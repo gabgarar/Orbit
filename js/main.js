@@ -4,10 +4,10 @@ console.log("Iniciando Cesium...");
 // 1) Crear el SingleTileImageryProvider
 // ===============================
 
-console.log("Creando SingleTileImageryProvider para assets/earth.jpg...");
+console.log("Creando SingleTileImageryProvider para assets/earth8.jpg...");
 
 const localProvider = new Cesium.SingleTileImageryProvider({
-    url: "assets/earth2km.jpg",
+    url: "assets/earth8km.jpg",
     rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90)
 });
 
@@ -38,32 +38,16 @@ try {
   console.error('No se pudo añadir localProvider directamente:', e);
 }
 
-// Comprobar si el archivo local está disponible (diagnóstico) y aplicar fallback si hace falta
-fetch('assets/earth.jpg', { cache: 'no-cache' }).then(function(resp) {
-    console.log('Fetch assets/earth.jpg status', resp.status);
+// Comprobar si el archivo local está disponible (diagnóstico)
+fetch('assets/earth8km.jpg', { cache: 'no-cache' }).then(function(resp) {
+    console.log('Fetch assets/earth8km.jpg status', resp.status);
     if (!resp.ok) {
-        console.warn('Imagen local no encontrada o no accesible, usando textura pública de fallback');
-        const publicProvider = new Cesium.SingleTileImageryProvider({
-            url: 'https://raw.githubusercontent.com/CesiumGS/cesium/main/Apps/SampleData/images/earth.jpg',
-            rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90)
-        });
-        viewer.scene.imageryLayers.removeAll();
-        viewer.scene.imageryLayers.addImageryProvider(publicProvider);
-        console.log('Se añadió publicProvider a imageryLayers');
+        console.warn('Imagen local no encontrada o no accesible: se mantiene solo la textura local si está disponible.');
     } else {
         console.log('Imagen local cargada correctamente (status ' + resp.status + ')');
     }
 }).catch(function(err) {
-    console.error('Error al hacer fetch de assets/earth.jpg:', err);
-    try {
-        const publicProvider = new Cesium.SingleTileImageryProvider({
-            url: 'https://raw.githubusercontent.com/CesiumGS/cesium/main/Apps/SampleData/images/earth.jpg',
-            rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90)
-        });
-        viewer.scene.imageryLayers.removeAll();
-        viewer.scene.imageryLayers.addImageryProvider(publicProvider);
-        console.log('Fallback público añadido tras error');
-    } catch (e) { console.error('Fallback público falló:', e); }
+    console.error('Error al hacer fetch de assets/earth8km.jpg:', err);
 });
 
 console.log("Cesium Viewer creado exitosamente.");
@@ -76,20 +60,20 @@ viewer.scene.imageryLayers.layerAdded.addEventListener((layer) => {
     console.log("Capa añadida:", layer);
 
     layer.imageryProvider.errorEvent.addEventListener((err) => {
-        console.error("❌ ERROR cargando earth.jpg:", err);
+        console.error("❌ ERROR cargando earth8.jpg:", err);
     });
 
-    console.log("Intentando cargar earth.jpg...");
+    console.log("Intentando cargar earth8.jpg...");
 });
 
 // ===============================
 // 4) Ajustes visuales
 // ===============================
 
-viewer.scene.skyAtmosphere.show = false;
-viewer.scene.globe.enableLighting = false;
+viewer.scene.skyAtmosphere.show = true;
+viewer.scene.globe.enableLighting = true;
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
-viewer.scene.globe.depthTestAgainstTerrain = false;
+viewer.scene.globe.depthTestAgainstTerrain = true;
 
 // Mostrar qué proveedor está activo y su URL (diagnóstico)
 const activeLayer = viewer.scene.imageryLayers.get(0);
@@ -107,9 +91,10 @@ viewer.scene.globe.enableLighting = true;
 
 const baseLayer = viewer.scene.imageryLayers.get(0);
 if (baseLayer) {
-    baseLayer.brightness = 1.00;
-    baseLayer.contrast = 1.00;
+    baseLayer.brightness = 1.1;
+    baseLayer.contrast = 1.05;
     baseLayer.gamma = 1.00;
+
     console.log("Ajustes de brillo/contraste aplicados.");
 } else {
     console.warn("⚠ No se encontró ninguna capa base para ajustar.");
