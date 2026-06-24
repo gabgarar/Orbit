@@ -2,35 +2,36 @@
   "system": {
     "orbit": {
       "propagation_hours": 0.5,
-      "future_show": true,
+      "future_show": false,
       "future_samples": 125,
       "future_line_width": 2,
       "future_color": "#7fd7ff",
-      "past_show": true,
+      "past_show": false,
       "past_color": "#ff9a5a",
       "past_samples": 125,
       "past_line_width": 2,
-      "hide_near_satellite": true
+      "hide_near_satellite": false
     },
     "satellites": {
-      "label_size_px": 10,
-      "model_scale": 1.2,
-      "max_visible": 20
+      "label_size_px": 0,
+      "model_scale": 1.0,
+      "use_3d_model": false,
+      "max_visible": 10000
     },
     "realtime": {
-      "state_interval_seconds": 1,
-      "orbit_interval_seconds": 1,
-      "orbit_cache_ttl_seconds": 5
+      "state_interval_seconds": 4,
+      "orbit_interval_seconds": 4,
+      "orbit_cache_ttl_seconds": 10
     },
     "logging": {
-      "enabled": true,
+      "enabled": false,
       "level": "info"
     },
     "rendering": {
       "antialias_enabled": true,
       "background_color": "#03070d",
       "sky_atmosphere": false,
-      "globe_lighting": true,
+      "globe_lighting": false,
       "stars_enabled": false
     }
   },

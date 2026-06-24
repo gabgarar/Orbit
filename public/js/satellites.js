@@ -14,13 +14,60 @@ const INTERPOLATION_HEADROOM = 1.16;
 const INTERVAL_SMOOTHING_FACTOR = 0.14;
 const POSITION_SMOOTHING_ALPHA = 0.32;
 const HIDE_NEAR_SATELLITE_SECONDS = 8;
+const ORBIT_WIDTH_MODE_VISUAL = "visual";
+const ORBIT_WIDTH_MODE_PHYSICAL = "physical";
+const ORBIT_PHYSICAL_REF_DISTANCE_M = 1000000;
+const ORBIT_PHYSICAL_MIN_FACTOR = 0.2;
+const ORBIT_PHYSICAL_MAX_FACTOR = 3.0;
 const SAT_LABEL_FONT_WEIGHT = 600;
 const SAT_LABEL_FONT_FAMILY = "sans-serif";
 const SAT_LABEL_FILL_COLOR = "#dfe9f3";
 const SAT_LABEL_OUTLINE_COLOR = "#0a0f18";
 const SAT_LABEL_OUTLINE_WIDTH = 2;
-const SAT_MODEL_BASE_MIN_PIXEL_SIZE = 1000;
-const SAT_MODEL_BASE_MAX_SCALE = 5000;
+const SAT_MODEL_URI = "/models/satelliteModel.glb";
+const SAT_MODEL_BASE_MIN_PIXEL_SIZE = 12;
+const SAT_MODEL_BASE_MAX_SCALE = 50000000;
+const SAT_MODEL_MAX_USER_SCALE = 100000000;
+const SAT_POINT_PIXEL_SIZE = 5;
+const SAT_POINT_OUTLINE_WIDTH = 1;
+
+function createSatelliteModelGraphics() {
+    return new Cesium.ModelGraphics({
+        uri: SAT_MODEL_URI,
+        minimumPixelSize: SAT_MODEL_BASE_MIN_PIXEL_SIZE,
+        maximumScale: SAT_MODEL_BASE_MAX_SCALE,
+        show: true
+    });
+}
+
+function createSatelliteEntityOptions() {
+    const options = {
+        position: new Cesium.Cartesian3(0, 0, 0),
+        point: {
+            pixelSize: SAT_POINT_PIXEL_SIZE,
+            color: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: SAT_POINT_OUTLINE_WIDTH,
+            show: false
+        },
+        label: {
+            text: "",
+            font: "14px sans-serif",
+            fillColor: Cesium.Color.WHITE,
+            pixelOffset: new Cesium.Cartesian2(0, -30),
+            show: true
+        },
+        show: false
+    };
+
+    if (satelliteUse3DModel) {
+        options.orientation = Cesium.Quaternion.IDENTITY;
+        options.scale = 1;
+        options.model = createSatelliteModelGraphics();
+    }
+
+    return options;
+}
 
 // =============================
 // Object Pool para reutilizar entidades Cesium
@@ -37,24 +84,7 @@ class EntityPool {
     _initializePool() {
         // Pre-crear entidades reutilizables
         for (let i = 0; i < this.poolSize; i++) {
-            const entity = this.viewer.entities.add({
-                position: new Cesium.Cartesian3(0, 0, 0),
-                orientation: Cesium.Quaternion.IDENTITY,
-                scale: 1500,
-                model: {
-                    uri: "/models/satelliteModel.glb",
-                    minimumPixelSize: 1000,
-                    maximumScale: 5000
-                },
-                label: {
-                    text: "",
-                    font: "14px sans-serif",
-                    fillColor: Cesium.Color.WHITE,
-                    pixelOffset: new Cesium.Cartesian2(0, -30),
-                    show: true
-                },
-                show: false
-            });
+            const entity = this.viewer.entities.add(createSatelliteEntityOptions());
             this.availablePool.push(entity);
         }
         logger.info(`Object pool de ${this.poolSize} entidades creado`);
@@ -71,32 +101,18 @@ class EntityPool {
             entity = this.availablePool.pop();
         } else {
             // Si no hay en pool, crear nueva (menos eficiente pero fallback)
-            entity = this.viewer.entities.add({
-                position: new Cesium.Cartesian3(0, 0, 0),
-                orientation: Cesium.Quaternion.IDENTITY,
-                scale: 1500,
-                model: {
-                    uri: "/models/satelliteModel.glb",
-                    minimumPixelSize: 1000,
-                    maximumScale: 5000
-                },
-                label: {
-                    text: "",
-                    font: "14px sans-serif",
-                    fillColor: Cesium.Color.WHITE,
-                    pixelOffset: new Cesium.Cartesian2(0, -30),
-                    show: true
-                }
-            });
+            entity = this.viewer.entities.add(createSatelliteEntityOptions());
         }
 
         // Actualizar estado
         entity.satelliteId = id;  // Usar propiedad personalizada en lugar de id (que es de solo lectura)
         entity.name = id;
         entity.position = position;
-        entity.orientation = orientation;
+        if (satelliteUse3DModel) {
+            entity.orientation = orientation;
+        }
         applyLabelStyle(entity, id);
-        applyModelStyle(entity);
+        applyVisualStyle(entity);
         entity.show = true;
 
         this.activeEntities.set(id, {
@@ -129,6 +145,12 @@ class EntityPool {
         entity.name = "";
         entity.label.text = "";
         entity.position = new Cesium.Cartesian3(0, 0, 0);
+        if (entity.point) {
+            entity.point.show = false;
+        }
+        if (entity.model) {
+            entity.model.show = false;
+        }
         entity.satelliteId = null;
 
         this.activeEntities.delete(id);
@@ -171,11 +193,14 @@ let entityPool = null;
 let maxSatellitesVisible = MAX_SATELLITES_VISIBLE;
 let satelliteLabelSizePx = 14;
 let satelliteModelScale = 1.0;
+let satelliteUse3DModel = true;
+let satelliteSizeMode = "visual";
 let lastUpdateTime = Date.now();
 let animationFrameId = null;
 let orbitConfig = {
     orbit_future_show: true,
     orbit_past_show: true,
+    orbit_width_mode: ORBIT_WIDTH_MODE_VISUAL,
     orbit_future_line_width: 3,
     orbit_future_color: "#00ff88",
     orbit_hide_near_satellite: false,
@@ -217,6 +242,10 @@ export function setOrbitConfig(config) {
         satelliteModelScale = 1.0;
     }
 
+    satelliteUse3DModel = config?.satellite_use_3d_model !== false;
+
+    satelliteSizeMode = config?.satellite_size_mode === "physical" ? "physical" : "visual";
+
     // Reaplicar estilo en entidades activas cuando cambia configuración
     if (entityPool) {
         const activeIds = entityPool.getActive();
@@ -224,7 +253,10 @@ export function setOrbitConfig(config) {
             const state = entityPool.getState(id);
             if (state && state.entity && state.entity.label) {
                 applyLabelStyle(state.entity, id);
-                applyModelStyle(state.entity);
+                applyVisualStyle(state.entity);
+                if (satelliteUse3DModel && state.lastOrientation) {
+                    state.entity.orientation = state.lastOrientation;
+                }
             }
 
             // Si se desactiva estela pasada, limpiar entidades y buffers para ahorrar carga.
@@ -312,14 +344,38 @@ function applyLabelStyle(entity, id) {
     entity.label.show = labelVisible;
 }
 
-function applyModelStyle(entity) {
-    if (!entity || !entity.model) {
+function applyVisualStyle(entity) {
+    if (!entity) {
         return;
     }
 
-    const safeScale = Math.max(0.1, Math.min(10, satelliteModelScale));
+    if (entity.point) {
+        entity.point.pixelSize = SAT_POINT_PIXEL_SIZE;
+        entity.point.color = Cesium.Color.WHITE;
+        entity.point.outlineColor = Cesium.Color.BLACK;
+        entity.point.outlineWidth = SAT_POINT_OUTLINE_WIDTH;
+        entity.point.show = !satelliteUse3DModel;
+    }
+
+    if (!satelliteUse3DModel) {
+        if (entity.model) {
+            delete entity.model;
+        }
+        entity.orientation = undefined;
+        return;
+    }
+
+    entity.model = createSatelliteModelGraphics();
+    entity.model.show = true;
+
+    const safeScale = Math.max(0.000001, Math.min(SAT_MODEL_MAX_USER_SCALE, satelliteModelScale));
     entity.model.scale = safeScale;
-    entity.model.minimumPixelSize = Math.max(1, Math.floor(SAT_MODEL_BASE_MIN_PIXEL_SIZE * safeScale));
+
+    const minimumPixelSize = satelliteSizeMode === "physical"
+        ? 1
+        : Math.max(1, Math.floor(SAT_MODEL_BASE_MIN_PIXEL_SIZE * safeScale));
+
+    entity.model.minimumPixelSize = minimumPixelSize;
     entity.model.maximumScale = SAT_MODEL_BASE_MAX_SCALE * safeScale;
 }
 
@@ -543,6 +599,28 @@ function getColor(colorString, defaultColor) {
     }
 }
 
+function computeOrbitWidth(viewer, baseWidth, referencePosition) {
+    const safeBase = Number.isFinite(baseWidth) && baseWidth > 0 ? baseWidth : 1;
+    if (orbitConfig.orbit_width_mode !== ORBIT_WIDTH_MODE_PHYSICAL) {
+        return safeBase;
+    }
+
+    if (!viewer?.camera?.positionWC || !referencePosition) {
+        return safeBase;
+    }
+
+    const distance = Cesium.Cartesian3.distance(viewer.camera.positionWC, referencePosition);
+    if (!Number.isFinite(distance) || distance <= 0) {
+        return safeBase;
+    }
+
+    const factor = Math.max(
+        ORBIT_PHYSICAL_MIN_FACTOR,
+        Math.min(ORBIT_PHYSICAL_MAX_FACTOR, ORBIT_PHYSICAL_REF_DISTANCE_M / distance)
+    );
+    return safeBase * factor;
+}
+
 function createOrbitEntity(viewer, id, positions, color, width) {
     return viewer.entities.add({
         id: `${id}-orbit`,
@@ -584,6 +662,7 @@ function ensureSatelliteState(viewer, id, cart, orientation) {
         // Guardar posición anterior para interpolación
         state.previousPosition = state.targetPosition || state.entity.position;
         state.targetPosition = cart;
+        state.lastOrientation = orientation;
         state.interpolationDuration = computeInterpolationDuration(state, now);
         state.lastUpdateTime = now;
         state.lastMessageTime = now;
@@ -605,6 +684,7 @@ function ensureSatelliteState(viewer, id, cart, orientation) {
     state.entity = entity;
     state.previousPosition = cart;
     state.targetPosition = cart;
+    state.lastOrientation = orientation;
     state.lastUpdateTime = now;
     state.lastMessageTime = now;
     state.interpolationDuration = 900;
@@ -626,13 +706,16 @@ function updateSatelliteState(viewer, satData) {
     }
 
     const cart = new Cesium.Cartesian3(pos.x, pos.y, pos.z);
-    const orientation = calculateOrientation(pos, vel);
+    const orientation = satelliteUse3DModel ? calculateOrientation(pos, vel) : undefined;
 
     const state = ensureSatelliteState(viewer, id, cart, orientation);
 
     // No actualizar posición directamente; dejar que la interpolación la actualice
     // state.entity.position se actualiza en smoothUpdate()
-    state.entity.orientation = orientation;
+    if (satelliteUse3DModel) {
+        state.entity.orientation = orientation;
+        state.lastOrientation = orientation;
+    }
 
     if (orbitConfig.orbit_past_show === false) {
         if (state.trailEntity) {
@@ -656,20 +739,21 @@ function updateSatelliteState(viewer, satData) {
         }
 
         const trailColor = getColor(orbitConfig.orbit_past_color, "#ff0000");
+        const trailWidth = computeOrbitWidth(viewer, orbitConfig.orbit_past_line_width, state.entity.position);
         if (!state.trailEntity) {
             state.trailEntity = createTrailEntity(
                 viewer,
                 id,
                 visibleTrail,
                 trailColor,
-                orbitConfig.orbit_past_line_width
+                trailWidth
             );
         } else {
             // Suavizar trail antes de actualizar
             const smoothedTrail = smoothTrail(visibleTrail, 1);
             state.trailEntity.polyline.positions = smoothedTrail;
             state.trailEntity.polyline.material = new Cesium.ColorMaterialProperty(trailColor);
-            state.trailEntity.polyline.width = orbitConfig.orbit_past_line_width;
+            state.trailEntity.polyline.width = trailWidth;
         }
     }
 }
@@ -708,6 +792,8 @@ function updateSatelliteOrbit(viewer, satData) {
     const smoothedOrbit = smoothTrail(orbitPositions, 2);
     
     const futureColor = getColor(orbitConfig.orbit_future_color, "#00ff88");
+    const referencePosition = state.entity?.position || orbitPositions[0];
+    const futureWidth = computeOrbitWidth(viewer, orbitConfig.orbit_future_line_width, referencePosition);
 
     if (!state.orbitEntity) {
         state.orbitEntity = createOrbitEntity(
@@ -715,11 +801,11 @@ function updateSatelliteOrbit(viewer, satData) {
             id,
             smoothedOrbit,
             futureColor,
-            orbitConfig.orbit_future_line_width
+            futureWidth
         );
     } else {
         state.orbitEntity.polyline.positions = smoothedOrbit;
         state.orbitEntity.polyline.material = new Cesium.ColorMaterialProperty(futureColor);
-        state.orbitEntity.polyline.width = orbitConfig.orbit_future_line_width;
+        state.orbitEntity.polyline.width = futureWidth;
     }
 }

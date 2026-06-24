@@ -4,6 +4,7 @@ const CONFIG_SCHEMA = {
         { key: "future_show", label: "Future Show", type: "checkbox" },
         { key: "future_samples", label: "Future Samples", type: "number", step: "1", min: "2" },
         { key: "future_line_width", label: "Future Line Width", type: "number", step: "0.1", min: "0.1" },
+        { key: "width_mode", label: "Orbit Width Mode", type: "select", options: ["visual", "physical"] },
         { key: "future_color", label: "Future Color", type: "color" },
         { key: "past_show", label: "Past Show", type: "checkbox" },
         { key: "past_samples", label: "Past Samples", type: "number", step: "1", min: "2" },
@@ -13,7 +14,9 @@ const CONFIG_SCHEMA = {
     ],
     satellites: [
         { key: "label_size_px", label: "Label Size (px)", type: "number", step: "1", min: "0" },
-        { key: "model_scale", label: "Model Scale", type: "number", step: "0.1", min: "0.1" },
+        { key: "model_scale", label: "Model Scale", type: "number", step: "1", min: "0.000001" },
+        { key: "use_3d_model", label: "Use 3D Model", type: "checkbox" },
+        { key: "size_mode", label: "Size Mode", type: "select", options: ["visual", "physical"] },
         { key: "max_visible", label: "Max Visible", type: "number", step: "1", min: "1" }
     ],
     realtime: [
@@ -39,6 +42,7 @@ const FIELD_HELP = {
     "orbit.future_show": "Muestra u oculta la orbita futura.",
     "orbit.future_samples": "Numero de puntos usados para dibujar la orbita futura.",
     "orbit.future_line_width": "Grosor de la linea de orbita futura.",
+    "orbit.width_mode": "visual: grosor fijo en pantalla. physical: grosor aparente cambia con distancia.",
     "orbit.future_color": "Color de la orbita futura.",
     "orbit.past_show": "Muestra u oculta la estela/orbita pasada.",
     "orbit.past_samples": "Cantidad de puntos historicos de estela.",
@@ -48,6 +52,8 @@ const FIELD_HELP = {
 
     "satellites.label_size_px": "Tamano de texto de label. 0 oculta labels.",
     "satellites.model_scale": "Escala visual del modelo 3D del satelite.",
+    "satellites.use_3d_model": "Si esta activo, el satelite se renderiza como modelo 3D. Si no, se dibuja como punto.",
+    "satellites.size_mode": "visual: mantiene visibilidad por pixel. physical: respeta mas el tamano angular real por distancia.",
     "satellites.max_visible": "Numero maximo de satelites visibles en pantalla.",
 
     "realtime.state_interval_seconds": "Cada cuantos segundos llega el estado por WebSocket.",

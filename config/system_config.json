@@ -2,24 +2,27 @@
   "system": {
     "orbit": {
       "propagation_hours": 0.5,
-      "future_show": false,
+      "future_show": true,
       "future_samples": 125,
-      "future_line_width": 2,
+      "future_line_width": 1,
+      "width_mode": "physical",
       "future_color": "#7fd7ff",
-      "past_show": false,
+      "past_show": true,
       "past_color": "#ff9a5a",
       "past_samples": 125,
-      "past_line_width": 2,
+      "past_line_width": 1,
       "hide_near_satellite": false
     },
     "satellites": {
-      "label_size_px": 0,
-      "model_scale": 1.2,
-      "max_visible": 10000
+      "label_size_px": 8,
+      "model_scale": 1000.0,
+      "use_3d_model": true,
+      "size_mode": "physical",
+      "max_visible": 100
     },
     "realtime": {
-      "state_interval_seconds": 4,
-      "orbit_interval_seconds": 4,
+      "state_interval_seconds": 0.1,
+      "orbit_interval_seconds": 0.1,
       "orbit_cache_ttl_seconds": 10
     },
     "logging": {
@@ -29,12 +32,12 @@
     "rendering": {
       "antialias_enabled": true,
       "background_color": "#03070d",
-      "sky_atmosphere": false,
-      "globe_lighting": false,
+      "sky_atmosphere": true,
+      "globe_lighting": true,
       "stars_enabled": false
     }
   },
   "data": {
-    "satellites_file": "starlink_tles.txt"
+    "satellites_file": "sentinel_tles.txt"
   }
 }
