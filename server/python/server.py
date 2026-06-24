@@ -45,7 +45,7 @@ def load_system_config():
     except Exception as e:
         print(f"⚠️ No se pudo leer system_config.json: {e}")
         return {
-            "show_orbits": True,
+            "orbit_future_show": True,
             "propagation_hours": 12,
             "orbit_future_samples": 120,
             "orbit_future_line_width": 3,
@@ -61,7 +61,7 @@ def load_system_config():
     data_cfg = config.get("data", {})
 
     defaults = {
-        "show_orbits": True,
+        "orbit_future_show": True,
         "propagation_hours": 12,
         "orbit_future_samples": 120,
         "orbit_future_line_width": 3,
@@ -113,8 +113,8 @@ def get_state_snapshot():
 
 
 def build_orbit_payload(props, cfg):
-    show_orbits = cfg.get("show_orbits", True)
-    if not show_orbits:
+    orbit_future_show = cfg.get("orbit_future_show", True)
+    if not orbit_future_show:
         return []
 
     horizon_hours = cfg.get("propagation_hours", 12)
@@ -141,7 +141,7 @@ def get_orbits_cached(props, cfg):
     cache_ttl_seconds = cfg.get("orbit_cache_ttl_seconds", 10)
     cache_key = (
         tuple(name for name, _ in props),
-        cfg.get("show_orbits", True),
+        cfg.get("orbit_future_show", True),
         cfg.get("propagation_hours", 12),
         cfg.get("orbit_future_samples", 120),
         cache_ttl_seconds,
@@ -177,7 +177,7 @@ def get_orbits_cached_lru(props, cfg):
     """Órbitas con LRU cache de memoria limitada."""
     cache_key = (
         tuple(name for name, _ in props),
-        cfg.get("show_orbits", True),
+        cfg.get("orbit_future_show", True),
         cfg.get("propagation_hours", 12),
         cfg.get("orbit_future_samples", 120),
     )
@@ -283,6 +283,9 @@ def main():
         ws_server.state_interval = cfg.get("websocket_state_interval_seconds", 1.0)
         ws_server.orbit_interval = cfg.get("websocket_orbit_interval_seconds", 10.0)
 
+        # Si orbit_future_show está desactivado, no calcular ni enviar órbitas.
+        ws_server.set_orbit_callback(orbit_tick if cfg.get("orbit_future_show", True) else None)
+
         for name, prop in props:
             x, y, z, vx, vy, vz = prop.propagate()
             satellite = {
@@ -299,7 +302,8 @@ def main():
         return get_orbits_cached(props, cfg)
 
     ws_server.set_state_callback(state_tick)
-    ws_server.set_orbit_callback(orbit_tick)
+    # state_tick habilita/deshabilita dinámicamente este callback según orbit_future_show
+    ws_server.set_orbit_callback(None)
 
     asyncio.run(ws_server.start())
 

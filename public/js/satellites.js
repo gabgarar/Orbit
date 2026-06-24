@@ -11,6 +11,11 @@ const INTERPOLATION_HEADROOM = 1.16;
 const INTERVAL_SMOOTHING_FACTOR = 0.14;
 const POSITION_SMOOTHING_ALPHA = 0.32;
 const HIDE_NEAR_SATELLITE_SECONDS = 8;
+const SAT_LABEL_FONT_WEIGHT = 600;
+const SAT_LABEL_FONT_FAMILY = "sans-serif";
+const SAT_LABEL_FILL_COLOR = "#dfe9f3";
+const SAT_LABEL_OUTLINE_COLOR = "#0a0f18";
+const SAT_LABEL_OUTLINE_WIDTH = 2;
 
 // =============================
 // Object Pool para reutilizar entidades Cesium
@@ -82,9 +87,10 @@ class EntityPool {
 
         // Actualizar estado
         entity.satelliteId = id;  // Usar propiedad personalizada en lugar de id (que es de solo lectura)
+        entity.name = id;
         entity.position = position;
         entity.orientation = orientation;
-        entity.label.text = id;
+        applyLabelStyle(entity, id);
         entity.show = true;
 
         this.activeEntities.set(id, {
@@ -114,6 +120,7 @@ class EntityPool {
 
         // Resetear entidad
         entity.show = false;
+        entity.name = "";
         entity.label.text = "";
         entity.position = new Cesium.Cartesian3(0, 0, 0);
         entity.satelliteId = null;
@@ -133,9 +140,13 @@ class EntityPool {
     }
 
     enforceLimit() {
+        if (!Number.isFinite(maxSatellitesVisible)) {
+            return;
+        }
+
         // Si excedemos el límite, liberar los menos recientemente usados
-        if (this.activeEntities.size > MAX_SATELLITES_VISIBLE) {
-            const toRemove = this.activeEntities.size - MAX_SATELLITES_VISIBLE;
+        if (this.activeEntities.size > maxSatellitesVisible) {
+            const toRemove = this.activeEntities.size - maxSatellitesVisible;
             const keys = Array.from(this.activeEntities.keys());
             for (let i = 0; i < toRemove; i++) {
                 this.release(keys[i]);
@@ -151,10 +162,13 @@ class EntityPool {
 let satelliteEntities = {};
 let satelliteState = {};
 let entityPool = null;
+let maxSatellitesVisible = MAX_SATELLITES_VISIBLE;
+let satelliteLabelSizePx = 14;
 let lastUpdateTime = Date.now();
 let animationFrameId = null;
 let orbitConfig = {
-    show_orbits: true,
+    orbit_future_show: true,
+    orbit_past_show: true,
     orbit_future_line_width: 3,
     orbit_future_color: "#00ff88",
     orbit_hide_near_satellite: false,
@@ -171,6 +185,43 @@ export function setOrbitConfig(config) {
         ...orbitConfig,
         ...config
     };
+
+    const configuredMax = Number(config?.max_satellites_visible);
+    if (Number.isFinite(configuredMax) && configuredMax > 0) {
+        maxSatellitesVisible = Math.floor(configuredMax);
+    } else if (configuredMax === 0 || configuredMax === -1) {
+        // 0 o -1 => sin límite
+        maxSatellitesVisible = Number.POSITIVE_INFINITY;
+    } else {
+        maxSatellitesVisible = MAX_SATELLITES_VISIBLE;
+    }
+
+    const configuredLabelSize = Number(config?.satellite_label_size_px);
+    if (Number.isFinite(configuredLabelSize) && configuredLabelSize >= 0) {
+        satelliteLabelSizePx = configuredLabelSize;
+    } else {
+        satelliteLabelSizePx = 14;
+    }
+
+    // Reaplicar estilo en entidades activas cuando cambia configuración
+    if (entityPool) {
+        const activeIds = entityPool.getActive();
+        for (const id of activeIds) {
+            const state = entityPool.getState(id);
+            if (state && state.entity && state.entity.label) {
+                applyLabelStyle(state.entity, id);
+            }
+
+            // Si se desactiva estela pasada, limpiar entidades y buffers para ahorrar carga.
+            if (state && orbitConfig.orbit_past_show === false) {
+                if (state.trailEntity) {
+                    entityPool.viewer.entities.remove(state.trailEntity);
+                    state.trailEntity = null;
+                }
+                state.trailPositions = [];
+            }
+        }
+    }
 }
 
 // =============================
@@ -231,6 +282,19 @@ function computeInterpolationDuration(state, now) {
         MIN_INTERPOLATION_MS,
         MAX_INTERPOLATION_MS
     );
+}
+
+function applyLabelStyle(entity, id) {
+    const labelVisible = satelliteLabelSizePx > 0;
+    const labelSize = Math.max(1, Math.floor(satelliteLabelSizePx));
+
+    entity.label.text = id || "";
+    entity.label.font = `${SAT_LABEL_FONT_WEIGHT} ${labelSize}px ${SAT_LABEL_FONT_FAMILY}`;
+    entity.label.fillColor = Cesium.Color.fromCssColorString(SAT_LABEL_FILL_COLOR);
+    entity.label.outlineColor = Cesium.Color.fromCssColorString(SAT_LABEL_OUTLINE_COLOR);
+    entity.label.outlineWidth = SAT_LABEL_OUTLINE_WIDTH;
+    entity.label.style = Cesium.LabelStyle.FILL_AND_OUTLINE;
+    entity.label.show = labelVisible;
 }
 
 function getFutureSampleStepSeconds() {
@@ -498,9 +562,13 @@ function ensureSatelliteState(viewer, id, cart, orientation) {
         state.lastUpdateTime = now;
         state.lastMessageTime = now;
         
-        state.trailPositions.push(cart);
-        if (state.trailPositions.length > orbitConfig.orbit_past_samples) {
-            state.trailPositions.shift();
+        if (orbitConfig.orbit_past_show !== false) {
+            state.trailPositions.push(cart);
+            if (state.trailPositions.length > orbitConfig.orbit_past_samples) {
+                state.trailPositions.shift();
+            }
+        } else {
+            state.trailPositions = [];
         }
         return state;
     }
@@ -540,6 +608,15 @@ function updateSatelliteState(viewer, satData) {
     // state.entity.position se actualiza en smoothUpdate()
     state.entity.orientation = orientation;
 
+    if (orbitConfig.orbit_past_show === false) {
+        if (state.trailEntity) {
+            viewer.entities.remove(state.trailEntity);
+            state.trailEntity = null;
+        }
+        state.trailPositions = [];
+        return;
+    }
+
     if (state.trailPositions.length > 1) {
         const hiddenPastSamples = getHiddenPastSamples();
         const visibleTrail = trimTrailNearSatellite(state.trailPositions, hiddenPastSamples);
@@ -572,7 +649,7 @@ function updateSatelliteState(viewer, satData) {
 }
 
 function updateSatelliteOrbit(viewer, satData) {
-    if (!orbitConfig.show_orbits) {
+    if (!orbitConfig.orbit_future_show) {
         return;
     }
 

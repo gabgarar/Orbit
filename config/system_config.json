@@ -1,24 +1,27 @@
 {
   "system": {
-    "show_orbits": false,
-    "propagation_hours": 1,
-    "orbit_future_samples": 50,
+    "propagation_hours": 0.5,
+    "orbit_future_show": true,
+    "orbit_future_samples": 125,
     "orbit_future_line_width": 2,
-    "orbit_future_color": "#00ff88",
-    "orbit_past_color": "#ff0000",
-    "orbit_past_samples": 50,
+    "orbit_future_color": "#7fd7ff",
+    "orbit_past_show": true,
+    "orbit_past_color": "#ff9a5a",
+    "orbit_past_samples": 125,
     "orbit_past_line_width": 2,
-    "orbit_hide_near_satellite": false,
-    "websocket_state_interval_seconds": 0.5,
-    "websocket_orbit_interval_seconds": 0.5,
+    "orbit_hide_near_satellite": true,
+    "satellite_label_size_px": 10,
+    "max_satellites_visible": 20,
+    "websocket_state_interval_seconds": 1,
+    "websocket_orbit_interval_seconds": 1,
     "orbit_cache_ttl_seconds": 5,
-    "stars_enabled":  true,
-    "stars_quality": "high",
-    "background_color": "#000000",
+    "antialias_enabled": true,
+    "background_color": "#03070d",
     "sky_atmosphere": false,
-    "globe_lighting": true
+    "globe_lighting": true,
+    "stars_enabled": false
   },
   "data": {
-    "satellites_file": "sentinel_tles_subset.txt"
+    "satellites_file": "sentinel_tles.txt"
   }
 }

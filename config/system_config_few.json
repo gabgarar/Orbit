@@ -1,0 +1,26 @@
+{
+  "system": {
+    "propagation_hours": 1,
+    "orbit_future_show": false,
+    "orbit_future_samples": 50,
+    "orbit_future_line_width": 2,
+    "orbit_future_color": "#00ff88",
+    "orbit_past_show": false,
+    "orbit_past_color": "#ff0000",
+    "orbit_past_samples": 50,
+    "orbit_past_line_width": 2,
+    "orbit_hide_near_satellite": false,
+    "satellite_label_size_px": 0,
+    "max_satellites_visible": 10636,
+    "websocket_state_interval_seconds": 4,
+    "websocket_orbit_interval_seconds": 4,
+    "orbit_cache_ttl_seconds": 8,
+    "background_color": "#000000",
+    "sky_atmosphere": false,
+    "globe_lighting": true,
+    "stars_enabled": false
+  },
+  "data": {
+    "satellites_file": "starlink_tles.txt"
+  }
+}

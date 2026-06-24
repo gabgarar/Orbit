@@ -39,7 +39,7 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
   geocoder: false,
   timeline: false,
   animation: false,
-  sceneModePicker: false,
+  sceneModePicker: true,
   fullscreenButton: false,
   homeButton: true,
   terrainProvider: await Cesium.createWorldTerrainAsync(),
@@ -56,60 +56,74 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
   targetFrameRate: 60,           // ✅ Target 60 FPS
   requestRenderMode: false,      // Renderizar continuamente (más fluido)
   enableLighting: true,          // ✅ Lighting para sombras
-  scene3DOnly: true             // Optimizar para 3D
+  scene3DOnly: false             // Optimizar para 3D
 });
+
+const tychoSkyMapSources = {
+    positiveX: "assets/stars/tycho_highres_cubemap_png/tycho_highres_px.png",
+    negativeX: "assets/stars/tycho_highres_cubemap_png/tycho_highres_nx.png",
+    positiveY: "assets/stars/tycho_highres_cubemap_png/tycho_highres_py.png",
+    negativeY: "assets/stars/tycho_highres_cubemap_png/tycho_highres_ny.png",
+    positiveZ: "assets/stars/tycho_highres_cubemap_png/tycho_highres_pz.png",
+    negativeZ: "assets/stars/tycho_highres_cubemap_png/tycho_highres_nz.png"
+};
+
+let tychoSkyMapHighRes = null;
+
+function getTychoSkyBox() {
+    if (!tychoSkyMapHighRes) {
+        tychoSkyMapHighRes = new Cesium.SkyBox({
+            sources: tychoSkyMapSources
+        });
+    }
+    return tychoSkyMapHighRes;
+}
+
+function releaseTychoSkyBox() {
+    if (!tychoSkyMapHighRes) {
+        return;
+    }
+
+    if (typeof tychoSkyMapHighRes.destroy === "function" && !tychoSkyMapHighRes.isDestroyed?.()) {
+        tychoSkyMapHighRes.destroy();
+    }
+    tychoSkyMapHighRes = null;
+}
 
 function applyStarsConfig(systemConfig) {
     const starsEnabled = systemConfig.stars_enabled !== false;
-    const qualityRaw = typeof systemConfig.stars_quality === "string"
-        ? systemConfig.stars_quality.toLowerCase()
-        : "medium";
-    const starsQuality = ["low", "medium", "high"].includes(qualityRaw)
-        ? qualityRaw
-        : "medium";
-
-    viewer.scene.skyBox.show = starsEnabled;
-
-    let sunVisible = false;
-    let moonVisible = false;
-    let fxaaEnabled = false;
-    let msaaSamples = 1;
 
     if (starsEnabled) {
-        if (starsQuality === "low") {
-            sunVisible = false;
-            moonVisible = false;
-            fxaaEnabled = false;
-            msaaSamples = 1;
-        } else if (starsQuality === "high") {
-            sunVisible = true;
-            moonVisible = true;
-            fxaaEnabled = true;
-            msaaSamples = 4;
-        } else {
-            sunVisible = true;
-            moonVisible = false;
-            fxaaEnabled = true;
-            msaaSamples = 2;
-        }
+        viewer.scene.skyBox = getTychoSkyBox();
+        viewer.scene.skyBox.show = true;
+    } else {
+        viewer.scene.skyBox = undefined;
+        releaseTychoSkyBox();
     }
 
-    viewer.scene.sun.show = sunVisible;
-    viewer.scene.moon.show = moonVisible;
-    viewer.scene.fxaa = fxaaEnabled;
-    if (viewer.scene.postProcessStages && viewer.scene.postProcessStages.fxaa) {
-        viewer.scene.postProcessStages.fxaa.enabled = fxaaEnabled;
-    }
-
-    if (typeof viewer.scene.msaaSamples === "number") {
-        viewer.scene.msaaSamples = msaaSamples;
-    }
+    viewer.scene.sun.show = starsEnabled;
+    viewer.scene.moon.show = false;
 
     if (!starsEnabled) {
         viewer.scene.backgroundColor = Cesium.Color.BLACK;
     }
 
-    console.log(`⭐ Stars: ${starsEnabled ? "on" : "off"} | quality: ${starsQuality}`);
+    console.log(`⭐ Stars: ${starsEnabled ? "on" : "off"} | skybox: TychoSkyMapHighRes`);
+}
+
+function applyAntialiasConfig(systemConfig) {
+    const antialiasEnabled = systemConfig.antialias_enabled !== false;
+
+    viewer.scene.fxaa = antialiasEnabled;
+    if (viewer.scene.postProcessStages && viewer.scene.postProcessStages.fxaa) {
+        viewer.scene.postProcessStages.fxaa.enabled = antialiasEnabled;
+    }
+
+    if (typeof viewer.scene.msaaSamples === "number") {
+        viewer.scene.msaaSamples = antialiasEnabled ? 4 : 1;
+    }
+
+    console.log(`🪄 Antialias: ${antialiasEnabled ? "on" : "off"}`);
 }
 
 // Forzar la adición de la capa local al viewer (garantiza que exista antes de ajustar)
@@ -202,6 +216,7 @@ console.log("🚀 Cámara posicionada.");
             viewer.scene.backgroundColor = Cesium.Color.fromCssColorString(config.system.background_color);
         }
         applyStarsConfig(config.system);
+        applyAntialiasConfig(config.system);
         viewer.scene.skyAtmosphere.show = config.system.sky_atmosphere !== false;
         viewer.scene.globe.enableLighting = config.system.globe_lighting !== false;
     }
