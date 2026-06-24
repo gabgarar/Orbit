@@ -67,10 +67,11 @@ def main():
     def tick():
         data = []
         for name, prop in propagators:
-            x, y, z = prop.propagate()
+            x, y, z, vx, vy, vz = prop.propagate()
             data.append({
                 "satellite": name,
-                "position": {"x": x, "y": y, "z": z}
+                "position": {"x": x, "y": y, "z": z},
+                "velocity": {"x": vx, "y": vy, "z": vz}
             })
         return data
 

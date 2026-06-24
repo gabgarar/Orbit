@@ -17,4 +17,5 @@ class SGP4Propagator:
             print("Error SGP4:", e)
 
         x, y, z = [coord * 1000 for coord in r]
-        return x, y, z
+        vx, vy, vz = [coord * 1000 for coord in v]
+        return x, y, z, vx, vy, vz
