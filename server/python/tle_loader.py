@@ -1,49 +1,46 @@
 # tle_loader.py
-import requests
 
-# Listas de Celestrak donde buscar
-CELESTRAK_SOURCES = [
-    "https://celestrak.org/NORAD/elements/active.txt",
-    "https://celestrak.org/NORAD/elements/stations.txt",
-    "https://celestrak.org/NORAD/elements/resource.txt",
-    "https://celestrak.org/NORAD/elements/science.txt",
-    "https://celestrak.org/NORAD/elements/earth-observation.txt",
-    "https://celestrak.org/NORAD/elements/starlink.txt",
-    "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle"
-]
-
-def load_satellite_names(filename):
-    with open(filename, "r") as f:
-        return [l.strip() for l in f.readlines() if l.strip()]
-
-def find_tle_for_satellite(name):
-    name_upper = name.upper()
-
-    for url in CELESTRAK_SOURCES:
-        try:
-            resp = requests.get(url, timeout=5)
-            if resp.status_code != 200:
-                continue
-
-            lines = [l.strip() for l in resp.text.splitlines() if l.strip()]
-
-            for i in range(len(lines) - 2):
-                if lines[i].upper() == name_upper:
-                    return lines[i+1], lines[i+2]
-
-        except Exception:
-            continue
-
-    raise ValueError(f"No se encontró TLE para '{name}' en Celestrak")
 
 def load_all_tles_from_config(config_file):
-    names = load_satellite_names(config_file)
-    tles = []
+    """Carga múltiples TLEs desde un fichero local.
 
-    for name in names:
-        print(f"🔎 Buscando TLE para {name}...")
-        l1, l2 = find_tle_for_satellite(name)
-        print(f"✔ TLE encontrado para {name}")
-        tles.append((name, l1, l2))
+    El fichero debe contener grupos de 3 líneas:
+    - nombre del satélite
+    - línea 1 del TLE
+    - línea 2 del TLE
+
+    Los bloques pueden estar separados por líneas en blanco.
+    """
+    with open(config_file, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+
+    tles = []
+    block = []
+
+    for line in lines:
+        block.append(line)
+        if len(block) == 3:
+            name, l1, l2 = block
+            tles.append((name, l1, l2))
+            block = []
+
+    if block:
+        raise ValueError(
+            f"Archivo de TLEs incompleto: se esperaba un múltiplo de 3 líneas, pero quedaron {len(block)} línea(s) sin procesar."
+        )
+
+    print("TLEs cargados desde fichero:")
+    for name, l1, l2 in tles:
+        print(f"  - {name}")
 
     return tles
+
+
+def main():
+    config_file = "../../config/satellites.txt"
+    tles = load_all_tles_from_config(config_file)
+    print(f"\n🛰️ Se cargaron {len(tles)} TLEs correctamente\n")
+
+
+if __name__ == "__main__":
+    main()

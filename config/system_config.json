@@ -1,0 +1,18 @@
+{
+  "system": {
+    "show_orbits": true,
+    "propagation_hours": 0.5,
+    "orbit_future_samples": 600,
+    "orbit_future_line_width": 1.5,
+    "orbit_future_color": "#00ff88",
+    "orbit_past_color": "#ff0000",
+    "orbit_past_samples": 600,
+    "orbit_past_line_width": 1.5,
+    "background_color": "#000000",
+    "sky_atmosphere": true,
+    "globe_lighting": true
+  },
+  "data": {
+    "satellites_file": "satellites.txt"
+  }
+}

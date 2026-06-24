@@ -11,9 +11,10 @@ const app = express();
 const PORT = 8100;
 
 // ===============================
-// 1) Servir carpeta pública
+// 1) Servir carpeta pública y configuración JSON
 // ===============================
 app.use(express.static(path.join(__dirname, "../public")));
+app.use("/config", express.static(path.join(__dirname, "../config")));
 
 app.listen(PORT, () => {
     console.log(`🌍 Servidor web en http://localhost:${PORT}`);

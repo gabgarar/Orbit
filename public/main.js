@@ -1,6 +1,19 @@
 console.log("Iniciando Cesium...");
 
-import { initSatelliteReceiver } from "./js/satellites.js";
+import { initSatelliteReceiver, setOrbitConfig } from "./js/satellites.js";
+
+async function loadConfig() {
+    try {
+        const response = await fetch("/config/system_config.json", { cache: "no-cache" });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error("No se pudo cargar system_config.json:", error);
+        return null;
+    }
+}
 
 
 // ===============================
@@ -114,8 +127,17 @@ viewer.camera.flyTo({
 
 console.log("🚀 Cámara posicionada.");
 
-// ======================================
-// 6) Actualizar posiciones de satélites
-// ======================================
-initSatelliteReceiver(viewer);
-console.log("🛰️ Receptor de satélites inicializado.");
+(async function init() {
+    const config = await loadConfig();
+    if (config && config.system) {
+        setOrbitConfig(config.system);
+        if (config.system.background_color) {
+            viewer.scene.backgroundColor = Cesium.Color.fromCssColorString(config.system.background_color);
+        }
+        viewer.scene.skyAtmosphere.show = config.system.sky_atmosphere !== false;
+        viewer.scene.globe.enableLighting = config.system.globe_lighting !== false;
+    }
+
+    initSatelliteReceiver(viewer);
+    console.log("🛰️ Receptor de satélites inicializado.");
+})();
