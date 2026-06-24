@@ -1,4 +1,7 @@
 import { SatelliteWebSocket } from "./SatelliteWebSocket.js";
+import { getLogger } from "./logger.js";
+
+const logger = getLogger("satellites");
 
 // =============================
 // Configuración y límites
@@ -16,6 +19,8 @@ const SAT_LABEL_FONT_FAMILY = "sans-serif";
 const SAT_LABEL_FILL_COLOR = "#dfe9f3";
 const SAT_LABEL_OUTLINE_COLOR = "#0a0f18";
 const SAT_LABEL_OUTLINE_WIDTH = 2;
+const SAT_MODEL_BASE_MIN_PIXEL_SIZE = 1000;
+const SAT_MODEL_BASE_MAX_SCALE = 5000;
 
 // =============================
 // Object Pool para reutilizar entidades Cesium
@@ -52,7 +57,7 @@ class EntityPool {
             });
             this.availablePool.push(entity);
         }
-        console.log(`🎯 Object pool de ${this.poolSize} entidades creado`);
+        logger.info(`Object pool de ${this.poolSize} entidades creado`);
     }
 
     acquire(id, position, orientation) {
@@ -91,6 +96,7 @@ class EntityPool {
         entity.position = position;
         entity.orientation = orientation;
         applyLabelStyle(entity, id);
+        applyModelStyle(entity);
         entity.show = true;
 
         this.activeEntities.set(id, {
@@ -100,7 +106,7 @@ class EntityPool {
             orbitEntity: null
         });
 
-        console.log(`📡 Satélite adquirido: ${id} (activos: ${this.activeEntities.size})`);
+        logger.debug(`Satélite adquirido: ${id} (activos: ${this.activeEntities.size})`);
         return entity;
     }
 
@@ -128,7 +134,7 @@ class EntityPool {
         this.activeEntities.delete(id);
         this.availablePool.push(entity);
 
-        console.log(`♻️ Satélite liberado: ${id} (activos: ${this.activeEntities.size})`);
+        logger.debug(`Satélite liberado: ${id} (activos: ${this.activeEntities.size})`);
     }
 
     getActive() {
@@ -151,7 +157,7 @@ class EntityPool {
             for (let i = 0; i < toRemove; i++) {
                 this.release(keys[i]);
             }
-            console.warn(`⚠️ Límite de satélites alcanzado. Liberados ${toRemove}`);
+            logger.warn(`Límite de satélites alcanzado. Liberados ${toRemove}`);
         }
     }
 }
@@ -164,6 +170,7 @@ let satelliteState = {};
 let entityPool = null;
 let maxSatellitesVisible = MAX_SATELLITES_VISIBLE;
 let satelliteLabelSizePx = 14;
+let satelliteModelScale = 1.0;
 let lastUpdateTime = Date.now();
 let animationFrameId = null;
 let orbitConfig = {
@@ -203,6 +210,13 @@ export function setOrbitConfig(config) {
         satelliteLabelSizePx = 14;
     }
 
+    const configuredModelScale = Number(config?.satellite_model_scale);
+    if (Number.isFinite(configuredModelScale) && configuredModelScale > 0) {
+        satelliteModelScale = configuredModelScale;
+    } else {
+        satelliteModelScale = 1.0;
+    }
+
     // Reaplicar estilo en entidades activas cuando cambia configuración
     if (entityPool) {
         const activeIds = entityPool.getActive();
@@ -210,6 +224,7 @@ export function setOrbitConfig(config) {
             const state = entityPool.getState(id);
             if (state && state.entity && state.entity.label) {
                 applyLabelStyle(state.entity, id);
+                applyModelStyle(state.entity);
             }
 
             // Si se desactiva estela pasada, limpiar entidades y buffers para ahorrar carga.
@@ -295,6 +310,17 @@ function applyLabelStyle(entity, id) {
     entity.label.outlineWidth = SAT_LABEL_OUTLINE_WIDTH;
     entity.label.style = Cesium.LabelStyle.FILL_AND_OUTLINE;
     entity.label.show = labelVisible;
+}
+
+function applyModelStyle(entity) {
+    if (!entity || !entity.model) {
+        return;
+    }
+
+    const safeScale = Math.max(0.1, Math.min(10, satelliteModelScale));
+    entity.model.scale = safeScale;
+    entity.model.minimumPixelSize = Math.max(1, Math.floor(SAT_MODEL_BASE_MIN_PIXEL_SIZE * safeScale));
+    entity.model.maximumScale = SAT_MODEL_BASE_MAX_SCALE * safeScale;
 }
 
 function getFutureSampleStepSeconds() {

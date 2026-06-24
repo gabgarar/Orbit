@@ -1,3 +1,7 @@
+import { getLogger } from "./logger.js";
+
+const logger = getLogger("ws");
+
 export class SatelliteWebSocket {
 
     constructor(onMessageCallback) {
@@ -11,23 +15,23 @@ export class SatelliteWebSocket {
     }
 
     connect() {
-        console.log(`📡 Conectando WebSocket a ${this.url}...`);
+        logger.info(`Conectando WebSocket a ${this.url}...`);
 
         this.ws = new WebSocket(this.url);
         this.ws.binaryType = "arraybuffer";
 
         this.ws.onopen = () => {
-            console.log("🟢 WebSocket conectado");
+            logger.info("WebSocket conectado");
             this.reconnectAttempts = 0;
             this.reconnectDelay = 1000;
         };
 
         this.ws.onclose = () => {
-            console.warn("🔴 WebSocket desconectado");
+            logger.warn("WebSocket desconectado");
             this._attemptReconnect();
         };
 
-        this.ws.onerror = (err) => console.error("⚠️ Error en WebSocket:", err);
+        this.ws.onerror = (err) => logger.error("Error en WebSocket:", err);
 
         this.ws.onmessage = async (event) => {
             try {
@@ -47,25 +51,25 @@ export class SatelliteWebSocket {
                     // JSON normal en texto
                     data = JSON.parse(event.data);
                 } else {
-                    console.warn("Tipo de dato inesperado en WebSocket:", typeof event.data);
+                    logger.warn("Tipo de dato inesperado en WebSocket:", typeof event.data);
                     return;
                 }
 
                 this.onMessageCallback(data);
             } catch (e) {
-                console.error("❌ Error procesando mensaje WS:", e);
+                logger.error("Error procesando mensaje WS:", e);
             }
         };
     }
 
     _attemptReconnect() {
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            console.error("❌ Máximo de intentos de reconexión alcanzado");
+            logger.error("Máximo de intentos de reconexión alcanzado");
             return;
         }
 
         this.reconnectAttempts++;
-        console.log(`🔄 Reconectando en ${this.reconnectDelay}ms (intento ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+        logger.info(`Reconectando en ${this.reconnectDelay}ms (intento ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
 
         setTimeout(() => {
             this.connect();
@@ -115,7 +119,7 @@ export class SatelliteWebSocket {
                 return new TextDecoder().decode(decompressed);
             }
         } catch (e) {
-            console.warn("❌ DecompressionStream no disponible, usando pako:", e);
+            logger.debug("DecompressionStream no disponible, usando pako:", e);
         }
 
         // Fallback: usar pako
@@ -129,7 +133,7 @@ export class SatelliteWebSocket {
             const inflated = window.pako.inflate(buffer);
             return new TextDecoder().decode(inflated);
         } catch (e) {
-            console.error("❌ Error descomprimiendo con pako:", e);
+            logger.error("Error descomprimiendo con pako:", e);
             throw new Error("No se pudo descomprimir datos: " + e.message);
         }
     }

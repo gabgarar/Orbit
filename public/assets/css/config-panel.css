@@ -1,0 +1,147 @@
+#configToggleBtn {
+    position: fixed;
+    top: 56px;
+    right: 12px;
+    z-index: 10000;
+    padding: 8px 12px;
+    border: 1px solid #3a3f4b;
+    border-radius: 8px;
+    background: rgba(20, 24, 32, 0.92);
+    color: #eaf0ff;
+    font: 600 13px sans-serif;
+    cursor: pointer;
+}
+
+#configModal {
+    position: fixed;
+    inset: 0;
+    z-index: 10001;
+    background: rgba(0, 0, 0, 0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+#configModal.open {
+    display: flex;
+}
+
+#configPanel {
+    width: min(860px, 96vw);
+    max-height: 88vh;
+    overflow: auto;
+    border-radius: 12px;
+    background: #0f1520;
+    border: 1px solid #2a3140;
+    color: #dfe9f3;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    padding: 14px;
+}
+
+#configPanelHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    cursor: move;
+    user-select: none;
+}
+
+#configPanelHeader h3 {
+    margin: 0;
+    font: 700 16px sans-serif;
+}
+
+.config-close-btn {
+    border: 1px solid #3a3f4b;
+    background: #171f2c;
+    color: #dfe9f3;
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+
+.config-section {
+    margin: 10px 0 16px;
+    padding: 10px;
+    border: 1px solid #273141;
+    border-radius: 10px;
+    background: #121a28;
+}
+
+.config-section-title {
+    margin: 0 0 10px;
+    font: 700 13px sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #9fc3ff;
+}
+
+.config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+}
+
+.config-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font: 12px sans-serif;
+}
+
+.config-field label {
+    color: #b5c5de;
+}
+
+.config-label-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.config-help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    border: 1px solid #4a6286;
+    color: #c9dcff;
+    font: 700 10px sans-serif;
+    cursor: help;
+    user-select: none;
+    background: #16243a;
+    line-height: 1;
+}
+
+.config-help-icon:focus-visible {
+    outline: 2px solid #7fa8ff;
+    outline-offset: 1px;
+}
+
+.config-field input,
+.config-field select {
+    border: 1px solid #334158;
+    border-radius: 8px;
+    background: #0d1522;
+    color: #eaf0ff;
+    padding: 7px 8px;
+    font: 12px sans-serif;
+}
+
+.config-field.checkbox {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    margin-top: 18px;
+}
+
+#configHint {
+    font: 12px sans-serif;
+    color: #9db2d2;
+    margin: 6px 2px 4px;
+}

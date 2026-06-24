@@ -38,6 +38,31 @@ orbit_cache_valid_until = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 last_state_hash = None
 
 
+def normalize_system_config(system_cfg):
+    orbit_cfg = system_cfg.get("orbit", {}) if isinstance(system_cfg, dict) else {}
+    satellites_cfg = system_cfg.get("satellites", {}) if isinstance(system_cfg, dict) else {}
+    realtime_cfg = system_cfg.get("realtime", {}) if isinstance(system_cfg, dict) else {}
+
+    return {
+        "orbit_future_show": orbit_cfg.get("future_show", system_cfg.get("orbit_future_show", True)),
+        "orbit_past_show": orbit_cfg.get("past_show", system_cfg.get("orbit_past_show", True)),
+        "propagation_hours": orbit_cfg.get("propagation_hours", system_cfg.get("propagation_hours", 12)),
+        "orbit_future_samples": orbit_cfg.get("future_samples", system_cfg.get("orbit_future_samples", 120)),
+        "orbit_future_line_width": orbit_cfg.get("future_line_width", system_cfg.get("orbit_future_line_width", 3)),
+        "orbit_future_color": orbit_cfg.get("future_color", system_cfg.get("orbit_future_color", "#00ff88")),
+        "orbit_past_color": orbit_cfg.get("past_color", system_cfg.get("orbit_past_color", "#ff0000")),
+        "orbit_past_samples": orbit_cfg.get("past_samples", system_cfg.get("orbit_past_samples", 120)),
+        "orbit_past_line_width": orbit_cfg.get("past_line_width", system_cfg.get("orbit_past_line_width", 5)),
+        "orbit_hide_near_satellite": orbit_cfg.get("hide_near_satellite", system_cfg.get("orbit_hide_near_satellite", False)),
+        "satellite_label_size_px": satellites_cfg.get("label_size_px", system_cfg.get("satellite_label_size_px", 14)),
+        "satellite_model_scale": satellites_cfg.get("model_scale", system_cfg.get("satellite_model_scale", 1.0)),
+        "max_satellites_visible": satellites_cfg.get("max_visible", system_cfg.get("max_satellites_visible", 100)),
+        "websocket_state_interval_seconds": realtime_cfg.get("state_interval_seconds", system_cfg.get("websocket_state_interval_seconds", 1.0)),
+        "websocket_orbit_interval_seconds": realtime_cfg.get("orbit_interval_seconds", system_cfg.get("websocket_orbit_interval_seconds", 10.0)),
+        "orbit_cache_ttl_seconds": realtime_cfg.get("orbit_cache_ttl_seconds", system_cfg.get("orbit_cache_ttl_seconds", 10)),
+    }
+
+
 def load_system_config():
     try:
         with open(SYSTEM_CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -57,7 +82,7 @@ def load_system_config():
             "orbit_cache_ttl_seconds": 10
         }, {"satellites_file": "sentinel_tles_subset.txt"}
 
-    system_cfg = config.get("system", {})
+    system_cfg = normalize_system_config(config.get("system", {}))
     data_cfg = config.get("data", {})
 
     defaults = {
