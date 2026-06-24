@@ -5,6 +5,7 @@ import {
     getSatelliteIds,
     isCatalogLoaded,
     getSatelliteTle,
+    getSatelliteTleAsync,
     getActiveSatelliteLayerIds,
     getSatelliteEntity,
     getSatelliteTelemetry,
@@ -299,7 +300,8 @@ function firstPersonSatellite(entity) {
             viewer.selectedEntity = entity;
         },
         isCatalogReady: () => isCatalogLoaded(),
-        getObjectTle: (id) => getSatelliteTle(id)
+        getObjectTle: (id) => getSatelliteTle(id),
+        getObjectTleAsync: (id) => getSatelliteTleAsync(id)
     });
 
     viewer.screenSpaceEventHandler.setInputAction((movement) => {

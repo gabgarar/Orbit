@@ -196,6 +196,7 @@ const catalogSatelliteIds = new Set();
 const activeLayerSatelliteIds = new Set();
 const tleBySatelliteId = new Map();
 let catalogLoaded = false;
+let lastCatalogUrl = "/config/catalog.txt";
 let cachedSatelliteIds = [];
 let satelliteIdsDirty = true;
 let cachedActiveLayerIds = [];
@@ -853,6 +854,7 @@ export function isCatalogLoaded() {
 
 export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.txt") {
     try {
+        lastCatalogUrl = catalogUrl || lastCatalogUrl;
         const response = await fetch(catalogUrl, { cache: "no-cache" });
         if (!response.ok) {
             logger.warn(`No se pudo precargar catalogo (${response.status}): ${catalogUrl}`);
@@ -860,13 +862,17 @@ export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.txt"
         }
 
         const text = await response.text();
-        const lines = text.split(/\r?\n/);
+geb        // Ignorar lineas vacias para mantener el bloque nombre + L1 + L2 alineado.
+        const lines = text
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0);
 
         let added = 0;
-        for (let i = 0; i < lines.length; i += 3) {
-            const name = (lines[i] || "").trim();
-            const line1 = (lines[i + 1] || "").trim();
-            const line2 = (lines[i + 2] || "").trim();
+        for (let i = 0; i + 2 < lines.length; i += 3) {
+            const name = lines[i] || "";
+            const line1 = lines[i + 1] || "";
+            const line2 = lines[i + 2] || "";
             if (!name) {
                 continue;
             }
@@ -903,6 +909,20 @@ export function getSatelliteTle(id) {
     if (!id) {
         return null;
     }
+    return tleBySatelliteId.get(id) || null;
+}
+
+export async function getSatelliteTleAsync(id) {
+    if (!id) {
+        return null;
+    }
+
+    const cached = tleBySatelliteId.get(id);
+    if (cached) {
+        return cached;
+    }
+
+    await preloadSatelliteCatalog(lastCatalogUrl);
     return tleBySatelliteId.get(id) || null;
 }
 
