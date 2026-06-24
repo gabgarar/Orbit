@@ -35,12 +35,3 @@ def load_all_tles_from_config(config_file):
 
     return tles
 
-
-def main():
-    config_file = "../../config/satellites.txt"
-    tles = load_all_tles_from_config(config_file)
-    print(f"\n🛰️ Se cargaron {len(tles)} TLEs correctamente\n")
-
-
-if __name__ == "__main__":
-    main()

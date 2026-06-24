@@ -41,9 +41,76 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
   animation: false,
   sceneModePicker: false,
   fullscreenButton: false,
-  homeButton: false,
-  terrainProvider: new Cesium.EllipsoidTerrainProvider()
+  homeButton: true,
+  terrainProvider: await Cesium.createWorldTerrainAsync(),
+  // ========== OPTIMIZACIONES PARA FLUIDEZ ==========
+  contextOptions: {
+    webgl: {
+      antialias: true,           // ✅ Antialiasing para bordes suaves
+      alpha: false,
+      depth: true,
+      stencil: false,
+      preserveDrawingBuffer: false
+    }
+  },
+  targetFrameRate: 60,           // ✅ Target 60 FPS
+  requestRenderMode: false,      // Renderizar continuamente (más fluido)
+  enableLighting: true,          // ✅ Lighting para sombras
+  scene3DOnly: true             // Optimizar para 3D
 });
+
+function applyStarsConfig(systemConfig) {
+    const starsEnabled = systemConfig.stars_enabled !== false;
+    const qualityRaw = typeof systemConfig.stars_quality === "string"
+        ? systemConfig.stars_quality.toLowerCase()
+        : "medium";
+    const starsQuality = ["low", "medium", "high"].includes(qualityRaw)
+        ? qualityRaw
+        : "medium";
+
+    viewer.scene.skyBox.show = starsEnabled;
+
+    let sunVisible = false;
+    let moonVisible = false;
+    let fxaaEnabled = false;
+    let msaaSamples = 1;
+
+    if (starsEnabled) {
+        if (starsQuality === "low") {
+            sunVisible = false;
+            moonVisible = false;
+            fxaaEnabled = false;
+            msaaSamples = 1;
+        } else if (starsQuality === "high") {
+            sunVisible = true;
+            moonVisible = true;
+            fxaaEnabled = true;
+            msaaSamples = 4;
+        } else {
+            sunVisible = true;
+            moonVisible = false;
+            fxaaEnabled = true;
+            msaaSamples = 2;
+        }
+    }
+
+    viewer.scene.sun.show = sunVisible;
+    viewer.scene.moon.show = moonVisible;
+    viewer.scene.fxaa = fxaaEnabled;
+    if (viewer.scene.postProcessStages && viewer.scene.postProcessStages.fxaa) {
+        viewer.scene.postProcessStages.fxaa.enabled = fxaaEnabled;
+    }
+
+    if (typeof viewer.scene.msaaSamples === "number") {
+        viewer.scene.msaaSamples = msaaSamples;
+    }
+
+    if (!starsEnabled) {
+        viewer.scene.backgroundColor = Cesium.Color.BLACK;
+    }
+
+    console.log(`⭐ Stars: ${starsEnabled ? "on" : "off"} | quality: ${starsQuality}`);
+}
 
 // Forzar la adición de la capa local al viewer (garantiza que exista antes de ajustar)
 try {
@@ -134,6 +201,7 @@ console.log("🚀 Cámara posicionada.");
         if (config.system.background_color) {
             viewer.scene.backgroundColor = Cesium.Color.fromCssColorString(config.system.background_color);
         }
+        applyStarsConfig(config.system);
         viewer.scene.skyAtmosphere.show = config.system.sky_atmosphere !== false;
         viewer.scene.globe.enableLighting = config.system.globe_lighting !== false;
     }
