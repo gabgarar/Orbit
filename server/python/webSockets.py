@@ -14,6 +14,7 @@ class WebSocketServer:
         self.orbit_interval = orbit_interval
         self.on_state_callback = None
         self.on_orbit_callback = None
+        self.on_catalog_callback = None
         self.compression_enabled = compression_enabled
         self.compression_threshold = compression_threshold  # Comprimir si > X bytes
         self.client_states = {}  # Tracking de último estado por cliente para delta encoding
@@ -23,6 +24,39 @@ class WebSocketServer:
 
     def set_orbit_callback(self, callback):
         self.on_orbit_callback = callback
+
+    def set_catalog_callback(self, callback):
+        self.on_catalog_callback = callback
+
+    async def _receiver_loop(self, websocket, client_id):
+        while True:
+            raw = await websocket.recv()
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+
+            if not isinstance(msg, dict):
+                continue
+
+            msg_type = msg.get("type")
+            ids = msg.get("ids")
+            if not isinstance(ids, list):
+                ids = []
+
+            clean_ids = [str(x) for x in ids if isinstance(x, str)]
+            subscriptions = self.client_states.get(client_id, {}).get("subscriptions")
+            if subscriptions is None:
+                continue
+
+            if msg_type == "subscribe":
+                subscriptions.update(clean_ids)
+            elif msg_type == "unsubscribe":
+                for sat_id in clean_ids:
+                    subscriptions.discard(sat_id)
+            elif msg_type == "set_subscriptions":
+                subscriptions.clear()
+                subscriptions.update(clean_ids)
 
     def _compress_if_needed(self, json_str):
         """Comprimir datos si superan umbral y está habilitado."""
@@ -39,20 +73,31 @@ class WebSocketServer:
 
     async def handler(self, websocket):
         client_id = id(websocket)
-        self.client_states[client_id] = {"last_state": None, "last_orbits": None}
+        self.client_states[client_id] = {
+            "last_state": None,
+            "last_orbits": None,
+            "subscriptions": set(),
+        }
         print(f"🟢 Cliente conectado (ID: {client_id})")
 
         try:
+            if self.on_catalog_callback:
+                catalog = self.on_catalog_callback() or []
+                payload = {"type": "catalog", "data": catalog, "compressed": False}
+                await websocket.send(json.dumps(payload))
+
             loop = asyncio.get_running_loop()
             next_state_at = 0.0
             next_orbit_at = 0.0
+            receiver_task = asyncio.create_task(self._receiver_loop(websocket, client_id))
 
             while True:
                 now = loop.time()
                 sent_message = False
+                subscriptions = self.client_states.get(client_id, {}).get("subscriptions", set())
 
                 if self.on_state_callback and now >= next_state_at:
-                    data = self.on_state_callback()
+                    data = self.on_state_callback(client_id, subscriptions)
                     payload = {"type": "state", "data": data or [], "compressed": False}
                     
                     json_str = json.dumps(payload)
@@ -70,7 +115,7 @@ class WebSocketServer:
                     sent_message = True
 
                 if self.on_orbit_callback and now >= next_orbit_at:
-                    data = self.on_orbit_callback()
+                    data = self.on_orbit_callback(client_id, subscriptions)
                     payload = {"type": "orbits", "data": data or [], "compressed": False}
                     
                     json_str = json.dumps(payload)
@@ -94,7 +139,13 @@ class WebSocketServer:
 
         except websockets.exceptions.ConnectionClosed:
             print(f"🔴 Cliente desconectado (ID: {client_id})")
-            del self.client_states[client_id]
+        finally:
+            try:
+                receiver_task.cancel()
+            except Exception:
+                pass
+            if client_id in self.client_states:
+                del self.client_states[client_id]
 
     async def start(self):
         print(f"🚀 Servidor WebSocket escuchando en ws://{self.host}:{self.port}")

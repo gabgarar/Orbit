@@ -1,5 +1,22 @@
-import { initSatelliteReceiver, setOrbitConfig } from "./js/satellites.js";
+import {
+    initSatelliteReceiver,
+    preloadSatelliteCatalog,
+    setOrbitConfig,
+    getSatelliteIds,
+    isCatalogLoaded,
+    getSatelliteTle,
+    getActiveSatelliteLayerIds,
+    getSatelliteEntity,
+    getSatelliteTelemetry,
+    isSatelliteVisible,
+    setSatelliteVisible,
+    isSatelliteLayerActive,
+    setSatelliteLayerActive,
+    setAllSatelliteLayersActive,
+    setAllSatellitesVisible
+} from "./js/satellites.js";
 import { setupRuntimeConfigPanel } from "./js/configPanel.js";
+import { setupObjectSidebar } from "./js/objectSidebar.js";
 import { configureLogger, getLogger } from "./js/logger.js";
 import { normalizeSystemConfig, toSectionedSystemConfig } from "./js/configAdapter.js";
 
@@ -32,6 +49,8 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
     imageryProvider: localProvider,
     baseLayerPicker: false,
     geocoder: false,
+    infoBox: false,
+    selectionIndicator: true,
     timeline: false,
     animation: false,
     sceneModePicker: true,
@@ -52,6 +71,11 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
     enableLighting: true,
     scene3DOnly: false
 });
+
+if (viewer?.cesiumWidget?.creditContainer) {
+    viewer.cesiumWidget.creditContainer.style.display = "none";
+    viewer.cesiumWidget.creditContainer.setAttribute("aria-hidden", "true");
+}
 
 const tychoSkyMapSources = {
     positiveX: "assets/stars/tycho_highres_cubemap_png/tycho_highres_px.png",
@@ -197,6 +221,33 @@ viewer.camera.flyTo({
 
 logger.info("Cámara posicionada.");
 
+function focusSatellite(entity) {
+    if (!entity) {
+        return;
+    }
+
+    viewer.trackedEntity = entity;
+    entity.viewFrom = new Cesium.Cartesian3(0, -180000, 90000);
+    viewer.flyTo(entity, {
+        duration: 0.8,
+        offset: new Cesium.HeadingPitchRange(0, -0.35, 180000)
+    });
+}
+
+function firstPersonSatellite(entity) {
+    if (!entity) {
+        return;
+    }
+
+    viewer.trackedEntity = entity;
+    // Offsets muy pequeños para sensación de cámara embarcada.
+    entity.viewFrom = new Cesium.Cartesian3(0, 0, 2.5);
+    viewer.flyTo(entity, {
+        duration: 0.55,
+        offset: new Cesium.HeadingPitchRange(0, 0, 8)
+    });
+}
+
 (async function init() {
     const config = await loadConfig();
     const currentConfig = {
@@ -214,6 +265,78 @@ logger.info("Cámara posicionada.");
 
     applySystemRuntimeConfig(currentConfig.system);
 
+    const configuredCatalogFile = currentConfig?.data?.satellites_catalog_file || "catalog.txt";
+    const catalogUrl = configuredCatalogFile.startsWith("/")
+        ? configuredCatalogFile
+        : `/config/${configuredCatalogFile}`;
+    preloadSatelliteCatalog(catalogUrl);
+
     initSatelliteReceiver(viewer);
+    const objectSidebar = setupObjectSidebar({
+        getCatalogIds: () => getSatelliteIds(),
+        getLayerIds: () => getActiveSatelliteLayerIds(),
+        getObjectTelemetry: (id) => getSatelliteTelemetry(id),
+        getObjectVisibility: (id) => isSatelliteVisible(id),
+        onToggleObjectVisibility: (id, visible) => setSatelliteVisible(id, visible),
+        getObjectLayerActive: (id) => isSatelliteLayerActive(id),
+        onToggleObjectLayer: (id, active) => setSatelliteLayerActive(id, active),
+        onAddAllLayers: () => setAllSatelliteLayersActive(true),
+        onRemoveAllLayers: () => setAllSatelliteLayersActive(false),
+        onShowAllObjects: () => setAllSatellitesVisible(true),
+        onHideAllObjects: () => setAllSatellitesVisible(false),
+        onFocusObject: (id) => {
+            const entity = getSatelliteEntity(id);
+            if (!entity) {
+                return;
+            }
+            focusSatellite(entity);
+        },
+        onSelectObject: (id) => {
+            const entity = getSatelliteEntity(id);
+            if (!entity) {
+                return;
+            }
+            viewer.selectedEntity = entity;
+        },
+        isCatalogReady: () => isCatalogLoaded(),
+        getObjectTle: (id) => getSatelliteTle(id)
+    });
+
+    viewer.screenSpaceEventHandler.setInputAction((movement) => {
+        const picked = viewer.scene.pick(movement.position);
+        const pickedEntity = picked?.id;
+        const pickedId = pickedEntity?.satelliteId || pickedEntity?.name;
+
+        if (pickedId && isSatelliteLayerActive(pickedId) && getSatelliteTelemetry(pickedId)) {
+            objectSidebar.selectObject(pickedId);
+            const entity = getSatelliteEntity(pickedId);
+            if (entity) {
+                viewer.selectedEntity = entity;
+            }
+            return;
+        }
+
+        viewer.selectedEntity = undefined;
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    viewer.screenSpaceEventHandler.setInputAction((movement) => {
+        const picked = viewer.scene.pick(movement.position);
+        const pickedEntity = picked?.id;
+        const pickedId = pickedEntity?.satelliteId || pickedEntity?.name;
+
+        if (!pickedId || !isSatelliteLayerActive(pickedId) || !getSatelliteTelemetry(pickedId)) {
+            return;
+        }
+
+        objectSidebar.selectObject(pickedId);
+        const entity = getSatelliteEntity(pickedId);
+        if (!entity) {
+            return;
+        }
+
+        viewer.selectedEntity = entity;
+        firstPersonSatellite(entity);
+    }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+
     logger.info("Receptor de satélites inicializado.");
 })();

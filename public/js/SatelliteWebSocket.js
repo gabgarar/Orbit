@@ -12,6 +12,8 @@ export class SatelliteWebSocket {
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.reconnectDelay = 1000; // ms
+        this.catalogCallback = null;
+        this.pendingSubscriptions = new Set();
     }
 
     connect() {
@@ -24,6 +26,9 @@ export class SatelliteWebSocket {
             logger.info("WebSocket conectado");
             this.reconnectAttempts = 0;
             this.reconnectDelay = 1000;
+            if (this.pendingSubscriptions.size > 0) {
+                this.setSubscriptions(Array.from(this.pendingSubscriptions));
+            }
         };
 
         this.ws.onclose = () => {
@@ -56,10 +61,48 @@ export class SatelliteWebSocket {
                 }
 
                 this.onMessageCallback(data);
+
+                if (data && data.type === "catalog" && this.catalogCallback) {
+                    const catalog = Array.isArray(data.data) ? data.data : [];
+                    this.catalogCallback(catalog);
+                }
             } catch (e) {
                 logger.error("Error procesando mensaje WS:", e);
             }
         };
+    }
+
+    onCatalog(callback) {
+        this.catalogCallback = callback;
+    }
+
+    _sendControl(type, ids) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            return;
+        }
+        try {
+            this.ws.send(JSON.stringify({ type, ids }));
+        } catch (e) {
+            logger.warn("No se pudo enviar control WS:", e);
+        }
+    }
+
+    subscribe(ids = []) {
+        const clean = ids.filter((x) => typeof x === "string");
+        clean.forEach((id) => this.pendingSubscriptions.add(id));
+        this._sendControl("subscribe", clean);
+    }
+
+    unsubscribe(ids = []) {
+        const clean = ids.filter((x) => typeof x === "string");
+        clean.forEach((id) => this.pendingSubscriptions.delete(id));
+        this._sendControl("unsubscribe", clean);
+    }
+
+    setSubscriptions(ids = []) {
+        const clean = ids.filter((x) => typeof x === "string");
+        this.pendingSubscriptions = new Set(clean);
+        this._sendControl("set_subscriptions", clean);
     }
 
     _attemptReconnect() {

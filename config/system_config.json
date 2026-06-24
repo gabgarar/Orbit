@@ -38,6 +38,7 @@
     }
   },
   "data": {
-    "satellites_file": "sentinel_tles.txt"
+    "satellites_file": "sentinel_tles.txt",
+    "satellites_catalog_file": "catalog.txt"
   }
 }

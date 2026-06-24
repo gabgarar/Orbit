@@ -28,6 +28,7 @@ orbit_lru_cache = OrderedDict()
 # Estado global de propagadores
 # =============================
 propagators = []
+propagators_by_name = {}
 system_config = {}
 state_lock = threading.Lock()
 
@@ -105,11 +106,11 @@ def load_system_config():
 
 
 def load_constellation():
-    global propagators, system_config, orbit_cache_payload, orbit_cache_key, orbit_cache_valid_until
+    global propagators, propagators_by_name, system_config, orbit_cache_payload, orbit_cache_key, orbit_cache_valid_until
     print("🔄 Recargando constelación desde config...")
 
     new_system_config, data_config = load_system_config()
-    satellites_file = data_config.get("satellites_file", "sentinel_tles_subset.txt")
+    satellites_file = data_config.get("satellites_catalog_file", data_config.get("satellites_file", "sentinel_tles_subset.txt"))
     config_file = os.path.join(CONFIG_DIR, satellites_file)
 
     tles = load_all_tles_from_config(config_file)
@@ -120,11 +121,15 @@ def load_constellation():
     )
 
     new_props = []
+    new_props_by_name = {}
     for name, l1, l2 in tles:
-        new_props.append((name, SGP4Propagator(l1, l2)))
+        prop = SGP4Propagator(l1, l2)
+        new_props.append((name, prop))
+        new_props_by_name[name] = prop
 
     with state_lock:
         propagators = new_props
+        propagators_by_name = new_props_by_name
         system_config = new_system_config
         orbit_cache_payload = []
         orbit_cache_key = None
@@ -134,7 +139,7 @@ def load_constellation():
 
 def get_state_snapshot():
     with state_lock:
-        return list(propagators), dict(system_config)
+        return list(propagators), dict(system_config), dict(propagators_by_name)
 
 
 def build_orbit_payload(props, cfg):
@@ -226,7 +231,11 @@ def get_orbits_cached_lru(props, cfg):
 # -----------------------------
 class ConfigWatcher(FileSystemEventHandler):
     def on_modified(self, event):
-        if event.src_path.endswith("sentinel_tles_subset.txt") or event.src_path.endswith("system_config.json"):
+        if (
+            event.src_path.endswith("system_config.json")
+            or event.src_path.endswith("catalog.txt")
+            or event.src_path.endswith("_tles.txt")
+        ):
             load_constellation()
 
 
@@ -295,23 +304,28 @@ def main():
     watcher_thread.start()
 
     # 3) Crear servidor WebSocket
-    _, initial_cfg = get_state_snapshot()
+    _, initial_cfg, _ = get_state_snapshot()
     ws_server = WebSocketServer(
         state_interval=initial_cfg.get("websocket_state_interval_seconds", 1.0),
         orbit_interval=initial_cfg.get("websocket_orbit_interval_seconds", 10.0),
     )
 
     # 4) Callback: estado en tiempo real (sin órbitas)
-    def state_tick():
+    def state_tick(client_id, subscriptions):
         data = []
-        props, cfg = get_state_snapshot()
+        props, cfg, props_by_name = get_state_snapshot()
         ws_server.state_interval = cfg.get("websocket_state_interval_seconds", 1.0)
         ws_server.orbit_interval = cfg.get("websocket_orbit_interval_seconds", 10.0)
 
         # Si orbit_future_show está desactivado, no calcular ni enviar órbitas.
         ws_server.set_orbit_callback(orbit_tick if cfg.get("orbit_future_show", True) else None)
 
-        for name, prop in props:
+        if subscriptions:
+            selected = [(name, props_by_name[name]) for name in subscriptions if name in props_by_name]
+        else:
+            selected = []
+
+        for name, prop in selected:
             x, y, z, vx, vy, vz = prop.propagate()
             satellite = {
                 "satellite": name,
@@ -322,11 +336,19 @@ def main():
         return data
 
     # 5) Callback: órbitas con caché y menor frecuencia
-    def orbit_tick():
-        props, cfg = get_state_snapshot()
-        return get_orbits_cached(props, cfg)
+    def orbit_tick(client_id, subscriptions):
+        if not subscriptions:
+            return []
+        props, cfg, props_by_name = get_state_snapshot()
+        selected = [(name, props_by_name[name]) for name in subscriptions if name in props_by_name]
+        return get_orbits_cached(selected, cfg)
+
+    def catalog_tick():
+        props, _, _ = get_state_snapshot()
+        return [name for name, _ in props]
 
     ws_server.set_state_callback(state_tick)
+    ws_server.set_catalog_callback(catalog_tick)
     # state_tick habilita/deshabilita dinámicamente este callback según orbit_future_show
     ws_server.set_orbit_callback(None)
 

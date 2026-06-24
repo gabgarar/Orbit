@@ -190,6 +190,17 @@ class EntityPool {
 let satelliteEntities = {};
 let satelliteState = {};
 let entityPool = null;
+let currentViewer = null;
+const hiddenSatelliteIds = new Set();
+const catalogSatelliteIds = new Set();
+const activeLayerSatelliteIds = new Set();
+const tleBySatelliteId = new Map();
+let catalogLoaded = false;
+let cachedSatelliteIds = [];
+let satelliteIdsDirty = true;
+let cachedActiveLayerIds = [];
+let activeLayerIdsDirty = true;
+let wsClient = null;
 let maxSatellitesVisible = MAX_SATELLITES_VISIBLE;
 let satelliteLabelSizePx = 14;
 let satelliteModelScale = 1.0;
@@ -211,6 +222,24 @@ let orbitConfig = {
     orbit_future_samples: 120,
     websocket_state_interval_seconds: 1.0
 };
+
+function applySatelliteVisibility(id, state) {
+    if (!state || !state.entity) {
+        return true;
+    }
+
+    const visible = !hiddenSatelliteIds.has(id);
+    state.entity.show = visible;
+
+    if (state.trailEntity) {
+        state.trailEntity.show = visible && orbitConfig.orbit_past_show !== false;
+    }
+    if (state.orbitEntity) {
+        state.orbitEntity.show = visible && orbitConfig.orbit_future_show !== false;
+    }
+
+    return visible;
+}
 
 export function setOrbitConfig(config) {
     orbitConfig = {
@@ -257,6 +286,7 @@ export function setOrbitConfig(config) {
                 if (satelliteUse3DModel && state.lastOrientation) {
                     state.entity.orientation = state.lastOrientation;
                 }
+                applySatelliteVisibility(id, state);
             }
 
             // Si se desactiva estela pasada, limpiar entidades y buffers para ahorrar carga.
@@ -465,6 +495,7 @@ function trimOrbitNearSatellite(orbitPoints, hideSamples) {
 }
 
 export function initSatelliteReceiver(viewer) {
+    currentViewer = viewer;
     // Inicializar object pool
     entityPool = new EntityPool(viewer, ENTITY_POOL_SIZE);
 
@@ -496,6 +527,19 @@ export function initSatelliteReceiver(viewer) {
             updateSatelliteOrbit(viewer, message);
         }
     });
+
+    ws.onCatalog((catalog) => {
+        catalogSatelliteIds.clear();
+        for (const id of catalog) {
+            if (typeof id === "string") {
+                catalogSatelliteIds.add(id);
+            }
+        }
+        catalogLoaded = true;
+        satelliteIdsDirty = true;
+    });
+
+    wsClient = ws;
 
     ws.connect();
 }
@@ -698,6 +742,18 @@ function ensureSatelliteState(viewer, id, cart, orientation) {
 
 function updateSatelliteState(viewer, satData) {
     const id = satData.satellite || "UNKNOWN";
+
+    // Si la capa no está activa, ignorar updates de estado para evitar recrear entidades.
+    if (!activeLayerSatelliteIds.has(id)) {
+        return;
+    }
+    const isNewSatellite = !satelliteState[id];
+
+    // Si el satélite está oculto, ignorar por completo updates para ahorrar CPU.
+    if (hiddenSatelliteIds.has(id)) {
+        return;
+    }
+
     const pos = satData.position;
     const vel = satData.velocity || { x: 0, y: 0, z: 0 };
 
@@ -709,12 +765,26 @@ function updateSatelliteState(viewer, satData) {
     const orientation = satelliteUse3DModel ? calculateOrientation(pos, vel) : undefined;
 
     const state = ensureSatelliteState(viewer, id, cart, orientation);
+    if (isNewSatellite) {
+        satelliteIdsDirty = true;
+    }
+    state.lastVelocity = {
+        x: Number(vel.x) || 0,
+        y: Number(vel.y) || 0,
+        z: Number(vel.z) || 0
+    };
+
+    const isVisible = applySatelliteVisibility(id, state);
 
     // No actualizar posición directamente; dejar que la interpolación la actualice
     // state.entity.position se actualiza en smoothUpdate()
     if (satelliteUse3DModel) {
         state.entity.orientation = orientation;
         state.lastOrientation = orientation;
+    }
+
+    if (!isVisible) {
+        return;
     }
 
     if (orbitConfig.orbit_past_show === false) {
@@ -758,12 +828,271 @@ function updateSatelliteState(viewer, satData) {
     }
 }
 
+export function getSatelliteIds() {
+    if (satelliteIdsDirty) {
+        const merged = new Set([...catalogSatelliteIds, ...Object.keys(satelliteState)]);
+        cachedSatelliteIds = Array.from(merged).sort();
+        satelliteIdsDirty = false;
+    }
+
+    return cachedSatelliteIds;
+}
+
+export function getActiveSatelliteLayerIds() {
+    if (activeLayerIdsDirty) {
+        cachedActiveLayerIds = Array.from(activeLayerSatelliteIds).sort();
+        activeLayerIdsDirty = false;
+    }
+
+    return cachedActiveLayerIds;
+}
+
+export function isCatalogLoaded() {
+    return catalogLoaded;
+}
+
+export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.txt") {
+    try {
+        const response = await fetch(catalogUrl, { cache: "no-cache" });
+        if (!response.ok) {
+            logger.warn(`No se pudo precargar catalogo (${response.status}): ${catalogUrl}`);
+            return false;
+        }
+
+        const text = await response.text();
+        const lines = text.split(/\r?\n/);
+
+        let added = 0;
+        for (let i = 0; i < lines.length; i += 3) {
+            const name = (lines[i] || "").trim();
+            const line1 = (lines[i + 1] || "").trim();
+            const line2 = (lines[i + 2] || "").trim();
+            if (!name) {
+                continue;
+            }
+            if (!catalogSatelliteIds.has(name)) {
+                catalogSatelliteIds.add(name);
+                added += 1;
+            }
+            if (line1 && line2) {
+                tleBySatelliteId.set(name, { line1, line2 });
+            }
+        }
+
+        if (added > 0) {
+            satelliteIdsDirty = true;
+        }
+        if (catalogSatelliteIds.size > 0) {
+            catalogLoaded = true;
+        }
+
+        logger.info(`Catalogo precargado: ${catalogSatelliteIds.size} objetos`);
+        return catalogLoaded;
+    } catch (error) {
+        logger.warn("Error precargando catalogo:", error);
+        return false;
+    }
+}
+
+export function getSatelliteEntity(id) {
+    const state = satelliteState[id];
+    return state?.entity || null;
+}
+
+export function getSatelliteTle(id) {
+    if (!id) {
+        return null;
+    }
+    return tleBySatelliteId.get(id) || null;
+}
+
+export function getSatelliteTelemetry(id) {
+    const state = satelliteState[id];
+    if (!state || !state.entity) {
+        return null;
+    }
+
+    const position = state.renderPosition || state.targetPosition || state.entity.position;
+    if (!position) {
+        return null;
+    }
+
+    const velocity = state.lastVelocity || { x: 0, y: 0, z: 0 };
+    const speed = Math.sqrt(
+        velocity.x * velocity.x +
+        velocity.y * velocity.y +
+        velocity.z * velocity.z
+    );
+
+    const cartographic = Cesium.Cartographic.fromCartesian(position);
+    const latitudeDeg = cartographic ? Cesium.Math.toDegrees(cartographic.latitude) : null;
+    const longitudeDeg = cartographic ? Cesium.Math.toDegrees(cartographic.longitude) : null;
+    const altitudeM = cartographic ? cartographic.height : null;
+
+    let distanceToCameraM = null;
+    if (currentViewer?.camera?.positionWC) {
+        distanceToCameraM = Cesium.Cartesian3.distance(currentViewer.camera.positionWC, position);
+    }
+
+    const speedKmS = speed / 1000;
+    const speedKmH = speed * 3.6;
+    const telemetryAgeMs = Date.now() - (state.lastMessageTime || Date.now());
+
+    return {
+        id,
+        position: {
+            x: Number(position.x) || 0,
+            y: Number(position.y) || 0,
+            z: Number(position.z) || 0
+        },
+        geo: {
+            latitude_deg: latitudeDeg,
+            longitude_deg: longitudeDeg,
+            altitude_m: altitudeM
+        },
+        velocity,
+        speed_m_s: speed,
+        speed_km_s: speedKmS,
+        speed_km_h: speedKmH,
+        distance_to_camera_m: distanceToCameraM,
+        trail_points: state.trailPositions?.length || 0,
+        has_future_orbit: Boolean(state.orbitEntity),
+        is_visible: !hiddenSatelliteIds.has(id),
+        telemetry_age_ms: telemetryAgeMs,
+        timestamp_ms: Date.now()
+    };
+}
+
+export function isSatelliteVisible(id) {
+    return !hiddenSatelliteIds.has(id);
+}
+
+export function isSatelliteLayerActive(id) {
+    return activeLayerSatelliteIds.has(id);
+}
+
+export function setSatelliteLayerActive(id, active) {
+    if (!id) {
+        return;
+    }
+
+    if (active) {
+        activeLayerSatelliteIds.add(id);
+        activeLayerIdsDirty = true;
+        wsClient?.subscribe([id]);
+    } else {
+        activeLayerSatelliteIds.delete(id);
+        activeLayerIdsDirty = true;
+        wsClient?.unsubscribe([id]);
+
+        // Al quitar capa, ocultar y liberar recursos render de ese objeto.
+        const state = satelliteState[id];
+        if (state) {
+            if (state.trailEntity && currentViewer) {
+                currentViewer.entities.remove(state.trailEntity);
+            }
+            if (state.orbitEntity && currentViewer) {
+                currentViewer.entities.remove(state.orbitEntity);
+            }
+            if (state.entity) {
+                state.entity.show = false;
+            }
+        }
+    }
+}
+
+export function setAllSatelliteLayersActive(active) {
+    const ids = getSatelliteIds();
+    if (!ids.length) {
+        return;
+    }
+
+    if (active) {
+        activeLayerSatelliteIds.clear();
+        ids.forEach((id) => activeLayerSatelliteIds.add(id));
+        activeLayerIdsDirty = true;
+        wsClient?.setSubscriptions(ids);
+        return;
+    }
+
+    activeLayerSatelliteIds.clear();
+    activeLayerIdsDirty = true;
+    wsClient?.setSubscriptions([]);
+
+    for (const id of ids) {
+        const state = satelliteState[id];
+        if (!state) {
+            continue;
+        }
+
+        if (state.trailEntity && currentViewer) {
+            currentViewer.entities.remove(state.trailEntity);
+            state.trailEntity = null;
+        }
+        if (state.orbitEntity && currentViewer) {
+            currentViewer.entities.remove(state.orbitEntity);
+            state.orbitEntity = null;
+        }
+        if (state.entity) {
+            state.entity.show = false;
+        }
+    }
+}
+
+export function setAllSatellitesVisible(visible) {
+    const ids = Array.from(activeLayerSatelliteIds);
+    if (!ids.length) {
+        return;
+    }
+
+    if (visible) {
+        hiddenSatelliteIds.clear();
+    } else {
+        ids.forEach((id) => hiddenSatelliteIds.add(id));
+    }
+
+    for (const id of ids) {
+        const state = satelliteState[id] || entityPool?.getState(id);
+        if (state) {
+            applySatelliteVisibility(id, state);
+        }
+    }
+}
+
+export function setSatelliteVisible(id, visible) {
+    if (!id) {
+        return;
+    }
+
+    if (visible) {
+        hiddenSatelliteIds.delete(id);
+    } else {
+        hiddenSatelliteIds.add(id);
+    }
+
+    const state = satelliteState[id] || entityPool?.getState(id);
+    if (state) {
+        applySatelliteVisibility(id, state);
+    }
+}
+
 function updateSatelliteOrbit(viewer, satData) {
     if (!orbitConfig.orbit_future_show) {
         return;
     }
 
     const id = satData.satellite || "UNKNOWN";
+
+    // Nunca dibujar órbitas de satélites sin capa activa.
+    if (!activeLayerSatelliteIds.has(id)) {
+        return;
+    }
+
+    // Si el satélite está oculto, ignorar también su órbita futura.
+    if (hiddenSatelliteIds.has(id)) {
+        return;
+    }
+
     const orbit = satData.orbit;
     if (!Array.isArray(orbit) || orbit.length < 2) {
         return;
@@ -771,6 +1100,10 @@ function updateSatelliteOrbit(viewer, satData) {
 
     const state = satelliteState[id];
     if (!state) {
+        return;
+    }
+
+    if (!applySatelliteVisibility(id, state)) {
         return;
     }
 
