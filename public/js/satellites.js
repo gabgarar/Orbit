@@ -667,6 +667,11 @@ function computeOrbitWidth(viewer, baseWidth, referencePosition) {
 }
 
 function createOrbitEntity(viewer, id, positions, color, width) {
+    try {
+        logger.debug(`createOrbitEntity: id=${id} points=${Array.isArray(positions)?positions.length:0} width=${width}`);
+    } catch (e) {
+        // ignore logging errors
+    }
     return viewer.entities.add({
         id: `${id}-orbit`,
         polyline: {
@@ -743,6 +748,12 @@ function ensureSatelliteState(viewer, id, cart, orientation) {
 
 function updateSatelliteState(viewer, satData) {
     const id = satData.satellite || "UNKNOWN";
+
+    try {
+        logger.debug(`updateSatelliteState: id=${id} active=${activeLayerSatelliteIds.has(id)} hidden=${hiddenSatelliteIds.has(id)} hasPos=${Boolean(satData.position)}`);
+    } catch (e) {
+        // ignore
+    }
 
     // Si la capa no está activa, ignorar updates de estado para evitar recrear entidades.
     if (!activeLayerSatelliteIds.has(id)) {
@@ -862,7 +873,7 @@ export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.txt"
         }
 
         const text = await response.text();
-geb        // Ignorar lineas vacias para mantener el bloque nombre + L1 + L2 alineado.
+        // Ignorar lineas vacias para mantener el bloque nombre + L1 + L2 alineado.
         const lines = text
             .split(/\r?\n/)
             .map((line) => line.trim())
@@ -898,6 +909,25 @@ geb        // Ignorar lineas vacias para mantener el bloque nombre + L1 + L2 ali
         logger.warn("Error precargando catalogo:", error);
         return false;
     }
+}
+
+export async function refreshSatelliteCatalog(catalogUrl = "/config/catalog.txt") {
+    // Actualiza la URL del catálogo y lo recarga. También reaplica subscripciones WS actuales.
+    lastCatalogUrl = catalogUrl || lastCatalogUrl;
+    const ok = await preloadSatelliteCatalog(lastCatalogUrl);
+
+    try {
+        if (wsClient && typeof wsClient.setSubscriptions === "function") {
+            const ids = Array.from(activeLayerSatelliteIds);
+            if (ids.length) {
+                wsClient.setSubscriptions(ids);
+            }
+        }
+    } catch (e) {
+        logger.warn("No se pudo reaplicar subscripciones WS tras refrescar el catálogo:", e);
+    }
+
+    return ok;
 }
 
 export function getSatelliteEntity(id) {

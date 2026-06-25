@@ -475,6 +475,26 @@
     font: 12px sans-serif;
 }
 
+.catalog-refresh-status {
+    border: 1px solid #2f4568;
+    border-radius: 10px;
+    background: #132036;
+    padding: 8px;
+    display: grid;
+    gap: 6px;
+}
+
+.catalog-refresh-text {
+    color: #cfe1ff;
+    font: 600 11px sans-serif;
+}
+
+#catalogRefreshBar {
+    width: 100%;
+    height: 10px;
+    accent-color: #4f9eff;
+}
+
 #catalogList {
     border: 1px solid #2b3a53;
     border-radius: 10px;

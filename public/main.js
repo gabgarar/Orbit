@@ -1,6 +1,7 @@
 import {
     initSatelliteReceiver,
     preloadSatelliteCatalog,
+    refreshSatelliteCatalog,
     setOrbitConfig,
     getSatelliteIds,
     isCatalogLoaded,
@@ -270,7 +271,12 @@ function firstPersonSatellite(entity) {
     const catalogUrl = configuredCatalogFile.startsWith("/")
         ? configuredCatalogFile
         : `/config/${configuredCatalogFile}`;
-    preloadSatelliteCatalog(catalogUrl);
+    // Esperar a que el catalogo se precargue antes de mostrar capas
+    try {
+        await preloadSatelliteCatalog(catalogUrl);
+    } catch (e) {
+        logger.warn("No se pudo precargar el catalogo:", e);
+    }
 
     initSatelliteReceiver(viewer);
     const objectSidebar = setupObjectSidebar({
@@ -301,7 +307,8 @@ function firstPersonSatellite(entity) {
         },
         isCatalogReady: () => isCatalogLoaded(),
         getObjectTle: (id) => getSatelliteTle(id),
-        getObjectTleAsync: (id) => getSatelliteTleAsync(id)
+        getObjectTleAsync: (id) => getSatelliteTleAsync(id),
+        onRefreshCatalog: () => refreshSatelliteCatalog(catalogUrl)
     });
 
     viewer.screenSpaceEventHandler.setInputAction((movement) => {

@@ -81,7 +81,7 @@ def load_system_config():
             "websocket_state_interval_seconds": 1.0,
             "websocket_orbit_interval_seconds": 10.0,
             "orbit_cache_ttl_seconds": 10
-        }, {"satellites_file": "sentinel_tles_subset.txt"}
+        }, {"satellites_file": "catalog.txt"}
 
     system_cfg = normalize_system_config(config.get("system", {}))
     data_cfg = config.get("data", {})
@@ -101,7 +101,7 @@ def load_system_config():
     for key, default in defaults.items():
         system_cfg.setdefault(key, default)
 
-    data_cfg.setdefault("satellites_file", "sentinel_tles_subset.txt")
+    data_cfg.setdefault("satellites_file", "catalog.txt")
     return system_cfg, data_cfg
 
 
@@ -110,7 +110,7 @@ def load_constellation():
     print("🔄 Recargando constelación desde config...")
 
     new_system_config, data_config = load_system_config()
-    satellites_file = data_config.get("satellites_catalog_file", data_config.get("satellites_file", "sentinel_tles_subset.txt"))
+    satellites_file = data_config.get("satellites_catalog_file", data_config.get("satellites_file", "catalog.txt"))
     config_file = os.path.join(CONFIG_DIR, satellites_file)
 
     tles = load_all_tles_from_config(config_file)
@@ -122,10 +122,15 @@ def load_constellation():
 
     new_props = []
     new_props_by_name = {}
+    invalid_count = 0
     for name, l1, l2 in tles:
-        prop = SGP4Propagator(l1, l2)
-        new_props.append((name, prop))
-        new_props_by_name[name] = prop
+        try:
+            prop = SGP4Propagator(l1, l2)
+            new_props.append((name, prop))
+            new_props_by_name[name] = prop
+        except Exception as e:
+            invalid_count += 1
+            print(f"⚠️ TLE inválido ignorado: {name} ({e})")
 
     with state_lock:
         propagators = new_props
@@ -134,7 +139,7 @@ def load_constellation():
         orbit_cache_payload = []
         orbit_cache_key = None
         orbit_cache_valid_until = datetime.datetime.min.replace(tzinfo=datetime.UTC)
-    print("🛰️ Constelación actualizada")
+    print(f"🛰️ Constelación actualizada ({len(new_props)} válidos, {invalid_count} inválidos ignorados)")
 
 
 def get_state_snapshot():
@@ -236,7 +241,10 @@ class ConfigWatcher(FileSystemEventHandler):
             or event.src_path.endswith("catalog.txt")
             or event.src_path.endswith("_tles.txt")
         ):
-            load_constellation()
+            try:
+                load_constellation()
+            except Exception as e:
+                print(f"⚠️ Error recargando constelación: {e}")
 
 
 def start_watcher():

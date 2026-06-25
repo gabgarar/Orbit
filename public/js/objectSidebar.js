@@ -156,6 +156,7 @@ function buildSatelliteDetailsHtml(satelliteId, details) {
             <h4>Resumen</h4>
             <p class="tle-info-paragraph">${escapeHtml(details.summary || "-")}</p>
         </section>
+        ${details.orbitalHtml || ""}
         <section class="tle-info-section">
             <h4>Fuente</h4>
             <p class="tle-info-paragraph">${escapeHtml(details.source || "Wikipedia")}</p>
@@ -164,28 +165,92 @@ function buildSatelliteDetailsHtml(satelliteId, details) {
     `;
 }
 
-async function fetchWikipediaDetails(satelliteId) {
+function getSatelliteNameCandidates(satelliteId) {
     const normalized = (satelliteId || "").trim();
     if (!normalized) {
-        return null;
+        return [];
     }
 
     const base = normalized.replace(/\s*\([^)]*\)\s*/g, "").trim();
     const candidates = [normalized, base].filter(Boolean);
 
     if (/\bISS\b|ZARYA/i.test(normalized)) {
-        candidates.push("International Space Station");
+        candidates.push("ISS (ZARYA)", "International Space Station");
     }
     if (/STARLINK/i.test(normalized)) {
-        candidates.push("Starlink", "Starlink satellite constellation");
+        candidates.push("STARLINK");
     }
     if (/SENTINEL/i.test(normalized)) {
-        candidates.push("Copernicus Programme", "Sentinel-1", "Sentinel-2");
+        candidates.push("SENTINEL");
     }
 
-    const uniqueCandidates = [...new Set(candidates)];
+    return [...new Set(candidates)];
+}
 
-    for (const candidate of uniqueCandidates) {
+function buildCelestrakDetailsFromRecord(satelliteId, record) {
+    if (!record) {
+        return null;
+    }
+
+    const noradId = record.NORAD_CAT_ID || record.CATNR || "";
+    const objectName = record.OBJECT_NAME || satelliteId;
+    const objectId = record.OBJECT_ID || "-";
+    const epoch = record.EPOCH || "-";
+    const inclination = record.INCLINATION ?? "-";
+    const eccentricity = record.ECCENTRICITY ?? "-";
+    const meanMotion = record.MEAN_MOTION ?? "-";
+
+    const orbitalHtml = `
+        <section class="tle-info-section">
+            <h4>Orbita (CelesTrak GP)</h4>
+            <div class="tle-info-grid">
+                <div><span>NORAD</span><strong>${escapeHtml(String(noradId || "-"))}</strong></div>
+                <div><span>OBJECT_ID</span><strong>${escapeHtml(String(objectId))}</strong></div>
+                <div><span>Epoch</span><strong>${escapeHtml(String(epoch))}</strong></div>
+                <div><span>Inclinacion</span><strong>${escapeHtml(String(inclination))}</strong></div>
+                <div><span>Excentricidad</span><strong>${escapeHtml(String(eccentricity))}</strong></div>
+                <div><span>Mean motion</span><strong>${escapeHtml(String(meanMotion))}</strong></div>
+            </div>
+        </section>
+    `;
+
+    return {
+        title: objectName,
+        summary: `Registro orbital obtenido de CelesTrak para ${objectName}.`,
+        source: "CelesTrak",
+        url: noradId ? `https://celestrak.org/satcat/records.php?CATNR=${encodeURIComponent(String(noradId))}` : "https://celestrak.org",
+        orbitalHtml
+    };
+}
+
+async function fetchCelestrakDetails(satelliteId) {
+    const candidates = getSatelliteNameCandidates(satelliteId);
+    for (const candidate of candidates) {
+        try {
+            const url = `https://celestrak.org/NORAD/elements/gp.php?NAME=${encodeURIComponent(candidate)}&FORMAT=JSON`;
+            const response = await fetch(url, { headers: { Accept: "application/json" } });
+            if (!response.ok) {
+                continue;
+            }
+
+            const data = await response.json();
+            const first = Array.isArray(data) ? data[0] : null;
+            if (!first) {
+                continue;
+            }
+
+            return buildCelestrakDetailsFromRecord(satelliteId, first);
+        } catch {
+            // seguir probando candidatos
+        }
+    }
+
+    return null;
+}
+
+async function fetchWikipediaDetails(satelliteId) {
+    const candidates = getSatelliteNameCandidates(satelliteId);
+    for (const candidate of candidates) {
         try {
             const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(candidate)}`;
             const response = await fetch(url, { headers: { Accept: "application/json" } });
@@ -227,7 +292,8 @@ export function setupObjectSidebar({
     onSelectObject,
     isCatalogReady,
     getObjectTle,
-    getObjectTleAsync
+    getObjectTleAsync,
+    onRefreshCatalog
 }) {
     let selectedId = null;
     let layerFilterText = "";
@@ -243,6 +309,8 @@ export function setupObjectSidebar({
     let catalogFilterToken = 0;
     let catalogSearchDebounce = null;
     let catalogBusy = false;
+    let catalogRefreshBusy = false;
+    let catalogRefreshTimer = null;
     let catalogAnchorIndex = null;
     let catalogWaitInterval = null;
     let contextTargetId = null;
@@ -276,11 +344,16 @@ export function setupObjectSidebar({
             <div class="catalog-modal-header">
                 <h3>Catalogo</h3>
                 <div class="catalog-modal-header-actions">
+                    <button class="catalog-header-btn" id="catalogRefreshBtn" type="button">Actualizar catalogo</button>
                     <button class="catalog-header-btn" id="catalogSelectAllBtn" type="button">Seleccionar todo</button>
                     <button class="catalog-close-btn" id="catalogCloseBtn" type="button">Cerrar</button>
                 </div>
             </div>
             <input id="catalogSearch" type="text" placeholder="Buscar en catalogo..." />
+            <div class="catalog-refresh-status" id="catalogRefreshStatus" hidden>
+                <div class="catalog-refresh-text" id="catalogRefreshText">Preparando actualizacion...</div>
+                <progress id="catalogRefreshBar" max="100" value="0"></progress>
+            </div>
             <div id="catalogList"></div>
             <div class="catalog-modal-actions">
                 <div class="catalog-progress" id="catalogProgress" aria-live="polite"></div>
@@ -318,7 +391,6 @@ export function setupObjectSidebar({
     contextMenu.id = "catalogContextMenu";
     contextMenu.innerHTML = `
         <button class="catalog-context-action" id="contextExplainBtn" type="button">Explicar parametros orbitales (TLE)</button>
-        <button class="catalog-context-action" id="contextRawBtn" type="button">Ver TLE crudo</button>
         <button class="catalog-context-action" id="contextDetailsBtn" type="button">Detalles del satelite</button>
     `;
     document.body.appendChild(contextMenu);
@@ -345,8 +417,12 @@ export function setupObjectSidebar({
     const infoRoot = sidebar.querySelector("#objectInfo");
 
     const catalogCloseBtn = catalogModal.querySelector("#catalogCloseBtn");
+    const catalogRefreshBtn = catalogModal.querySelector("#catalogRefreshBtn");
     const catalogSelectAllBtn = catalogModal.querySelector("#catalogSelectAllBtn");
     const catalogSearchInput = catalogModal.querySelector("#catalogSearch");
+    const catalogRefreshStatus = catalogModal.querySelector("#catalogRefreshStatus");
+    const catalogRefreshText = catalogModal.querySelector("#catalogRefreshText");
+    const catalogRefreshBar = catalogModal.querySelector("#catalogRefreshBar");
     const catalogListRoot = catalogModal.querySelector("#catalogList");
     const catalogProgress = catalogModal.querySelector("#catalogProgress");
     const catalogAddSelectedBtn = catalogModal.querySelector("#catalogAddSelectedBtn");
@@ -359,7 +435,6 @@ export function setupObjectSidebar({
     const catalogLoadingText = catalogLoadingModal.querySelector("p");
 
     const contextExplainBtn = contextMenu.querySelector("#contextExplainBtn");
-    const contextRawBtn = contextMenu.querySelector("#contextRawBtn");
     const contextDetailsBtn = contextMenu.querySelector("#contextDetailsBtn");
 
     const tleInfoCloseBtn = tleInfoModal.querySelector("#tleInfoCloseBtn");
@@ -416,6 +491,11 @@ export function setupObjectSidebar({
 
     const openCatalogModal = () => {
         catalogModal.classList.add("open");
+        setCatalogRefreshState({
+            visible: false,
+            text: "",
+            value: 0
+        });
         catalogProgress.textContent = "Cargando catalogo...";
         renderCatalogList();
         catalogSearchInput.focus();
@@ -430,6 +510,123 @@ export function setupObjectSidebar({
     function closeContextMenu() {
         contextMenu.classList.remove("open");
         contextTargetId = null;
+    }
+
+    function showErrorPopup(message) {
+        window.alert(message);
+    }
+
+    function stopCatalogRefreshProgressTimer() {
+        if (catalogRefreshTimer) {
+            clearInterval(catalogRefreshTimer);
+            catalogRefreshTimer = null;
+        }
+    }
+
+    function setCatalogRefreshState({ visible, text = "", value = 0 }) {
+        catalogRefreshStatus.hidden = !visible;
+        catalogRefreshText.textContent = text;
+        const safeValue = Math.max(0, Math.min(100, Number(value) || 0));
+        catalogRefreshBar.value = safeValue;
+    }
+
+    async function refreshCatalogFromCelestrak() {
+        if (catalogBusy || catalogRefreshBusy) {
+            return;
+        }
+
+        const ok = await askConfirmation({
+            title: "Actualizar Catalogo",
+            message: "Se descargaran TLEs de CelesTrak y se sobrescribira el catalogo local. Quieres continuar?",
+            confirmText: "Actualizar",
+            cancelText: "Cancelar"
+        });
+
+        if (!ok) {
+            return;
+        }
+
+        catalogRefreshBusy = true;
+        setCatalogBusyState(true, "Actualizando catalogo...");
+
+        let progress = 4;
+        setCatalogRefreshState({
+            visible: true,
+            text: "Descargando TLEs desde CelesTrak...",
+            value: progress
+        });
+
+        stopCatalogRefreshProgressTimer();
+        catalogRefreshTimer = setInterval(() => {
+            progress = Math.min(92, progress + Math.max(1, Math.random() * 7));
+            setCatalogRefreshState({
+                visible: true,
+                text: "Procesando catalogo...",
+                value: progress
+            });
+        }, 260);
+
+        try {
+            const response = await fetch("/api/catalog/refresh", {
+                method: "POST"
+            });
+            const payload = await response.json().catch(() => null);
+
+            if (!response.ok || !payload?.ok) {
+                const errorMessage = payload?.error || `Error HTTP ${response.status}`;
+                throw new Error(errorMessage);
+            }
+
+            setCatalogRefreshState({
+                visible: true,
+                text: "Recargando catalogo local...",
+                value: 96
+            });
+
+            if (onRefreshCatalog) {
+                await onRefreshCatalog();
+            }
+
+            selectedCatalogIds.clear();
+            catalogAnchorIndex = null;
+            renderCatalogList();
+            renderList();
+            renderInfo();
+
+            const failedCount = Array.isArray(payload.failedGroups) ? payload.failedGroups.length : 0;
+            const discardedInvalid = Number(payload.discardedInvalidEntries) || 0;
+            const warningSuffix = failedCount > 0 ? ` (${failedCount} grupos con fallo)` : "";
+
+            setCatalogRefreshState({
+                visible: true,
+                text: `Catalogo actualizado: ${payload.writtenEntries || 0} TLEs${warningSuffix}${discardedInvalid > 0 ? `, ${discardedInvalid} descartados` : ""}`,
+                value: 100
+            });
+            catalogProgress.textContent = `Catalogo actualizado: ${payload.writtenEntries || 0} TLEs${discardedInvalid > 0 ? ` (${discardedInvalid} invalidos descartados)` : ""}`;
+
+            if (failedCount > 0) {
+                const failedNames = payload.failedGroups
+                    .map((item) => item.group)
+                    .slice(0, 8)
+                    .join(", ");
+                showErrorPopup(`Actualizacion completada con advertencias. Grupos con fallo: ${failedNames}`);
+            }
+
+            if (discardedInvalid > 0) {
+                showErrorPopup(`Se descartaron ${discardedInvalid} TLEs con formato invalido durante la actualizacion.`);
+            }
+        } catch (error) {
+            setCatalogRefreshState({
+                visible: true,
+                text: "No se pudo actualizar el catalogo.",
+                value: 100
+            });
+            showErrorPopup(`Error actualizando catalogo: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            stopCatalogRefreshProgressTimer();
+            catalogRefreshBusy = false;
+            setCatalogBusyState(false);
+        }
     }
 
     function openContextMenu(satelliteId, x, y) {
@@ -460,7 +657,7 @@ export function setupObjectSidebar({
         openInfoModalWithHtml(`<div class="tle-info-empty">Cargando informacion...</div>`);
 
         if (mode === "details") {
-            const details = await fetchWikipediaDetails(satelliteId);
+            const details = await fetchCelestrakDetails(satelliteId) || await fetchWikipediaDetails(satelliteId);
             openInfoModalWithHtml(buildSatelliteDetailsHtml(satelliteId, details));
             return;
         }
@@ -585,15 +782,6 @@ export function setupObjectSidebar({
         openTleInfo(id, "explain");
     });
 
-    contextRawBtn.addEventListener("click", () => {
-        if (!contextTargetId) {
-            return;
-        }
-        const id = contextTargetId;
-        closeContextMenu();
-        openTleInfo(id, "raw");
-    });
-
     contextDetailsBtn.addEventListener("click", () => {
         if (!contextTargetId) {
             return;
@@ -678,6 +866,10 @@ export function setupObjectSidebar({
         });
     });
 
+    catalogRefreshBtn.addEventListener("click", () => {
+        refreshCatalogFromCelestrak();
+    });
+
     catalogSelectAllBtn.addEventListener("click", async () => {
         if (catalogBusy) {
             return;
@@ -744,6 +936,7 @@ export function setupObjectSidebar({
         catalogBusy = isBusy;
         catalogAddSelectedBtn.disabled = isBusy || selectedCatalogIds.size === 0;
         catalogSelectAllBtn.disabled = isBusy;
+        catalogRefreshBtn.disabled = isBusy;
         catalogCloseBtn.disabled = isBusy;
         catalogSearchInput.disabled = isBusy;
         catalogProgress.textContent = text;
@@ -1081,6 +1274,7 @@ export function setupObjectSidebar({
                 clearInterval(catalogWaitInterval);
                 catalogWaitInterval = null;
             }
+            stopCatalogRefreshProgressTimer();
             sidebar.remove();
             catalogModal.remove();
             confirmModal.remove();
