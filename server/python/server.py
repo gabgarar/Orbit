@@ -81,7 +81,7 @@ def load_system_config():
             "websocket_state_interval_seconds": 1.0,
             "websocket_orbit_interval_seconds": 10.0,
             "orbit_cache_ttl_seconds": 10
-        }, {"satellites_file": "catalog.txt"}
+        }, {"satellites_file": "catalog.json"}
 
     system_cfg = normalize_system_config(config.get("system", {}))
     data_cfg = config.get("data", {})
@@ -101,7 +101,7 @@ def load_system_config():
     for key, default in defaults.items():
         system_cfg.setdefault(key, default)
 
-    data_cfg.setdefault("satellites_file", "catalog.txt")
+    data_cfg.setdefault("satellites_file", "catalog.json")
     return system_cfg, data_cfg
 
 
@@ -110,7 +110,7 @@ def load_constellation():
     print("🔄 Recargando constelación desde config...")
 
     new_system_config, data_config = load_system_config()
-    satellites_file = data_config.get("satellites_catalog_file", data_config.get("satellites_file", "catalog.txt"))
+    satellites_file = data_config.get("satellites_catalog_file", data_config.get("satellites_file", "catalog.json"))
     config_file = os.path.join(CONFIG_DIR, satellites_file)
 
     tles = load_all_tles_from_config(config_file)
@@ -239,6 +239,7 @@ class ConfigWatcher(FileSystemEventHandler):
         if (
             event.src_path.endswith("system_config.json")
             or event.src_path.endswith("catalog.txt")
+            or event.src_path.endswith("catalog.json")
             or event.src_path.endswith("_tles.txt")
         ):
             try:

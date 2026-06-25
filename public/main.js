@@ -132,18 +132,36 @@ function applyStarsConfig(systemConfig) {
 }
 
 function applyAntialiasConfig(systemConfig) {
-    const antialiasEnabled = systemConfig.antialias_enabled !== false;
+    const mode = systemConfig.antialias_mode ?? (systemConfig.antialias_enabled !== false ? "fxaa" : "off");
 
-    viewer.scene.fxaa = antialiasEnabled;
-    if (viewer.scene.postProcessStages && viewer.scene.postProcessStages.fxaa) {
-        viewer.scene.postProcessStages.fxaa.enabled = antialiasEnabled;
+    // FXAA (post-process) vs MSAA (hardware). Keep compatibility con antialias_enabled.
+    if (mode === "off") {
+        viewer.scene.fxaa = false;
+        if (viewer.scene.postProcessStages && viewer.scene.postProcessStages.fxaa) {
+            viewer.scene.postProcessStages.fxaa.enabled = false;
+        }
+        if (typeof viewer.scene.msaaSamples === "number") {
+            viewer.scene.msaaSamples = 1;
+        }
+    } else if (mode === "fxaa") {
+        viewer.scene.fxaa = true;
+        if (viewer.scene.postProcessStages && viewer.scene.postProcessStages.fxaa) {
+            viewer.scene.postProcessStages.fxaa.enabled = true;
+        }
+        if (typeof viewer.scene.msaaSamples === "number") {
+            viewer.scene.msaaSamples = 1;
+        }
+    } else if (mode === "msaa") {
+        viewer.scene.fxaa = false;
+        if (viewer.scene.postProcessStages && viewer.scene.postProcessStages.fxaa) {
+            viewer.scene.postProcessStages.fxaa.enabled = false;
+        }
+        if (typeof viewer.scene.msaaSamples === "number") {
+            viewer.scene.msaaSamples = 4;
+        }
     }
 
-    if (typeof viewer.scene.msaaSamples === "number") {
-        viewer.scene.msaaSamples = antialiasEnabled ? 4 : 1;
-    }
-
-    logger.info(`Antialias: ${antialiasEnabled ? "on" : "off"}`);
+    logger.info(`Antialias mode: ${mode}`);
 }
 
 function applySystemRuntimeConfig(systemConfigRaw) {
@@ -257,6 +275,8 @@ function firstPersonSatellite(entity) {
         system: toSectionedSystemConfig(config?.system || {})
     };
 
+    let objectSidebar = null;
+
     setupRuntimeConfigPanel({
         initialSystemConfig: currentConfig.system,
         onSystemConfigChange: (nextSystemConfig) => {
@@ -267,7 +287,7 @@ function firstPersonSatellite(entity) {
 
     applySystemRuntimeConfig(currentConfig.system);
 
-    const configuredCatalogFile = currentConfig?.data?.satellites_catalog_file || "catalog.txt";
+    const configuredCatalogFile = currentConfig?.data?.satellites_catalog_file || "catalog.json";
     const catalogUrl = configuredCatalogFile.startsWith("/")
         ? configuredCatalogFile
         : `/config/${configuredCatalogFile}`;
@@ -279,7 +299,7 @@ function firstPersonSatellite(entity) {
     }
 
     initSatelliteReceiver(viewer);
-    const objectSidebar = setupObjectSidebar({
+    objectSidebar = setupObjectSidebar({
         getCatalogIds: () => getSatelliteIds(),
         getLayerIds: () => getActiveSatelliteLayerIds(),
         getObjectTelemetry: (id) => getSatelliteTelemetry(id),

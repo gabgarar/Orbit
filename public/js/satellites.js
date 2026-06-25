@@ -196,7 +196,7 @@ const catalogSatelliteIds = new Set();
 const activeLayerSatelliteIds = new Set();
 const tleBySatelliteId = new Map();
 let catalogLoaded = false;
-let lastCatalogUrl = "/config/catalog.txt";
+let lastCatalogUrl = "/config/catalog.json";
 let cachedSatelliteIds = [];
 let satelliteIdsDirty = true;
 let cachedActiveLayerIds = [];
@@ -863,7 +863,7 @@ export function isCatalogLoaded() {
     return catalogLoaded;
 }
 
-export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.txt") {
+export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.json") {
     try {
         lastCatalogUrl = catalogUrl || lastCatalogUrl;
         const response = await fetch(catalogUrl, { cache: "no-cache" });
@@ -872,29 +872,69 @@ export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.txt"
             return false;
         }
 
-        const text = await response.text();
-        // Ignorar lineas vacias para mantener el bloque nombre + L1 + L2 alineado.
-        const lines = text
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
+        let entries = [];
+        const isJsonCatalog = String(catalogUrl || "").toLowerCase().endsWith(".json");
 
-        let added = 0;
-        for (let i = 0; i + 2 < lines.length; i += 3) {
-            const name = lines[i] || "";
-            const line1 = lines[i + 1] || "";
-            const line2 = lines[i + 2] || "";
-            if (!name) {
-                continue;
-            }
-            if (!catalogSatelliteIds.has(name)) {
-                catalogSatelliteIds.add(name);
-                added += 1;
-            }
-            if (line1 && line2) {
-                tleBySatelliteId.set(name, { line1, line2 });
+        if (isJsonCatalog) {
+            const payload = await response.json();
+            const rawEntries = Array.isArray(payload) ? payload : payload?.entries;
+            entries = Array.isArray(rawEntries)
+                ? rawEntries.map((e) => ({
+                    name: String(e?.name || "").trim(),
+                    line1: String(e?.line1 || "").trim(),
+                    line2: String(e?.line2 || "").trim()
+                })).filter((e) => e.name && e.line1 && e.line2)
+                : [];
+        } else {
+            const text = await response.text();
+            const lines = text
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+
+            for (let i = 0; i + 2 < lines.length; i += 3) {
+                entries.push({
+                    name: lines[i] || "",
+                    line1: lines[i + 1] || "",
+                    line2: lines[i + 2] || ""
+                });
             }
         }
+
+        let added = 0;
+
+        // Procesar en chunks para evitar bloquear el hilo principal en archivos muy grandes
+        const CHUNK_SIZE = 300; // procesar 300 entradas por frame
+
+        await new Promise((resolve) => {
+            let index = 0;
+
+            function processChunk() {
+                const end = Math.min(index + CHUNK_SIZE, entries.length);
+                for (let i = index; i < end; i += 1) {
+                    const { name = "", line1 = "", line2 = "" } = entries[i] || {};
+                    if (!name) {
+                        continue;
+                    }
+                    if (!catalogSatelliteIds.has(name)) {
+                        catalogSatelliteIds.add(name);
+                        added += 1;
+                    }
+                    if (line1 && line2) {
+                        tleBySatelliteId.set(name, { line1, line2 });
+                    }
+                }
+
+                index = end;
+                if (index < entries.length) {
+                    requestAnimationFrame(processChunk);
+                } else {
+                    resolve();
+                }
+            }
+
+            requestAnimationFrame(processChunk);
+        });
 
         if (added > 0) {
             satelliteIdsDirty = true;
@@ -911,7 +951,7 @@ export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.txt"
     }
 }
 
-export async function refreshSatelliteCatalog(catalogUrl = "/config/catalog.txt") {
+export async function refreshSatelliteCatalog(catalogUrl = "/config/catalog.json") {
     // Actualiza la URL del catálogo y lo recarga. También reaplica subscripciones WS actuales.
     lastCatalogUrl = catalogUrl || lastCatalogUrl;
     const ok = await preloadSatelliteCatalog(lastCatalogUrl);

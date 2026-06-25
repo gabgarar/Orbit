@@ -1,10 +1,10 @@
 const CONFIG_SCHEMA = {
     orbit: [
         { key: "propagation_hours", label: "Propagation Hours", type: "number", step: "0.1", min: "0.1" },
+        { key: "width_mode", label: "Orbit Width Mode", type: "select", options: ["visual", "physical"] },
         { key: "future_show", label: "Future Show", type: "checkbox" },
         { key: "future_samples", label: "Future Samples", type: "number", step: "1", min: "2" },
         { key: "future_line_width", label: "Future Line Width", type: "number", step: "0.1", min: "0.1" },
-        { key: "width_mode", label: "Orbit Width Mode", type: "select", options: ["visual", "physical"] },
         { key: "future_color", label: "Future Color", type: "color" },
         { key: "past_show", label: "Past Show", type: "checkbox" },
         { key: "past_samples", label: "Past Samples", type: "number", step: "1", min: "2" },
@@ -29,7 +29,7 @@ const CONFIG_SCHEMA = {
         { key: "level", label: "Log Level", type: "select", options: ["debug", "info", "warn", "error", "silent"] }
     ],
     rendering: [
-        { key: "antialias_enabled", label: "Antialias Enabled", type: "checkbox" },
+        { key: "antialias_mode", label: "Antialias Mode", type: "select", options: ["off", "fxaa", "msaa"] },
         { key: "background_color", label: "Background Color", type: "color" },
         { key: "sky_atmosphere", label: "Sky Atmosphere", type: "checkbox" },
         { key: "globe_lighting", label: "Globe Lighting", type: "checkbox" },
@@ -63,7 +63,7 @@ const FIELD_HELP = {
     "logging.enabled": "Activa o desactiva trazas del logger.",
     "logging.level": "Nivel de logs: debug, info, warn, error o silent.",
 
-    "rendering.antialias_enabled": "Suaviza bordes de lineas y geometrias.",
+    "rendering.antialias_mode": "Elige el metodo de antialiasing: 'off' desactiva suavizado; 'fxaa' aplica FXAA (post-proceso, barato); 'msaa' usa MSAA (mejor calidad si soportado).",
     "rendering.background_color": "Color de fondo del visor.",
     "rendering.sky_atmosphere": "Muestra atmosfera del cielo.",
     "rendering.globe_lighting": "Activa iluminacion del globo por sol.",
@@ -81,7 +81,7 @@ function createPanelMarkup() {
     const toggleBtn = document.createElement("button");
     toggleBtn.id = "configToggleBtn";
     toggleBtn.type = "button";
-    toggleBtn.textContent = "Config";
+    toggleBtn.textContent = "⚙";
 
     const modal = document.createElement("div");
     modal.id = "configModal";
@@ -95,7 +95,7 @@ function createPanelMarkup() {
     panel.innerHTML = `
         <div id="configPanelHeader">
             <h3>Configuracion en tiempo real</h3>
-            <button class="config-close-btn" id="configCloseBtn" type="button">Cerrar</button>
+            <button class="config-close-btn" id="configCloseBtn" type="button" aria-label="Cerrar panel" title="Cerrar">✕</button>
         </div>
         <div id="configHint">Los cambios se aplican al instante en la vista (no guardan el archivo en disco).</div>
         <div id="configForm"></div>
@@ -213,14 +213,144 @@ function renderConfigPanel(formRoot, currentSystemConfig, onChange) {
         title.className = "config-section-title";
         title.textContent = sectionName;
 
+        // Special handling for 'orbit' to separate future and past groups
+        if (sectionName === "orbit") {
+            const orbitWrapper = document.createElement("div");
+            orbitWrapper.className = "orbit-wrapper";
+
+            const futureTitle = document.createElement("div");
+            futureTitle.className = "orbit-subtitle";
+            futureTitle.textContent = "Futuro";
+
+            const futureGrid = document.createElement("div");
+            futureGrid.className = "config-grid orbit-grid";
+
+            const pastTitle = document.createElement("div");
+            pastTitle.className = "orbit-subtitle";
+            pastTitle.textContent = "Pasado";
+
+            const pastGrid = document.createElement("div");
+            pastGrid.className = "config-grid orbit-grid";
+
+            // Collect fields by key to allow custom ordering for past/future
+            const futureFields = [];
+            const pastFields = [];
+            const otherOrbitFields = [];
+            const fieldByKey = new Map();
+            for (const field of fields) {
+                fieldByKey.set(String(field.key), field);
+                if (String(field.key).startsWith("future")) {
+                    futureFields.push(field);
+                } else if (String(field.key).startsWith("past")) {
+                    pastFields.push(field);
+                } else {
+                    otherOrbitFields.push(field);
+                }
+            }
+
+            // Force explicit future field order so we can swap positions as requested
+            const desiredFutureOrder = [
+                "future_samples",
+                "future_line_width",
+                // place width_mode here (swapped with future_show)
+                "width_mode",
+                "future_color",
+                "future_show"
+            ];
+
+            const usedFuture = new Set();
+            for (const key of desiredFutureOrder) {
+                const f = fieldByKey.get(key);
+                if (f) {
+                    const el = createFieldElement(sectionName, f, currentSystemConfig, onChange);
+                    // align future color and show to left per last request
+                    if (key === "future_color" || key === "future_show") {
+                        el.classList.add("align-left");
+                    }
+                    futureGrid.appendChild(el);
+                    usedFuture.add(key);
+                }
+            }
+
+            // append any remaining futureFields preserving original order
+            for (const f of futureFields) {
+                const k = String(f.key || "");
+                if (usedFuture.has(k)) continue;
+                futureGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange));
+                usedFuture.add(k);
+            }
+
+            // Past: prefer order [past_samples, past_line_width, past_show, past_color]
+            const desiredPastOrder = ["past_samples", "past_line_width", "past_color", "past_show"];
+            const used = new Set();
+            for (const key of desiredPastOrder) {
+                const f = fieldByKey.get(key);
+                if (f) {
+                    pastGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange));
+                    used.add(key);
+                }
+            }
+            // Append any remaining past fields in their original order
+            for (const f of pastFields) {
+                if (!used.has(String(f.key))) {
+                    pastGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange));
+                }
+            }
+
+            // Any other orbit fields (e.g., hide_near_satellite) append to future area by default
+            // Remove width_mode from otherOrbitFields to avoid duplication if we insert it explicitly
+            const otherFiltered = otherOrbitFields.filter((f) => String(f.key) !== "width_mode");
+            for (const f of otherFiltered) {
+                futureGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange));
+            }
+
+            orbitWrapper.appendChild(futureTitle);
+            orbitWrapper.appendChild(futureGrid);
+            orbitWrapper.appendChild(pastTitle);
+            orbitWrapper.appendChild(pastGrid);
+
+            section.appendChild(title);
+            section.appendChild(orbitWrapper);
+            formRoot.appendChild(section);
+            continue;
+        }
+
         const grid = document.createElement("div");
         grid.className = "config-grid";
 
+        // Agrupar campos tipo "toolbox" arriba dentro de la sección (heurística por clave)
+        const toolboxFields = [];
+        const otherFields = [];
         for (const field of fields) {
-            grid.appendChild(createFieldElement(sectionName, field, currentSystemConfig, onChange));
+            const key = String(field.key || "").toLowerCase();
+            if (key.includes("tool") || key.includes("toolbox") || key.includes("tbx")) {
+                toolboxFields.push(field);
+            } else {
+                otherFields.push(field);
+            }
         }
 
         section.appendChild(title);
+
+        if (toolboxFields.length) {
+            const subHeading = document.createElement("div");
+            subHeading.className = "config-subheading";
+            subHeading.textContent = "Toolboxes";
+            section.appendChild(subHeading);
+
+            const toolboxGrid = document.createElement("div");
+            toolboxGrid.className = "config-grid";
+            for (const field of toolboxFields) {
+                toolboxGrid.appendChild(createFieldElement(sectionName, field, currentSystemConfig, onChange));
+            }
+            section.appendChild(toolboxGrid);
+        }
+
+        // añadir el resto de campos
+        for (const field of otherFields) {
+            grid.appendChild(createFieldElement(sectionName, field, currentSystemConfig, onChange));
+        }
+
         section.appendChild(grid);
         formRoot.appendChild(section);
     }

@@ -28,6 +28,7 @@ export function normalizeSystemConfig(rawSystem = {}) {
         websocket_orbit_interval_seconds: realtime.orbit_interval_seconds ?? rawSystem.websocket_orbit_interval_seconds,
         orbit_cache_ttl_seconds: realtime.orbit_cache_ttl_seconds ?? rawSystem.orbit_cache_ttl_seconds,
 
+        antialias_mode: rendering.antialias_mode ?? rawSystem.antialias_mode,
         antialias_enabled: rendering.antialias_enabled ?? rawSystem.antialias_enabled,
         background_color: rendering.background_color ?? rawSystem.background_color,
         sky_atmosphere: rendering.sky_atmosphere ?? rawSystem.sky_atmosphere,
@@ -72,6 +73,7 @@ export function toSectionedSystemConfig(rawSystem = {}) {
             level: flat.log_level ?? "info"
         },
         rendering: {
+            antialias_mode: flat.antialias_mode ?? (flat.antialias_enabled ? "fxaa" : "off"),
             antialias_enabled: flat.antialias_enabled ?? true,
             background_color: flat.background_color ?? "#03070d",
             sky_atmosphere: flat.sky_atmosphere ?? false,

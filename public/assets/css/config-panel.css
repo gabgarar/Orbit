@@ -3,13 +3,22 @@
     top: 40px;
     right: 12px;
     z-index: 10000;
-    padding: 8px 12px;
-    border: 1px solid #3a3f4b;
-    border-radius: 8px;
-    background: rgba(20, 24, 32, 0.92);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1px solid #3a4e72;
+    background: #172339;
     color: #eaf0ff;
-    font: 600 13px sans-serif;
+    font: 700 16px/1 sans-serif;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+}
+
+#configToggleBtn:hover {
+    background: #223555;
 }
 
 #configModal {
@@ -49,18 +58,54 @@
     user-select: none;
 }
 
+/* Mantener header visible al hacer scroll dentro del panel */
+#configPanel {
+    width: min(860px, 96vw);
+    max-height: 88vh;
+    overflow: auto;
+    border-radius: 12px;
+    background: #0f1520;
+    border: 1px solid #2a3140;
+    color: #dfe9f3;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    padding: 14px;
+    position: relative;
+}
+
+#configPanelHeader {
+    position: sticky;
+    top: 0;
+    background: linear-gradient(180deg, rgba(15,21,32,0.98), rgba(15,21,32,0.92));
+    padding: 12px 14px;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    z-index: 60;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.45);
+    margin-bottom: 8px;
+}
+
 #configPanelHeader h3 {
     margin: 0;
     font: 700 16px sans-serif;
 }
 
 .config-close-btn {
-    border: 1px solid #3a3f4b;
-    background: #171f2c;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 1px solid #3a4e72;
+    background: #172339;
     color: #dfe9f3;
-    border-radius: 8px;
-    padding: 6px 10px;
+    padding: 0;
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font: 700 16px/1 sans-serif;
+}
+
+.config-close-btn:hover {
+    background: #223555;
 }
 
 .config-section {
@@ -69,6 +114,39 @@
     border: 1px solid #273141;
     border-radius: 10px;
     background: #121a28;
+}
+
+.config-subheading {
+    font: 700 12px sans-serif;
+    color: #99c1ff;
+    margin: 6px 0 6px;
+}
+
+/* Alinear controles a la derecha dentro de grids (usado para future_show / future_color) */
+.config-field.align-right {
+    justify-self: end;
+    align-self: center;
+}
+
+/* Alineación izquierda para controles (usado para future_color / future_show según petición) */
+.config-field.align-left {
+    justify-self: start;
+    align-self: center;
+}
+
+.orbit-wrapper {
+    display: grid;
+    gap: 8px;
+}
+
+.orbit-subtitle {
+    font: 700 12px sans-serif;
+    color: #9fb4d8;
+    margin: 6px 0 2px;
+}
+
+.orbit-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .config-section-title {
@@ -144,4 +222,24 @@
     font: 12px sans-serif;
     color: #9db2d2;
     margin: 6px 2px 4px;
+}
+
+/* Scrollbar styling integrado con azul de la aplicación */
+#configPanel::-webkit-scrollbar {
+    width: 12px;
+}
+#configPanel::-webkit-scrollbar-track {
+    background: #0b1220;
+    border-radius: 8px;
+}
+#configPanel::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #2b4b73 0%, #1e3550 100%);
+    border-radius: 8px;
+    border: 2px solid rgba(15,21,32,0.6);
+}
+
+/* Firefox */
+#configPanel {
+    scrollbar-width: thin;
+    scrollbar-color: #2b4b73 #0b1220;
 }

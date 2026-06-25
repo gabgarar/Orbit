@@ -24,7 +24,20 @@ function section(title, rowsHtml) {
     `;
 }
 
-function buildInfoText(telemetry) {
+function formatTleAgeHuman(ageDays) {
+    if (!Number.isFinite(ageDays)) return "edad desconocida";
+    if (ageDays < (1 / 24)) {
+        const minutes = Math.max(1, Math.floor(ageDays * 24 * 60));
+        return `${minutes} min`;
+    }
+    if (ageDays < 1) {
+        const hours = Math.max(1, Math.floor(ageDays * 24));
+        return `${hours} h`;
+    }
+    return `${Math.floor(ageDays)} dias`;
+}
+
+function buildInfoText(telemetry, orbitInfo = null, tleSummary = null) {
     if (!telemetry) {
         return "<div class=\"object-info-empty\">Selecciona un objeto para ver telemetria en tiempo real.</div>";
     }
@@ -50,11 +63,15 @@ function buildInfoText(telemetry) {
         row("Distancia a camara", formatNumber(telemetry.distance_to_camera_m, 2), " m"),
         row("Puntos de estela", formatNumber(telemetry.trail_points, 0)),
         row("Orbita futura", telemetry.has_future_orbit ? "Si" : "No"),
-        row("Edad telemetria", formatNumber(telemetry.telemetry_age_ms, 0), " ms")
+        row("Edad telemetria", formatNumber(telemetry.telemetry_age_ms, 0), " ms"),
+        row("Propagacion", "SGP4"),
+        row("Tipo orbita", orbitInfo?.label || "Desconocida")
     ].join("");
 
+    const orbitTag = orbitInfo ? buildOrbitTypeTagHtml(orbitInfo) : "";
+
     return `
-        <div class="object-info-title">${telemetry.id}</div>
+        <div class="object-info-title">${orbitTag}${escapeHtml(telemetry.id)}</div>
         ${section("Geografica", geoRows)}
         ${section("Cinematica", kinematicsRows)}
         ${section("Estado", statusRows)}
@@ -104,13 +121,155 @@ function parseTleSummary(tle) {
     };
 }
 
+// Convertir epoch TLE (YYDDD.dddddd) a Date UTC
+function tleEpochToDate(epochStr) {
+    if (!epochStr) return null;
+    // Normalizar y asegurar formato
+    const s = String(epochStr).trim();
+    if (!/^[0-9]{5}(.+)?/.test(s)) {
+        // intentar parsear con partes
+    }
+    const yy = Number(s.slice(0, 2));
+    const doy = Number(s.slice(2));
+    if (!Number.isFinite(yy) || !Number.isFinite(doy)) return null;
+    const year = yy >= 57 ? 1900 + yy : 2000 + yy;
+    const dayIndex = Math.floor(doy) - 1;
+    const fraction = doy - Math.floor(doy);
+    const ms = Math.round(fraction * 24 * 3600 * 1000);
+    const date = new Date(Date.UTC(year, 0, 1));
+    date.setUTCDate(date.getUTCDate() + dayIndex);
+    // añadir fraccion del dia
+    date.setTime(date.getTime() + ms);
+    return date;
+}
+
+const EARTH_RADIUS_KM = 6378.137;
+const EARTH_MU_KM3_S2 = 398600.4418;
+
+const ORBIT_KIND = {
+    LEO: "leo",
+    MEO: "meo",
+    GEO: "geo",
+    HEO: "heo",
+    UNKNOWN: "unknown"
+};
+
+function orbitTagCode(kind) {
+    switch (kind) {
+    case ORBIT_KIND.LEO: return "LEO";
+    case ORBIT_KIND.MEO: return "MEO";
+    case ORBIT_KIND.GEO: return "GEO";
+    case ORBIT_KIND.HEO: return "HEO";
+    default: return "UNKNOWN";
+    }
+}
+
+function buildOrbitTypeTagHtml(orbitInfo) {
+    if (!orbitInfo) return "";
+    const code = orbitTagCode(orbitInfo.kind);
+    return `<span class="orbit-type-tag orbit-type-${escapeHtml(orbitInfo.kind)}" title="${escapeHtml(orbitInfo.label)}">[${escapeHtml(code)}]</span> `;
+}
+
+function createOrbitTypeTagElement(orbitInfo) {
+    if (!orbitInfo) return null;
+    const code = orbitTagCode(orbitInfo.kind);
+    const tag = document.createElement("span");
+    tag.className = `orbit-type-tag orbit-type-${orbitInfo.kind}`;
+    tag.title = orbitInfo.label;
+    tag.textContent = `[${code}]`;
+    return tag;
+}
+
+function estimateAltitudeKmFromMeanMotion(meanMotionRevDay) {
+    const revDay = Number(meanMotionRevDay);
+    if (!Number.isFinite(revDay) || revDay <= 0) return null;
+    const nRadSec = revDay * (2 * Math.PI) / 86400;
+    const semiMajorAxisKm = Math.cbrt(EARTH_MU_KM3_S2 / (nRadSec * nRadSec));
+    const altitudeKm = semiMajorAxisKm - EARTH_RADIUS_KM;
+    return Number.isFinite(altitudeKm) ? altitudeKm : null;
+}
+
+function classifyOrbitByAltitudeKm(altitudeKm) {
+    if (!Number.isFinite(altitudeKm)) return ORBIT_KIND.UNKNOWN;
+    if (altitudeKm < 2000) return ORBIT_KIND.LEO;
+    if (altitudeKm < 35786) return ORBIT_KIND.MEO;
+    if (altitudeKm >= 35000 && altitudeKm <= 36550) return ORBIT_KIND.GEO;
+    if (altitudeKm > 35786) return ORBIT_KIND.HEO;
+    return ORBIT_KIND.UNKNOWN;
+}
+
+function classifyOrbitByName(satelliteId) {
+    const s = String(satelliteId || "").toLowerCase();
+    if (!s) return ORBIT_KIND.UNKNOWN;
+    return ORBIT_KIND.UNKNOWN;
+}
+
+function getOrbitRecommendation(orbitKind) {
+    switch (orbitKind) {
+    case ORBIT_KIND.LEO:
+        return { label: "LEO - Low Earth Orbit", recommendedWindow: "1-3 dias", recommendedMaxDays: 3 };
+    case ORBIT_KIND.MEO:
+        return { label: "MEO - Medium Earth Orbit", recommendedWindow: "1-2 semanas", recommendedMaxDays: 14 };
+    case ORBIT_KIND.GEO:
+        return { label: "GEO - Geostationary Orbit", recommendedWindow: "2-4 semanas", recommendedMaxDays: 28 };
+    case ORBIT_KIND.HEO:
+        return { label: "HEO - High Earth Orbit", recommendedWindow: "2-4 semanas", recommendedMaxDays: 28 };
+    default:
+        return { label: "Desconocida", recommendedWindow: "Sin referencia", recommendedMaxDays: null };
+    }
+}
+
+function getOrbitInfoFromTleSummary(tleSummary, satelliteId = "") {
+    const altitudeKm = estimateAltitudeKmFromMeanMotion(tleSummary?.meanMotionRevDay);
+    let kind = classifyOrbitByAltitudeKm(altitudeKm);
+    if (kind === ORBIT_KIND.UNKNOWN) {
+        kind = classifyOrbitByName(satelliteId);
+    }
+    const recommendation = getOrbitRecommendation(kind);
+    const veryLowOverride = kind === ORBIT_KIND.LEO && Number.isFinite(altitudeKm) && altitudeKm < 400;
+    return {
+        kind,
+        altitudeKm,
+        label: recommendation.label,
+        recommendedWindow: veryLowOverride ? "< 24 horas" : recommendation.recommendedWindow,
+        recommendedMaxDays: veryLowOverride ? 1 : recommendation.recommendedMaxDays
+    };
+}
+
+function buildTleFreshnessMessage(orbitInfo, ageDays) {
+    const ageText = formatTleAgeHuman(ageDays);
+    const orbitLabel = orbitInfo?.label || "orbita desconocida";
+    const rec = orbitInfo?.recommendedWindow || "sin referencia";
+    return `Edad del TLE: ${ageText}. Recomendado para ${orbitLabel}: ${rec}.`;
+}
+
+function tleAgeDaysFromSummary(tleSummary) {
+    if (!tleSummary || !tleSummary.epoch) return null;
+    const d = tleEpochToDate(tleSummary.epoch);
+    if (!d) return null;
+    return (Date.now() - d.getTime()) / (24 * 3600 * 1000);
+}
+
+function checkTleOldAdaptive(tleSummary, orbitInfo) {
+    const age = tleAgeDaysFromSummary(tleSummary);
+    const maxDays = orbitInfo?.recommendedMaxDays;
+    if (age === null || !Number.isFinite(maxDays)) {
+        return { isOld: false, days: null };
+    }
+    return { isOld: age > maxDays, days: Math.floor(age) };
+}
+
 function buildTleExplanationHtml(satelliteId, tleSummary) {
     if (!tleSummary) {
         return `<div class="tle-info-empty">No hay TLE disponible para <strong>${escapeHtml(satelliteId)}</strong>.</div>`;
     }
 
+    const orbitInfo = getOrbitInfoFromTleSummary(tleSummary, satelliteId);
+    const tleAgeDays = tleAgeDaysFromSummary(tleSummary);
+    const freshnessText = buildTleFreshnessMessage(orbitInfo, tleAgeDays);
+
     return `
-        <div class="tle-info-title">${escapeHtml(satelliteId)}</div>
+        <div class="tle-info-title">${buildOrbitTypeTagHtml(orbitInfo)}${escapeHtml(satelliteId)}</div>
         <section class="tle-info-section">
             <h4>Lineas TLE</h4>
             <pre>${escapeHtml(tleSummary.line1)}\n${escapeHtml(tleSummary.line2)}</pre>
@@ -119,6 +278,8 @@ function buildTleExplanationHtml(satelliteId, tleSummary) {
             <h4>Parametros Orbitales</h4>
             <div class="tle-info-grid">
                 <div><span>Epoca</span><strong>${escapeHtml(tleSummary.epoch || "-")}</strong></div>
+                <div><span>Tipo orbita</span><strong>${escapeHtml(orbitInfo.label)}</strong></div>
+                <div><span>Altitud estimada</span><strong>${Number.isFinite(orbitInfo.altitudeKm) ? `${escapeHtml(formatNumber(orbitInfo.altitudeKm, 1))} km` : "-"}</strong></div>
                 <div><span>Inclinacion</span><strong>${escapeHtml(tleSummary.inclinationDeg || "-")} deg</strong></div>
                 <div><span>RAAN</span><strong>${escapeHtml(tleSummary.raanDeg || "-")} deg</strong></div>
                 <div><span>Excentricidad</span><strong>${escapeHtml(tleSummary.eccentricity || "-")}</strong></div>
@@ -128,6 +289,10 @@ function buildTleExplanationHtml(satelliteId, tleSummary) {
                 <div><span>Derivada Mov. Medio</span><strong>${escapeHtml(tleSummary.meanMotionDot || "-")}</strong></div>
                 <div><span>BSTAR</span><strong>${escapeHtml(tleSummary.bstar || "-")}</strong></div>
             </div>
+        </section>
+        <section class="tle-info-section">
+            <h4>Vigencia recomendada</h4>
+            <p class="tle-info-paragraph">${escapeHtml(freshnessText)}</p>
         </section>
         <section class="tle-info-section">
             <h4>Interpretacion rapida</h4>
@@ -142,19 +307,23 @@ function buildTleExplanationHtml(satelliteId, tleSummary) {
     `;
 }
 
-function buildSatelliteDetailsHtml(satelliteId, details) {
+function buildSatelliteDetailsHtml(satelliteId, details, orbitInfo = null) {
     if (!details) {
         return `
-            <div class="tle-info-title">${escapeHtml(satelliteId)}</div>
+            <div class="tle-info-title">${buildOrbitTypeTagHtml(orbitInfo)}${escapeHtml(satelliteId)}</div>
             <div class="tle-info-empty">No se encontro informacion externa fiable para este satelite.</div>
         `;
     }
 
     return `
-        <div class="tle-info-title">${escapeHtml(details.title || satelliteId)}</div>
+        <div class="tle-info-title">${buildOrbitTypeTagHtml(orbitInfo)}${escapeHtml(details.title || satelliteId)}</div>
         <section class="tle-info-section">
             <h4>Resumen</h4>
             <p class="tle-info-paragraph">${escapeHtml(details.summary || "-")}</p>
+        </section>
+        <section class="tle-info-section">
+            <h4>Clasificacion</h4>
+            <p class="tle-info-paragraph">${escapeHtml(orbitInfo?.label || "Desconocida")}</p>
         </section>
         ${details.orbitalHtml || ""}
         <section class="tle-info-section">
@@ -301,9 +470,9 @@ export function setupObjectSidebar({
     let globalLayersVisible = true;
     const selectedCatalogIds = new Set();
 
-    const CATALOG_RENDER_CHUNK = 250;
-    const CATALOG_FILTER_CHUNK = 1200;
-    const BULK_PROCESS_CHUNK = 120;
+    const CATALOG_RENDER_CHUNK = 100;
+    const CATALOG_FILTER_CHUNK = 600;
+    const BULK_PROCESS_CHUNK = 60;
 
     let catalogRenderToken = 0;
     let catalogFilterToken = 0;
@@ -314,6 +483,31 @@ export function setupObjectSidebar({
     let catalogAnchorIndex = null;
     let catalogWaitInterval = null;
     let contextTargetId = null;
+    const collapsedCatalogGroups = new Set();
+    const catalogMetaCache = new Map();
+
+    function clearCatalogMetaCache() {
+        catalogMetaCache.clear();
+    }
+
+    function getCatalogMeta(id) {
+        const cached = catalogMetaCache.get(id);
+        if (cached) {
+            return cached;
+        }
+
+        const tle = getObjectTle ? getObjectTle(id) : null;
+        const tleSummary = parseTleSummary(tle);
+        const orbitInfo = getOrbitInfoFromTleSummary(tleSummary, id);
+        const meta = { tleSummary, orbitInfo };
+
+        // Solo cacheamos cuando ya hay TLE parseable para evitar cachear nulls tempranos.
+        if (tleSummary) {
+            catalogMetaCache.set(id, meta);
+        }
+
+        return meta;
+    }
 
     const catalogRowElements = new Map();
 
@@ -346,7 +540,7 @@ export function setupObjectSidebar({
                 <div class="catalog-modal-header-actions">
                     <button class="catalog-header-btn" id="catalogRefreshBtn" type="button">Actualizar catalogo</button>
                     <button class="catalog-header-btn" id="catalogSelectAllBtn" type="button">Seleccionar todo</button>
-                    <button class="catalog-close-btn" id="catalogCloseBtn" type="button">Cerrar</button>
+                    <button class="catalog-close-btn" id="catalogCloseBtn" type="button" aria-label="Cerrar catalogo" title="Cerrar">✕</button>
                 </div>
             </div>
             <input id="catalogSearch" type="text" placeholder="Buscar en catalogo..." />
@@ -401,7 +595,7 @@ export function setupObjectSidebar({
         <div class="tle-info-panel" role="dialog" aria-modal="true" aria-label="Informacion satelite">
             <div class="tle-info-header">
                 <h3>Informacion satelite</h3>
-                <button class="catalog-close-btn" id="tleInfoCloseBtn" type="button">Cerrar</button>
+                <button class="catalog-close-btn" id="tleInfoCloseBtn" type="button" aria-label="Cerrar" title="Cerrar">✕</button>
             </div>
             <div class="tle-info-content" id="tleInfoContent"></div>
         </div>
@@ -491,18 +685,23 @@ export function setupObjectSidebar({
 
     const openCatalogModal = () => {
         catalogModal.classList.add("open");
+        // asegurar que la barra de progreso está oculta al abrir
+        stopCatalogRefreshProgressTimer();
         setCatalogRefreshState({
             visible: false,
             text: "",
             value: 0
         });
-        catalogProgress.textContent = "Cargando catalogo...";
+        catalogProgress.textContent = "";
         renderCatalogList();
         catalogSearchInput.focus();
     };
 
     const closeCatalogModal = () => {
         catalogRenderToken += 1;
+        stopCatalogRefreshProgressTimer();
+        setCatalogRefreshState({ visible: false, text: "", value: 0 });
+        catalogProgress.textContent = "";
         catalogModal.classList.remove("open");
         closeContextMenu();
     };
@@ -512,8 +711,46 @@ export function setupObjectSidebar({
         contextTargetId = null;
     }
 
+    function showToast(message, type = "info", duration = 4500) {
+        try {
+            const toast = document.createElement("div");
+            toast.className = `sidebar-toast sidebar-toast-${type}`;
+            toast.textContent = message;
+            Object.assign(toast.style, {
+                position: "fixed",
+                right: "16px",
+                bottom: "16px",
+                background: type === "error" ? "#6b1f1f" : "#1f6f4f",
+                color: "#fff",
+                padding: "10px 14px",
+                borderRadius: "8px",
+                boxShadow: "0 6px 18px rgba(0,0,0,0.4)",
+                zIndex: 99999,
+                font: "600 13px sans-serif",
+                maxWidth: "480px",
+                wordBreak: "break-word"
+            });
+
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.transition = "opacity 220ms ease-out, transform 220ms ease-out";
+                toast.style.opacity = "0";
+                toast.style.transform = "translateY(10px)";
+                setTimeout(() => toast.remove(), 240);
+            }, duration);
+        } catch (e) {
+            // Fallback a alert si algo falla
+            try { window.alert(message); } catch (_) {}
+        }
+    }
+
     function showErrorPopup(message) {
-        window.alert(message);
+        showToast(message, "error", 6000);
+    }
+
+    function showInfoPopup(message) {
+        showToast(message, "info", 3800);
     }
 
     function stopCatalogRefreshProgressTimer() {
@@ -525,9 +762,12 @@ export function setupObjectSidebar({
 
     function setCatalogRefreshState({ visible, text = "", value = 0 }) {
         catalogRefreshStatus.hidden = !visible;
-        catalogRefreshText.textContent = text;
+        catalogRefreshStatus.style.display = visible ? "grid" : "none";
+        catalogRefreshText.hidden = !visible;
+        catalogRefreshBar.hidden = !visible;
+        catalogRefreshText.textContent = visible ? text : "";
         const safeValue = Math.max(0, Math.min(100, Number(value) || 0));
-        catalogRefreshBar.value = safeValue;
+        catalogRefreshBar.value = visible ? safeValue : 0;
     }
 
     async function refreshCatalogFromCelestrak() {
@@ -547,6 +787,8 @@ export function setupObjectSidebar({
         }
 
         catalogRefreshBusy = true;
+        // ocultar el selector de búsqueda mientras dura la actualización y mostrar la barra
+        if (catalogSearchInput) catalogSearchInput.hidden = true;
         setCatalogBusyState(true, "Actualizando catalogo...");
 
         let progress = 4;
@@ -587,6 +829,9 @@ export function setupObjectSidebar({
                 await onRefreshCatalog();
             }
 
+            // El catalogo cambió; invalidar cache de metadatos para recalcular con datos nuevos.
+            clearCatalogMetaCache();
+
             selectedCatalogIds.clear();
             catalogAnchorIndex = null;
             renderCatalogList();
@@ -597,12 +842,16 @@ export function setupObjectSidebar({
             const discardedInvalid = Number(payload.discardedInvalidEntries) || 0;
             const warningSuffix = failedCount > 0 ? ` (${failedCount} grupos con fallo)` : "";
 
+            const summaryMsg = `Catalogo actualizado: ${payload.writtenEntries || 0} TLEs${warningSuffix}${discardedInvalid > 0 ? `, ${discardedInvalid} descartados` : ""}`;
+
             setCatalogRefreshState({
                 visible: true,
-                text: `Catalogo actualizado: ${payload.writtenEntries || 0} TLEs${warningSuffix}${discardedInvalid > 0 ? `, ${discardedInvalid} descartados` : ""}`,
+                text: summaryMsg,
                 value: 100
             });
-            catalogProgress.textContent = `Catalogo actualizado: ${payload.writtenEntries || 0} TLEs${discardedInvalid > 0 ? ` (${discardedInvalid} invalidos descartados)` : ""}`;
+
+            // mostrar popup con resultado
+            showInfoPopup(summaryMsg);
 
             if (failedCount > 0) {
                 const failedNames = payload.failedGroups
@@ -626,6 +875,10 @@ export function setupObjectSidebar({
             stopCatalogRefreshProgressTimer();
             catalogRefreshBusy = false;
             setCatalogBusyState(false);
+            // volver a mostrar el selector de búsqueda cuando termine
+            if (catalogSearchInput) catalogSearchInput.hidden = false;
+            // ocultar la barra de progreso cuando la operación finalice
+            setCatalogRefreshState({ visible: false, text: "", value: 0 });
         }
     }
 
@@ -656,13 +909,17 @@ export function setupObjectSidebar({
     async function openTleInfo(satelliteId, mode) {
         openInfoModalWithHtml(`<div class="tle-info-empty">Cargando informacion...</div>`);
 
+        const tleForOrbit = await resolveTle(satelliteId);
+        const tleSummaryForOrbit = parseTleSummary(tleForOrbit);
+        const orbitInfo = getOrbitInfoFromTleSummary(tleSummaryForOrbit, satelliteId);
+
         if (mode === "details") {
             const details = await fetchCelestrakDetails(satelliteId) || await fetchWikipediaDetails(satelliteId);
-            openInfoModalWithHtml(buildSatelliteDetailsHtml(satelliteId, details));
+            openInfoModalWithHtml(buildSatelliteDetailsHtml(satelliteId, details, orbitInfo));
             return;
         }
 
-        const tle = await resolveTle(satelliteId);
+        const tle = tleForOrbit;
         const summary = parseTleSummary(tle);
 
         if (mode === "raw") {
@@ -1044,6 +1301,11 @@ export function setupObjectSidebar({
             return;
         }
 
+        // Garantiza que la barra no aparezca fuera del refresh real.
+        if (!catalogRefreshBusy) {
+            setCatalogRefreshState({ visible: false, text: "", value: 0 });
+        }
+
         const ids = getCatalogIds();
         const activeRenderToken = ++catalogRenderToken;
         const activeFilterToken = ++catalogFilterToken;
@@ -1099,115 +1361,212 @@ export function setupObjectSidebar({
     }
 
     function renderCatalogRows(filtered, renderToken) {
+        if (!catalogModal.classList.contains("open")) return;
         catalogListRoot.innerHTML = "";
         closeContextMenu();
         catalogRowElements.clear();
 
         const total = filtered.length;
-        catalogProgress.textContent = total ? `Mostrando ${total} resultados...` : "Sin resultados";
+        catalogProgress.textContent = total ? `Mostrando 0/${total} resultados...` : "Sin resultados";
 
-        const renderChunk = (startIndex) => {
-            if (renderToken !== catalogRenderToken) {
-                return;
-            }
+        // mapa id -> index para evitar indexOf costoso
+        const idIndexMap = new Map();
+        filtered.forEach((id, idx) => idIndexMap.set(id, idx));
 
-            const fragment = document.createDocumentFragment();
-            const end = Math.min(startIndex + CATALOG_RENDER_CHUNK, filtered.length);
+        // Agrupar por tipo inferido (toolbox arriba)
+        function inferType(id) {
+            const raw = String(id || "").toLowerCase();
+            const s = raw.replace(/[_\-]/g, " ");
 
-            for (let i = startIndex; i < end; i++) {
-                const id = filtered[i];
-                const rowEl = document.createElement("div");
-                rowEl.className = "catalog-list-row";
+            if (/\b(toolbox|tool\b|tools\b|tbx|tool-box|tool_box)\b/i.test(s)) return "Toolbox";
+            if (/\b(payloads?|payload)\b/i.test(s)) return "Payload";
+            if (/\bsentinel\b/i.test(s)) return "Sentinel";
+            if (/\bstarlink\b/i.test(s)) return "Starlink";
+            if (/\b(sat(elite)?|sat\b)\b/i.test(s)) return "Satellite";
+            return "Other";
+        }
 
-                const nameEl = document.createElement("div");
-                nameEl.className = "catalog-list-name";
-                nameEl.textContent = id;
+        const GROUP_ORDER = ["Toolbox", "Payload", "Starlink", "Sentinel", "Satellite", "Other"];
+        const groups = new Map();
+        for (let i = 0; i < filtered.length; i++) {
+            const id = filtered[i];
+            const type = inferType(id);
+            if (!groups.has(type)) groups.set(type, []);
+            groups.get(type).push(id);
+        }
 
-                const active = getObjectLayerActive(id);
-                const selected = !active && selectedCatalogIds.has(id);
-                if (active) {
-                    rowEl.classList.add("is-added");
-                } else if (selected) {
-                    rowEl.classList.add("is-selected");
+        // Render por grupos en chunks para evitar bloqueos largos.
+        let rendered = 0;
+        const groupEntries = GROUP_ORDER.map((g) => [g, groups.get(g) || []]).filter(([, items]) => items.length);
+        const totalToRender = groupEntries.reduce((s, [, items]) => s + items.length, 0);
+
+        let currentGroupIndex = 0;
+        let groupItemIndex = 0;
+
+        function renderNextChunk() {
+            if (renderToken !== catalogRenderToken) return; // cancelado
+
+            const CHUNK = Math.max(40, Math.min(CATALOG_RENDER_CHUNK, 180));
+            let didWork = false;
+
+            while (currentGroupIndex < groupEntries.length) {
+                const [groupName, items] = groupEntries[currentGroupIndex];
+
+                // si estamos al inicio del grupo, añadir header
+                if (groupItemIndex === 0) {
+                    const headerEl = document.createElement("div");
+                    headerEl.className = "catalog-group-header";
+                    const collapsed = collapsedCatalogGroups.has(groupName);
+                    headerEl.innerHTML = `<span class="catalog-group-toggle">${collapsed ? "▸" : "▾"}</span>${escapeHtml(groupName)}`;
+                    headerEl.title = collapsed ? `Expandir grupo ${groupName}` : `Colapsar grupo ${groupName}`;
+                    headerEl.addEventListener("click", () => {
+                        if (collapsedCatalogGroups.has(groupName)) {
+                            collapsedCatalogGroups.delete(groupName);
+                        } else {
+                            collapsedCatalogGroups.add(groupName);
+                        }
+                        renderCatalogList();
+                    });
+                    catalogListRoot.appendChild(headerEl);
+                    if (collapsed) {
+                        currentGroupIndex += 1;
+                        groupItemIndex = 0;
+                        continue;
+                    }
                 }
 
-                const stateEl = document.createElement("div");
-                stateEl.className = `catalog-row-state${active ? " is-added" : ""}`;
-                stateEl.textContent = active ? "Anadido" : "Disponible";
+                let chunkCount = 0;
+                while (groupItemIndex < items.length && chunkCount < CHUNK) {
+                    const id = items[groupItemIndex];
+                    const rowEl = document.createElement("div");
+                    rowEl.className = "catalog-list-row";
 
-                rowEl.addEventListener("click", (event) => {
-                    if (catalogBusy || active) {
-                        return;
+                    const nameEl = document.createElement("div");
+                    nameEl.className = "catalog-list-name";
+                    nameEl.textContent = "";
+                    nameEl.style.userSelect = "none";
+
+                    const active = getObjectLayerActive(id);
+                    const selected = !active && selectedCatalogIds.has(id);
+                    // marcar TLEs muy antiguos
+                    const meta = getCatalogMeta(id);
+                    const tleSummary = meta.tleSummary;
+                    const orbitInfo = meta.orbitInfo;
+                    const oldInfo = checkTleOldAdaptive(tleSummary, orbitInfo);
+                    if (active) rowEl.classList.add("is-added");
+                    else if (selected) rowEl.classList.add("is-selected");
+
+                    const stateEl = document.createElement("div");
+                    stateEl.className = `catalog-row-state${active ? " is-added" : ""}`;
+                    stateEl.textContent = active ? "Anadido" : "Disponible";
+
+                    if (orbitInfo && orbitInfo.kind !== ORBIT_KIND.UNKNOWN) {
+                        const orbitTag = createOrbitTypeTagElement(orbitInfo);
+                        orbitTag.title = `${orbitInfo.label}. Recomendado: ${orbitInfo.recommendedWindow}`;
+                        nameEl.appendChild(orbitTag);
+                        nameEl.appendChild(document.createTextNode(" "));
                     }
 
-                    const isRangeSelection = event.shiftKey && catalogAnchorIndex !== null;
-                    const isMultiToggle = event.ctrlKey || event.metaKey;
+                    nameEl.appendChild(document.createTextNode(id));
 
-                    if (isRangeSelection) {
-                        const from = Math.min(catalogAnchorIndex, i);
-                        const to = Math.max(catalogAnchorIndex, i);
+                    if (oldInfo && oldInfo.isOld && !active) {
+                        const warn = document.createElement("span");
+                        warn.className = "catalog-old-warning";
+                        const warnMsg = buildTleFreshnessMessage(orbitInfo, tleAgeDaysFromSummary(tleSummary));
+                        warn.title = warnMsg;
+                        warn.textContent = "⚠";
+                        warn.addEventListener("click", (event) => {
+                            event.stopPropagation();
+                            showInfoPopup(warnMsg);
+                        });
+                        nameEl.appendChild(document.createTextNode(" "));
+                        nameEl.appendChild(warn);
+                    }
+
+                    const indexInFiltered = idIndexMap.get(id);
+
+                    rowEl.addEventListener("click", (event) => {
+                        if (catalogBusy || active) return;
+
+                        const isRangeSelection = event.shiftKey && catalogAnchorIndex !== null;
+                        const isMultiToggle = event.ctrlKey || event.metaKey;
+
+                        if (isRangeSelection && indexInFiltered !== -1) {
+                            const from = Math.min(catalogAnchorIndex, indexInFiltered);
+                            const to = Math.max(catalogAnchorIndex, indexInFiltered);
+                            if (!isMultiToggle) selectedCatalogIds.clear();
+
+                            for (let idx = from; idx <= to; idx++) {
+                                const rangeId = filtered[idx];
+                                if (!getObjectLayerActive(rangeId)) selectedCatalogIds.add(rangeId);
+                            }
+
+                            catalogAnchorIndex = indexInFiltered;
+                            refreshRenderedCatalogSelectionStyles();
+                            updateCatalogActionsState();
+                            return;
+                        }
+
                         if (!isMultiToggle) {
                             selectedCatalogIds.clear();
+                            selectedCatalogIds.add(id);
+                            catalogAnchorIndex = indexInFiltered;
+                            refreshRenderedCatalogSelectionStyles();
+                            updateCatalogActionsState();
+                            return;
                         }
 
-                        for (let index = from; index <= to; index++) {
-                            const rangeId = filtered[index];
-                            if (!getObjectLayerActive(rangeId)) {
-                                selectedCatalogIds.add(rangeId);
-                            }
+                        if (selectedCatalogIds.has(id)) {
+                            selectedCatalogIds.delete(id);
+                            rowEl.classList.remove("is-selected");
+                        } else {
+                            selectedCatalogIds.add(id);
+                            rowEl.classList.add("is-selected");
                         }
 
-                        catalogAnchorIndex = i;
-                        refreshRenderedCatalogSelectionStyles();
+                        catalogAnchorIndex = indexInFiltered;
                         updateCatalogActionsState();
-                        return;
-                    }
+                    });
 
-                    if (!isMultiToggle) {
-                        selectedCatalogIds.clear();
-                        selectedCatalogIds.add(id);
-                        catalogAnchorIndex = i;
-                        refreshRenderedCatalogSelectionStyles();
-                        updateCatalogActionsState();
-                        return;
-                    }
+                    rowEl.addEventListener("contextmenu", (event) => {
+                        event.preventDefault();
+                        openContextMenu(id, event.clientX, event.clientY);
+                    });
 
-                    if (selectedCatalogIds.has(id)) {
-                        selectedCatalogIds.delete(id);
-                        rowEl.classList.remove("is-selected");
-                    } else {
-                        selectedCatalogIds.add(id);
-                        rowEl.classList.add("is-selected");
-                    }
+                    rowEl.appendChild(nameEl);
+                    rowEl.appendChild(stateEl);
+                    catalogRowElements.set(id, rowEl);
+                    catalogListRoot.appendChild(rowEl);
 
-                    catalogAnchorIndex = i;
-                    updateCatalogActionsState();
-                });
+                    groupItemIndex += 1;
+                    chunkCount += 1;
+                    rendered += 1;
+                    didWork = true;
+                }
 
-                rowEl.addEventListener("contextmenu", (event) => {
-                    event.preventDefault();
-                    openContextMenu(id, event.clientX, event.clientY);
-                });
+                // Si terminamos el grupo, avanzar al siguiente
+                if (groupItemIndex >= items.length) {
+                    currentGroupIndex += 1;
+                    groupItemIndex = 0;
+                }
 
-                rowEl.appendChild(nameEl);
-                rowEl.appendChild(stateEl);
-                catalogRowElements.set(id, rowEl);
-                fragment.appendChild(rowEl);
+                // Si el chunk se llenó, break to yield
+                if (didWork && chunkCount >= CHUNK) break;
             }
 
-            catalogListRoot.appendChild(fragment);
-            catalogProgress.textContent = `Mostrando ${Math.min(end, total)}/${total}`;
+            catalogProgress.textContent = `Mostrando ${rendered}/${totalToRender} resultados...`;
 
-            if (end < filtered.length) {
-                requestAnimationFrame(() => renderChunk(end));
+            if (currentGroupIndex < groupEntries.length) {
+                requestAnimationFrame(renderNextChunk);
                 return;
             }
 
-            catalogProgress.textContent = `${total} resultados`;
-        };
+            // terminado
+            catalogProgress.textContent = `${totalToRender} resultados`;
+            updateCatalogActionsState();
+        }
 
-        requestAnimationFrame(() => renderChunk(0));
-        updateCatalogActionsState();
+        requestAnimationFrame(renderNextChunk);
     }
 
     function refreshRenderedCatalogSelectionStyles() {
@@ -1233,7 +1592,10 @@ export function setupObjectSidebar({
         const telemetry = selectedId && getObjectLayerActive(selectedId)
             ? getObjectTelemetry(selectedId)
             : null;
-        infoRoot.innerHTML = buildInfoText(telemetry);
+        const tle = selectedId && getObjectLayerActive(selectedId) ? getObjectTle?.(selectedId) : null;
+        const summary = parseTleSummary(tle);
+        const orbitInfo = getOrbitInfoFromTleSummary(summary, selectedId || "");
+        infoRoot.innerHTML = buildInfoText(telemetry, orbitInfo, summary);
     }
 
     function selectObject(id) {

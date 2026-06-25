@@ -12,7 +12,7 @@ const app = express();
 const PORT = 8100;
 const CONFIG_DIR = path.join(__dirname, "../config");
 const SYSTEM_CONFIG_PATH = path.join(CONFIG_DIR, "system_config.json");
-const DEFAULT_CATALOG_FILE = "catalog.txt";
+const DEFAULT_CATALOG_FILE = "catalog.json";
 
 const DEFAULT_CELESTRAK_GROUPS = [
     // Grupos de mayor cobertura
@@ -175,6 +175,15 @@ function serializeCatalog(entries) {
     return entries.map((entry) => `${entry.name}\n${entry.line1}\n${entry.line2}`).join("\n\n") + "\n";
 }
 
+function serializeCatalogJson(entries) {
+    return JSON.stringify({
+        format: "tle-catalog-v1",
+        generatedAt: new Date().toISOString(),
+        count: entries.length,
+        entries
+    });
+}
+
 async function resolveCatalogPath() {
     try {
         const raw = await fs.readFile(SYSTEM_CONFIG_PATH, "utf-8");
@@ -277,9 +286,12 @@ app.post("/api/catalog/refresh", async (_req, res) => {
     }
 
     const catalogPath = await resolveCatalogPath();
-    const catalogText = serializeCatalog(normalized);
+    const ext = path.extname(catalogPath).toLowerCase();
+    const catalogPayload = ext === ".txt"
+        ? serializeCatalog(normalized)
+        : serializeCatalogJson(normalized);
 
-    await fs.writeFile(catalogPath, catalogText, "utf-8");
+    await fs.writeFile(catalogPath, catalogPayload, "utf-8");
 
     res.json({
         ok: true,

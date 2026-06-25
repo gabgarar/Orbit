@@ -14,8 +14,8 @@
       "hide_near_satellite": false
     },
     "satellites": {
-      "label_size_px": 8,
-      "model_scale": 1000.0,
+      "label_size_px": 12,
+      "model_scale": 1500.0,
       "use_3d_model": true,
       "size_mode": "physical",
       "max_visible": 100
@@ -38,7 +38,7 @@
     }
   },
   "data": {
-    "satellites_file": "catalog.txt",
-    "satellites_catalog_file": "catalog.txt"
+    "satellites_file": "catalog.json",
+    "satellites_catalog_file": "catalog.json"
   }
 }
