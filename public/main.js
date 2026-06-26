@@ -16,7 +16,8 @@ import {
     isSatelliteLayerActive,
     setSatelliteLayerActive,
     setAllSatelliteLayersActive,
-    setAllSatellitesVisible
+    setAllSatellitesVisible,
+    setSelectedOrbitSatelliteId
 } from "./js/satellites.js";
 import { setupRuntimeConfigPanel } from "./js/configPanel.js";
 import { setupObjectSidebar } from "./js/objectSidebar.js";
@@ -41,6 +42,47 @@ async function loadConfig() {
         logger.error("No se pudo cargar system_config.json:", error);
         return null;
     }
+}
+
+async function persistSystemConfig(sectionedSystemConfig, dataConfig) {
+    const response = await fetch("/api/system-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            system: sectionedSystemConfig,
+            data: dataConfig
+        })
+    });
+
+    if (!response.ok) {
+        let detail = "";
+        try {
+            const payload = await response.json();
+            detail = payload?.error ? `: ${payload.error}` : "";
+        } catch {
+            detail = "";
+        }
+        throw new Error(`HTTP ${response.status}${detail}`);
+    }
+}
+
+async function persistSystemConfigWithRetry(sectionedSystemConfig, dataConfig, retries = 2) {
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            await persistSystemConfig(sectionedSystemConfig, dataConfig);
+            return;
+        } catch (error) {
+            lastError = error;
+            if (attempt >= retries) {
+                break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 180 * (attempt + 1)));
+        }
+    }
+
+    throw lastError;
 }
 
 logger.info("Creando SingleTileImageryProvider para assets/earth8.jpg...");
@@ -98,6 +140,48 @@ let runtimeSystemConfig = null;
 let lastAppliedResolutionScale = null;
 let lastAppliedUiScale = null;
 let resizeAnimationFrameId = null;
+let currentRuntimeDataConfig = { satellites_catalog_file: "catalog.json" };
+let persistConfigTimeoutId = null;
+let lastPersistedSystemConfigSerialized = "";
+let runtimeConfigPanelApi = null;
+
+function setConfigSaveState(state, message) {
+    if (runtimeConfigPanelApi && typeof runtimeConfigPanelApi.setSaveState === "function") {
+        runtimeConfigPanelApi.setSaveState(state, message);
+    }
+}
+
+function schedulePersistSystemConfig(nextSectionedSystemConfig) {
+    const serialized = JSON.stringify(nextSectionedSystemConfig || {});
+    if (serialized === lastPersistedSystemConfigSerialized) {
+        setConfigSaveState("saved", "Estado: guardado");
+        return;
+    }
+
+    setConfigSaveState("saving", "Estado: guardando...");
+
+    if (persistConfigTimeoutId !== null) {
+        clearTimeout(persistConfigTimeoutId);
+    }
+
+    persistConfigTimeoutId = setTimeout(async () => {
+        persistConfigTimeoutId = null;
+        try {
+            await persistSystemConfigWithRetry(nextSectionedSystemConfig, currentRuntimeDataConfig, 2);
+            lastPersistedSystemConfigSerialized = serialized;
+            const savedAt = new Date();
+            const hh = String(savedAt.getHours()).padStart(2, "0");
+            const mm = String(savedAt.getMinutes()).padStart(2, "0");
+            const ss = String(savedAt.getSeconds()).padStart(2, "0");
+            setConfigSaveState("saved", `Estado: guardado ${hh}:${mm}:${ss}`);
+        } catch (error) {
+            logger.error("No se pudo persistir system_config en servidor:", error);
+            const detail = error instanceof Error ? error.message : String(error);
+            const shortDetail = detail.length > 56 ? `${detail.slice(0, 56)}...` : detail;
+            setConfigSaveState("error", `Estado: error al guardar (${shortDetail})`);
+        }
+    }, 250);
+}
 
 function getTychoSkyBox() {
     if (!tychoSkyMapHighRes) {
@@ -199,11 +283,13 @@ function computeAdaptiveUiScale() {
 }
 
 function applyResolutionScaleConfig(systemConfig, options = {}) {
-    const mode = systemConfig.resolution_scale_mode ?? "auto";
-    const manualScale = Number(systemConfig.resolution_scale);
-    const resolvedScale = mode === "manual" && Number.isFinite(manualScale)
-        ? clamp(manualScale, 0.5, 2)
-        : computeAdaptiveResolutionScale();
+    let resolvedScale = computeAdaptiveResolutionScale();
+
+    const antialiasMode = systemConfig.antialias_mode ?? (systemConfig.antialias_enabled !== false ? "fxaa" : "off");
+    if (antialiasMode !== "off") {
+        // Con AA activo priorizamos nitidez en líneas orbitales.
+        resolvedScale = Math.max(1, resolvedScale);
+    }
 
     const shouldUpdate =
         !Number.isFinite(lastAppliedResolutionScale) ||
@@ -220,16 +306,12 @@ function applyResolutionScaleConfig(systemConfig, options = {}) {
     lastAppliedResolutionScale = resolvedScale;
 
     if (!options.silent) {
-        logger.info(`Resolution scale: ${resolvedScale.toFixed(3)} (${mode})`);
+        logger.info(`Resolution scale: ${resolvedScale.toFixed(3)} (auto)`);
     }
 }
 
 function applyUiScaleConfig(systemConfig, options = {}) {
-    const mode = systemConfig.ui_scale_mode ?? "auto";
-    const manualScale = Number(systemConfig.ui_scale);
-    const resolvedScale = mode === "manual" && Number.isFinite(manualScale)
-        ? clamp(manualScale, 0.7, 1.25)
-        : computeAdaptiveUiScale();
+    const resolvedScale = computeAdaptiveUiScale();
 
     const shouldUpdate =
         !Number.isFinite(lastAppliedUiScale) ||
@@ -243,7 +325,7 @@ function applyUiScaleConfig(systemConfig, options = {}) {
     lastAppliedUiScale = resolvedScale;
 
     if (!options.silent) {
-        logger.info(`UI scale: ${resolvedScale.toFixed(3)} (${mode})`);
+        logger.info(`UI scale: ${resolvedScale.toFixed(3)} (auto)`);
     }
 }
 
@@ -378,16 +460,20 @@ function firstPersonSatellite(entity) {
         ...(config || {}),
         system: toSectionedSystemConfig(config?.system || {})
     };
+    currentRuntimeDataConfig = currentConfig?.data || { satellites_catalog_file: "catalog.json" };
+    lastPersistedSystemConfigSerialized = JSON.stringify(currentConfig.system || {});
 
     let objectSidebar = null;
 
-    setupRuntimeConfigPanel({
+    runtimeConfigPanelApi = setupRuntimeConfigPanel({
         initialSystemConfig: currentConfig.system,
         onSystemConfigChange: (nextSystemConfig) => {
             currentConfig.system = nextSystemConfig;
             applySystemRuntimeConfig(currentConfig.system);
+            schedulePersistSystemConfig(currentConfig.system);
         }
     });
+    setConfigSaveState("idle", "Estado: sincronizado");
 
     applySystemRuntimeConfig(currentConfig.system);
 
@@ -421,6 +507,7 @@ function firstPersonSatellite(entity) {
             if (!entity) {
                 return;
             }
+            setSelectedOrbitSatelliteId(id);
             focusSatellite(entity);
         },
         onSelectObject: (id) => {
@@ -428,6 +515,7 @@ function firstPersonSatellite(entity) {
             if (!entity) {
                 return;
             }
+            setSelectedOrbitSatelliteId(id);
             viewer.selectedEntity = entity;
         },
         isCatalogReady: () => isCatalogLoaded(),
@@ -445,11 +533,13 @@ function firstPersonSatellite(entity) {
             objectSidebar.selectObject(pickedId);
             const entity = getSatelliteEntity(pickedId);
             if (entity) {
+                setSelectedOrbitSatelliteId(pickedId);
                 viewer.selectedEntity = entity;
             }
             return;
         }
 
+        setSelectedOrbitSatelliteId(null);
         viewer.selectedEntity = undefined;
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
@@ -468,6 +558,7 @@ function firstPersonSatellite(entity) {
             return;
         }
 
+        setSelectedOrbitSatelliteId(pickedId);
         viewer.selectedEntity = entity;
         firstPersonSatellite(entity);
     }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);

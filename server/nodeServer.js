@@ -87,6 +87,27 @@ function getUniqueSorted(values) {
 
 app.use(express.json());
 
+function isObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function sanitizeSystemConfigPayload(payload) {
+    if (!isObject(payload)) {
+        return null;
+    }
+
+    const system = payload.system;
+    if (!isObject(system)) {
+        return null;
+    }
+
+    // Mantener solamente estructura esperada del sistema.
+    return {
+        system,
+        data: isObject(payload.data) ? payload.data : undefined
+    };
+}
+
 function parseTleCatalog(text) {
     const lines = String(text || "")
         .split(/\r?\n/)
@@ -501,6 +522,51 @@ app.get("/api/catalog/tle", async (req, res) => {
         }
 
         res.json({ ok: true, item: match });
+    } catch (error) {
+        res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+        });
+    }
+});
+
+app.post("/api/system-config", async (req, res) => {
+    try {
+        const sanitized = sanitizeSystemConfigPayload(req.body);
+        if (!sanitized) {
+            res.status(400).json({
+                ok: false,
+                error: "Payload inválido. Se esperaba { system: {...}, data?: {...} }."
+            });
+            return;
+        }
+
+        let previous = {};
+        try {
+            const raw = await fs.readFile(SYSTEM_CONFIG_PATH, "utf-8");
+            previous = JSON.parse(raw);
+        } catch {
+            previous = {};
+        }
+
+        const nextConfig = {
+            ...previous,
+            system: sanitized.system,
+            data: sanitized.data ?? previous?.data ?? { satellites_catalog_file: DEFAULT_CATALOG_FILE }
+        };
+
+        await fs.writeFile(SYSTEM_CONFIG_PATH, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf-8");
+
+        // Forzar recarga inmediata de configuración en backend Python.
+        try {
+            if (pythonProcess && !pythonProcess.killed) {
+                pythonProcess.kill("SIGHUP");
+            }
+        } catch (signalError) {
+            console.warn("No se pudo enviar SIGHUP a Python:", signalError);
+        }
+
+        res.json({ ok: true });
     } catch (error) {
         res.status(500).json({
             ok: false,

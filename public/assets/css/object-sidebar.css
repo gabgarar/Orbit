@@ -708,6 +708,8 @@
     align-items: center;
     gap: 8px;
     padding: 6px 8px;
+    min-height: 38px;
+    box-sizing: border-box;
     border-bottom: 1px solid #20304a;
     cursor: pointer;
 }
@@ -728,6 +730,9 @@
 .catalog-list-name {
     color: #d6e5ff;
     font: 12px sans-serif;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .catalog-row-state {
@@ -778,6 +783,39 @@
     bottom: 0;
     padding-top: 8px;
     background: linear-gradient(180deg, rgba(15, 21, 32, 0.15) 0%, rgba(15, 21, 32, 0.98) 24%);
+}
+
+.catalog-pagination {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.catalog-page-info {
+    text-align: center;
+    color: #cfe1ff;
+    font: 600 12px sans-serif;
+}
+
+.catalog-page-btn {
+    border: 1px solid #395279;
+    border-radius: 8px;
+    background: #1a2a44;
+    color: #dce9ff;
+    font: 700 12px sans-serif;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+
+.catalog-page-btn:hover:not(:disabled) {
+    background: #223555;
+    border-color: #4a6a97;
+}
+
+.catalog-page-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 /* Toasts para notificaciones no bloqueantes */

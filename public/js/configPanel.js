@@ -1,28 +1,25 @@
 const CONFIG_SCHEMA = {
     orbit: [
-        { key: "propagation_hours", label: "Propagation Hours", type: "number", step: "0.1", min: "0.1" },
+        { key: "propagation_hours", label: "Propagation Hours", type: "number", step: "0.1", min: "0.1", max: "240" },
         { key: "width_mode", label: "Orbit Width Mode", type: "select", options: ["visual", "physical"] },
         { key: "future_show", label: "Future Show", type: "checkbox" },
-        { key: "future_samples", label: "Future Samples", type: "number", step: "1", min: "2" },
         { key: "future_line_width", label: "Future Line Width", type: "number", step: "0.1", min: "0.1" },
         { key: "future_color", label: "Future Color", type: "color" },
+        { key: "selected_color", label: "Selected Orbit Color", type: "color" },
         { key: "past_show", label: "Past Show", type: "checkbox" },
-        { key: "past_samples", label: "Past Samples", type: "number", step: "1", min: "2" },
+        { key: "past_seconds", label: "Past Duration (s)", type: "number", step: "0.1", min: "0.1", max: "86400" },
         { key: "past_line_width", label: "Past Line Width", type: "number", step: "0.1", min: "0.1" },
-        { key: "past_color", label: "Past Color", type: "color" },
-        { key: "hide_near_satellite", label: "Hide Near Satellite", type: "checkbox" }
+        { key: "past_color", label: "Past Color", type: "color" }
     ],
     satellites: [
         { key: "label_size_px", label: "Label Size (px)", type: "number", step: "1", min: "0" },
         { key: "model_scale", label: "Model Scale", type: "number", step: "1", min: "0.000001" },
         { key: "use_3d_model", label: "Use 3D Model", type: "checkbox" },
-        { key: "size_mode", label: "Size Mode", type: "select", options: ["visual", "physical"] },
-        { key: "max_visible", label: "Max Visible", type: "number", step: "1", min: "1" }
+        { key: "size_mode", label: "Size Mode", type: "select", options: ["visual", "physical"] }
     ],
     realtime: [
         { key: "state_interval_seconds", label: "State Interval (s)", type: "number", step: "0.1", min: "0.1" },
-        { key: "orbit_interval_seconds", label: "Orbit Interval (s)", type: "number", step: "0.1", min: "0.1" },
-        { key: "orbit_cache_ttl_seconds", label: "Orbit Cache TTL (s)", type: "number", step: "1", min: "1" }
+        { key: "orbit_interval_seconds", label: "Orbit Interval (s)", type: "number", step: "0.1", min: "0.1" }
     ],
     logging: [
         { key: "enabled", label: "Logging Enabled", type: "checkbox" },
@@ -30,10 +27,6 @@ const CONFIG_SCHEMA = {
     ],
     rendering: [
         { key: "antialias_mode", label: "Antialias Mode", type: "select", options: ["off", "fxaa", "msaa"] },
-        { key: "resolution_scale_mode", label: "Resolution Scale Mode", type: "select", options: ["auto", "manual"] },
-        { key: "resolution_scale", label: "Resolution Scale", type: "number", step: "0.05", min: "0.5", max: "2" },
-        { key: "ui_scale_mode", label: "UI Scale Mode", type: "select", options: ["auto", "manual"] },
-        { key: "ui_scale", label: "UI Scale", type: "number", step: "0.05", min: "0.7", max: "1.25" },
         { key: "background_color", label: "Background Color", type: "color" },
         { key: "sky_atmosphere", label: "Sky Atmosphere", type: "checkbox" },
         { key: "globe_lighting", label: "Globe Lighting", type: "checkbox" },
@@ -42,36 +35,29 @@ const CONFIG_SCHEMA = {
 };
 
 const FIELD_HELP = {
-    "orbit.propagation_hours": "Horas de proyeccion de la orbita futura.",
+    "orbit.propagation_hours": "Horas de proyeccion de la orbita futura. Rango permitido: 0.1 a 240 horas.",
     "orbit.future_show": "Muestra u oculta la orbita futura.",
-    "orbit.future_samples": "Numero de puntos usados para dibujar la orbita futura.",
     "orbit.future_line_width": "Grosor de la linea de orbita futura.",
     "orbit.width_mode": "visual: grosor fijo en pantalla. physical: grosor aparente cambia con distancia.",
     "orbit.future_color": "Color de la orbita futura.",
+    "orbit.selected_color": "Color de la orbita del satelite seleccionado.",
     "orbit.past_show": "Muestra u oculta la estela/orbita pasada.",
-    "orbit.past_samples": "Cantidad de puntos historicos de estela.",
+    "orbit.past_seconds": "Duracion temporal de la estela pasada en segundos. Rango permitido: 0.1 a 86400.",
     "orbit.past_line_width": "Grosor de la linea de orbita pasada.",
     "orbit.past_color": "Color de la orbita pasada.",
-    "orbit.hide_near_satellite": "Oculta el tramo de linea muy cercano al satelite.",
 
     "satellites.label_size_px": "Tamano de texto de label. 0 oculta labels.",
     "satellites.model_scale": "Escala visual del modelo 3D del satelite.",
     "satellites.use_3d_model": "Si esta activo, el satelite se renderiza como modelo 3D. Si no, se dibuja como punto.",
     "satellites.size_mode": "visual: mantiene visibilidad por pixel. physical: respeta mas el tamano angular real por distancia.",
-    "satellites.max_visible": "Numero maximo de satelites visibles en pantalla.",
 
     "realtime.state_interval_seconds": "Cada cuantos segundos llega el estado por WebSocket.",
     "realtime.orbit_interval_seconds": "Cada cuantos segundos llega la orbita por WebSocket.",
-    "realtime.orbit_cache_ttl_seconds": "Tiempo de vida del cache de orbitas en backend.",
 
     "logging.enabled": "Activa o desactiva trazas del logger.",
     "logging.level": "Nivel de logs: debug, info, warn, error o silent.",
 
     "rendering.antialias_mode": "Elige el metodo de antialiasing: 'off' desactiva suavizado; 'fxaa' aplica FXAA (post-proceso, barato); 'msaa' usa MSAA (mejor calidad si soportado).",
-    "rendering.resolution_scale_mode": "auto adapta el render segun DPI/resolucion; manual usa el valor fijo de Resolution Scale.",
-    "rendering.resolution_scale": "Escala del render Cesium: < 1 mejora rendimiento y reduce tamano aparente en pantallas densas; > 1 aumenta nitidez y coste GPU.",
-    "rendering.ui_scale_mode": "auto adapta el tamano de paneles segun DPI/resolucion; manual aplica escala fija de interfaz.",
-    "rendering.ui_scale": "Escala visual de paneles y controles. 1 = tamano base.",
     "rendering.background_color": "Color de fondo del visor.",
     "rendering.sky_atmosphere": "Muestra atmosfera del cielo.",
     "rendering.globe_lighting": "Activa iluminacion del globo por sol.",
@@ -105,7 +91,9 @@ function createPanelMarkup() {
             <h3>Configuracion en tiempo real</h3>
             <button class="config-close-btn" id="configCloseBtn" type="button" aria-label="Cerrar panel" title="Cerrar">✕</button>
         </div>
-        <div id="configHint">Los cambios se aplican al instante en la vista (no guardan el archivo en disco).</div>
+        <div id="configHint">Los cambios se aplican al instante en la vista y se guardan en disco.</div>
+        <div id="configValidationBanner" class="config-validation-banner" hidden aria-live="assertive"></div>
+        <div id="configSaveStatus" class="config-save-status idle" aria-live="polite">Estado: sincronizado</div>
         <div id="configForm"></div>
     `;
 
@@ -119,11 +107,56 @@ function createPanelMarkup() {
         panel,
         panelHeader: panel.querySelector("#configPanelHeader"),
         closeBtn: panel.querySelector("#configCloseBtn"),
+        validationBanner: panel.querySelector("#configValidationBanner"),
+        saveStatus: panel.querySelector("#configSaveStatus"),
         formRoot: panel.querySelector("#configForm")
     };
 }
 
-function createFieldElement(sectionName, field, currentSystemConfig, onChange) {
+function showValidationBanner(validationBannerElement, message) {
+    if (!validationBannerElement) {
+        return;
+    }
+
+    validationBannerElement.hidden = false;
+    validationBannerElement.textContent = message;
+}
+
+function hideValidationBanner(validationBannerElement) {
+    if (!validationBannerElement) {
+        return;
+    }
+
+    validationBannerElement.hidden = true;
+    validationBannerElement.textContent = "";
+}
+
+function setSaveStatus(saveStatusElement, state, message) {
+    if (!saveStatusElement) {
+        return;
+    }
+
+    const nextState = state || "idle";
+    saveStatusElement.classList.remove("idle", "saving", "saved", "error");
+    saveStatusElement.classList.add(nextState);
+
+    if (message) {
+        saveStatusElement.textContent = message;
+        return;
+    }
+
+    if (nextState === "saving") {
+        saveStatusElement.textContent = "Estado: guardando...";
+    } else if (nextState === "saved") {
+        saveStatusElement.textContent = "Estado: guardado";
+    } else if (nextState === "error") {
+        saveStatusElement.textContent = "Estado: error al guardar";
+    } else {
+        saveStatusElement.textContent = "Estado: sincronizado";
+    }
+}
+
+function createFieldElement(sectionName, field, currentSystemConfig, onChange, onValidationError, onValidationOk) {
     const wrapper = document.createElement("div");
     wrapper.className = `config-field${field.type === "checkbox" ? " checkbox" : ""}`;
 
@@ -176,11 +209,33 @@ function createFieldElement(sectionName, field, currentSystemConfig, onChange) {
             value = input.checked;
         } else if (type === "number") {
             const parsed = Number(input.value);
-            value = Number.isFinite(parsed) ? parsed : currentSystemConfig[section][key];
+            if (!Number.isFinite(parsed)) {
+                onValidationError?.(`${field.label}: valor numerico no valido.`);
+                input.value = String(currentSystemConfig[section][key] ?? "");
+                return;
+            }
+
+            const min = field.min !== undefined ? Number(field.min) : Number.NEGATIVE_INFINITY;
+            const max = field.max !== undefined ? Number(field.max) : Number.POSITIVE_INFINITY;
+
+            if (Number.isFinite(min) && parsed < min) {
+                onValidationError?.(`${field.label}: valor fuera de rango. Minimo permitido: ${min}.`);
+                input.value = String(currentSystemConfig[section][key] ?? "");
+                return;
+            }
+
+            if (Number.isFinite(max) && parsed > max) {
+                onValidationError?.(`${field.label}: valor fuera de rango. Maximo permitido: ${max}.`);
+                input.value = String(currentSystemConfig[section][key] ?? "");
+                return;
+            }
+
+            value = parsed;
         } else {
             value = input.value;
         }
 
+        onValidationOk?.();
         currentSystemConfig[section][key] = value;
         onChange(cloneConfig(currentSystemConfig));
     };
@@ -206,7 +261,7 @@ function createFieldElement(sectionName, field, currentSystemConfig, onChange) {
     return wrapper;
 }
 
-function renderConfigPanel(formRoot, currentSystemConfig, onChange) {
+function renderConfigPanel(formRoot, currentSystemConfig, onChange, onValidationError, onValidationOk) {
     formRoot.innerHTML = "";
 
     for (const [sectionName, fields] of Object.entries(CONFIG_SCHEMA)) {
@@ -258,11 +313,11 @@ function renderConfigPanel(formRoot, currentSystemConfig, onChange) {
 
             // Force explicit future field order so we can swap positions as requested
             const desiredFutureOrder = [
-                "future_samples",
                 "future_line_width",
                 // place width_mode here (swapped with future_show)
                 "width_mode",
                 "future_color",
+                "selected_color",
                 "future_show"
             ];
 
@@ -270,7 +325,7 @@ function renderConfigPanel(formRoot, currentSystemConfig, onChange) {
             for (const key of desiredFutureOrder) {
                 const f = fieldByKey.get(key);
                 if (f) {
-                    const el = createFieldElement(sectionName, f, currentSystemConfig, onChange);
+                    const el = createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk);
                     // align future color and show to left per last request
                     if (key === "future_color" || key === "future_show") {
                         el.classList.add("align-left");
@@ -284,24 +339,24 @@ function renderConfigPanel(formRoot, currentSystemConfig, onChange) {
             for (const f of futureFields) {
                 const k = String(f.key || "");
                 if (usedFuture.has(k)) continue;
-                futureGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange));
+                futureGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk));
                 usedFuture.add(k);
             }
 
-            // Past: prefer order [past_samples, past_line_width, past_show, past_color]
-            const desiredPastOrder = ["past_samples", "past_line_width", "past_color", "past_show"];
+            // Past: prefer order [past_seconds, past_line_width, past_show, past_color]
+            const desiredPastOrder = ["past_seconds", "past_line_width", "past_color", "past_show"];
             const used = new Set();
             for (const key of desiredPastOrder) {
                 const f = fieldByKey.get(key);
                 if (f) {
-                    pastGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange));
+                    pastGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk));
                     used.add(key);
                 }
             }
             // Append any remaining past fields in their original order
             for (const f of pastFields) {
                 if (!used.has(String(f.key))) {
-                    pastGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange));
+                    pastGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk));
                 }
             }
 
@@ -309,7 +364,7 @@ function renderConfigPanel(formRoot, currentSystemConfig, onChange) {
             // Remove width_mode from otherOrbitFields to avoid duplication if we insert it explicitly
             const otherFiltered = otherOrbitFields.filter((f) => String(f.key) !== "width_mode");
             for (const f of otherFiltered) {
-                futureGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange));
+                futureGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk));
             }
 
             orbitWrapper.appendChild(futureTitle);
@@ -349,14 +404,14 @@ function renderConfigPanel(formRoot, currentSystemConfig, onChange) {
             const toolboxGrid = document.createElement("div");
             toolboxGrid.className = "config-grid";
             for (const field of toolboxFields) {
-                toolboxGrid.appendChild(createFieldElement(sectionName, field, currentSystemConfig, onChange));
+                toolboxGrid.appendChild(createFieldElement(sectionName, field, currentSystemConfig, onChange, onValidationError, onValidationOk));
             }
             section.appendChild(toolboxGrid);
         }
 
         // añadir el resto de campos
         for (const field of otherFields) {
-            grid.appendChild(createFieldElement(sectionName, field, currentSystemConfig, onChange));
+            grid.appendChild(createFieldElement(sectionName, field, currentSystemConfig, onChange, onValidationError, onValidationOk));
         }
 
         section.appendChild(grid);
@@ -437,14 +492,20 @@ function makePanelDraggable(panelHeader, panel) {
 
 export function setupRuntimeConfigPanel({ initialSystemConfig, onSystemConfigChange }) {
     let currentSystemConfig = cloneConfig(initialSystemConfig || {});
-    const { toggleBtn, modal, panel, panelHeader, closeBtn, formRoot } = createPanelMarkup();
+    const { toggleBtn, modal, panel, panelHeader, closeBtn, validationBanner, saveStatus, formRoot } = createPanelMarkup();
 
     const propagateChange = (nextSystemConfig) => {
         currentSystemConfig = cloneConfig(nextSystemConfig);
         onSystemConfigChange(cloneConfig(currentSystemConfig));
     };
 
-    renderConfigPanel(formRoot, currentSystemConfig, propagateChange);
+    renderConfigPanel(
+        formRoot,
+        currentSystemConfig,
+        propagateChange,
+        (message) => showValidationBanner(validationBanner, message),
+        () => hideValidationBanner(validationBanner)
+    );
     syncConfigPanelValues(formRoot, currentSystemConfig);
     makePanelDraggable(panelHeader, panel);
 
@@ -463,10 +524,15 @@ export function setupRuntimeConfigPanel({ initialSystemConfig, onSystemConfigCha
         }
     });
 
+    setSaveStatus(saveStatus, "idle");
+
     return {
         setSystemConfig(nextConfig) {
             currentSystemConfig = cloneConfig(nextConfig || {});
             syncConfigPanelValues(formRoot, currentSystemConfig);
+        },
+        setSaveState(state, message) {
+            setSaveStatus(saveStatus, state, message);
         }
     };
 }

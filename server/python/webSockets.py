@@ -45,18 +45,22 @@ class WebSocketServer:
                 ids = []
 
             clean_ids = [str(x) for x in ids if isinstance(x, str)]
-            subscriptions = self.client_states.get(client_id, {}).get("subscriptions")
+            client_state = self.client_states.get(client_id, {})
+            subscriptions = client_state.get("subscriptions")
             if subscriptions is None:
                 continue
 
             if msg_type == "subscribe":
                 subscriptions.update(clean_ids)
+                client_state["force_refresh"] = True
             elif msg_type == "unsubscribe":
                 for sat_id in clean_ids:
                     subscriptions.discard(sat_id)
+                client_state["force_refresh"] = True
             elif msg_type == "set_subscriptions":
                 subscriptions.clear()
                 subscriptions.update(clean_ids)
+                client_state["force_refresh"] = True
 
     def _compress_if_needed(self, json_str):
         """Comprimir datos si superan umbral y está habilitado."""
@@ -77,6 +81,7 @@ class WebSocketServer:
             "last_state": None,
             "last_orbits": None,
             "subscriptions": set(),
+            "force_refresh": False,
         }
         print(f"🟢 Cliente conectado (ID: {client_id})")
 
@@ -94,7 +99,13 @@ class WebSocketServer:
             while True:
                 now = loop.time()
                 sent_message = False
-                subscriptions = self.client_states.get(client_id, {}).get("subscriptions", set())
+                client_state = self.client_states.get(client_id, {})
+                subscriptions = client_state.get("subscriptions", set())
+
+                if client_state.get("force_refresh"):
+                    next_state_at = 0.0
+                    next_orbit_at = 0.0
+                    client_state["force_refresh"] = False
 
                 if self.on_state_callback and now >= next_state_at:
                     data = self.on_state_callback(client_id, subscriptions)

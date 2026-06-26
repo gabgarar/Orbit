@@ -1,44 +1,38 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 0.5,
+      "propagation_hours": 240,
       "future_show": true,
-      "future_samples": 125,
-      "future_line_width": 1,
+      "future_line_width": 2,
       "width_mode": "physical",
       "future_color": "#7fd7ff",
+      "selected_color": "#ff2d2d",
       "past_show": true,
       "past_color": "#ff9a5a",
-      "past_samples": 125,
-      "past_line_width": 1,
-      "hide_near_satellite": false
+      "past_seconds": 9000,
+      "past_line_width": 2
     },
     "satellites": {
       "label_size_px": 12,
-      "model_scale": 1500.0,
+      "model_scale": 1500,
       "use_3d_model": true,
-      "size_mode": "physical",
-      "max_visible": 100
+      "size_mode": "physical"
     },
     "realtime": {
       "state_interval_seconds": 0.1,
-      "orbit_interval_seconds": 0.1,
-      "orbit_cache_ttl_seconds": 10
+      "orbit_interval_seconds": 5
     },
     "logging": {
       "enabled": false,
       "level": "info"
     },
     "rendering": {
+      "antialias_mode": "msaa",
       "antialias_enabled": true,
-      "resolution_scale_mode": "auto",
-      "resolution_scale": 1.0,
-      "ui_scale_mode": "auto",
-      "ui_scale": 1.0,
       "background_color": "#03070d",
       "sky_atmosphere": true,
       "globe_lighting": true,
-      "stars_enabled": false
+      "stars_enabled": true
     }
   },
   "data": {

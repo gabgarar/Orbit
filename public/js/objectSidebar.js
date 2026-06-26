@@ -503,11 +503,6 @@ export function setupObjectSidebar({
     };
 
     const CATALOG_PAGE_SIZE = 200;
-    const CATALOG_WINDOW_MAX_ROWS = 800;
-    const CATALOG_WINDOW_STEP_ROWS = 200;
-    const CATALOG_WINDOW_EDGE_THRESHOLD = 140;
-    const CATALOG_PREFETCH_THRESHOLD = 560;
-    const CATALOG_ROW_HEIGHT_FALLBACK = 42;
     const BULK_PROCESS_CHUNK = 60;
 
     let catalogRenderToken = 0;
@@ -522,16 +517,10 @@ export function setupObjectSidebar({
     let lastRenderedCatalogIds = [];
     let catalogServerTotal = 0;
     let catalogOffset = 0;
+    let catalogCurrentPage = 1;
+    let catalogTotalPages = 1;
     let catalogHasMore = false;
     let catalogLoadingPage = false;
-    let catalogRowHeightPx = CATALOG_ROW_HEIGHT_FALLBACK;
-    let catalogWindowStart = 0;
-    let catalogWindowEnd = 0;
-    let catalogLastScrollTop = 0;
-    let catalogAdjustingScroll = false;
-    let catalogVirtualTopSpacer = null;
-    let catalogVirtualRowsRoot = null;
-    let catalogVirtualBottomSpacer = null;
     const catalogIndexById = new Map();
     const catalogMetaCache = new Map();
 
@@ -615,6 +604,11 @@ export function setupObjectSidebar({
             <div id="catalogList"></div>
             <div class="catalog-modal-actions">
                 <div class="catalog-progress" id="catalogProgress" aria-live="polite"></div>
+                <div class="catalog-pagination">
+                    <button class="catalog-page-btn" id="catalogPrevPageBtn" type="button">Anterior</button>
+                    <div class="catalog-page-info" id="catalogPageInfo" aria-live="polite">Pagina 1/1</div>
+                    <button class="catalog-page-btn" id="catalogNextPageBtn" type="button">Siguiente</button>
+                </div>
                 <button class="catalog-action-btn" id="catalogAddSelectedBtn" type="button">Añadir seleccionadas</button>
             </div>
         </div>
@@ -714,6 +708,9 @@ export function setupObjectSidebar({
     const catalogRefreshBar = catalogModal.querySelector("#catalogRefreshBar");
     const catalogListRoot = catalogModal.querySelector("#catalogList");
     const catalogProgress = catalogModal.querySelector("#catalogProgress");
+    const catalogPrevPageBtn = catalogModal.querySelector("#catalogPrevPageBtn");
+    const catalogPageInfo = catalogModal.querySelector("#catalogPageInfo");
+    const catalogNextPageBtn = catalogModal.querySelector("#catalogNextPageBtn");
     const catalogAddSelectedBtn = catalogModal.querySelector("#catalogAddSelectedBtn");
 
     const catalogFilterCloseBtn = catalogFilterModal.querySelector("#catalogFilterCloseBtn");
@@ -1286,46 +1283,18 @@ export function setupObjectSidebar({
         applyCatalogFilters({ [key]: "" });
     });
 
-    catalogListRoot.addEventListener("scroll", () => {
-        if (catalogAdjustingScroll) {
+    catalogPrevPageBtn.addEventListener("click", () => {
+        if (catalogCurrentPage <= 1 || catalogLoadingPage) {
             return;
         }
+        requestCatalogPage(catalogCurrentPage - 1);
+    });
 
-        if (catalogModal.classList.contains("open") && catalogRenderToken === catalogQueryToken) {
-            const currentScrollTop = catalogListRoot.scrollTop;
-            const scrollingDown = currentScrollTop >= catalogLastScrollTop;
-            catalogLastScrollTop = currentScrollTop;
-
-            if (scrollingDown) {
-                const movedRows = isNearCatalogBottom(CATALOG_WINDOW_EDGE_THRESHOLD) ? shiftCatalogWindowDown() : 0;
-                if (movedRows > 0) {
-                    renderCatalogWindowRows(catalogRenderToken);
-                    const adjustPx = movedRows * Math.max(1, catalogRowHeightPx);
-                    catalogAdjustingScroll = true;
-                    catalogListRoot.scrollTop += adjustPx;
-                    catalogLastScrollTop = catalogListRoot.scrollTop;
-                    requestAnimationFrame(() => {
-                        catalogAdjustingScroll = false;
-                    });
-                    return;
-                }
-            } else {
-                const movedRows = currentScrollTop <= CATALOG_WINDOW_EDGE_THRESHOLD ? shiftCatalogWindowUp() : 0;
-                if (movedRows > 0) {
-                    renderCatalogWindowRows(catalogRenderToken);
-                    const adjustPx = movedRows * Math.max(1, catalogRowHeightPx);
-                    catalogAdjustingScroll = true;
-                    catalogListRoot.scrollTop = Math.max(0, catalogListRoot.scrollTop - adjustPx);
-                    catalogLastScrollTop = catalogListRoot.scrollTop;
-                    requestAnimationFrame(() => {
-                        catalogAdjustingScroll = false;
-                    });
-                    return;
-                }
-            }
+    catalogNextPageBtn.addEventListener("click", () => {
+        if (catalogCurrentPage >= catalogTotalPages || catalogLoadingPage) {
+            return;
         }
-
-        maybeLoadMoreCatalog(catalogRenderToken);
+        requestCatalogPage(catalogCurrentPage + 1);
     });
 
     catalogAddSelectedBtn.addEventListener("click", async () => {
@@ -1572,43 +1541,37 @@ export function setupObjectSidebar({
             return;
         }
 
-        // Garantiza que la barra no aparezca fuera del refresh real.
         if (!catalogRefreshBusy) {
             setCatalogRefreshState({ visible: false, text: "", value: 0 });
         }
 
-        const token = ++catalogQueryToken;
-        catalogRenderToken = token;
-        catalogOffset = 0;
-        catalogServerTotal = 0;
-        catalogHasMore = false;
-        catalogLoadingPage = false;
-        lastRenderedCatalogIds = [];
-        catalogIndexById.clear();
-        catalogRowHeightPx = CATALOG_ROW_HEIGHT_FALLBACK;
-        catalogWindowStart = 0;
-        catalogWindowEnd = 0;
-        catalogLastScrollTop = 0;
-        catalogAdjustingScroll = false;
-        renderCatalogRows([], token);
-        loadCatalogNextPage(token);
+        catalogCurrentPage = 1;
+        requestCatalogPage(catalogCurrentPage);
     }
 
-    async function loadCatalogNextPage(token = catalogQueryToken) {
-        if (!fetchCatalogPage || catalogLoadingPage) {
-            return;
-        }
+    function requestCatalogPage(page) {
+        const safePage = Math.max(1, Number(page) || 1);
+        const token = ++catalogQueryToken;
+        catalogRenderToken = token;
 
-        if (catalogOffset > 0 && !catalogHasMore) {
-            return;
-        }
-
-        const requestedNearBottom = isNearCatalogBottom(CATALOG_PREFETCH_THRESHOLD);
         catalogLoadingPage = true;
+        catalogProgress.textContent = "Cargando resultados...";
+        updateCatalogPaginationState();
+
+        loadCatalogPage(token, safePage);
+    }
+
+    async function loadCatalogPage(token, page) {
+        if (!fetchCatalogPage) {
+            catalogLoadingPage = false;
+            return;
+        }
+
+        const offset = (page - 1) * CATALOG_PAGE_SIZE;
 
         try {
             const result = await fetchCatalogPage({
-                offset: catalogOffset,
+                offset,
                 limit: CATALOG_PAGE_SIZE,
                 search: catalogFilterState.name,
                 orbitKind: catalogFilterState.orbitKind,
@@ -1620,136 +1583,49 @@ export function setupObjectSidebar({
             }
 
             const ids = Array.isArray(result?.ids) ? result.ids : [];
-            catalogServerTotal = Number(result?.total) || 0;
-            catalogOffset += ids.length;
-            catalogHasMore = Boolean(result?.hasMore);
+            const total = Math.max(0, Number(result?.total) || 0);
 
-            const previousCount = lastRenderedCatalogIds.length;
+            catalogServerTotal = total;
+            catalogTotalPages = Math.max(1, Math.ceil(total / CATALOG_PAGE_SIZE));
+            catalogCurrentPage = Math.min(Math.max(1, page), catalogTotalPages);
+            catalogOffset = offset + ids.length;
+            catalogHasMore = catalogCurrentPage < catalogTotalPages;
 
-            if (ids.length) {
-                lastRenderedCatalogIds = [...lastRenderedCatalogIds, ...ids];
-                for (let i = previousCount; i < lastRenderedCatalogIds.length; i += 1) {
-                    catalogIndexById.set(lastRenderedCatalogIds[i], i);
-                }
-            }
-
-            renderCatalogRows(lastRenderedCatalogIds, token, {
-                append: previousCount > 0,
-                requestedNearBottom
-            });
+            renderCatalogRows(ids, token);
         } catch (error) {
             if (token === catalogQueryToken) {
                 showErrorPopup(`No se pudo cargar el catalogo paginado: ${error instanceof Error ? error.message : String(error)}`);
                 catalogProgress.textContent = "Error cargando resultados";
+                updateCatalogPaginationState();
             }
         } finally {
             if (token === catalogQueryToken) {
                 catalogLoadingPage = false;
+                updateCatalogPaginationState();
             }
         }
     }
 
-    function ensureCatalogVirtualDom() {
-        if (catalogVirtualTopSpacer && catalogVirtualRowsRoot && catalogVirtualBottomSpacer) {
-            return;
-        }
+    function updateCatalogPaginationState() {
+        const totalPages = Math.max(1, catalogTotalPages);
+        const current = Math.min(Math.max(1, catalogCurrentPage), totalPages);
 
-        catalogListRoot.innerHTML = "";
-
-        catalogVirtualTopSpacer = document.createElement("div");
-        catalogVirtualTopSpacer.className = "catalog-virtual-spacer catalog-virtual-top-spacer";
-
-        catalogVirtualRowsRoot = document.createElement("div");
-        catalogVirtualRowsRoot.className = "catalog-virtual-rows";
-
-        catalogVirtualBottomSpacer = document.createElement("div");
-        catalogVirtualBottomSpacer.className = "catalog-virtual-spacer catalog-virtual-bottom-spacer";
-
-        catalogListRoot.appendChild(catalogVirtualTopSpacer);
-        catalogListRoot.appendChild(catalogVirtualRowsRoot);
-        catalogListRoot.appendChild(catalogVirtualBottomSpacer);
-    }
-
-    function isNearCatalogBottom(thresholdPx = CATALOG_WINDOW_EDGE_THRESHOLD) {
-        return catalogListRoot.scrollTop + catalogListRoot.clientHeight >= catalogListRoot.scrollHeight - thresholdPx;
-    }
-
-    function maybeLoadMoreCatalog(token = catalogRenderToken) {
-        if (catalogBusy || catalogLoadingPage || !catalogHasMore) {
-            return;
-        }
-
-        const needsPrefetch = isNearCatalogBottom(CATALOG_PREFETCH_THRESHOLD)
-            || (catalogListRoot.scrollHeight <= catalogListRoot.clientHeight + CATALOG_PREFETCH_THRESHOLD);
-
-        if (needsPrefetch) {
-            loadCatalogNextPage(token);
-        }
-    }
-
-    function normalizeCatalogWindowRange() {
-        const total = lastRenderedCatalogIds.length;
-        if (!total) {
-            catalogWindowStart = 0;
-            catalogWindowEnd = 0;
-            return;
-        }
-
-        const desiredWindowSize = Math.min(total, CATALOG_WINDOW_MAX_ROWS);
-
-        if (catalogWindowEnd <= 0) {
-            catalogWindowEnd = desiredWindowSize;
-            catalogWindowStart = 0;
-        }
-
-        if (catalogWindowEnd > total) {
-            catalogWindowEnd = total;
-        }
-
-        if (catalogWindowStart < 0) {
-            catalogWindowStart = 0;
-        }
-
-        if (catalogWindowEnd - catalogWindowStart > desiredWindowSize) {
-            catalogWindowStart = catalogWindowEnd - desiredWindowSize;
-        }
-
-        if (catalogWindowStart > catalogWindowEnd) {
-            catalogWindowStart = Math.max(0, catalogWindowEnd - desiredWindowSize);
-        }
-
-        // Evita que la ventana se encoja (causa huecos visuales grandes).
-        // Mientras haya datos suficientes, mantenemos ancho constante.
-        let currentSize = catalogWindowEnd - catalogWindowStart;
-        if (currentSize < desiredWindowSize) {
-            const missing = desiredWindowSize - currentSize;
-            if (catalogWindowEnd >= total) {
-                catalogWindowStart = Math.max(0, catalogWindowStart - missing);
-            } else {
-                catalogWindowEnd = Math.min(total, catalogWindowEnd + missing);
-            }
-            currentSize = catalogWindowEnd - catalogWindowStart;
-            if (currentSize < desiredWindowSize) {
-                catalogWindowStart = Math.max(0, catalogWindowEnd - desiredWindowSize);
-            }
-        }
+        catalogPageInfo.textContent = `Pagina ${current}/${totalPages}`;
+        catalogPrevPageBtn.disabled = catalogBusy || catalogLoadingPage || current <= 1;
+        catalogNextPageBtn.disabled = catalogBusy || catalogLoadingPage || current >= totalPages;
     }
 
     function updateCatalogLoadedProgress() {
         const loaded = lastRenderedCatalogIds.length;
-        const totalHint = catalogServerTotal > 0 ? `${loaded}/${catalogServerTotal}` : `${loaded}`;
-
         if (!loaded) {
             catalogProgress.textContent = catalogLoadingPage ? "Cargando resultados..." : "Sin resultados";
             return;
         }
 
-        if (catalogHasMore) {
-            catalogProgress.textContent = `${totalHint} resultados cargados. Desplaza para cargar mas.`;
-            return;
-        }
-
-        catalogProgress.textContent = `${totalHint} resultados cargados`;
+        const start = ((catalogCurrentPage - 1) * CATALOG_PAGE_SIZE) + 1;
+        const end = start + loaded - 1;
+        const total = Math.max(catalogServerTotal, end);
+        catalogProgress.textContent = `Mostrando ${start}-${end} de ${total}`;
     }
 
     function createCatalogRowElement(id, filtered) {
@@ -1806,9 +1682,16 @@ export function setupObjectSidebar({
             }
 
             if (!isMultiToggle) {
-                selectedCatalogIds.clear();
-                selectedCatalogIds.add(id);
-                catalogAnchorIndex = indexInFiltered;
+                if (selectedCatalogIds.has(id)) {
+                    selectedCatalogIds.delete(id);
+                    if (catalogAnchorIndex === indexInFiltered) {
+                        catalogAnchorIndex = null;
+                    }
+                } else {
+                    selectedCatalogIds.add(id);
+                    catalogAnchorIndex = indexInFiltered;
+                }
+
                 refreshRenderedCatalogSelectionStyles();
                 updateCatalogActionsState();
                 return;
@@ -1837,90 +1720,11 @@ export function setupObjectSidebar({
         return rowEl;
     }
 
-    function shiftCatalogWindowDown() {
-        const total = lastRenderedCatalogIds.length;
-        if (catalogWindowEnd >= total) {
-            return 0;
-        }
-
-        const delta = Math.min(CATALOG_WINDOW_STEP_ROWS, total - catalogWindowEnd);
-        catalogWindowStart += delta;
-        catalogWindowEnd += delta;
-        normalizeCatalogWindowRange();
-        return delta;
-    }
-
-    function shiftCatalogWindowUp() {
-        if (catalogWindowStart <= 0) {
-            return 0;
-        }
-
-        const delta = Math.min(CATALOG_WINDOW_STEP_ROWS, catalogWindowStart);
-        catalogWindowStart -= delta;
-        catalogWindowEnd -= delta;
-        normalizeCatalogWindowRange();
-        return delta;
-    }
-
-    function renderCatalogWindowRows(renderToken) {
+    function renderCatalogRows(filtered, renderToken) {
         if (!catalogModal.classList.contains("open")) return;
         if (renderToken !== catalogRenderToken) return;
 
-        ensureCatalogVirtualDom();
-        catalogVirtualRowsRoot.innerHTML = "";
-        catalogRowElements.clear();
-
-        const total = lastRenderedCatalogIds.length;
-        if (!total) {
-            catalogVirtualTopSpacer.style.height = "0px";
-            catalogVirtualBottomSpacer.style.height = "0px";
-            updateCatalogLoadedProgress();
-            return;
-        }
-
-        normalizeCatalogWindowRange();
-
-        const desiredWindowSize = Math.min(total, CATALOG_WINDOW_MAX_ROWS);
-        const currentWindowSize = catalogWindowEnd - catalogWindowStart;
-        if (currentWindowSize < desiredWindowSize) {
-            catalogWindowStart = Math.max(0, catalogWindowEnd - desiredWindowSize);
-            catalogWindowEnd = Math.min(total, catalogWindowStart + desiredWindowSize);
-        }
-
-        catalogVirtualTopSpacer.style.height = `${catalogWindowStart * catalogRowHeightPx}px`;
-        catalogVirtualBottomSpacer.style.height = `${Math.max(0, (total - catalogWindowEnd) * catalogRowHeightPx)}px`;
-
-        for (let index = catalogWindowStart; index < catalogWindowEnd; index += 1) {
-            const id = lastRenderedCatalogIds[index];
-            const rowEl = createCatalogRowElement(id, lastRenderedCatalogIds);
-            catalogVirtualRowsRoot.appendChild(rowEl);
-        }
-
-        const firstRendered = catalogVirtualRowsRoot.firstElementChild;
-        if (firstRendered) {
-            const measured = Math.max(1, Math.round(firstRendered.getBoundingClientRect().height));
-            if (Number.isFinite(measured) && measured > 0 && Math.abs(measured - catalogRowHeightPx) > 2) {
-                catalogRowHeightPx = measured;
-                requestAnimationFrame(() => {
-                    renderCatalogWindowRows(renderToken);
-                });
-                return;
-            }
-        }
-
-        updateCatalogLoadedProgress();
-
-        maybeLoadMoreCatalog(renderToken);
-    }
-
-    function renderCatalogRows(filtered, renderToken, options = {}) {
-        if (!catalogModal.classList.contains("open")) return;
-        const appendMode = Boolean(options.append);
-        const requestedNearBottom = Boolean(options.requestedNearBottom);
-        const previousTotal = lastRenderedCatalogIds.length;
-        if (!appendMode) {
-            closeContextMenu();
-        }
+        closeContextMenu();
 
         lastRenderedCatalogIds = filtered.slice();
         catalogIndexById.clear();
@@ -1928,21 +1732,17 @@ export function setupObjectSidebar({
             catalogIndexById.set(lastRenderedCatalogIds[i], i);
         }
 
-        if (!appendMode) {
-            catalogWindowStart = 0;
-            catalogWindowEnd = Math.min(lastRenderedCatalogIds.length, CATALOG_WINDOW_MAX_ROWS);
-            catalogListRoot.scrollTop = 0;
-            catalogLastScrollTop = 0;
-        } else {
-            const added = Math.max(0, lastRenderedCatalogIds.length - previousTotal);
-            if (added > 0 && requestedNearBottom) {
-                catalogWindowEnd = lastRenderedCatalogIds.length;
-                catalogWindowStart = Math.max(0, catalogWindowEnd - CATALOG_WINDOW_MAX_ROWS);
-            }
-            updateCatalogLoadedProgress();
+        catalogListRoot.innerHTML = "";
+        catalogRowElements.clear();
+
+        for (const id of lastRenderedCatalogIds) {
+            const rowEl = createCatalogRowElement(id, lastRenderedCatalogIds);
+            catalogListRoot.appendChild(rowEl);
         }
 
-        renderCatalogWindowRows(renderToken);
+        catalogListRoot.scrollTop = 0;
+        updateCatalogLoadedProgress();
+        updateCatalogPaginationState();
     }
 
     function refreshRenderedCatalogSelectionStyles() {

@@ -60,9 +60,7 @@ def load_all_tles_from_config(config_file):
     else:
         tles = _load_tles_from_txt(config_file)
 
-    print("TLEs cargados desde fichero:")
-    for name, _, _ in tles:
-        print(f"  - {name}")
+    print(f"TLEs cargados desde fichero: {len(tles)} entradas")
 
     return tles
 
