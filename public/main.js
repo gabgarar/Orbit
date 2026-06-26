@@ -1,6 +1,7 @@
 import {
     initSatelliteReceiver,
     preloadSatelliteCatalog,
+    fetchCatalogPage,
     refreshSatelliteCatalog,
     setOrbitConfig,
     getSatelliteIds,
@@ -24,6 +25,10 @@ import { normalizeSystemConfig, toSectionedSystemConfig } from "./js/configAdapt
 
 const logger = getLogger("main");
 logger.info("Iniciando Cesium...");
+
+function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+}
 
 async function loadConfig() {
     try {
@@ -89,6 +94,10 @@ const tychoSkyMapSources = {
 };
 
 let tychoSkyMapHighRes = null;
+let runtimeSystemConfig = null;
+let lastAppliedResolutionScale = null;
+let lastAppliedUiScale = null;
+let resizeAnimationFrameId = null;
 
 function getTychoSkyBox() {
     if (!tychoSkyMapHighRes) {
@@ -164,10 +173,89 @@ function applyAntialiasConfig(systemConfig) {
     logger.info(`Antialias mode: ${mode}`);
 }
 
+function computeAdaptiveResolutionScale() {
+    const width = Math.max(1, window.innerWidth || 1920);
+    const height = Math.max(1, window.innerHeight || 1080);
+    const referencePixels = 1920 * 1080;
+    const viewportRatio = (width * height) / referencePixels;
+
+    // Mantener buena nitidez y ajustar de forma suave solo por resolución visible.
+    if (viewportRatio <= 0.55) return 0.84;
+    if (viewportRatio <= 0.7) return 0.9;
+    if (viewportRatio <= 0.9) return 0.95;
+    if (viewportRatio <= 1.2) return 1;
+    return 1;
+}
+
+function computeAdaptiveUiScale() {
+    const width = Math.max(1, window.innerWidth || 1920);
+    const height = Math.max(1, window.innerHeight || 1080);
+    const scaleByWidth = width / 1920;
+    const scaleByHeight = height / 1080;
+    const viewportScale = Math.min(scaleByWidth, scaleByHeight);
+
+    // Escala de UI basada en resolución para que la interfaz quepa sin zoom manual.
+    return clamp(viewportScale, 0.82, 1.05);
+}
+
+function applyResolutionScaleConfig(systemConfig, options = {}) {
+    const mode = systemConfig.resolution_scale_mode ?? "auto";
+    const manualScale = Number(systemConfig.resolution_scale);
+    const resolvedScale = mode === "manual" && Number.isFinite(manualScale)
+        ? clamp(manualScale, 0.5, 2)
+        : computeAdaptiveResolutionScale();
+
+    const shouldUpdate =
+        !Number.isFinite(lastAppliedResolutionScale) ||
+        Math.abs(lastAppliedResolutionScale - resolvedScale) > 0.005;
+
+    if (!shouldUpdate) {
+        return;
+    }
+
+    // Tomamos control explícito para mantener resultado consistente entre DPIs.
+    viewer.useBrowserRecommendedResolution = false;
+    viewer.resolutionScale = resolvedScale;
+    viewer.resize();
+    lastAppliedResolutionScale = resolvedScale;
+
+    if (!options.silent) {
+        logger.info(`Resolution scale: ${resolvedScale.toFixed(3)} (${mode})`);
+    }
+}
+
+function applyUiScaleConfig(systemConfig, options = {}) {
+    const mode = systemConfig.ui_scale_mode ?? "auto";
+    const manualScale = Number(systemConfig.ui_scale);
+    const resolvedScale = mode === "manual" && Number.isFinite(manualScale)
+        ? clamp(manualScale, 0.7, 1.25)
+        : computeAdaptiveUiScale();
+
+    const shouldUpdate =
+        !Number.isFinite(lastAppliedUiScale) ||
+        Math.abs(lastAppliedUiScale - resolvedScale) > 0.005;
+
+    if (!shouldUpdate) {
+        return;
+    }
+
+    document.documentElement.style.setProperty("--orbit-ui-scale", resolvedScale.toFixed(3));
+    lastAppliedUiScale = resolvedScale;
+
+    if (!options.silent) {
+        logger.info(`UI scale: ${resolvedScale.toFixed(3)} (${mode})`);
+    }
+}
+
 function applySystemRuntimeConfig(systemConfigRaw) {
     const systemConfig = normalizeSystemConfig(systemConfigRaw);
+    runtimeSystemConfig = systemConfig;
+
     configureLogger(systemConfig);
     setOrbitConfig(systemConfig);
+
+    applyResolutionScaleConfig(systemConfig);
+    applyUiScaleConfig(systemConfig);
 
     if (systemConfig.background_color) {
         viewer.scene.backgroundColor = Cesium.Color.fromCssColorString(systemConfig.background_color);
@@ -178,6 +266,22 @@ function applySystemRuntimeConfig(systemConfigRaw) {
     viewer.scene.skyAtmosphere.show = systemConfig.sky_atmosphere !== false;
     viewer.scene.globe.enableLighting = systemConfig.globe_lighting !== false;
 }
+
+window.addEventListener("resize", () => {
+    if (!runtimeSystemConfig) {
+        return;
+    }
+
+    if (resizeAnimationFrameId !== null) {
+        cancelAnimationFrame(resizeAnimationFrameId);
+    }
+
+    resizeAnimationFrameId = requestAnimationFrame(() => {
+        applyResolutionScaleConfig(runtimeSystemConfig, { silent: true });
+        applyUiScaleConfig(runtimeSystemConfig, { silent: true });
+        resizeAnimationFrameId = null;
+    });
+});
 
 try {
     viewer.scene.imageryLayers.removeAll();
@@ -301,6 +405,7 @@ function firstPersonSatellite(entity) {
     initSatelliteReceiver(viewer);
     objectSidebar = setupObjectSidebar({
         getCatalogIds: () => getSatelliteIds(),
+        fetchCatalogPage: (params) => fetchCatalogPage(params),
         getLayerIds: () => getActiveSatelliteLayerIds(),
         getObjectTelemetry: (id) => getSatelliteTelemetry(id),
         getObjectVisibility: (id) => isSatelliteVisible(id),

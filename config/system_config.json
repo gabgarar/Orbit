@@ -31,6 +31,10 @@
     },
     "rendering": {
       "antialias_enabled": true,
+      "resolution_scale_mode": "auto",
+      "resolution_scale": 1.0,
+      "ui_scale_mode": "auto",
+      "ui_scale": 1.0,
       "background_color": "#03070d",
       "sky_atmosphere": true,
       "globe_lighting": true,
@@ -38,7 +42,6 @@
     }
   },
   "data": {
-    "satellites_file": "catalog.json",
     "satellites_catalog_file": "catalog.json"
   }
 }

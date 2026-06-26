@@ -30,6 +30,10 @@ const CONFIG_SCHEMA = {
     ],
     rendering: [
         { key: "antialias_mode", label: "Antialias Mode", type: "select", options: ["off", "fxaa", "msaa"] },
+        { key: "resolution_scale_mode", label: "Resolution Scale Mode", type: "select", options: ["auto", "manual"] },
+        { key: "resolution_scale", label: "Resolution Scale", type: "number", step: "0.05", min: "0.5", max: "2" },
+        { key: "ui_scale_mode", label: "UI Scale Mode", type: "select", options: ["auto", "manual"] },
+        { key: "ui_scale", label: "UI Scale", type: "number", step: "0.05", min: "0.7", max: "1.25" },
         { key: "background_color", label: "Background Color", type: "color" },
         { key: "sky_atmosphere", label: "Sky Atmosphere", type: "checkbox" },
         { key: "globe_lighting", label: "Globe Lighting", type: "checkbox" },
@@ -64,6 +68,10 @@ const FIELD_HELP = {
     "logging.level": "Nivel de logs: debug, info, warn, error o silent.",
 
     "rendering.antialias_mode": "Elige el metodo de antialiasing: 'off' desactiva suavizado; 'fxaa' aplica FXAA (post-proceso, barato); 'msaa' usa MSAA (mejor calidad si soportado).",
+    "rendering.resolution_scale_mode": "auto adapta el render segun DPI/resolucion; manual usa el valor fijo de Resolution Scale.",
+    "rendering.resolution_scale": "Escala del render Cesium: < 1 mejora rendimiento y reduce tamano aparente en pantallas densas; > 1 aumenta nitidez y coste GPU.",
+    "rendering.ui_scale_mode": "auto adapta el tamano de paneles segun DPI/resolucion; manual aplica escala fija de interfaz.",
+    "rendering.ui_scale": "Escala visual de paneles y controles. 1 = tamano base.",
     "rendering.background_color": "Color de fondo del visor.",
     "rendering.sky_atmosphere": "Muestra atmosfera del cielo.",
     "rendering.globe_lighting": "Activa iluminacion del globo por sol.",

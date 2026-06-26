@@ -7,6 +7,7 @@ const logger = getLogger("satellites");
 // Configuración y límites
 // =============================
 const MAX_SATELLITES_VISIBLE = 100;  // Límite de satélites en pantalla
+const MAX_WS_CATALOG_IDS_IN_MEMORY = 1000;
 const ENTITY_POOL_SIZE = 50;         // Tamaño del object pool
 const MIN_INTERPOLATION_MS = 250;
 const MAX_INTERPOLATION_MS = 2000;
@@ -531,9 +532,14 @@ export function initSatelliteReceiver(viewer) {
 
     ws.onCatalog((catalog) => {
         catalogSatelliteIds.clear();
+        let loaded = 0;
         for (const id of catalog) {
             if (typeof id === "string") {
                 catalogSatelliteIds.add(id);
+                loaded += 1;
+                if (loaded >= MAX_WS_CATALOG_IDS_IN_MEMORY) {
+                    break;
+                }
             }
         }
         catalogLoaded = true;
@@ -863,87 +869,76 @@ export function isCatalogLoaded() {
     return catalogLoaded;
 }
 
+export async function fetchCatalogPage({
+    offset = 0,
+    limit = 200,
+    search = "",
+    orbitKind = "",
+    mission = ""
+} = {}) {
+    const safeOffset = Math.max(0, Number.parseInt(String(offset), 10) || 0);
+    const safeLimit = Math.max(1, Math.min(1000, Number.parseInt(String(limit), 10) || 200));
+
+    const params = new URLSearchParams({
+        offset: String(safeOffset),
+        limit: String(safeLimit)
+    });
+
+    const normalizedSearch = String(search || "").trim();
+    const normalizedOrbit = String(orbitKind || "").trim().toLowerCase();
+    const normalizedMission = String(mission || "").trim().toLowerCase();
+
+    if (normalizedSearch) params.set("search", normalizedSearch);
+    if (normalizedOrbit) params.set("orbitKind", normalizedOrbit);
+    if (normalizedMission) params.set("mission", normalizedMission);
+
+    const response = await fetch(`/api/catalog/page?${params.toString()}`, { cache: "no-cache" });
+    if (!response.ok) {
+        throw new Error(`No se pudo cargar página de catálogo (HTTP ${response.status})`);
+    }
+
+    const payload = await response.json();
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    const ids = [];
+
+    for (const item of items) {
+        const name = String(item?.name || "").trim();
+        const line1 = String(item?.line1 || "").trim();
+        const line2 = String(item?.line2 || "").trim();
+        if (!name) {
+            continue;
+        }
+
+        ids.push(name);
+        catalogSatelliteIds.add(name);
+        if (line1 && line2) {
+            tleBySatelliteId.set(name, { line1, line2 });
+        }
+    }
+
+    if (ids.length) {
+        satelliteIdsDirty = true;
+    }
+
+    const total = Number(payload?.total) || 0;
+    if (total > 0) {
+        catalogLoaded = true;
+    }
+
+    return {
+        ids,
+        total,
+        offset: Number(payload?.offset) || safeOffset,
+        limit: Number(payload?.limit) || safeLimit,
+        hasMore: Boolean(payload?.hasMore)
+    };
+}
+
 export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.json") {
     try {
         lastCatalogUrl = catalogUrl || lastCatalogUrl;
-        const response = await fetch(catalogUrl, { cache: "no-cache" });
-        if (!response.ok) {
-            logger.warn(`No se pudo precargar catalogo (${response.status}): ${catalogUrl}`);
-            return false;
-        }
-
-        let entries = [];
-        const isJsonCatalog = String(catalogUrl || "").toLowerCase().endsWith(".json");
-
-        if (isJsonCatalog) {
-            const payload = await response.json();
-            const rawEntries = Array.isArray(payload) ? payload : payload?.entries;
-            entries = Array.isArray(rawEntries)
-                ? rawEntries.map((e) => ({
-                    name: String(e?.name || "").trim(),
-                    line1: String(e?.line1 || "").trim(),
-                    line2: String(e?.line2 || "").trim()
-                })).filter((e) => e.name && e.line1 && e.line2)
-                : [];
-        } else {
-            const text = await response.text();
-            const lines = text
-                .split(/\r?\n/)
-                .map((line) => line.trim())
-                .filter((line) => line.length > 0);
-
-            for (let i = 0; i + 2 < lines.length; i += 3) {
-                entries.push({
-                    name: lines[i] || "",
-                    line1: lines[i + 1] || "",
-                    line2: lines[i + 2] || ""
-                });
-            }
-        }
-
-        let added = 0;
-
-        // Procesar en chunks para evitar bloquear el hilo principal en archivos muy grandes
-        const CHUNK_SIZE = 300; // procesar 300 entradas por frame
-
-        await new Promise((resolve) => {
-            let index = 0;
-
-            function processChunk() {
-                const end = Math.min(index + CHUNK_SIZE, entries.length);
-                for (let i = index; i < end; i += 1) {
-                    const { name = "", line1 = "", line2 = "" } = entries[i] || {};
-                    if (!name) {
-                        continue;
-                    }
-                    if (!catalogSatelliteIds.has(name)) {
-                        catalogSatelliteIds.add(name);
-                        added += 1;
-                    }
-                    if (line1 && line2) {
-                        tleBySatelliteId.set(name, { line1, line2 });
-                    }
-                }
-
-                index = end;
-                if (index < entries.length) {
-                    requestAnimationFrame(processChunk);
-                } else {
-                    resolve();
-                }
-            }
-
-            requestAnimationFrame(processChunk);
-        });
-
-        if (added > 0) {
-            satelliteIdsDirty = true;
-        }
-        if (catalogSatelliteIds.size > 0) {
-            catalogLoaded = true;
-        }
-
-        logger.info(`Catalogo precargado: ${catalogSatelliteIds.size} objetos`);
+        const page = await fetchCatalogPage({ offset: 0, limit: 200 });
+        logger.info(`Catalogo precargado (modo paginado): ${page.ids.length}/${page.total} objetos`);
         return catalogLoaded;
     } catch (error) {
         logger.warn("Error precargando catalogo:", error);
@@ -954,6 +949,10 @@ export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.json
 export async function refreshSatelliteCatalog(catalogUrl = "/config/catalog.json") {
     // Actualiza la URL del catálogo y lo recarga. También reaplica subscripciones WS actuales.
     lastCatalogUrl = catalogUrl || lastCatalogUrl;
+    catalogSatelliteIds.clear();
+    tleBySatelliteId.clear();
+    satelliteIdsDirty = true;
+    catalogLoaded = false;
     const ok = await preloadSatelliteCatalog(lastCatalogUrl);
 
     try {
@@ -992,8 +991,32 @@ export async function getSatelliteTleAsync(id) {
         return cached;
     }
 
-    await preloadSatelliteCatalog(lastCatalogUrl);
-    return tleBySatelliteId.get(id) || null;
+    try {
+        const response = await fetch(`/api/catalog/tle?name=${encodeURIComponent(id)}`, { cache: "no-cache" });
+        if (!response.ok) {
+            return null;
+        }
+
+        const payload = await response.json();
+        const item = payload?.item;
+        const name = String(item?.name || "").trim();
+        const line1 = String(item?.line1 || "").trim();
+        const line2 = String(item?.line2 || "").trim();
+
+        if (!name || !line1 || !line2) {
+            return null;
+        }
+
+        const tle = { line1, line2 };
+        tleBySatelliteId.set(name, tle);
+        catalogSatelliteIds.add(name);
+        satelliteIdsDirty = true;
+        catalogLoaded = true;
+        return tle;
+    } catch (error) {
+        logger.warn(`No se pudo obtener TLE para ${id}:`, error);
+        return null;
+    }
 }
 
 export function getSatelliteTelemetry(id) {

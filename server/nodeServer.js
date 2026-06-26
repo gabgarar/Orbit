@@ -51,6 +51,36 @@ const DEFAULT_CELESTRAK_GROUPS = [
     "x-comm"
 ];
 
+const EARTH_RADIUS_KM = 6378.137;
+const EARTH_MU_KM3_S2 = 398600.4418;
+const ORBIT_KIND = {
+    LEO: "leo",
+    MEO: "meo",
+    GEO: "geo",
+    HEO: "heo",
+    UNKNOWN: "unknown"
+};
+
+const MISSION_RULES = [
+    { value: "starlink", test: /\bstarlink\b/i },
+    { value: "sentinel", test: /\bsentinel\b/i },
+    { value: "oneweb", test: /\boneweb\b/i },
+    { value: "planet", test: /\bplanet\b/i },
+    { value: "gnss", test: /\b(gps|galileo|glonass|beidou|navstar|qzss|irnss|navic)\b/i },
+    { value: "weather", test: /\b(weather|goes|noaa|meteo|metop|himawari|fy-|fengyun)\b/i },
+    { value: "communications", test: /\b(intelsat|iridium|orbcomm|globalstar|ses|viasat|echostar)\b/i },
+    { value: "stations", test: /\b(iss|tiangong|css|station)\b/i },
+    { value: "military", test: /\b(nrol|yaogan|military|defense|usa )\b/i },
+    { value: "science", test: /\b(hubble|jwst|fermi|swift|gaia|tess|science)\b/i },
+    { value: "earth-observation", test: /\b(landsat|resource|dmc|radarsat|spot|pleiades)\b/i }
+];
+
+let catalogCache = {
+    path: "",
+    mtimeMs: 0,
+    entries: []
+};
+
 function getUniqueSorted(values) {
     return Array.from(new Set(values.filter(Boolean).map((v) => String(v).trim().toLowerCase()))).sort();
 }
@@ -184,12 +214,128 @@ function serializeCatalogJson(entries) {
     });
 }
 
+function normalizeCatalogEntries(rawEntries) {
+    return Array.isArray(rawEntries)
+        ? rawEntries
+            .map((entry) => ({
+                name: String(entry?.name || "").trim(),
+                line1: String(entry?.line1 || "").trim(),
+                line2: String(entry?.line2 || "").trim()
+            }))
+            .filter((entry) => entry.name && entry.line1 && entry.line2)
+        : [];
+}
+
+async function readCatalogEntries(catalogPath) {
+    const ext = path.extname(catalogPath).toLowerCase();
+    const raw = await fs.readFile(catalogPath, "utf-8");
+
+    if (ext === ".json") {
+        const payload = JSON.parse(raw);
+        const entries = Array.isArray(payload) ? payload : payload?.entries;
+        return normalizeCatalogEntries(entries);
+    }
+
+    return normalizeCatalogEntries(parseTleCatalog(raw));
+}
+
+async function getCatalogEntriesCached() {
+    const catalogPath = await resolveCatalogPath();
+    const stats = await fs.stat(catalogPath);
+
+    if (
+        catalogCache.path === catalogPath &&
+        catalogCache.mtimeMs === stats.mtimeMs &&
+        Array.isArray(catalogCache.entries)
+    ) {
+        return { catalogPath, entries: catalogCache.entries };
+    }
+
+    const entries = await readCatalogEntries(catalogPath);
+    catalogCache = {
+        path: catalogPath,
+        mtimeMs: stats.mtimeMs,
+        entries
+    };
+
+    return { catalogPath, entries };
+}
+
+function estimateAltitudeKmFromLine2(line2) {
+    const meanMotion = Number(String(line2 || "").slice(52, 63).trim());
+    if (!Number.isFinite(meanMotion) || meanMotion <= 0) {
+        return null;
+    }
+
+    const nRadSec = meanMotion * (2 * Math.PI) / 86400;
+    const semiMajorAxisKm = Math.cbrt(EARTH_MU_KM3_S2 / (nRadSec * nRadSec));
+    const altitudeKm = semiMajorAxisKm - EARTH_RADIUS_KM;
+    return Number.isFinite(altitudeKm) ? altitudeKm : null;
+}
+
+function inferOrbitKind(line2) {
+    const altitudeKm = estimateAltitudeKmFromLine2(line2);
+    if (!Number.isFinite(altitudeKm)) {
+        return ORBIT_KIND.UNKNOWN;
+    }
+    if (altitudeKm < 2000) return ORBIT_KIND.LEO;
+    if (altitudeKm < 35786) return ORBIT_KIND.MEO;
+    if (altitudeKm >= 35000 && altitudeKm <= 36550) return ORBIT_KIND.GEO;
+    if (altitudeKm > 35786) return ORBIT_KIND.HEO;
+    return ORBIT_KIND.UNKNOWN;
+}
+
+function inferMission(name) {
+    const normalized = String(name || "").trim();
+    for (const rule of MISSION_RULES) {
+        if (rule.test.test(normalized)) {
+            return rule.value;
+        }
+    }
+    return "other";
+}
+
+function normalizePaginationNumber(value, fallback, min, max) {
+    const parsed = Number.parseInt(String(value ?? ""), 10);
+    if (!Number.isFinite(parsed)) {
+        return fallback;
+    }
+    return Math.max(min, Math.min(max, parsed));
+}
+
+function normalizeFilterParam(value) {
+    return String(value || "").trim().toLowerCase();
+}
+
+function filterCatalogEntries(entries, { search, orbitKind, mission }) {
+    const hasSearch = Boolean(search);
+    const hasOrbitFilter = Boolean(orbitKind);
+    const hasMissionFilter = Boolean(mission);
+
+    if (!hasSearch && !hasOrbitFilter && !hasMissionFilter) {
+        return entries;
+    }
+
+    return entries.filter((entry) => {
+        if (hasSearch && !entry.name.toLowerCase().includes(search)) {
+            return false;
+        }
+        if (hasOrbitFilter && inferOrbitKind(entry.line2) !== orbitKind) {
+            return false;
+        }
+        if (hasMissionFilter && inferMission(entry.name) !== mission) {
+            return false;
+        }
+        return true;
+    });
+}
+
 async function resolveCatalogPath() {
     try {
         const raw = await fs.readFile(SYSTEM_CONFIG_PATH, "utf-8");
         const parsed = JSON.parse(raw);
         const dataCfg = parsed?.data && typeof parsed.data === "object" ? parsed.data : {};
-        const configuredFile = dataCfg.satellites_catalog_file || dataCfg.satellites_file || DEFAULT_CATALOG_FILE;
+        const configuredFile = dataCfg.satellites_catalog_file || DEFAULT_CATALOG_FILE;
         const safeFileName = path.basename(String(configuredFile));
         return path.join(CONFIG_DIR, safeFileName);
     } catch {
@@ -306,6 +452,61 @@ app.post("/api/catalog/refresh", async (_req, res) => {
         successfulGroups: successful.map((item) => ({ group: item.group, count: item.count })),
         failedGroups: failed
     });
+});
+
+app.get("/api/catalog/page", async (req, res) => {
+    try {
+        const offset = normalizePaginationNumber(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+        const limit = normalizePaginationNumber(req.query.limit, 100, 1, 1000);
+        const search = normalizeFilterParam(req.query.search);
+        const orbitKind = normalizeFilterParam(req.query.orbitKind);
+        const mission = normalizeFilterParam(req.query.mission);
+
+        const { entries } = await getCatalogEntriesCached();
+        const filtered = filterCatalogEntries(entries, { search, orbitKind, mission });
+
+        const pageItems = filtered.slice(offset, offset + limit);
+
+        res.json({
+            ok: true,
+            total: filtered.length,
+            offset,
+            limit,
+            hasMore: offset + pageItems.length < filtered.length,
+            items: pageItems
+        });
+    } catch (error) {
+        res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+        });
+    }
+});
+
+app.get("/api/catalog/tle", async (req, res) => {
+    try {
+        const queryName = String(req.query.name || "").trim();
+        if (!queryName) {
+            res.status(400).json({ ok: false, error: "Parametro 'name' requerido." });
+            return;
+        }
+
+        const target = queryName.toLowerCase();
+        const { entries } = await getCatalogEntriesCached();
+        const match = entries.find((entry) => entry.name.toLowerCase() === target);
+
+        if (!match) {
+            res.status(404).json({ ok: false, error: "Satelite no encontrado." });
+            return;
+        }
+
+        res.json({ ok: true, item: match });
+    } catch (error) {
+        res.status(500).json({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+        });
+    }
 });
 
 // ===============================

@@ -30,6 +30,10 @@ export function normalizeSystemConfig(rawSystem = {}) {
 
         antialias_mode: rendering.antialias_mode ?? rawSystem.antialias_mode,
         antialias_enabled: rendering.antialias_enabled ?? rawSystem.antialias_enabled,
+        resolution_scale_mode: rendering.resolution_scale_mode ?? rawSystem.resolution_scale_mode,
+        resolution_scale: rendering.resolution_scale ?? rawSystem.resolution_scale,
+        ui_scale_mode: rendering.ui_scale_mode ?? rawSystem.ui_scale_mode,
+        ui_scale: rendering.ui_scale ?? rawSystem.ui_scale,
         background_color: rendering.background_color ?? rawSystem.background_color,
         sky_atmosphere: rendering.sky_atmosphere ?? rawSystem.sky_atmosphere,
         globe_lighting: rendering.globe_lighting ?? rawSystem.globe_lighting,
@@ -75,6 +79,10 @@ export function toSectionedSystemConfig(rawSystem = {}) {
         rendering: {
             antialias_mode: flat.antialias_mode ?? (flat.antialias_enabled ? "fxaa" : "off"),
             antialias_enabled: flat.antialias_enabled ?? true,
+            resolution_scale_mode: flat.resolution_scale_mode ?? "auto",
+            resolution_scale: flat.resolution_scale ?? 1,
+            ui_scale_mode: flat.ui_scale_mode ?? "auto",
+            ui_scale: flat.ui_scale ?? 1,
             background_color: flat.background_color ?? "#03070d",
             sky_atmosphere: flat.sky_atmosphere ?? false,
             globe_lighting: flat.globe_lighting ?? true,

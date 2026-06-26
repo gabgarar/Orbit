@@ -154,6 +154,23 @@ const ORBIT_KIND = {
     UNKNOWN: "unknown"
 };
 
+const MISSION_RULES = [
+    { value: "starlink", label: "Starlink", test: /\bstarlink\b/i },
+    { value: "sentinel", label: "Sentinel", test: /\bsentinel\b/i },
+    { value: "oneweb", label: "OneWeb", test: /\boneweb\b/i },
+    { value: "planet", label: "Planet", test: /\bplanet\b/i },
+    { value: "gnss", label: "GNSS", test: /\b(gps|galileo|glonass|beidou|navstar|qzss|irnss|navic)\b/i },
+    { value: "weather", label: "Weather", test: /\b(weather|goes|noaa|meteo|metop|himawari|fy-|fengyun)\b/i },
+    { value: "communications", label: "Communications", test: /\b(intelsat|iridium|orbcomm|globalstar|ses|viasat|echostar)\b/i },
+    { value: "stations", label: "Stations", test: /\b(iss|tiangong|css|station)\b/i },
+    { value: "military", label: "Military", test: /\b(nrol|yaogan|military|defense|usa )\b/i },
+    { value: "science", label: "Science", test: /\b(hubble|jwst|fermi|swift|gaia|tess|science)\b/i },
+    { value: "earth-observation", label: "Earth Observation", test: /\b(landsat|resource|dmc|radarsat|spot|pleiades)\b/i }
+];
+
+const ORBIT_FILTER_ORDER = [ORBIT_KIND.LEO, ORBIT_KIND.MEO, ORBIT_KIND.GEO, ORBIT_KIND.HEO, ORBIT_KIND.UNKNOWN];
+const MISSION_FILTER_ORDER = [...MISSION_RULES.map((rule) => rule.value), "other"];
+
 function orbitTagCode(kind) {
     switch (kind) {
     case ORBIT_KIND.LEO: return "LEO";
@@ -202,6 +219,16 @@ function classifyOrbitByName(satelliteId) {
     const s = String(satelliteId || "").toLowerCase();
     if (!s) return ORBIT_KIND.UNKNOWN;
     return ORBIT_KIND.UNKNOWN;
+}
+
+function inferMissionInfo(satelliteId) {
+    const normalized = String(satelliteId || "").trim();
+    for (const rule of MISSION_RULES) {
+        if (rule.test.test(normalized)) {
+            return { value: rule.value, label: rule.label };
+        }
+    }
+    return { value: "other", label: "Other" };
 }
 
 function getOrbitRecommendation(orbitKind) {
@@ -448,6 +475,7 @@ async function fetchWikipediaDetails(satelliteId) {
 
 export function setupObjectSidebar({
     getCatalogIds,
+    fetchCatalogPage,
     getLayerIds,
     getObjectTelemetry,
     getObjectVisibility,
@@ -466,16 +494,24 @@ export function setupObjectSidebar({
 }) {
     let selectedId = null;
     let layerFilterText = "";
-    let catalogFilterText = "";
     let globalLayersVisible = true;
     const selectedCatalogIds = new Set();
+    const catalogFilterState = {
+        name: "",
+        orbitKind: "",
+        mission: ""
+    };
 
-    const CATALOG_RENDER_CHUNK = 100;
-    const CATALOG_FILTER_CHUNK = 600;
+    const CATALOG_PAGE_SIZE = 200;
+    const CATALOG_WINDOW_MAX_ROWS = 800;
+    const CATALOG_WINDOW_STEP_ROWS = 200;
+    const CATALOG_WINDOW_EDGE_THRESHOLD = 140;
+    const CATALOG_PREFETCH_THRESHOLD = 560;
+    const CATALOG_ROW_HEIGHT_FALLBACK = 42;
     const BULK_PROCESS_CHUNK = 60;
 
     let catalogRenderToken = 0;
-    let catalogFilterToken = 0;
+    let catalogQueryToken = 0;
     let catalogSearchDebounce = null;
     let catalogBusy = false;
     let catalogRefreshBusy = false;
@@ -483,7 +519,20 @@ export function setupObjectSidebar({
     let catalogAnchorIndex = null;
     let catalogWaitInterval = null;
     let contextTargetId = null;
-    const collapsedCatalogGroups = new Set();
+    let lastRenderedCatalogIds = [];
+    let catalogServerTotal = 0;
+    let catalogOffset = 0;
+    let catalogHasMore = false;
+    let catalogLoadingPage = false;
+    let catalogRowHeightPx = CATALOG_ROW_HEIGHT_FALLBACK;
+    let catalogWindowStart = 0;
+    let catalogWindowEnd = 0;
+    let catalogLastScrollTop = 0;
+    let catalogAdjustingScroll = false;
+    let catalogVirtualTopSpacer = null;
+    let catalogVirtualRowsRoot = null;
+    let catalogVirtualBottomSpacer = null;
+    const catalogIndexById = new Map();
     const catalogMetaCache = new Map();
 
     function clearCatalogMetaCache() {
@@ -491,22 +540,35 @@ export function setupObjectSidebar({
     }
 
     function getCatalogMeta(id) {
+        const tle = getObjectTle ? getObjectTle(id) : null;
+        const hasTle = Boolean(tle?.line1 && tle?.line2);
         const cached = catalogMetaCache.get(id);
-        if (cached) {
+
+        if (cached && (cached.hasTle || !hasTle)) {
             return cached;
         }
 
-        const tle = getObjectTle ? getObjectTle(id) : null;
         const tleSummary = parseTleSummary(tle);
         const orbitInfo = getOrbitInfoFromTleSummary(tleSummary, id);
-        const meta = { tleSummary, orbitInfo };
-
-        // Solo cacheamos cuando ya hay TLE parseable para evitar cachear nulls tempranos.
-        if (tleSummary) {
-            catalogMetaCache.set(id, meta);
-        }
-
+        const missionInfo = inferMissionInfo(id);
+        const meta = { tleSummary, orbitInfo, missionInfo, hasTle };
+        catalogMetaCache.set(id, meta);
         return meta;
+    }
+
+    function orbitFilterLabel(kind) {
+        switch (kind) {
+        case ORBIT_KIND.LEO: return "LEO";
+        case ORBIT_KIND.MEO: return "MEO";
+        case ORBIT_KIND.GEO: return "GEO";
+        case ORBIT_KIND.HEO: return "HEO";
+        default: return "Unknown";
+        }
+    }
+
+    function missionFilterLabel(value) {
+        const rule = MISSION_RULES.find((item) => item.value === value);
+        return rule?.label || "Other";
     }
 
     const catalogRowElements = new Map();
@@ -538,12 +600,14 @@ export function setupObjectSidebar({
             <div class="catalog-modal-header">
                 <h3>Catalogo</h3>
                 <div class="catalog-modal-header-actions">
+                    <button class="catalog-header-btn" id="catalogFiltersBtn" type="button">Filtros</button>
                     <button class="catalog-header-btn" id="catalogRefreshBtn" type="button">Actualizar catalogo</button>
                     <button class="catalog-header-btn" id="catalogSelectAllBtn" type="button">Seleccionar todo</button>
                     <button class="catalog-close-btn" id="catalogCloseBtn" type="button" aria-label="Cerrar catalogo" title="Cerrar">✕</button>
                 </div>
             </div>
             <input id="catalogSearch" type="text" placeholder="Buscar en catalogo..." />
+            <div class="catalog-filter-summary" id="catalogFilterSummary" hidden></div>
             <div class="catalog-refresh-status" id="catalogRefreshStatus" hidden>
                 <div class="catalog-refresh-text" id="catalogRefreshText">Preparando actualizacion...</div>
                 <progress id="catalogRefreshBar" max="100" value="0"></progress>
@@ -556,6 +620,35 @@ export function setupObjectSidebar({
         </div>
     `;
     document.body.appendChild(catalogModal);
+
+    const catalogFilterModal = document.createElement("div");
+    catalogFilterModal.id = "catalogFilterModal";
+    catalogFilterModal.innerHTML = `
+        <div class="catalog-filter-panel" role="dialog" aria-modal="true" aria-label="Filtros de catalogo">
+            <div class="catalog-filter-header">
+                <h3>Filtros</h3>
+                <button class="catalog-close-btn" id="catalogFilterCloseBtn" type="button" aria-label="Cerrar filtros" title="Cerrar">✕</button>
+            </div>
+            <div class="catalog-filter-grid">
+                <label class="catalog-filter-field">
+                    <span>Nombre</span>
+                    <input id="catalogFilterName" type="text" placeholder="Filtrar por nombre..." />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Tipo de orbita</span>
+                    <select id="catalogOrbitFilter"></select>
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Tipo de mision</span>
+                    <select id="catalogMissionFilter"></select>
+                </label>
+            </div>
+            <div class="catalog-filter-actions">
+                <button class="catalog-header-btn" id="catalogFilterClearBtn" type="button">Limpiar filtros</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(catalogFilterModal);
 
     const confirmModal = document.createElement("div");
     confirmModal.id = "sidebarConfirmModal";
@@ -611,15 +704,23 @@ export function setupObjectSidebar({
     const infoRoot = sidebar.querySelector("#objectInfo");
 
     const catalogCloseBtn = catalogModal.querySelector("#catalogCloseBtn");
+    const catalogFiltersBtn = catalogModal.querySelector("#catalogFiltersBtn");
     const catalogRefreshBtn = catalogModal.querySelector("#catalogRefreshBtn");
     const catalogSelectAllBtn = catalogModal.querySelector("#catalogSelectAllBtn");
     const catalogSearchInput = catalogModal.querySelector("#catalogSearch");
+    const catalogFilterSummary = catalogModal.querySelector("#catalogFilterSummary");
     const catalogRefreshStatus = catalogModal.querySelector("#catalogRefreshStatus");
     const catalogRefreshText = catalogModal.querySelector("#catalogRefreshText");
     const catalogRefreshBar = catalogModal.querySelector("#catalogRefreshBar");
     const catalogListRoot = catalogModal.querySelector("#catalogList");
     const catalogProgress = catalogModal.querySelector("#catalogProgress");
     const catalogAddSelectedBtn = catalogModal.querySelector("#catalogAddSelectedBtn");
+
+    const catalogFilterCloseBtn = catalogFilterModal.querySelector("#catalogFilterCloseBtn");
+    const catalogFilterNameInput = catalogFilterModal.querySelector("#catalogFilterName");
+    const catalogOrbitFilter = catalogFilterModal.querySelector("#catalogOrbitFilter");
+    const catalogMissionFilter = catalogFilterModal.querySelector("#catalogMissionFilter");
+    const catalogFilterClearBtn = catalogFilterModal.querySelector("#catalogFilterClearBtn");
 
     const confirmTitle = confirmModal.querySelector("#sidebarConfirmTitle");
     const confirmMessage = confirmModal.querySelector("#sidebarConfirmMessage");
@@ -693,6 +794,7 @@ export function setupObjectSidebar({
             value: 0
         });
         catalogProgress.textContent = "";
+        syncCatalogFilterControls();
         renderCatalogList();
         catalogSearchInput.focus();
     };
@@ -703,8 +805,95 @@ export function setupObjectSidebar({
         setCatalogRefreshState({ visible: false, text: "", value: 0 });
         catalogProgress.textContent = "";
         catalogModal.classList.remove("open");
+        catalogFilterModal.classList.remove("open");
         closeContextMenu();
     };
+
+    function openCatalogFilterModal() {
+        syncCatalogFilterControls();
+        catalogFilterModal.classList.add("open");
+        catalogFilterNameInput.focus();
+    }
+
+    function closeCatalogFilterModal() {
+        catalogFilterModal.classList.remove("open");
+    }
+
+    function buildFilterChip(key, label, value) {
+        return `
+            <span class="catalog-filter-chip">
+                <strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}
+                <button
+                    type="button"
+                    class="catalog-filter-chip-remove"
+                    data-filter-key="${escapeHtml(key)}"
+                    aria-label="Quitar filtro ${escapeHtml(label)}"
+                    title="Quitar filtro"
+                >✕</button>
+            </span>
+        `;
+    }
+
+    function updateCatalogFilterSummary() {
+        const chips = [];
+        if (catalogFilterState.name) chips.push(buildFilterChip("name", "Nombre", catalogFilterState.name));
+        if (catalogFilterState.orbitKind) chips.push(buildFilterChip("orbitKind", "Orbita", orbitFilterLabel(catalogFilterState.orbitKind)));
+        if (catalogFilterState.mission) chips.push(buildFilterChip("mission", "Mision", missionFilterLabel(catalogFilterState.mission)));
+        catalogFilterSummary.innerHTML = chips.join("");
+        catalogFilterSummary.hidden = chips.length === 0;
+    }
+
+    function populateCatalogSelect(selectEl, options, selectedValue, allLabel) {
+        const nextValue = options.some((option) => option.value === selectedValue) ? selectedValue : "";
+        selectEl.innerHTML = "";
+
+        const allOption = document.createElement("option");
+        allOption.value = "";
+        allOption.textContent = allLabel;
+        selectEl.appendChild(allOption);
+
+        for (const option of options) {
+            const optionEl = document.createElement("option");
+            optionEl.value = option.value;
+            optionEl.textContent = option.label;
+            selectEl.appendChild(optionEl);
+        }
+
+        selectEl.value = nextValue;
+        return nextValue;
+    }
+
+    function syncCatalogFilterControls() {
+        const orbitOptions = ORBIT_FILTER_ORDER.map((kind) => ({
+            value: kind,
+            label: orbitFilterLabel(kind)
+        }));
+        const missionOptions = MISSION_FILTER_ORDER.map((value) => ({
+            value,
+            label: missionFilterLabel(value)
+        }));
+
+        catalogFilterState.orbitKind = populateCatalogSelect(catalogOrbitFilter, orbitOptions, catalogFilterState.orbitKind, "Todas las orbitas");
+        catalogFilterState.mission = populateCatalogSelect(catalogMissionFilter, missionOptions, catalogFilterState.mission, "Todas las misiones");
+        catalogSearchInput.value = catalogFilterState.name;
+        catalogFilterNameInput.value = catalogFilterState.name;
+        updateCatalogFilterSummary();
+    }
+
+    function applyCatalogFilters(nextState = {}) {
+        if (Object.prototype.hasOwnProperty.call(nextState, "name")) {
+            catalogFilterState.name = String(nextState.name || "").toLowerCase().trim();
+        }
+        if (Object.prototype.hasOwnProperty.call(nextState, "orbitKind")) {
+            catalogFilterState.orbitKind = String(nextState.orbitKind || "");
+        }
+        if (Object.prototype.hasOwnProperty.call(nextState, "mission")) {
+            catalogFilterState.mission = String(nextState.mission || "");
+        }
+
+        syncCatalogFilterControls();
+        renderCatalogList();
+    }
 
     function closeContextMenu() {
         contextMenu.classList.remove("open");
@@ -829,9 +1018,6 @@ export function setupObjectSidebar({
                 await onRefreshCatalog();
             }
 
-            // El catalogo cambió; invalidar cache de metadatos para recalcular con datos nuevos.
-            clearCatalogMetaCache();
-
             selectedCatalogIds.clear();
             catalogAnchorIndex = null;
             renderCatalogList();
@@ -942,33 +1128,8 @@ export function setupObjectSidebar({
     }
 
     function waitAndOpenCatalog() {
-        if (isCatalogReady?.()) {
-            openCatalogModal();
-            return;
-        }
-
-        catalogLoadingText.textContent = "Esperando datos del servidor...";
-        catalogLoadingModal.classList.add("open");
-
-        if (catalogWaitInterval) {
-            clearInterval(catalogWaitInterval);
-            catalogWaitInterval = null;
-        }
-
-        let elapsedMs = 0;
-        catalogWaitInterval = setInterval(() => {
-            elapsedMs += 150;
-            if (isCatalogReady?.()) {
-                clearInterval(catalogWaitInterval);
-                catalogWaitInterval = null;
-                catalogLoadingModal.classList.remove("open");
-                openCatalogModal();
-                return;
-            }
-            if (elapsedMs >= 2500) {
-                catalogLoadingText.textContent = "Sigue cargando... puede tardar unos segundos.";
-            }
-        }, 150);
+        catalogLoadingModal.classList.remove("open");
+        openCatalogModal();
     }
 
     header.addEventListener("click", toggleSidebar);
@@ -1024,9 +1185,17 @@ export function setupObjectSidebar({
     });
 
     catalogCloseBtn.addEventListener("click", closeCatalogModal);
+    catalogFiltersBtn.addEventListener("click", openCatalogFilterModal);
     catalogModal.addEventListener("click", (event) => {
         if (event.target === catalogModal) {
             closeCatalogModal();
+        }
+    });
+
+    catalogFilterCloseBtn.addEventListener("click", closeCatalogFilterModal);
+    catalogFilterModal.addEventListener("click", (event) => {
+        if (event.target === catalogFilterModal) {
+            closeCatalogFilterModal();
         }
     });
 
@@ -1078,9 +1247,85 @@ export function setupObjectSidebar({
             clearTimeout(catalogSearchDebounce);
         }
         catalogSearchDebounce = setTimeout(() => {
-            catalogFilterText = (catalogSearchInput.value || "").toLowerCase();
-            renderCatalogList();
+            applyCatalogFilters({ name: catalogSearchInput.value || "" });
         }, 120);
+    });
+
+    catalogFilterNameInput.addEventListener("input", () => {
+        if (catalogSearchDebounce) {
+            clearTimeout(catalogSearchDebounce);
+        }
+        catalogSearchDebounce = setTimeout(() => {
+            applyCatalogFilters({ name: catalogFilterNameInput.value || "" });
+        }, 120);
+    });
+
+    catalogOrbitFilter.addEventListener("change", () => {
+        applyCatalogFilters({ orbitKind: catalogOrbitFilter.value || "" });
+    });
+
+    catalogMissionFilter.addEventListener("change", () => {
+        applyCatalogFilters({ mission: catalogMissionFilter.value || "" });
+    });
+
+    catalogFilterClearBtn.addEventListener("click", () => {
+        applyCatalogFilters({ name: "", orbitKind: "", mission: "" });
+    });
+
+    catalogFilterSummary.addEventListener("click", (event) => {
+        const removeBtn = event.target.closest(".catalog-filter-chip-remove");
+        if (!removeBtn) {
+            return;
+        }
+
+        const key = String(removeBtn.dataset.filterKey || "");
+        if (!key) {
+            return;
+        }
+
+        applyCatalogFilters({ [key]: "" });
+    });
+
+    catalogListRoot.addEventListener("scroll", () => {
+        if (catalogAdjustingScroll) {
+            return;
+        }
+
+        if (catalogModal.classList.contains("open") && catalogRenderToken === catalogQueryToken) {
+            const currentScrollTop = catalogListRoot.scrollTop;
+            const scrollingDown = currentScrollTop >= catalogLastScrollTop;
+            catalogLastScrollTop = currentScrollTop;
+
+            if (scrollingDown) {
+                const movedRows = isNearCatalogBottom(CATALOG_WINDOW_EDGE_THRESHOLD) ? shiftCatalogWindowDown() : 0;
+                if (movedRows > 0) {
+                    renderCatalogWindowRows(catalogRenderToken);
+                    const adjustPx = movedRows * Math.max(1, catalogRowHeightPx);
+                    catalogAdjustingScroll = true;
+                    catalogListRoot.scrollTop += adjustPx;
+                    catalogLastScrollTop = catalogListRoot.scrollTop;
+                    requestAnimationFrame(() => {
+                        catalogAdjustingScroll = false;
+                    });
+                    return;
+                }
+            } else {
+                const movedRows = currentScrollTop <= CATALOG_WINDOW_EDGE_THRESHOLD ? shiftCatalogWindowUp() : 0;
+                if (movedRows > 0) {
+                    renderCatalogWindowRows(catalogRenderToken);
+                    const adjustPx = movedRows * Math.max(1, catalogRowHeightPx);
+                    catalogAdjustingScroll = true;
+                    catalogListRoot.scrollTop = Math.max(0, catalogListRoot.scrollTop - adjustPx);
+                    catalogLastScrollTop = catalogListRoot.scrollTop;
+                    requestAnimationFrame(() => {
+                        catalogAdjustingScroll = false;
+                    });
+                    return;
+                }
+            }
+        }
+
+        maybeLoadMoreCatalog(catalogRenderToken);
     });
 
     catalogAddSelectedBtn.addEventListener("click", async () => {
@@ -1115,6 +1360,8 @@ export function setupObjectSidebar({
             onSelectObject?.(selectedId);
             selectedCatalogIds.clear();
             catalogAnchorIndex = null;
+            layerFilterText = "";
+            searchInput.value = "";
             setCatalogBusyState(false);
             renderList();
             renderInfo();
@@ -1132,9 +1379,7 @@ export function setupObjectSidebar({
             return;
         }
 
-        const ids = getCatalogIds();
-        const filtered = ids.filter((id) => id.toLowerCase().includes(catalogFilterText));
-        const toSelect = filtered.filter((id) => !getObjectLayerActive(id) && !selectedCatalogIds.has(id));
+        const toSelect = lastRenderedCatalogIds.filter((id) => !getObjectLayerActive(id) && !selectedCatalogIds.has(id));
 
         if (!toSelect.length) {
             return;
@@ -1194,14 +1439,40 @@ export function setupObjectSidebar({
         catalogAddSelectedBtn.disabled = isBusy || selectedCatalogIds.size === 0;
         catalogSelectAllBtn.disabled = isBusy;
         catalogRefreshBtn.disabled = isBusy;
+        catalogFiltersBtn.disabled = isBusy;
         catalogCloseBtn.disabled = isBusy;
         catalogSearchInput.disabled = isBusy;
+        catalogFilterNameInput.disabled = isBusy;
+        catalogOrbitFilter.disabled = isBusy;
+        catalogMissionFilter.disabled = isBusy;
+        catalogFilterClearBtn.disabled = isBusy;
         catalogProgress.textContent = text;
     }
 
+    function getRenderableLayerIds() {
+        const directIds = getLayerIds();
+        if (directIds.length > 1) {
+            return directIds;
+        }
+
+        // Fallback defensivo: reconstruir activos consultando catálogo + estado real.
+        // Evita que el panel izquierdo se quede con 1 elemento por desincronización de caché.
+        try {
+            const rebuilt = getCatalogIds().filter((id) => getObjectLayerActive(id));
+            if (rebuilt.length > directIds.length) {
+                return rebuilt;
+            }
+        } catch {
+            // mantener resultado directo si el fallback falla
+        }
+
+        return directIds;
+    }
+
     function renderList() {
-        const ids = getLayerIds();
-        const filtered = ids.filter((id) => id.toLowerCase().includes(layerFilterText));
+        const ids = getRenderableLayerIds();
+        const activeFilterText = String(searchInput?.value || layerFilterText || "").toLowerCase().trim();
+        const filtered = ids.filter((id) => id.toLowerCase().includes(activeFilterText));
 
         listRoot.innerHTML = "";
         for (const id of filtered) {
@@ -1306,267 +1577,372 @@ export function setupObjectSidebar({
             setCatalogRefreshState({ visible: false, text: "", value: 0 });
         }
 
-        const ids = getCatalogIds();
-        const activeRenderToken = ++catalogRenderToken;
-        const activeFilterToken = ++catalogFilterToken;
-
-        catalogProgress.textContent = `Filtrando... 0/${ids.length}`;
-
-        buildFilteredIdsAsync(ids, catalogFilterText, activeFilterToken, (done, total) => {
-            if (activeRenderToken !== catalogRenderToken) {
-                return;
-            }
-            catalogProgress.textContent = `Filtrando... ${done}/${total}`;
-        }).then((filtered) => {
-            if (!filtered || activeRenderToken !== catalogRenderToken) {
-                return;
-            }
-            renderCatalogRows(filtered, activeRenderToken);
-        });
+        const token = ++catalogQueryToken;
+        catalogRenderToken = token;
+        catalogOffset = 0;
+        catalogServerTotal = 0;
+        catalogHasMore = false;
+        catalogLoadingPage = false;
+        lastRenderedCatalogIds = [];
+        catalogIndexById.clear();
+        catalogRowHeightPx = CATALOG_ROW_HEIGHT_FALLBACK;
+        catalogWindowStart = 0;
+        catalogWindowEnd = 0;
+        catalogLastScrollTop = 0;
+        catalogAdjustingScroll = false;
+        renderCatalogRows([], token);
+        loadCatalogNextPage(token);
     }
 
-    function buildFilteredIdsAsync(ids, filterText, token, onProgress) {
-        return new Promise((resolve) => {
-            const filtered = [];
-            let index = 0;
-            const needle = (filterText || "").toLowerCase();
+    async function loadCatalogNextPage(token = catalogQueryToken) {
+        if (!fetchCatalogPage || catalogLoadingPage) {
+            return;
+        }
 
-            const step = () => {
-                if (token !== catalogFilterToken) {
-                    resolve(null);
-                    return;
+        if (catalogOffset > 0 && !catalogHasMore) {
+            return;
+        }
+
+        const requestedNearBottom = isNearCatalogBottom(CATALOG_PREFETCH_THRESHOLD);
+        catalogLoadingPage = true;
+
+        try {
+            const result = await fetchCatalogPage({
+                offset: catalogOffset,
+                limit: CATALOG_PAGE_SIZE,
+                search: catalogFilterState.name,
+                orbitKind: catalogFilterState.orbitKind,
+                mission: catalogFilterState.mission
+            });
+
+            if (token !== catalogQueryToken) {
+                return;
+            }
+
+            const ids = Array.isArray(result?.ids) ? result.ids : [];
+            catalogServerTotal = Number(result?.total) || 0;
+            catalogOffset += ids.length;
+            catalogHasMore = Boolean(result?.hasMore);
+
+            const previousCount = lastRenderedCatalogIds.length;
+
+            if (ids.length) {
+                lastRenderedCatalogIds = [...lastRenderedCatalogIds, ...ids];
+                for (let i = previousCount; i < lastRenderedCatalogIds.length; i += 1) {
+                    catalogIndexById.set(lastRenderedCatalogIds[i], i);
                 }
+            }
 
-                const end = Math.min(index + CATALOG_FILTER_CHUNK, ids.length);
-                while (index < end) {
-                    const id = ids[index];
-                    if (!needle || id.toLowerCase().includes(needle)) {
-                        filtered.push(id);
-                    }
-                    index += 1;
-                }
-
-                onProgress?.(index, ids.length);
-
-                if (index < ids.length) {
-                    requestAnimationFrame(step);
-                    return;
-                }
-
-                resolve(filtered);
-            };
-
-            requestAnimationFrame(step);
-        });
+            renderCatalogRows(lastRenderedCatalogIds, token, {
+                append: previousCount > 0,
+                requestedNearBottom
+            });
+        } catch (error) {
+            if (token === catalogQueryToken) {
+                showErrorPopup(`No se pudo cargar el catalogo paginado: ${error instanceof Error ? error.message : String(error)}`);
+                catalogProgress.textContent = "Error cargando resultados";
+            }
+        } finally {
+            if (token === catalogQueryToken) {
+                catalogLoadingPage = false;
+            }
+        }
     }
 
-    function renderCatalogRows(filtered, renderToken) {
-        if (!catalogModal.classList.contains("open")) return;
+    function ensureCatalogVirtualDom() {
+        if (catalogVirtualTopSpacer && catalogVirtualRowsRoot && catalogVirtualBottomSpacer) {
+            return;
+        }
+
         catalogListRoot.innerHTML = "";
-        closeContextMenu();
+
+        catalogVirtualTopSpacer = document.createElement("div");
+        catalogVirtualTopSpacer.className = "catalog-virtual-spacer catalog-virtual-top-spacer";
+
+        catalogVirtualRowsRoot = document.createElement("div");
+        catalogVirtualRowsRoot.className = "catalog-virtual-rows";
+
+        catalogVirtualBottomSpacer = document.createElement("div");
+        catalogVirtualBottomSpacer.className = "catalog-virtual-spacer catalog-virtual-bottom-spacer";
+
+        catalogListRoot.appendChild(catalogVirtualTopSpacer);
+        catalogListRoot.appendChild(catalogVirtualRowsRoot);
+        catalogListRoot.appendChild(catalogVirtualBottomSpacer);
+    }
+
+    function isNearCatalogBottom(thresholdPx = CATALOG_WINDOW_EDGE_THRESHOLD) {
+        return catalogListRoot.scrollTop + catalogListRoot.clientHeight >= catalogListRoot.scrollHeight - thresholdPx;
+    }
+
+    function maybeLoadMoreCatalog(token = catalogRenderToken) {
+        if (catalogBusy || catalogLoadingPage || !catalogHasMore) {
+            return;
+        }
+
+        const needsPrefetch = isNearCatalogBottom(CATALOG_PREFETCH_THRESHOLD)
+            || (catalogListRoot.scrollHeight <= catalogListRoot.clientHeight + CATALOG_PREFETCH_THRESHOLD);
+
+        if (needsPrefetch) {
+            loadCatalogNextPage(token);
+        }
+    }
+
+    function normalizeCatalogWindowRange() {
+        const total = lastRenderedCatalogIds.length;
+        if (!total) {
+            catalogWindowStart = 0;
+            catalogWindowEnd = 0;
+            return;
+        }
+
+        const desiredWindowSize = Math.min(total, CATALOG_WINDOW_MAX_ROWS);
+
+        if (catalogWindowEnd <= 0) {
+            catalogWindowEnd = desiredWindowSize;
+            catalogWindowStart = 0;
+        }
+
+        if (catalogWindowEnd > total) {
+            catalogWindowEnd = total;
+        }
+
+        if (catalogWindowStart < 0) {
+            catalogWindowStart = 0;
+        }
+
+        if (catalogWindowEnd - catalogWindowStart > desiredWindowSize) {
+            catalogWindowStart = catalogWindowEnd - desiredWindowSize;
+        }
+
+        if (catalogWindowStart > catalogWindowEnd) {
+            catalogWindowStart = Math.max(0, catalogWindowEnd - desiredWindowSize);
+        }
+
+        // Evita que la ventana se encoja (causa huecos visuales grandes).
+        // Mientras haya datos suficientes, mantenemos ancho constante.
+        let currentSize = catalogWindowEnd - catalogWindowStart;
+        if (currentSize < desiredWindowSize) {
+            const missing = desiredWindowSize - currentSize;
+            if (catalogWindowEnd >= total) {
+                catalogWindowStart = Math.max(0, catalogWindowStart - missing);
+            } else {
+                catalogWindowEnd = Math.min(total, catalogWindowEnd + missing);
+            }
+            currentSize = catalogWindowEnd - catalogWindowStart;
+            if (currentSize < desiredWindowSize) {
+                catalogWindowStart = Math.max(0, catalogWindowEnd - desiredWindowSize);
+            }
+        }
+    }
+
+    function updateCatalogLoadedProgress() {
+        const loaded = lastRenderedCatalogIds.length;
+        const totalHint = catalogServerTotal > 0 ? `${loaded}/${catalogServerTotal}` : `${loaded}`;
+
+        if (!loaded) {
+            catalogProgress.textContent = catalogLoadingPage ? "Cargando resultados..." : "Sin resultados";
+            return;
+        }
+
+        if (catalogHasMore) {
+            catalogProgress.textContent = `${totalHint} resultados cargados. Desplaza para cargar mas.`;
+            return;
+        }
+
+        catalogProgress.textContent = `${totalHint} resultados cargados`;
+    }
+
+    function createCatalogRowElement(id, filtered) {
+        const rowEl = document.createElement("div");
+        rowEl.className = "catalog-list-row";
+
+        const nameEl = document.createElement("div");
+        nameEl.className = "catalog-list-name";
+        nameEl.textContent = "";
+        nameEl.style.userSelect = "none";
+
+        const active = getObjectLayerActive(id);
+        const selected = !active && selectedCatalogIds.has(id);
+        const meta = getCatalogMeta(id);
+        const orbitInfo = meta.orbitInfo;
+        if (active) rowEl.classList.add("is-added");
+        else if (selected) rowEl.classList.add("is-selected");
+
+        const stateEl = document.createElement("div");
+        stateEl.className = `catalog-row-state${active ? " is-added" : ""}`;
+        stateEl.textContent = active ? "Anadido" : "Disponible";
+
+        if (orbitInfo && orbitInfo.kind !== ORBIT_KIND.UNKNOWN) {
+            const orbitTag = createOrbitTypeTagElement(orbitInfo);
+            orbitTag.title = orbitInfo.label;
+            nameEl.appendChild(orbitTag);
+            nameEl.appendChild(document.createTextNode(" "));
+        }
+
+        nameEl.appendChild(document.createTextNode(id));
+
+        const indexInFiltered = catalogIndexById.get(id);
+
+        rowEl.addEventListener("click", (event) => {
+            if (catalogBusy || active) return;
+
+            const isRangeSelection = event.shiftKey && catalogAnchorIndex !== null;
+            const isMultiToggle = event.ctrlKey || event.metaKey;
+
+            if (isRangeSelection && indexInFiltered !== undefined) {
+                const from = Math.min(catalogAnchorIndex, indexInFiltered);
+                const to = Math.max(catalogAnchorIndex, indexInFiltered);
+                if (!isMultiToggle) selectedCatalogIds.clear();
+
+                for (let idx = from; idx <= to; idx++) {
+                    const rangeId = filtered[idx];
+                    if (!getObjectLayerActive(rangeId)) selectedCatalogIds.add(rangeId);
+                }
+
+                catalogAnchorIndex = indexInFiltered;
+                refreshRenderedCatalogSelectionStyles();
+                updateCatalogActionsState();
+                return;
+            }
+
+            if (!isMultiToggle) {
+                selectedCatalogIds.clear();
+                selectedCatalogIds.add(id);
+                catalogAnchorIndex = indexInFiltered;
+                refreshRenderedCatalogSelectionStyles();
+                updateCatalogActionsState();
+                return;
+            }
+
+            if (selectedCatalogIds.has(id)) {
+                selectedCatalogIds.delete(id);
+                rowEl.classList.remove("is-selected");
+            } else {
+                selectedCatalogIds.add(id);
+                rowEl.classList.add("is-selected");
+            }
+
+            catalogAnchorIndex = indexInFiltered;
+            updateCatalogActionsState();
+        });
+
+        rowEl.addEventListener("contextmenu", (event) => {
+            event.preventDefault();
+            openContextMenu(id, event.clientX, event.clientY);
+        });
+
+        rowEl.appendChild(nameEl);
+        rowEl.appendChild(stateEl);
+        catalogRowElements.set(id, rowEl);
+        return rowEl;
+    }
+
+    function shiftCatalogWindowDown() {
+        const total = lastRenderedCatalogIds.length;
+        if (catalogWindowEnd >= total) {
+            return 0;
+        }
+
+        const delta = Math.min(CATALOG_WINDOW_STEP_ROWS, total - catalogWindowEnd);
+        catalogWindowStart += delta;
+        catalogWindowEnd += delta;
+        normalizeCatalogWindowRange();
+        return delta;
+    }
+
+    function shiftCatalogWindowUp() {
+        if (catalogWindowStart <= 0) {
+            return 0;
+        }
+
+        const delta = Math.min(CATALOG_WINDOW_STEP_ROWS, catalogWindowStart);
+        catalogWindowStart -= delta;
+        catalogWindowEnd -= delta;
+        normalizeCatalogWindowRange();
+        return delta;
+    }
+
+    function renderCatalogWindowRows(renderToken) {
+        if (!catalogModal.classList.contains("open")) return;
+        if (renderToken !== catalogRenderToken) return;
+
+        ensureCatalogVirtualDom();
+        catalogVirtualRowsRoot.innerHTML = "";
         catalogRowElements.clear();
 
-        const total = filtered.length;
-        catalogProgress.textContent = total ? `Mostrando 0/${total} resultados...` : "Sin resultados";
-
-        // mapa id -> index para evitar indexOf costoso
-        const idIndexMap = new Map();
-        filtered.forEach((id, idx) => idIndexMap.set(id, idx));
-
-        // Agrupar por tipo inferido (toolbox arriba)
-        function inferType(id) {
-            const raw = String(id || "").toLowerCase();
-            const s = raw.replace(/[_\-]/g, " ");
-
-            if (/\b(toolbox|tool\b|tools\b|tbx|tool-box|tool_box)\b/i.test(s)) return "Toolbox";
-            if (/\b(payloads?|payload)\b/i.test(s)) return "Payload";
-            if (/\bsentinel\b/i.test(s)) return "Sentinel";
-            if (/\bstarlink\b/i.test(s)) return "Starlink";
-            if (/\b(sat(elite)?|sat\b)\b/i.test(s)) return "Satellite";
-            return "Other";
+        const total = lastRenderedCatalogIds.length;
+        if (!total) {
+            catalogVirtualTopSpacer.style.height = "0px";
+            catalogVirtualBottomSpacer.style.height = "0px";
+            updateCatalogLoadedProgress();
+            return;
         }
 
-        const GROUP_ORDER = ["Toolbox", "Payload", "Starlink", "Sentinel", "Satellite", "Other"];
-        const groups = new Map();
-        for (let i = 0; i < filtered.length; i++) {
-            const id = filtered[i];
-            const type = inferType(id);
-            if (!groups.has(type)) groups.set(type, []);
-            groups.get(type).push(id);
+        normalizeCatalogWindowRange();
+
+        const desiredWindowSize = Math.min(total, CATALOG_WINDOW_MAX_ROWS);
+        const currentWindowSize = catalogWindowEnd - catalogWindowStart;
+        if (currentWindowSize < desiredWindowSize) {
+            catalogWindowStart = Math.max(0, catalogWindowEnd - desiredWindowSize);
+            catalogWindowEnd = Math.min(total, catalogWindowStart + desiredWindowSize);
         }
 
-        // Render por grupos en chunks para evitar bloqueos largos.
-        let rendered = 0;
-        const groupEntries = GROUP_ORDER.map((g) => [g, groups.get(g) || []]).filter(([, items]) => items.length);
-        const totalToRender = groupEntries.reduce((s, [, items]) => s + items.length, 0);
+        catalogVirtualTopSpacer.style.height = `${catalogWindowStart * catalogRowHeightPx}px`;
+        catalogVirtualBottomSpacer.style.height = `${Math.max(0, (total - catalogWindowEnd) * catalogRowHeightPx)}px`;
 
-        let currentGroupIndex = 0;
-        let groupItemIndex = 0;
+        for (let index = catalogWindowStart; index < catalogWindowEnd; index += 1) {
+            const id = lastRenderedCatalogIds[index];
+            const rowEl = createCatalogRowElement(id, lastRenderedCatalogIds);
+            catalogVirtualRowsRoot.appendChild(rowEl);
+        }
 
-        function renderNextChunk() {
-            if (renderToken !== catalogRenderToken) return; // cancelado
-
-            const CHUNK = Math.max(40, Math.min(CATALOG_RENDER_CHUNK, 180));
-            let didWork = false;
-
-            while (currentGroupIndex < groupEntries.length) {
-                const [groupName, items] = groupEntries[currentGroupIndex];
-
-                // si estamos al inicio del grupo, añadir header
-                if (groupItemIndex === 0) {
-                    const headerEl = document.createElement("div");
-                    headerEl.className = "catalog-group-header";
-                    const collapsed = collapsedCatalogGroups.has(groupName);
-                    headerEl.innerHTML = `<span class="catalog-group-toggle">${collapsed ? "▸" : "▾"}</span>${escapeHtml(groupName)}`;
-                    headerEl.title = collapsed ? `Expandir grupo ${groupName}` : `Colapsar grupo ${groupName}`;
-                    headerEl.addEventListener("click", () => {
-                        if (collapsedCatalogGroups.has(groupName)) {
-                            collapsedCatalogGroups.delete(groupName);
-                        } else {
-                            collapsedCatalogGroups.add(groupName);
-                        }
-                        renderCatalogList();
-                    });
-                    catalogListRoot.appendChild(headerEl);
-                    if (collapsed) {
-                        currentGroupIndex += 1;
-                        groupItemIndex = 0;
-                        continue;
-                    }
-                }
-
-                let chunkCount = 0;
-                while (groupItemIndex < items.length && chunkCount < CHUNK) {
-                    const id = items[groupItemIndex];
-                    const rowEl = document.createElement("div");
-                    rowEl.className = "catalog-list-row";
-
-                    const nameEl = document.createElement("div");
-                    nameEl.className = "catalog-list-name";
-                    nameEl.textContent = "";
-                    nameEl.style.userSelect = "none";
-
-                    const active = getObjectLayerActive(id);
-                    const selected = !active && selectedCatalogIds.has(id);
-                    // marcar TLEs muy antiguos
-                    const meta = getCatalogMeta(id);
-                    const tleSummary = meta.tleSummary;
-                    const orbitInfo = meta.orbitInfo;
-                    const oldInfo = checkTleOldAdaptive(tleSummary, orbitInfo);
-                    if (active) rowEl.classList.add("is-added");
-                    else if (selected) rowEl.classList.add("is-selected");
-
-                    const stateEl = document.createElement("div");
-                    stateEl.className = `catalog-row-state${active ? " is-added" : ""}`;
-                    stateEl.textContent = active ? "Anadido" : "Disponible";
-
-                    if (orbitInfo && orbitInfo.kind !== ORBIT_KIND.UNKNOWN) {
-                        const orbitTag = createOrbitTypeTagElement(orbitInfo);
-                        orbitTag.title = `${orbitInfo.label}. Recomendado: ${orbitInfo.recommendedWindow}`;
-                        nameEl.appendChild(orbitTag);
-                        nameEl.appendChild(document.createTextNode(" "));
-                    }
-
-                    nameEl.appendChild(document.createTextNode(id));
-
-                    if (oldInfo && oldInfo.isOld && !active) {
-                        const warn = document.createElement("span");
-                        warn.className = "catalog-old-warning";
-                        const warnMsg = buildTleFreshnessMessage(orbitInfo, tleAgeDaysFromSummary(tleSummary));
-                        warn.title = warnMsg;
-                        warn.textContent = "⚠";
-                        warn.addEventListener("click", (event) => {
-                            event.stopPropagation();
-                            showInfoPopup(warnMsg);
-                        });
-                        nameEl.appendChild(document.createTextNode(" "));
-                        nameEl.appendChild(warn);
-                    }
-
-                    const indexInFiltered = idIndexMap.get(id);
-
-                    rowEl.addEventListener("click", (event) => {
-                        if (catalogBusy || active) return;
-
-                        const isRangeSelection = event.shiftKey && catalogAnchorIndex !== null;
-                        const isMultiToggle = event.ctrlKey || event.metaKey;
-
-                        if (isRangeSelection && indexInFiltered !== -1) {
-                            const from = Math.min(catalogAnchorIndex, indexInFiltered);
-                            const to = Math.max(catalogAnchorIndex, indexInFiltered);
-                            if (!isMultiToggle) selectedCatalogIds.clear();
-
-                            for (let idx = from; idx <= to; idx++) {
-                                const rangeId = filtered[idx];
-                                if (!getObjectLayerActive(rangeId)) selectedCatalogIds.add(rangeId);
-                            }
-
-                            catalogAnchorIndex = indexInFiltered;
-                            refreshRenderedCatalogSelectionStyles();
-                            updateCatalogActionsState();
-                            return;
-                        }
-
-                        if (!isMultiToggle) {
-                            selectedCatalogIds.clear();
-                            selectedCatalogIds.add(id);
-                            catalogAnchorIndex = indexInFiltered;
-                            refreshRenderedCatalogSelectionStyles();
-                            updateCatalogActionsState();
-                            return;
-                        }
-
-                        if (selectedCatalogIds.has(id)) {
-                            selectedCatalogIds.delete(id);
-                            rowEl.classList.remove("is-selected");
-                        } else {
-                            selectedCatalogIds.add(id);
-                            rowEl.classList.add("is-selected");
-                        }
-
-                        catalogAnchorIndex = indexInFiltered;
-                        updateCatalogActionsState();
-                    });
-
-                    rowEl.addEventListener("contextmenu", (event) => {
-                        event.preventDefault();
-                        openContextMenu(id, event.clientX, event.clientY);
-                    });
-
-                    rowEl.appendChild(nameEl);
-                    rowEl.appendChild(stateEl);
-                    catalogRowElements.set(id, rowEl);
-                    catalogListRoot.appendChild(rowEl);
-
-                    groupItemIndex += 1;
-                    chunkCount += 1;
-                    rendered += 1;
-                    didWork = true;
-                }
-
-                // Si terminamos el grupo, avanzar al siguiente
-                if (groupItemIndex >= items.length) {
-                    currentGroupIndex += 1;
-                    groupItemIndex = 0;
-                }
-
-                // Si el chunk se llenó, break to yield
-                if (didWork && chunkCount >= CHUNK) break;
-            }
-
-            catalogProgress.textContent = `Mostrando ${rendered}/${totalToRender} resultados...`;
-
-            if (currentGroupIndex < groupEntries.length) {
-                requestAnimationFrame(renderNextChunk);
+        const firstRendered = catalogVirtualRowsRoot.firstElementChild;
+        if (firstRendered) {
+            const measured = Math.max(1, Math.round(firstRendered.getBoundingClientRect().height));
+            if (Number.isFinite(measured) && measured > 0 && Math.abs(measured - catalogRowHeightPx) > 2) {
+                catalogRowHeightPx = measured;
+                requestAnimationFrame(() => {
+                    renderCatalogWindowRows(renderToken);
+                });
                 return;
             }
-
-            // terminado
-            catalogProgress.textContent = `${totalToRender} resultados`;
-            updateCatalogActionsState();
         }
 
-        requestAnimationFrame(renderNextChunk);
+        updateCatalogLoadedProgress();
+
+        maybeLoadMoreCatalog(renderToken);
+    }
+
+    function renderCatalogRows(filtered, renderToken, options = {}) {
+        if (!catalogModal.classList.contains("open")) return;
+        const appendMode = Boolean(options.append);
+        const requestedNearBottom = Boolean(options.requestedNearBottom);
+        const previousTotal = lastRenderedCatalogIds.length;
+        if (!appendMode) {
+            closeContextMenu();
+        }
+
+        lastRenderedCatalogIds = filtered.slice();
+        catalogIndexById.clear();
+        for (let i = 0; i < lastRenderedCatalogIds.length; i += 1) {
+            catalogIndexById.set(lastRenderedCatalogIds[i], i);
+        }
+
+        if (!appendMode) {
+            catalogWindowStart = 0;
+            catalogWindowEnd = Math.min(lastRenderedCatalogIds.length, CATALOG_WINDOW_MAX_ROWS);
+            catalogListRoot.scrollTop = 0;
+            catalogLastScrollTop = 0;
+        } else {
+            const added = Math.max(0, lastRenderedCatalogIds.length - previousTotal);
+            if (added > 0 && requestedNearBottom) {
+                catalogWindowEnd = lastRenderedCatalogIds.length;
+                catalogWindowStart = Math.max(0, catalogWindowEnd - CATALOG_WINDOW_MAX_ROWS);
+            }
+            updateCatalogLoadedProgress();
+        }
+
+        renderCatalogWindowRows(renderToken);
     }
 
     function refreshRenderedCatalogSelectionStyles() {
@@ -1616,10 +1992,6 @@ export function setupObjectSidebar({
     setGlobalVisibility(true);
     renderInfo();
     closeSidebar();
-
-    requestAnimationFrame(() => {
-        getCatalogIds();
-    });
 
     const listInterval = setInterval(renderList, 1000);
     const infoInterval = setInterval(renderInfo, 250);
