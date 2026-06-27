@@ -26,11 +26,11 @@ MAX_CACHED_ORBITS = 50
 orbit_lru_cache = OrderedDict()
 orbit_point_cache = {}
 AUTO_MIN_ORBIT_SAMPLES = 24
-AUTO_MAX_ORBIT_SAMPLES = 720
+AUTO_MAX_ORBIT_SAMPLES = 1440
 PROPAGATION_HOURS_MIN = 0.1
 PROPAGATION_HOURS_MAX = 240.0
 ORBIT_CACHE_TTL_SECONDS = 10
-MAX_TOTAL_ORBIT_POINTS_PER_BATCH = 200000
+MAX_TOTAL_ORBIT_POINTS_PER_BATCH = 300000
 
 # =============================
 # Estado global de propagadores
@@ -170,7 +170,28 @@ def get_state_snapshot():
         return list(propagators), dict(system_config), dict(propagators_by_name)
 
 
-def compute_auto_orbit_samples(horizon_hours, satellites_count=1):
+def get_orbit_density_factor(prop):
+    sat = getattr(prop, "sat", None)
+    if sat is None:
+        return 1.0
+
+    try:
+        eccentricity = max(0.0, float(getattr(sat, "ecco", 0.0) or 0.0))
+    except Exception:
+        return 1.0
+
+    factor = 1.0
+    if eccentricity >= 0.1:
+        factor += min(0.8, eccentricity * 1.2)
+    if eccentricity >= 0.25:
+        factor += min(1.2, (eccentricity - 0.25) * 2.0)
+    if eccentricity >= 0.5:
+        factor += min(1.0, (eccentricity - 0.5) * 2.0)
+
+    return max(1.0, min(3.0, factor))
+
+
+def compute_auto_orbit_samples(horizon_hours, satellites_count=1, prop=None):
     safe_hours = horizon_hours if isinstance(horizon_hours, (int, float)) and horizon_hours > 0 else 12
 
     if safe_hours <= 1:
@@ -187,8 +208,10 @@ def compute_auto_orbit_samples(horizon_hours, satellites_count=1):
 
     safe_satellites = satellites_count if isinstance(satellites_count, int) and satellites_count > 0 else 1
     budget_samples_per_sat = max(AUTO_MIN_ORBIT_SAMPLES, MAX_TOTAL_ORBIT_POINTS_PER_BATCH // safe_satellites)
+    density_factor = get_orbit_density_factor(prop)
+    dense_samples = int(round(base_samples * density_factor))
 
-    return max(AUTO_MIN_ORBIT_SAMPLES, min(base_samples, budget_samples_per_sat))
+    return max(AUTO_MIN_ORBIT_SAMPLES, min(dense_samples, budget_samples_per_sat))
 
 
 def get_runtime_propagation_hours(cfg):
@@ -225,13 +248,16 @@ def build_orbit_payload(props, cfg):
         return []
 
     horizon_hours = get_runtime_propagation_hours(cfg)
-
-    samples = compute_auto_orbit_samples(horizon_hours, len(props))
     cache_ttl_seconds = ORBIT_CACHE_TTL_SECONDS
     now = datetime.datetime.now(datetime.UTC)
 
-    payload = []
+    sample_plan = []
     for name, prop in props:
+        samples = compute_auto_orbit_samples(horizon_hours, len(props), prop)
+        sample_plan.append((name, prop, samples))
+
+    payload = []
+    for name, prop, samples in sample_plan:
         sat_cache_key = (name, horizon_hours, samples)
 
         with state_lock:
@@ -268,11 +294,15 @@ def get_orbits_cached(props, cfg):
     now = datetime.datetime.now(datetime.UTC)
     cache_ttl_seconds = ORBIT_CACHE_TTL_SECONDS
     horizon_hours = get_runtime_propagation_hours(cfg)
+    sample_plan = tuple(
+        compute_auto_orbit_samples(horizon_hours, len(props), prop)
+        for _, prop in props
+    )
     cache_key = (
         tuple(name for name, _ in props),
         cfg.get("orbit_future_show", True),
         horizon_hours,
-        compute_auto_orbit_samples(horizon_hours, len(props)),
+        sample_plan,
         cache_ttl_seconds,
     )
 
@@ -304,11 +334,16 @@ def get_payload_hash(payload):
 
 def get_orbits_cached_lru(props, cfg):
     """Órbitas con LRU cache de memoria limitada."""
+    horizon_hours = cfg.get("propagation_hours", 12)
+    sample_plan = tuple(
+        compute_auto_orbit_samples(horizon_hours, len(props), prop)
+        for _, prop in props
+    )
     cache_key = (
         tuple(name for name, _ in props),
         cfg.get("orbit_future_show", True),
-        cfg.get("propagation_hours", 12),
-        compute_auto_orbit_samples(cfg.get("propagation_hours", 12)),
+        horizon_hours,
+        sample_plan,
     )
     
     if cache_key in orbit_lru_cache:

@@ -10,8 +10,8 @@ Convención propuesta:
 Estado actual:
 - Total de commits: 23
 - Última versión en develop: v0.0.23
-- Próxima versión en preparación: v0.0.26
-- Cambios en curso: siguiente commit reservado para v0.0.26; el último bloque funcional queda fijado en v0.0.23.
+- Próxima versión en preparación: v0.0.24
+- Cambios en curso: siguiente commit reservado para v0.0.24; incluye mejoras visuales de órbitas (HEO/GEO), skydome de estrellas estable en zoom y mezcla día/noche del globo con textura nocturna fija `earthnight3km.jpg`.
 
 ## Historial de versiones (1 commit = 1 versión)
 
@@ -127,23 +127,14 @@ Estado actual:
 
 ### v0.0.23
 - Fecha: 2026-06-26
-- Commit: PENDIENTE
-- Cambios: render de órbitas con `depthFailMaterial` para que no desaparezcan detrás del globo, opacidad forzada a 1.0 y grosor por defecto aumentado para que las estelas naranjas no se vean lavadas; además, mitigación anti-OOM en backend con muestreo adaptativo por número de satélites para limitar puntos de órbita por lote, con presupuesto ampliado para no degradar 200 satélites; y validación con banner visible para entradas numéricas fuera de rango.
+- Commit: dab0dd9
+- Cambios: catálogo con virtualización basada en la posición real del scroll (elimina los huecos en blanco y las recargas bruscas al pasar de página), altura de fila medida una sola vez y fijada para evitar la oscilación que provocaba scroll descontrolado, y throttle del manejador de scroll con `requestAnimationFrame`. Además, el botón de configuración (`#configToggleBtn`) se reubica a la esquina superior izquierda para no solaparse con la barra de herramientas de Cesium (botón de ayuda/home/sceneModePicker).
 
 ### v0.0.24
 - Fecha: 2026-06-26
 - Commit: PENDIENTE
-- Cambios: catálogo con virtualización basada en la posición real del scroll (elimina los huecos en blanco y las recargas bruscas al pasar de página), altura de fila medida una sola vez y fijada para evitar la oscilación que provocaba scroll descontrolado, y throttle del manejador de scroll con `requestAnimationFrame`. Además, el botón de configuración (`#configToggleBtn`) se reubica a la esquina superior izquierda para no solaparse con la barra de herramientas de Cesium (botón de ayuda/home/sceneModePicker).
+- Cambios: render de órbitas con `depthFailMaterial` para que no desaparezcan detrás del globo, opacidad forzada a 1.0 y grosor por defecto aumentado para que las estelas naranjas no se vean lavadas; además, mitigación anti-OOM en backend con muestreo adaptativo por número de satélites para limitar puntos de órbita por lote, con presupuesto ampliado para no degradar 200 satélites, y densidad extra para órbitas de alta excentricidad (HEO); el fondo estelar pasa de skybox cúbico a skydome esférico con textura high-res, actualización en `preRender` para evitar jitter al zoom, domo mucho más lejano para evitar oclusiones del globo, trazas naranjas ocultas detrás de la Tierra, zoom mínimo reducido para acercar más la cámara, zoom máximo ampliado para alejar mucho más, y mezcla dinámica día/noche del globo con capa nocturna dedicada (`dayAlpha/nightAlpha`) y ruta fija `earthnight3km.jpg`; y validación con banner visible para entradas numéricas fuera de rango. corrección de scroll del catálogo ante rueda con deltas grandes (toque único que desplazaba sin control), añadiendo límite de delta por evento en `wheel` y estabilización visual de filas (`min-height` + `text-overflow`) para evitar saltos de layout durante la virtualización. Ajustes adicionales: modo estricto de rueda con paso fijo y control por ráfaga; último ajuste en modo "primer evento por ráfaga" con pausa idle para eliminar acumulación al bajar rápido.
 
-### v0.0.25
-- Fecha: 2026-06-26
-- Commit: PENDIENTE
-- Cambios: corrección de scroll del catálogo ante rueda con deltas grandes (toque único que desplazaba sin control), añadiendo límite de delta por evento en `wheel` y estabilización visual de filas (`min-height` + `text-overflow`) para evitar saltos de layout durante la virtualización. Ajustes adicionales: modo estricto de rueda con paso fijo y control por ráfaga; último ajuste en modo "primer evento por ráfaga" con pausa idle para eliminar acumulación al bajar rápido.
-
-### v0.0.26
-- Fecha: 2026-06-26
-- Commit: PENDIENTE
-- Cambios: PENDIENTE.
 
 ## Cómo mantener este documento
 

@@ -92,6 +92,11 @@ const localProvider = new Cesium.SingleTileImageryProvider({
     rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90)
 });
 
+const nightProvider = new Cesium.SingleTileImageryProvider({
+    url: "assets/earthnight3km.jpg",
+    rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90)
+});
+
 logger.info("Creando Cesium Viewer...");
 
 const viewer = new Cesium.Viewer("cesiumContainer", {
@@ -126,16 +131,12 @@ if (viewer?.cesiumWidget?.creditContainer) {
     viewer.cesiumWidget.creditContainer.setAttribute("aria-hidden", "true");
 }
 
-const tychoSkyMapSources = {
-    positiveX: "assets/stars/tycho_highres_cubemap_png/tycho_highres_px.png",
-    negativeX: "assets/stars/tycho_highres_cubemap_png/tycho_highres_nx.png",
-    positiveY: "assets/stars/tycho_highres_cubemap_png/tycho_highres_py.png",
-    negativeY: "assets/stars/tycho_highres_cubemap_png/tycho_highres_ny.png",
-    positiveZ: "assets/stars/tycho_highres_cubemap_png/tycho_highres_pz.png",
-    negativeZ: "assets/stars/tycho_highres_cubemap_png/tycho_highres_nz.png"
-};
+const tychoSkyDomeTextureUrl = "assets/stars/TychoSkyMapHighRes.jpg";
+const tychoSkyDomeRadius = 1000000000;
 
-let tychoSkyMapHighRes = null;
+let tychoSkyDome = null;
+let tychoSkyDomeUpdateListener = null;
+let nightImageryLayer = null;
 let runtimeSystemConfig = null;
 let lastAppliedResolutionScale = null;
 let lastAppliedUiScale = null;
@@ -183,35 +184,73 @@ function schedulePersistSystemConfig(nextSectionedSystemConfig) {
     }, 250);
 }
 
-function getTychoSkyBox() {
-    if (!tychoSkyMapHighRes) {
-        tychoSkyMapHighRes = new Cesium.SkyBox({
-            sources: tychoSkyMapSources
-        });
-    }
-    return tychoSkyMapHighRes;
-}
-
-function releaseTychoSkyBox() {
-    if (!tychoSkyMapHighRes) {
+function updateTychoSkyDomeTransform() {
+    if (!tychoSkyDome || !viewer?.camera?.positionWC) {
         return;
     }
 
-    if (typeof tychoSkyMapHighRes.destroy === "function" && !tychoSkyMapHighRes.isDestroyed?.()) {
-        tychoSkyMapHighRes.destroy();
+    tychoSkyDome.modelMatrix = Cesium.Matrix4.fromTranslation(viewer.camera.positionWC, tychoSkyDome.modelMatrix);
+}
+
+function getTychoSkyDome() {
+    if (!tychoSkyDome) {
+        const skyMaterial = Cesium.Material.fromType("Image", {
+            image: tychoSkyDomeTextureUrl,
+            repeat: new Cesium.Cartesian2(1.0, 1.0),
+            transparent: false
+        });
+
+        tychoSkyDome = viewer.scene.primitives.add(new Cesium.Primitive({
+            geometryInstances: new Cesium.GeometryInstance({
+                geometry: new Cesium.SphereGeometry({
+                    radius: tychoSkyDomeRadius,
+                    vertexFormat: Cesium.VertexFormat.POSITION_AND_ST
+                })
+            }),
+            appearance: new Cesium.MaterialAppearance({
+                material: skyMaterial,
+                faceForward: true,
+                closed: false,
+                translucent: false,
+                flat: true
+            }),
+            asynchronous: false
+        }));
+
+        updateTychoSkyDomeTransform();
+        tychoSkyDomeUpdateListener = () => updateTychoSkyDomeTransform();
+        viewer.scene.preRender.addEventListener(tychoSkyDomeUpdateListener);
     }
-    tychoSkyMapHighRes = null;
+
+    return tychoSkyDome;
+}
+
+function releaseTychoSkyDome() {
+    if (tychoSkyDomeUpdateListener) {
+        viewer.scene.preRender.removeEventListener(tychoSkyDomeUpdateListener);
+        tychoSkyDomeUpdateListener = null;
+    }
+
+    if (!tychoSkyDome) {
+        return;
+    }
+
+    viewer.scene.primitives.remove(tychoSkyDome);
+    if (typeof tychoSkyDome.destroy === "function" && !tychoSkyDome.isDestroyed?.()) {
+        tychoSkyDome.destroy();
+    }
+    tychoSkyDome = null;
 }
 
 function applyStarsConfig(systemConfig) {
     const starsEnabled = systemConfig.stars_enabled !== false;
 
     if (starsEnabled) {
-        viewer.scene.skyBox = getTychoSkyBox();
-        viewer.scene.skyBox.show = true;
+        viewer.scene.skyBox = undefined;
+        getTychoSkyDome();
     } else {
         viewer.scene.skyBox = undefined;
-        releaseTychoSkyBox();
+        releaseTychoSkyDome();
     }
 
     viewer.scene.sun.show = starsEnabled;
@@ -221,7 +260,7 @@ function applyStarsConfig(systemConfig) {
         viewer.scene.backgroundColor = Cesium.Color.BLACK;
     }
 
-    logger.info(`Stars: ${starsEnabled ? "on" : "off"} | skybox: TychoSkyMapHighRes`);
+    logger.info(`Stars: ${starsEnabled ? "on" : "off"} | skydome: TychoSkyMapHighRes`);
 }
 
 function applyAntialiasConfig(systemConfig) {
@@ -329,6 +368,19 @@ function applyUiScaleConfig(systemConfig, options = {}) {
     }
 }
 
+function applyEarthDayNightBlend(systemConfig) {
+    if (!nightImageryLayer) {
+        return;
+    }
+
+    const blendEnabled = systemConfig.globe_lighting !== false;
+    nightImageryLayer.show = blendEnabled;
+    // La capa nocturna solo aparece en la cara de noche, nunca en la de día.
+    nightImageryLayer.dayAlpha = 0.0;
+    nightImageryLayer.nightAlpha = blendEnabled ? 1.0 : 0.0;
+    nightImageryLayer.brightness = 1.2;
+}
+
 function applySystemRuntimeConfig(systemConfigRaw) {
     const systemConfig = normalizeSystemConfig(systemConfigRaw);
     runtimeSystemConfig = systemConfig;
@@ -347,6 +399,7 @@ function applySystemRuntimeConfig(systemConfigRaw) {
     applyAntialiasConfig(systemConfig);
     viewer.scene.skyAtmosphere.show = systemConfig.sky_atmosphere !== false;
     viewer.scene.globe.enableLighting = systemConfig.globe_lighting !== false;
+    applyEarthDayNightBlend(systemConfig);
 }
 
 window.addEventListener("resize", () => {
@@ -368,7 +421,11 @@ window.addEventListener("resize", () => {
 try {
     viewer.scene.imageryLayers.removeAll();
     viewer.scene.imageryLayers.addImageryProvider(localProvider);
-    logger.info("Se añadió localProvider a imageryLayers");
+    nightImageryLayer = viewer.scene.imageryLayers.addImageryProvider(nightProvider);
+    nightImageryLayer.dayAlpha = 0.0;
+    nightImageryLayer.nightAlpha = 1.0;
+    nightImageryLayer.brightness = 1.2;
+    logger.info("Se añadieron capas de día y noche a imageryLayers");
 } catch (e) {
     logger.error("No se pudo añadir localProvider directamente:", e);
 }
@@ -400,6 +457,8 @@ viewer.scene.skyAtmosphere.show = true;
 viewer.scene.globe.enableLighting = true;
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
 viewer.scene.globe.depthTestAgainstTerrain = true;
+viewer.scene.screenSpaceCameraController.maximumZoomDistance = 900000000.0;
+viewer.scene.screenSpaceCameraController.minimumZoomDistance = 1000.0;
 
 const activeLayer = viewer.scene.imageryLayers.get(0);
 if (activeLayer && activeLayer.imageryProvider) {

@@ -794,7 +794,6 @@ function createTrailEntity(viewer, id, positions, color, width) {
             positions,
             width,
             material: createOrbitMaterial(color),
-            depthFailMaterial: createOrbitMaterial(color),
             clampToGround: false
         }
     });
@@ -941,6 +940,7 @@ function updateSatelliteState(viewer, satData) {
             const smoothedTrail = smoothTrail(visibleTrail, 1);
             state.trailEntity.polyline.positions = smoothedTrail;
             state.trailEntity.polyline.material = createOrbitMaterial(trailColor);
+            state.trailEntity.polyline.depthFailMaterial = undefined;
             state.trailEntity.polyline.width = trailWidth;
         }
     }

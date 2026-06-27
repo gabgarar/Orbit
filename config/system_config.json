@@ -1,20 +1,20 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 240,
+      "propagation_hours": 50,
       "future_show": true,
-      "future_line_width": 2,
+      "future_line_width": 1,
       "width_mode": "physical",
       "future_color": "#7fd7ff",
       "selected_color": "#ff2d2d",
       "past_show": true,
       "past_color": "#ff9a5a",
       "past_seconds": 9000,
-      "past_line_width": 2
+      "past_line_width": 1
     },
     "satellites": {
-      "label_size_px": 12,
-      "model_scale": 1500,
+      "label_size_px": 0,
+      "model_scale": 45000,
       "use_3d_model": true,
       "size_mode": "physical"
     },
