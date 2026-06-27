@@ -1,7 +1,7 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 50,
+      "propagation_hours": 5,
       "future_show": true,
       "future_line_width": 1,
       "width_mode": "physical",
@@ -13,8 +13,8 @@
       "past_line_width": 1
     },
     "satellites": {
-      "label_size_px": 0,
-      "model_scale": 45000,
+      "label_size_px": 8,
+      "model_scale": 1000,
       "use_3d_model": true,
       "size_mode": "physical"
     },
@@ -33,6 +33,10 @@
       "sky_atmosphere": true,
       "globe_lighting": true,
       "stars_enabled": true
+    },
+    "recording": {
+      "quality": "high",
+      "output_format": "mp4"
     }
   },
   "data": {

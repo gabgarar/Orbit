@@ -25,6 +25,167 @@
     background: #223555;
 }
 
+#cameraModeToggleBtn {
+    position: fixed;
+    top: calc(12px * var(--orbit-ui-scale));
+    left: calc(58px * var(--orbit-ui-scale));
+    z-index: 10000;
+    height: calc(36px * var(--orbit-ui-scale));
+    border-radius: calc(18px * var(--orbit-ui-scale));
+    border: 1px solid #3a4e72;
+    background: #172339;
+    color: #eaf0ff;
+    font: 700 calc(12px * var(--orbit-ui-scale))/1 sans-serif;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+    padding: 0 calc(12px * var(--orbit-ui-scale));
+    min-width: calc(168px * var(--orbit-ui-scale));
+}
+
+#cameraModeToggleBtn:hover {
+    background: #223555;
+}
+
+#cameraModeToggleBtn.centered {
+    border-color: #355f8a;
+}
+
+#cameraModeToggleBtn.free {
+    border-color: #2c8a6b;
+    background: #143629;
+}
+
+#cameraModeToggleBtn.free:hover {
+    background: #1a4735;
+}
+
+#sessionRecordBtn {
+    position: fixed;
+    top: calc(12px * var(--orbit-ui-scale));
+    left: calc(236px * var(--orbit-ui-scale));
+    z-index: 10000;
+    height: calc(36px * var(--orbit-ui-scale));
+    border-radius: calc(18px * var(--orbit-ui-scale));
+    border: 1px solid #84502a;
+    background: #3f2414;
+    color: #fff2e6;
+    font: 700 calc(12px * var(--orbit-ui-scale))/1 sans-serif;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+    padding: 0 calc(12px * var(--orbit-ui-scale));
+    min-width: calc(146px * var(--orbit-ui-scale));
+}
+
+#sessionRecordBtn:hover {
+    background: #5a331d;
+}
+
+#sessionRecordBtn.recording {
+    border-color: #b03a48;
+    background: #7a1428;
+    color: #ffe9ee;
+}
+
+#sessionRecordBtn.recording:hover {
+    background: #901931;
+}
+
+#sessionRecordBtn.processing {
+    border-color: #4b5e75;
+    background: #233246;
+    color: #d7e4f7;
+    cursor: wait;
+}
+
+#sessionRecordBtn:disabled {
+    opacity: 0.9;
+}
+
+#appDialogModal {
+    position: fixed;
+    inset: 0;
+    z-index: 10030;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(6, 10, 16, 0.65);
+    padding: 14px;
+    box-sizing: border-box;
+}
+
+#appDialogModal.open {
+    display: flex;
+}
+
+#appDialogPanel {
+    width: min(420px, 94vw);
+    border-radius: 14px;
+    border: 1px solid #314968;
+    background: linear-gradient(180deg, #0f1827, #0b1320);
+    color: #e6efff;
+    padding: 16px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+#appDialogTitle {
+    margin: 0 0 8px;
+    font: 700 calc(16px * var(--orbit-ui-scale)) sans-serif;
+}
+
+#appDialogMessage {
+    margin: 0;
+    font: 500 calc(13px * var(--orbit-ui-scale)) / 1.45 sans-serif;
+    color: #ccdaef;
+}
+
+#appDialogActions {
+    margin-top: 16px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+#appDialogActions button {
+    border: 1px solid #3c5375;
+    background: #16263d;
+    color: #e6efff;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    height: calc(34px * var(--orbit-ui-scale));
+    padding: 0 12px;
+    font: 700 calc(12px * var(--orbit-ui-scale))/1 sans-serif;
+    cursor: pointer;
+}
+
+#appDialogActions button:hover {
+    background: #213553;
+}
+
+#appDialogCancel {
+    border-color: #5a6b83;
+    background: #1a2738;
+}
+
+#appDialogConfirm {
+    border-color: #2f6b45;
+    background: #17412a;
+}
+
+#appDialogConfirm:hover {
+    background: #1d5436;
+}
+
 #configModal {
     position: fixed;
     inset: 0;

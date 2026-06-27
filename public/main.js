@@ -145,6 +145,531 @@ let currentRuntimeDataConfig = { satellites_catalog_file: "catalog.json" };
 let persistConfigTimeoutId = null;
 let lastPersistedSystemConfigSerialized = "";
 let runtimeConfigPanelApi = null;
+let cameraModeToggleBtn = null;
+let cameraNavigationMode = "centered";
+const freeCameraPressedKeys = new Set();
+let freeCameraTickListener = null;
+let freeCameraKeyboardAttached = false;
+let sessionRecordButton = null;
+let sessionRecorder = null;
+let sessionRecordingStream = null;
+let sessionRecordingChunks = [];
+let sessionRecordingMimeType = "video/webm";
+let isSessionRecording = false;
+let runtimeRecordingConfig = {
+    quality: "medium",
+    output_format: "webm"
+};
+let appDialogRoot = null;
+let appDialogTitle = null;
+let appDialogMessage = null;
+let appDialogConfirmBtn = null;
+let appDialogCancelBtn = null;
+
+function isEditableTarget(target) {
+    if (!target || !(target instanceof HTMLElement)) {
+        return false;
+    }
+    const tag = target.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+}
+
+function normalizeFreeCameraKey(key) {
+    if (!key) {
+        return "";
+    }
+    return String(key).toLowerCase();
+}
+
+function handleFreeCameraKeyDown(event) {
+    if (cameraNavigationMode !== "free") {
+        return;
+    }
+    if (isEditableTarget(event.target)) {
+        return;
+    }
+
+    const key = normalizeFreeCameraKey(event.key);
+    if (!key) {
+        return;
+    }
+
+    const actionableKeys = ["w", "a", "s", "d", "q", "e", "arrowup", "arrowdown", "arrowleft", "arrowright"];
+    if (!actionableKeys.includes(key)) {
+        return;
+    }
+
+    freeCameraPressedKeys.add(key);
+    event.preventDefault();
+}
+
+function handleFreeCameraKeyUp(event) {
+    const key = normalizeFreeCameraKey(event.key);
+    if (!key) {
+        return;
+    }
+    freeCameraPressedKeys.delete(key);
+}
+
+function applyFreeCameraKeyboardMotion() {
+    if (cameraNavigationMode !== "free") {
+        return;
+    }
+
+    const camera = viewer.camera;
+    const height = Math.max(1, camera.positionCartographic?.height || 5000);
+    const moveStep = clamp(height * 0.025, 40, 2500000);
+    const lookStep = 0.012;
+
+    if (freeCameraPressedKeys.has("w")) camera.moveForward(moveStep);
+    if (freeCameraPressedKeys.has("s")) camera.moveBackward(moveStep);
+    if (freeCameraPressedKeys.has("a")) camera.moveLeft(moveStep);
+    if (freeCameraPressedKeys.has("d")) camera.moveRight(moveStep);
+    if (freeCameraPressedKeys.has("q")) camera.moveDown(moveStep);
+    if (freeCameraPressedKeys.has("e")) camera.moveUp(moveStep);
+
+    if (freeCameraPressedKeys.has("arrowup")) camera.lookUp(lookStep);
+    if (freeCameraPressedKeys.has("arrowdown")) camera.lookDown(lookStep);
+    if (freeCameraPressedKeys.has("arrowleft")) camera.lookLeft(lookStep);
+    if (freeCameraPressedKeys.has("arrowright")) camera.lookRight(lookStep);
+}
+
+function enableFreeCameraKeyboardControls() {
+    if (!freeCameraKeyboardAttached) {
+        window.addEventListener("keydown", handleFreeCameraKeyDown, { passive: false });
+        window.addEventListener("keyup", handleFreeCameraKeyUp);
+        freeCameraKeyboardAttached = true;
+    }
+
+    if (!freeCameraTickListener) {
+        freeCameraTickListener = () => applyFreeCameraKeyboardMotion();
+        viewer.clock.onTick.addEventListener(freeCameraTickListener);
+    }
+}
+
+function disableFreeCameraKeyboardControls() {
+    freeCameraPressedKeys.clear();
+
+    if (freeCameraTickListener) {
+        viewer.clock.onTick.removeEventListener(freeCameraTickListener);
+        freeCameraTickListener = null;
+    }
+
+    if (freeCameraKeyboardAttached) {
+        window.removeEventListener("keydown", handleFreeCameraKeyDown);
+        window.removeEventListener("keyup", handleFreeCameraKeyUp);
+        freeCameraKeyboardAttached = false;
+    }
+}
+
+function ensureCameraModeToggleButton() {
+    if (cameraModeToggleBtn) {
+        return cameraModeToggleBtn;
+    }
+
+    const button = document.createElement("button");
+    button.id = "cameraModeToggleBtn";
+    button.type = "button";
+    button.className = "camera-mode-toggle centered";
+    button.setAttribute("aria-live", "polite");
+    button.title = "Cambiar modo de navegacion de camara";
+    button.addEventListener("click", () => {
+        const nextMode = cameraNavigationMode === "centered" ? "free" : "centered";
+        applyCameraNavigationMode(nextMode);
+    });
+
+    document.body.appendChild(button);
+    cameraModeToggleBtn = button;
+    return button;
+}
+
+function ensureSessionRecordButton() {
+    if (sessionRecordButton) {
+        return sessionRecordButton;
+    }
+
+    const button = document.createElement("button");
+    button.id = "sessionRecordBtn";
+    button.type = "button";
+    button.className = "session-record-btn idle";
+    button.setAttribute("aria-live", "polite");
+    button.title = "Iniciar grabacion de la sesion";
+    button.addEventListener("click", () => {
+        toggleSessionRecording();
+    });
+
+    document.body.appendChild(button);
+    sessionRecordButton = button;
+    return button;
+}
+
+function updateSessionRecordButtonLabel(options = {}) {
+    const button = ensureSessionRecordButton();
+    const isProcessing = options.processing === true;
+
+    if (isProcessing) {
+        button.textContent = "Procesando...";
+        button.disabled = true;
+        button.classList.remove("idle", "recording");
+        button.classList.add("processing");
+        button.setAttribute("aria-label", "Procesando grabacion de sesion");
+        button.title = "Procesando grabacion";
+        return;
+    }
+
+    button.disabled = false;
+    button.classList.remove("processing");
+
+    if (isSessionRecording) {
+        button.textContent = "Detener grabacion";
+        button.classList.remove("idle");
+        button.classList.add("recording");
+        button.setAttribute("aria-label", "Grabacion en curso. Pulsar para detener");
+        button.title = "Detener grabacion de la sesion";
+        return;
+    }
+
+    button.textContent = "Grabar sesion";
+    button.classList.remove("recording");
+    button.classList.add("idle");
+    button.setAttribute("aria-label", "Iniciar grabacion de sesion");
+    button.title = "Iniciar grabacion de la sesion";
+}
+
+function resolveSupportedRecordingMimeType(preferredOutputFormat = "webm") {
+    if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
+        return "";
+    }
+
+    const webmCandidates = [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm"
+    ];
+
+    const mp4Candidates = [
+        "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+        "video/mp4"
+    ];
+
+    const preferred = String(preferredOutputFormat || "webm").toLowerCase() === "mp4"
+        ? [...mp4Candidates, ...webmCandidates]
+        : [...webmCandidates, ...mp4Candidates];
+
+    for (const candidate of preferred) {
+        if (MediaRecorder.isTypeSupported(candidate)) {
+            return candidate;
+        }
+    }
+
+    return "";
+}
+
+function getRecordingProfile(quality) {
+    const normalized = String(quality || "medium").toLowerCase();
+    if (normalized === "low") {
+        return { frameRate: 24, videoBitsPerSecond: 4500000 };
+    }
+    if (normalized === "high") {
+        return { frameRate: 60, videoBitsPerSecond: 18000000 };
+    }
+    return { frameRate: 30, videoBitsPerSecond: 9000000 };
+}
+
+function ensureAppDialog() {
+    if (appDialogRoot) {
+        return;
+    }
+
+    const modal = document.createElement("div");
+    modal.id = "appDialogModal";
+    modal.setAttribute("aria-hidden", "true");
+    modal.innerHTML = `
+        <div id="appDialogPanel" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle" aria-describedby="appDialogMessage">
+            <h4 id="appDialogTitle">Aviso</h4>
+            <p id="appDialogMessage"></p>
+            <div id="appDialogActions">
+                <button id="appDialogCancel" type="button">Cancelar</button>
+                <button id="appDialogConfirm" type="button">Aceptar</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    appDialogRoot = modal;
+    appDialogTitle = modal.querySelector("#appDialogTitle");
+    appDialogMessage = modal.querySelector("#appDialogMessage");
+    appDialogConfirmBtn = modal.querySelector("#appDialogConfirm");
+    appDialogCancelBtn = modal.querySelector("#appDialogCancel");
+}
+
+function openAppDialog({ title, message, showCancel }) {
+    ensureAppDialog();
+
+    return new Promise((resolve) => {
+        const cleanup = () => {
+            appDialogRoot.classList.remove("open");
+            appDialogRoot.setAttribute("aria-hidden", "true");
+            appDialogConfirmBtn.removeEventListener("click", onConfirm);
+            appDialogCancelBtn.removeEventListener("click", onCancel);
+            appDialogRoot.removeEventListener("click", onBackdropClick);
+            document.removeEventListener("keydown", onKeyDown);
+        };
+
+        const onConfirm = () => {
+            cleanup();
+            resolve(true);
+        };
+
+        const onCancel = () => {
+            cleanup();
+            resolve(false);
+        };
+
+        const onBackdropClick = (event) => {
+            if (event.target === appDialogRoot) {
+                onCancel();
+            }
+        };
+
+        const onKeyDown = (event) => {
+            if (event.key === "Escape") {
+                onCancel();
+            }
+        };
+
+        appDialogTitle.textContent = title || "Aviso";
+        appDialogMessage.textContent = message || "";
+        appDialogCancelBtn.style.display = showCancel ? "inline-flex" : "none";
+        appDialogConfirmBtn.textContent = showCancel ? "Guardar" : "Aceptar";
+
+        appDialogRoot.classList.add("open");
+        appDialogRoot.setAttribute("aria-hidden", "false");
+
+        appDialogConfirmBtn.addEventListener("click", onConfirm);
+        appDialogCancelBtn.addEventListener("click", onCancel);
+        appDialogRoot.addEventListener("click", onBackdropClick);
+        document.addEventListener("keydown", onKeyDown);
+
+        appDialogConfirmBtn.focus();
+    });
+}
+
+function showAppAlert(message, title = "Aviso") {
+    return openAppDialog({ title, message, showCancel: false });
+}
+
+function showAppConfirm(message, title = "Confirmacion") {
+    return openAppDialog({ title, message, showCancel: true });
+}
+
+function buildSessionRecordingFilename(mimeType) {
+    const now = new Date();
+    const yyyy = String(now.getFullYear());
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const min = String(now.getMinutes()).padStart(2, "0");
+    const ss = String(now.getSeconds()).padStart(2, "0");
+    const extension = mimeType.includes("mp4") ? "mp4" : "webm";
+    return `orbit-session-${yyyy}${mm}${dd}-${hh}${min}${ss}.${extension}`;
+}
+
+function downloadSessionRecording(blob, mimeType) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = buildSessionRecordingFilename(mimeType || "video/webm");
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+}
+
+function resetSessionRecordingState() {
+    if (sessionRecordingStream) {
+        for (const track of sessionRecordingStream.getTracks()) {
+            track.stop();
+        }
+    }
+
+    sessionRecordingStream = null;
+    sessionRecorder = null;
+    sessionRecordingChunks = [];
+    isSessionRecording = false;
+    updateSessionRecordButtonLabel();
+}
+
+async function startSessionRecording() {
+    if (isSessionRecording) {
+        return;
+    }
+
+    if (typeof MediaRecorder === "undefined") {
+        await showAppAlert("Tu navegador no soporta grabacion de pantalla con MediaRecorder.", "Grabacion no disponible");
+        return;
+    }
+
+    const canvas = viewer?.scene?.canvas;
+    if (!canvas || typeof canvas.captureStream !== "function") {
+        await showAppAlert("No se pudo iniciar la grabacion: captureStream no esta disponible.", "Error de grabacion");
+        return;
+    }
+
+    try {
+        const quality = runtimeRecordingConfig.quality || "medium";
+        const outputFormat = runtimeRecordingConfig.output_format || "webm";
+        const profile = getRecordingProfile(quality);
+        sessionRecordingStream = canvas.captureStream(profile.frameRate);
+        const primaryVideoTrack = sessionRecordingStream.getVideoTracks?.()[0];
+        if (primaryVideoTrack) {
+            primaryVideoTrack.contentHint = "motion";
+        }
+
+        sessionRecordingChunks = [];
+        sessionRecordingMimeType = resolveSupportedRecordingMimeType(outputFormat) || "video/webm";
+
+        if (outputFormat === "mp4" && !sessionRecordingMimeType.includes("mp4")) {
+            logger.warn("Formato mp4 no soportado por MediaRecorder en este navegador. Se usa webm.");
+        }
+
+        const recorderOptions = sessionRecordingMimeType
+            ? {
+                mimeType: sessionRecordingMimeType,
+                videoBitsPerSecond: profile.videoBitsPerSecond
+            }
+            : {
+                videoBitsPerSecond: profile.videoBitsPerSecond
+            };
+
+        sessionRecorder = new MediaRecorder(sessionRecordingStream, recorderOptions);
+
+        sessionRecorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+                sessionRecordingChunks.push(event.data);
+            }
+        };
+
+        sessionRecorder.onstop = async () => {
+            const chunks = sessionRecordingChunks.slice();
+            const mimeType = sessionRecordingMimeType || "video/webm";
+            resetSessionRecordingState();
+
+            if (!chunks.length) {
+                showAppAlert("La grabacion termino sin datos para guardar.", "Grabacion vacia");
+                return;
+            }
+
+            const recordingBlob = new Blob(chunks, { type: mimeType });
+            const shouldSave = await showAppConfirm("¿Quieres guardar la sesion?", "Guardar sesion");
+
+            if (shouldSave) {
+                downloadSessionRecording(recordingBlob, mimeType);
+                logger.info("Grabacion de sesion descargada.");
+            } else {
+                logger.info("Grabacion de sesion descartada por el usuario.");
+            }
+        };
+
+        sessionRecorder.onerror = (event) => {
+            logger.error("Error en MediaRecorder:", event);
+            showAppAlert("Ocurrio un error durante la grabacion de la sesion.", "Error de grabacion");
+            resetSessionRecordingState();
+        };
+
+        sessionRecorder.start(1000);
+        isSessionRecording = true;
+        updateSessionRecordButtonLabel();
+        logger.info("Grabacion de sesion iniciada.");
+    } catch (error) {
+        logger.error("No se pudo iniciar la grabacion de sesion:", error);
+        const detail = error instanceof Error ? error.message : "No se pudo iniciar la grabacion de la sesion.";
+        await showAppAlert(detail, "Error de grabacion");
+        resetSessionRecordingState();
+    }
+}
+
+function stopSessionRecording() {
+    if (!sessionRecorder || sessionRecorder.state !== "recording") {
+        resetSessionRecordingState();
+        return;
+    }
+
+    isSessionRecording = false;
+    updateSessionRecordButtonLabel({ processing: true });
+    sessionRecorder.stop();
+    logger.info("Deteniendo grabacion de sesion...");
+}
+
+function toggleSessionRecording() {
+    if (isSessionRecording) {
+        stopSessionRecording();
+        return;
+    }
+
+    startSessionRecording();
+}
+
+function updateCameraModeButtonLabel() {
+    const button = ensureCameraModeToggleButton();
+    const isFreeMode = cameraNavigationMode === "free";
+    button.textContent = isFreeMode ? "Navegacion: Libre (WASD)" : "Navegacion: Centrada";
+    button.classList.toggle("free", isFreeMode);
+    button.classList.toggle("centered", !isFreeMode);
+    button.title = isFreeMode
+        ? "Modo libre: WASD mueve, Q/E sube-baja, flechas orientan, arrastre izq mira"
+        : "Modo centrado: navegacion clasica alrededor del globo";
+    button.setAttribute("aria-label", isFreeMode ? "Modo libre activo. Pulsar para volver a modo centrado" : "Modo centrado activo. Pulsar para activar modo libre");
+}
+
+function applyCameraNavigationMode(mode, options = {}) {
+    if (!viewer?.scene?.screenSpaceCameraController) {
+        return;
+    }
+
+    const nextMode = mode === "free" ? "free" : "centered";
+    const controller = viewer.scene.screenSpaceCameraController;
+
+    controller.enableRotate = true;
+    controller.enableTranslate = true;
+    controller.enableZoom = true;
+    controller.enableTilt = true;
+    controller.enableLook = true;
+
+    if (nextMode === "free") {
+        if (!options.keepTrackedEntity) {
+            viewer.trackedEntity = undefined;
+        }
+        controller.enableCollisionDetection = false;
+        controller.minimumZoomDistance = 1.0;
+        controller.maximumZoomDistance = 900000000.0;
+        controller.constrainedAxis = undefined;
+        controller.lookEventTypes = [Cesium.CameraEventType.LEFT_DRAG];
+        controller.rotateEventTypes = [Cesium.CameraEventType.RIGHT_DRAG];
+        controller.tiltEventTypes = [Cesium.CameraEventType.MIDDLE_DRAG];
+        controller.zoomEventTypes = [Cesium.CameraEventType.WHEEL, Cesium.CameraEventType.PINCH];
+        enableFreeCameraKeyboardControls();
+        // Soltar cualquier transform de seguimiento para una camara totalmente libre.
+        viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    } else {
+        disableFreeCameraKeyboardControls();
+        controller.enableCollisionDetection = true;
+        controller.minimumZoomDistance = 1000.0;
+        controller.maximumZoomDistance = 900000000.0;
+        controller.lookEventTypes = [{ eventType: Cesium.CameraEventType.LEFT_DRAG, modifier: Cesium.KeyboardEventModifier.SHIFT }];
+        controller.rotateEventTypes = [Cesium.CameraEventType.LEFT_DRAG];
+        controller.tiltEventTypes = [Cesium.CameraEventType.MIDDLE_DRAG];
+        controller.zoomEventTypes = [Cesium.CameraEventType.RIGHT_DRAG, Cesium.CameraEventType.WHEEL, Cesium.CameraEventType.PINCH];
+        // Mantener orientacion estable respecto al globo en modo centrado.
+        controller.constrainedAxis = Cesium.Cartesian3.UNIT_Z;
+    }
+
+    cameraNavigationMode = nextMode;
+    updateCameraModeButtonLabel();
+    logger.info(`Modo de navegacion de camara: ${nextMode}`);
+}
 
 function setConfigSaveState(state, message) {
     if (runtimeConfigPanelApi && typeof runtimeConfigPanelApi.setSaveState === "function") {
@@ -384,6 +909,12 @@ function applyEarthDayNightBlend(systemConfig) {
 function applySystemRuntimeConfig(systemConfigRaw) {
     const systemConfig = normalizeSystemConfig(systemConfigRaw);
     runtimeSystemConfig = systemConfig;
+    runtimeRecordingConfig = {
+        quality: ["low", "medium", "high"].includes(systemConfig.recording_quality)
+            ? systemConfig.recording_quality
+            : "medium",
+        output_format: systemConfig.recording_output_format === "mp4" ? "mp4" : "webm"
+    };
 
     configureLogger(systemConfig);
     setOrbitConfig(systemConfig);
@@ -457,8 +988,10 @@ viewer.scene.skyAtmosphere.show = true;
 viewer.scene.globe.enableLighting = true;
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
 viewer.scene.globe.depthTestAgainstTerrain = true;
-viewer.scene.screenSpaceCameraController.maximumZoomDistance = 900000000.0;
-viewer.scene.screenSpaceCameraController.minimumZoomDistance = 1000.0;
+ensureCameraModeToggleButton();
+applyCameraNavigationMode("centered", { keepTrackedEntity: true });
+ensureSessionRecordButton();
+updateSessionRecordButtonLabel();
 
 const activeLayer = viewer.scene.imageryLayers.get(0);
 if (activeLayer && activeLayer.imageryProvider) {
@@ -491,6 +1024,10 @@ function focusSatellite(entity) {
         return;
     }
 
+    if (cameraNavigationMode === "free") {
+        applyCameraNavigationMode("centered", { keepTrackedEntity: true });
+    }
+
     viewer.trackedEntity = entity;
     entity.viewFrom = new Cesium.Cartesian3(0, -180000, 90000);
     viewer.flyTo(entity, {
@@ -502,6 +1039,10 @@ function focusSatellite(entity) {
 function firstPersonSatellite(entity) {
     if (!entity) {
         return;
+    }
+
+    if (cameraNavigationMode === "free") {
+        applyCameraNavigationMode("centered", { keepTrackedEntity: true });
     }
 
     viewer.trackedEntity = entity;

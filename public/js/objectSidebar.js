@@ -1348,9 +1348,24 @@ export function setupObjectSidebar({
             return;
         }
 
-        const toSelect = lastRenderedCatalogIds.filter((id) => !getObjectLayerActive(id) && !selectedCatalogIds.has(id));
+        setCatalogBusyState(true, "Buscando resultados en todas las paginas...");
+
+        let filteredIds = [];
+        try {
+            filteredIds = await fetchAllFilteredCatalogIds((loaded, total) => {
+                const safeTotal = Math.max(total || 0, loaded || 0);
+                setCatalogBusyState(true, `Cargando candidatos... ${loaded}/${safeTotal}`);
+            });
+        } catch (error) {
+            setCatalogBusyState(false);
+            showErrorPopup(`No se pudo completar 'Seleccionar todo': ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+
+        const toSelect = filteredIds.filter((id) => !getObjectLayerActive(id) && !selectedCatalogIds.has(id));
 
         if (!toSelect.length) {
+            setCatalogBusyState(false);
             return;
         }
 
@@ -1362,6 +1377,7 @@ export function setupObjectSidebar({
         });
 
         if (!ok) {
+            setCatalogBusyState(false);
             return;
         }
 
@@ -1376,6 +1392,55 @@ export function setupObjectSidebar({
             renderCatalogList();
         });
     });
+
+    async function fetchAllFilteredCatalogIds(onProgress) {
+        if (!fetchCatalogPage) {
+            return [];
+        }
+
+        const allIds = [];
+        const uniqueIds = new Set();
+        const limit = CATALOG_PAGE_SIZE;
+        let offset = 0;
+        let total = null;
+
+        while (true) {
+            const result = await fetchCatalogPage({
+                offset,
+                limit,
+                search: catalogFilterState.name,
+                orbitKind: catalogFilterState.orbitKind,
+                mission: catalogFilterState.mission
+            });
+
+            const pageIds = Array.isArray(result?.ids) ? result.ids : [];
+            const reportedTotal = Number(result?.total);
+            if (Number.isFinite(reportedTotal) && reportedTotal >= 0) {
+                total = Math.max(total ?? 0, Math.floor(reportedTotal));
+            }
+
+            for (const id of pageIds) {
+                if (!uniqueIds.has(id)) {
+                    uniqueIds.add(id);
+                    allIds.push(id);
+                }
+            }
+
+            onProgress?.(allIds.length, total ?? allIds.length);
+
+            if (!pageIds.length) {
+                break;
+            }
+
+            offset += pageIds.length;
+
+            if (total !== null && offset >= total) {
+                break;
+            }
+        }
+
+        return allIds;
+    }
 
     function processInChunks(items, processItem, onProgress) {
         return new Promise((resolve) => {

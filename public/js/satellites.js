@@ -224,7 +224,8 @@ function applySatelliteVisibility(id, state) {
         return true;
     }
 
-    const visible = !hiddenSatelliteIds.has(id);
+    const isActiveLayer = activeLayerSatelliteIds.has(id);
+    const visible = isActiveLayer && !hiddenSatelliteIds.has(id);
     state.entity.show = visible;
 
     if (state.trailEntity) {

@@ -31,6 +31,10 @@ const CONFIG_SCHEMA = {
         { key: "sky_atmosphere", label: "Sky Atmosphere", type: "checkbox" },
         { key: "globe_lighting", label: "Globe Lighting", type: "checkbox" },
         { key: "stars_enabled", label: "Stars Enabled", type: "checkbox" }
+    ],
+    recording: [
+        { key: "quality", label: "Recording Quality", type: "select", options: ["low", "medium", "high"] },
+        { key: "output_format", label: "Output Format", type: "select", options: ["webm", "mp4"] }
     ]
 };
 
@@ -61,7 +65,10 @@ const FIELD_HELP = {
     "rendering.background_color": "Color de fondo del visor.",
     "rendering.sky_atmosphere": "Muestra atmosfera del cielo.",
     "rendering.globe_lighting": "Activa iluminacion del globo por sol.",
-    "rendering.stars_enabled": "Muestra el fondo de estrellas."
+    "rendering.stars_enabled": "Muestra el fondo de estrellas.",
+
+    "recording.quality": "Calidad de video de grabacion: low (24 FPS, ligero), medium (30 FPS, equilibrado), high (hasta 60 FPS, mas fluido).",
+    "recording.output_format": "Formato de salida preferido. Si no es compatible con el navegador, se usa webm automaticamente."
 };
 
 function cloneConfig(obj) {
@@ -208,10 +215,17 @@ function createFieldElement(sectionName, field, currentSystemConfig, onChange, o
         if (type === "checkbox") {
             value = input.checked;
         } else if (type === "number") {
-            const parsed = Number(input.value);
+            const rawValue = String(input.value ?? "").trim();
+            const normalizedRawValue = rawValue.replace(",", ".");
+
+            if (!normalizedRawValue) {
+                onValidationError?.(`${field.label}: valor numerico no valido.`);
+                return;
+            }
+
+            const parsed = Number(normalizedRawValue);
             if (!Number.isFinite(parsed)) {
                 onValidationError?.(`${field.label}: valor numerico no valido.`);
-                input.value = String(currentSystemConfig[section][key] ?? "");
                 return;
             }
 
@@ -220,17 +234,16 @@ function createFieldElement(sectionName, field, currentSystemConfig, onChange, o
 
             if (Number.isFinite(min) && parsed < min) {
                 onValidationError?.(`${field.label}: valor fuera de rango. Minimo permitido: ${min}.`);
-                input.value = String(currentSystemConfig[section][key] ?? "");
                 return;
             }
 
             if (Number.isFinite(max) && parsed > max) {
                 onValidationError?.(`${field.label}: valor fuera de rango. Maximo permitido: ${max}.`);
-                input.value = String(currentSystemConfig[section][key] ?? "");
                 return;
             }
 
             value = parsed;
+            input.value = String(parsed);
         } else {
             value = input.value;
         }
@@ -240,9 +253,23 @@ function createFieldElement(sectionName, field, currentSystemConfig, onChange, o
         onChange(cloneConfig(currentSystemConfig));
     };
 
+    const syncDraftInput = () => {
+        if (input.dataset.type !== "number") {
+            syncModelFromInput();
+            return;
+        }
+
+        // Permitir estados intermedios de escritura (vacío, separador decimal, etc.)
+        // y validar/propagar solo en el evento "change".
+        onValidationOk?.();
+    };
+
     input.addEventListener("change", syncModelFromInput);
-    if (field.type === "range" || field.type === "number" || field.type === "color") {
+    if (field.type === "range" || field.type === "color") {
         input.addEventListener("input", syncModelFromInput);
+    }
+    if (field.type === "number") {
+        input.addEventListener("input", syncDraftInput);
     }
 
     if (field.type === "checkbox") {

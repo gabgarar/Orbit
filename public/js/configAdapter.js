@@ -4,6 +4,7 @@ export function normalizeSystemConfig(rawSystem = {}) {
     const realtime = rawSystem.realtime || {};
     const rendering = rawSystem.rendering || {};
     const logging = rawSystem.logging || {};
+    const recording = rawSystem.recording || {};
 
     return {
         propagation_hours: orbit.propagation_hours ?? rawSystem.propagation_hours,
@@ -34,6 +35,9 @@ export function normalizeSystemConfig(rawSystem = {}) {
         sky_atmosphere: rendering.sky_atmosphere ?? rawSystem.sky_atmosphere,
         globe_lighting: rendering.globe_lighting ?? rawSystem.globe_lighting,
         stars_enabled: rendering.stars_enabled ?? rawSystem.stars_enabled,
+
+        recording_quality: recording.quality ?? rawSystem.recording_quality,
+        recording_output_format: recording.output_format ?? rawSystem.recording_output_format,
 
         log_enabled: logging.enabled ?? rawSystem.log_enabled,
         log_level: logging.level ?? rawSystem.log_level
@@ -76,6 +80,10 @@ export function toSectionedSystemConfig(rawSystem = {}) {
             sky_atmosphere: flat.sky_atmosphere ?? false,
             globe_lighting: flat.globe_lighting ?? true,
             stars_enabled: flat.stars_enabled ?? false
+        },
+        recording: {
+            quality: flat.recording_quality ?? "medium",
+            output_format: flat.recording_output_format ?? "webm"
         }
     };
 }
