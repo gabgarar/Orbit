@@ -1,3 +1,4 @@
 watchdog
 websockets
 sgp4
+Pillow

@@ -3,7 +3,8 @@
   "scripts": {
     "start": "node nodeServer.js",
     "start:daemon": "nohup node nodeServer.js > server.log 2>&1 & echo $! > server.pid && echo 'Servidor iniciado con PID $(cat server.pid)'",
-    "stop": "if [ -f server.pid ]; then pid=$(cat server.pid) && if kill -0 \"$pid\" 2>/dev/null; then kill \"$pid\" && echo 'Servidor detenido (PID ' $pid ')'; else echo 'Servidor no está corriendo. Eliminando server.pid obsoleto.'; fi && rm -f server.pid; else echo 'No se encontró server.pid. El servidor puede no estar en ejecución.'; fi"
+    "stop": "if [ -f server.pid ]; then pid=$(cat server.pid) && if kill -0 \"$pid\" 2>/dev/null; then kill \"$pid\" && echo 'Servidor detenido (PID ' $pid ')'; else echo 'Servidor no está corriendo. Eliminando server.pid obsoleto.'; fi && rm -f server.pid; else echo 'No se encontró server.pid. El servidor puede no estar en ejecución.'; fi",
+    "tiles:earth2km": "python3 python/generate_earth2km_tiles.py --input ../public/assets/earth2km.jpg --output ../public/assets/earth2km_tiles --min-zoom 0 --max-zoom 6 --tile-size 256"
   },
   "dependencies": {
     "express": "^4.19.2"

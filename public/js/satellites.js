@@ -32,9 +32,9 @@ const SAT_POINT_PIXEL_SIZE = 5;
 const SAT_POINT_OUTLINE_WIDTH = 1;
 const DEFAULT_SELECTED_ORBIT_COLOR = "#ff2d2d";
 const SELECTED_ORBIT_WIDTH_BOOST_PX = 2;
-const PROPAGATION_HOURS_MIN = 0.1;
+const PROPAGATION_HOURS_MIN = 0;
 const PROPAGATION_HOURS_MAX = 240;
-const PAST_SECONDS_MIN = 0.1;
+const PAST_SECONDS_MIN = 0;
 const PAST_SECONDS_MAX = 86400;
 
 function createSatelliteModelGraphics() {
@@ -205,6 +205,7 @@ let animationFrameId = null;
 let sourceFutureOrbitHours = null;
 let sourceFutureOrbitSamples = null;
 let selectedOrbitSatelliteId = null;
+const satelliteVisualOverridesById = new Map();
 let orbitConfig = {
     orbit_future_show: true,
     orbit_past_show: true,
@@ -219,6 +220,72 @@ let orbitConfig = {
     websocket_state_interval_seconds: 1.0
 };
 
+function getSatelliteOverrides(id) {
+    if (!id) {
+        return null;
+    }
+    return satelliteVisualOverridesById.get(String(id)) || null;
+}
+
+function getSatelliteConfigValue(id, key, fallbackValue) {
+    const overrides = getSatelliteOverrides(id);
+    if (overrides && Object.prototype.hasOwnProperty.call(overrides, key)) {
+        return overrides[key];
+    }
+    return fallbackValue;
+}
+
+function shouldShowFutureOrbit(id) {
+    return getSatelliteConfigValue(id, "orbit_future_show", orbitConfig.orbit_future_show) !== false
+        && getPropagationHoursForSatellite(id) > 0;
+}
+
+function shouldShowPastOrbit(id) {
+    return getSatelliteConfigValue(id, "orbit_past_show", orbitConfig.orbit_past_show) !== false
+        && getPastSecondsForSatellite(id) > 0;
+}
+
+function getPropagationHoursForSatellite(id) {
+    const requested = Number(getSatelliteConfigValue(id, "propagation_hours", orbitConfig.propagation_hours));
+    if (!Number.isFinite(requested) || requested < 0) {
+        return 12;
+    }
+    return clamp(requested, PROPAGATION_HOURS_MIN, PROPAGATION_HOURS_MAX);
+}
+
+function getPastSecondsForSatellite(id) {
+    const requested = Number(getSatelliteConfigValue(id, "orbit_past_seconds", orbitConfig.orbit_past_seconds));
+    if (!Number.isFinite(requested) || requested < 0) {
+        return 120;
+    }
+    return clamp(requested, PAST_SECONDS_MIN, PAST_SECONDS_MAX);
+}
+
+function getSatelliteLabelSize(id) {
+    const requested = Number(getSatelliteConfigValue(id, "satellite_label_size_px", satelliteLabelSizePx));
+    if (!Number.isFinite(requested) || requested < 0) {
+        return satelliteLabelSizePx;
+    }
+    return requested;
+}
+
+function shouldUse3DModelForSatellite(id) {
+    return getSatelliteConfigValue(id, "satellite_use_3d_model", satelliteUse3DModel) !== false;
+}
+
+function getModelScaleForSatellite(id) {
+    const requested = Number(getSatelliteConfigValue(id, "satellite_model_scale", satelliteModelScale));
+    if (!Number.isFinite(requested) || requested <= 0) {
+        return 1.0;
+    }
+    return Math.max(0.000001, Math.min(SAT_MODEL_MAX_USER_SCALE, requested));
+}
+
+function getSatelliteSizeMode(id) {
+    const requested = String(getSatelliteConfigValue(id, "satellite_size_mode", satelliteSizeMode) || "").toLowerCase();
+    return requested === "physical" ? "physical" : "visual";
+}
+
 function applySatelliteVisibility(id, state) {
     if (!state || !state.entity) {
         return true;
@@ -229,10 +296,10 @@ function applySatelliteVisibility(id, state) {
     state.entity.show = visible;
 
     if (state.trailEntity) {
-        state.trailEntity.show = visible && orbitConfig.orbit_past_show !== false;
+        state.trailEntity.show = visible && shouldShowPastOrbit(id);
     }
     if (state.orbitEntity) {
-        state.orbitEntity.show = visible && orbitConfig.orbit_future_show !== false;
+        state.orbitEntity.show = visible && shouldShowFutureOrbit(id);
     }
 
     return visible;
@@ -248,12 +315,12 @@ export function setOrbitConfig(config) {
     };
 
     const requestedHours = Number(nextOrbitConfig.propagation_hours);
-    if (Number.isFinite(requestedHours) && requestedHours > 0) {
+    if (Number.isFinite(requestedHours) && requestedHours >= 0) {
         nextOrbitConfig.propagation_hours = clamp(requestedHours, PROPAGATION_HOURS_MIN, PROPAGATION_HOURS_MAX);
     }
 
     const requestedPastSeconds = Number(nextOrbitConfig.orbit_past_seconds);
-    if (Number.isFinite(requestedPastSeconds) && requestedPastSeconds > 0) {
+    if (Number.isFinite(requestedPastSeconds) && requestedPastSeconds >= 0) {
         nextOrbitConfig.orbit_past_seconds = clamp(requestedPastSeconds, PAST_SECONDS_MIN, PAST_SECONDS_MAX);
     }
 
@@ -285,14 +352,14 @@ export function setOrbitConfig(config) {
             if (state && state.entity && state.entity.label) {
                 applyLabelStyle(state.entity, id);
                 applyVisualStyle(state.entity);
-                if (satelliteUse3DModel && state.lastOrientation) {
+                if (shouldUse3DModelForSatellite(id) && state.lastOrientation) {
                     state.entity.orientation = state.lastOrientation;
                 }
                 applySatelliteVisibility(id, state);
             }
 
             // Si se desactiva estela pasada, limpiar entidades y buffers para ahorrar carga.
-            if (state && orbitConfig.orbit_past_show === false) {
+            if (state && !shouldShowPastOrbit(id)) {
                 if (state.trailEntity) {
                     entityPool.viewer.entities.remove(state.trailEntity);
                     state.trailEntity = null;
@@ -301,7 +368,7 @@ export function setOrbitConfig(config) {
             }
 
             // Si se desactiva órbita futura, limpiar entidad inmediatamente.
-            if (state && orbitConfig.orbit_future_show === false) {
+            if (state && !shouldShowFutureOrbit(id)) {
                 if (state.orbitEntity) {
                     entityPool.viewer.entities.remove(state.orbitEntity);
                     state.orbitEntity = null;
@@ -311,7 +378,7 @@ export function setOrbitConfig(config) {
             // Si hay órbita cacheada, re-renderizar con la nueva configuración local.
             if (
                 state
-                && orbitConfig.orbit_future_show !== false
+                && shouldShowFutureOrbit(id)
                 && state.lastOrbitPayload
                 && currentViewer
             ) {
@@ -394,8 +461,9 @@ function computeInterpolationDuration(state, now) {
 }
 
 function applyLabelStyle(entity, id) {
-    const labelVisible = satelliteLabelSizePx > 0;
-    const labelSize = Math.max(1, Math.floor(satelliteLabelSizePx));
+    const localLabelSizePx = getSatelliteLabelSize(id);
+    const labelVisible = localLabelSizePx > 0;
+    const labelSize = Math.max(1, Math.floor(localLabelSizePx));
 
     entity.label.text = id || "";
     entity.label.font = `${SAT_LABEL_FONT_WEIGHT} ${labelSize}px ${SAT_LABEL_FONT_FAMILY}`;
@@ -411,29 +479,37 @@ function applyVisualStyle(entity) {
         return;
     }
 
+    const id = String(entity?.satelliteId || entity?.name || "");
+    const localUse3DModel = shouldUse3DModelForSatellite(id);
+    const localModelScale = getModelScaleForSatellite(id);
+    const localSizeMode = getSatelliteSizeMode(id);
+
     if (entity.point) {
         entity.point.pixelSize = SAT_POINT_PIXEL_SIZE;
         entity.point.color = Cesium.Color.WHITE;
         entity.point.outlineColor = Cesium.Color.BLACK;
         entity.point.outlineWidth = SAT_POINT_OUTLINE_WIDTH;
-        entity.point.show = !satelliteUse3DModel;
+        entity.point.show = !localUse3DModel;
     }
 
-    if (!satelliteUse3DModel) {
+    if (!localUse3DModel) {
         if (entity.model) {
-            delete entity.model;
+            entity.model.show = false;
+            entity.model = undefined;
         }
         entity.orientation = undefined;
         return;
     }
 
-    entity.model = createSatelliteModelGraphics();
+    if (!entity.model) {
+        entity.model = createSatelliteModelGraphics();
+    }
     entity.model.show = true;
 
-    const safeScale = Math.max(0.000001, Math.min(SAT_MODEL_MAX_USER_SCALE, satelliteModelScale));
+    const safeScale = localModelScale;
     entity.model.scale = safeScale;
 
-    const minimumPixelSize = satelliteSizeMode === "physical"
+    const minimumPixelSize = localSizeMode === "physical"
         ? 1
         : Math.max(1, Math.floor(SAT_MODEL_BASE_MIN_PIXEL_SIZE * safeScale));
 
@@ -458,11 +534,14 @@ function getPastSampleStepSeconds() {
     return Number.isFinite(stateInterval) && stateInterval > 0 ? stateInterval : 1.0;
 }
 
-function getPastTrailMaxPoints() {
-    const pastSecondsRaw = Number(orbitConfig.orbit_past_seconds);
+function getPastTrailMaxPoints(id) {
+    const pastSecondsRaw = Number(getPastSecondsForSatellite(id));
     const pastSeconds = Number.isFinite(pastSecondsRaw) && pastSecondsRaw > 0
         ? pastSecondsRaw
-        : 120;
+        : 0;
+    if (pastSeconds <= 0) {
+        return 0;
+    }
     const stepSeconds = getPastSampleStepSeconds();
     return Math.max(2, Math.floor(pastSeconds / stepSeconds) + 1);
 }
@@ -718,10 +797,13 @@ function createOrbitMaterial(color) {
 }
 
 function getFutureOrbitColor(id) {
+    const configuredSelectedColor = getSatelliteConfigValue(id, "orbit_selected_color", orbitConfig.orbit_selected_color);
+    const configuredFutureColor = getSatelliteConfigValue(id, "orbit_future_color", orbitConfig.orbit_future_color);
+
     if (selectedOrbitSatelliteId && id === selectedOrbitSatelliteId) {
-        return getOpaqueColor(orbitConfig.orbit_selected_color, DEFAULT_SELECTED_ORBIT_COLOR);
+        return getOpaqueColor(configuredSelectedColor, DEFAULT_SELECTED_ORBIT_COLOR);
     }
-    return getOpaqueColor(orbitConfig.orbit_future_color, "#00ff88");
+    return getOpaqueColor(configuredFutureColor, "#00ff88");
 }
 
 function getFutureOrbitRenderWidth(id, baseWidth) {
@@ -766,7 +848,7 @@ function createOrbitEntity(viewer, id, positions, color, width) {
     });
 }
 
-function clipFutureOrbitByRequestedHorizon(orbit) {
+function clipFutureOrbitByRequestedHorizon(id, orbit) {
     if (!Array.isArray(orbit) || orbit.length < 2) {
         return orbit;
     }
@@ -774,10 +856,14 @@ function clipFutureOrbitByRequestedHorizon(orbit) {
     const sourceHours = Number.isFinite(sourceFutureOrbitHours) && sourceFutureOrbitHours > 0
         ? sourceFutureOrbitHours
         : 0;
-    const requestedHoursRaw = Number(orbitConfig.propagation_hours);
-    const requestedHours = Number.isFinite(requestedHoursRaw) && requestedHoursRaw > 0
+    const requestedHoursRaw = Number(getPropagationHoursForSatellite(id));
+    const requestedHours = Number.isFinite(requestedHoursRaw) && requestedHoursRaw >= 0
         ? requestedHoursRaw
         : sourceHours;
+
+    if (requestedHours <= 0) {
+        return [];
+    }
 
     if (!(sourceHours > 0) || !(requestedHours > 0) || requestedHours >= sourceHours) {
         return orbit;
@@ -792,9 +878,10 @@ function createTrailEntity(viewer, id, positions, color, width) {
     return viewer.entities.add({
         id: `${id}-trail`,
         polyline: {
-            positions,
+            positions: Array.isArray(positions) ? positions.slice() : positions,
             width,
             material: createOrbitMaterial(color),
+            arcType: Cesium.ArcType.NONE,
             clampToGround: false
         }
     });
@@ -822,9 +909,9 @@ function ensureSatelliteState(viewer, id, cart, orientation) {
         state.lastUpdateTime = now;
         state.lastMessageTime = now;
         
-        if (orbitConfig.orbit_past_show !== false) {
+        if (shouldShowPastOrbit(id)) {
             state.trailPositions.push(cart);
-            const maxTrailPoints = getPastTrailMaxPoints();
+            const maxTrailPoints = getPastTrailMaxPoints(id);
             if (state.trailPositions.length > maxTrailPoints) {
                 state.trailPositions.shift();
             }
@@ -880,7 +967,7 @@ function updateSatelliteState(viewer, satData) {
     }
 
     const cart = new Cesium.Cartesian3(pos.x, pos.y, pos.z);
-    const orientation = satelliteUse3DModel ? calculateOrientation(pos, vel) : undefined;
+    const orientation = shouldUse3DModelForSatellite(id) ? calculateOrientation(pos, vel) : undefined;
 
     const state = ensureSatelliteState(viewer, id, cart, orientation);
     if (isNewSatellite) {
@@ -896,7 +983,7 @@ function updateSatelliteState(viewer, satData) {
 
     // No actualizar posición directamente; dejar que la interpolación la actualice
     // state.entity.position se actualiza en smoothUpdate()
-    if (satelliteUse3DModel) {
+    if (shouldUse3DModelForSatellite(id)) {
         state.entity.orientation = orientation;
         state.lastOrientation = orientation;
     }
@@ -905,7 +992,7 @@ function updateSatelliteState(viewer, satData) {
         return;
     }
 
-    if (orbitConfig.orbit_past_show === false) {
+    if (!shouldShowPastOrbit(id)) {
         if (state.trailEntity) {
             viewer.entities.remove(state.trailEntity);
             state.trailEntity = null;
@@ -926,8 +1013,18 @@ function updateSatelliteState(viewer, satData) {
             return;
         }
 
-        const trailColor = getOpaqueColor(orbitConfig.orbit_past_color, "#ff0000");
-        const trailWidth = computeOrbitWidth(viewer, orbitConfig.orbit_past_line_width, state.entity.position);
+        const configuredPastColor = String(getSatelliteConfigValue(id, "orbit_past_color", orbitConfig.orbit_past_color) || "#ff0000");
+        const trailColor = getOpaqueColor(configuredPastColor, "#ff0000");
+        const configuredPastWidth = Number(getSatelliteConfigValue(id, "orbit_past_line_width", orbitConfig.orbit_past_line_width));
+        const trailReferencePosition = visibleTrail[visibleTrail.length - 1] || state.entity.position;
+        const futureOrbitEnabled = shouldShowFutureOrbit(id);
+        const targetTrailWidth = futureOrbitEnabled
+            ? computeOrbitWidth(viewer, configuredPastWidth, trailReferencePosition)
+            : Math.max(ORBIT_MIN_PIXEL_WIDTH, configuredPastWidth);
+        const previousTrailWidth = Number(state.trailRenderWidth);
+        const trailWidth = Number.isFinite(previousTrailWidth)
+            ? lerp(previousTrailWidth, targetTrailWidth, orbitConfig.orbit_width_mode === ORBIT_WIDTH_MODE_PHYSICAL ? 0.18 : 1)
+            : targetTrailWidth;
         if (!state.trailEntity) {
             state.trailEntity = createTrailEntity(
                 viewer,
@@ -936,13 +1033,20 @@ function updateSatelliteState(viewer, satData) {
                 trailColor,
                 trailWidth
             );
+            state.trailColorCss = configuredPastColor;
+            state.trailRenderWidth = trailWidth;
         } else {
-            // Suavizar trail antes de actualizar
-            const smoothedTrail = smoothTrail(visibleTrail, 1);
-            state.trailEntity.polyline.positions = smoothedTrail;
-            state.trailEntity.polyline.material = createOrbitMaterial(trailColor);
-            state.trailEntity.polyline.depthFailMaterial = undefined;
-            state.trailEntity.polyline.width = trailWidth;
+            // Mantener geometría directa y estable reduce oscilación visual al actualizar en alta frecuencia.
+            state.trailEntity.polyline.positions = visibleTrail.slice();
+            if (state.trailColorCss !== configuredPastColor) {
+                state.trailEntity.polyline.material = createOrbitMaterial(trailColor);
+                state.trailEntity.polyline.depthFailMaterial = createOrbitMaterial(trailColor);
+                state.trailColorCss = configuredPastColor;
+            }
+            if (!Number.isFinite(previousTrailWidth) || Math.abs(previousTrailWidth - trailWidth) > 0.01) {
+                state.trailEntity.polyline.width = trailWidth;
+                state.trailRenderWidth = trailWidth;
+            }
         }
     }
 }
@@ -1151,6 +1255,8 @@ export function getSatelliteTelemetry(id) {
     const speedKmS = speed / 1000;
     const speedKmH = speed * 3.6;
     const telemetryAgeMs = Date.now() - (state.lastMessageTime || Date.now());
+    const propagationFutureHours = getPropagationHoursForSatellite(id);
+    const propagationPastSeconds = getPastSecondsForSatellite(id);
 
     return {
         id,
@@ -1171,6 +1277,11 @@ export function getSatelliteTelemetry(id) {
         distance_to_camera_m: distanceToCameraM,
         trail_points: state.trailPositions?.length || 0,
         has_future_orbit: Boolean(state.orbitEntity),
+        orbit_future_enabled: shouldShowFutureOrbit(id),
+        orbit_past_enabled: shouldShowPastOrbit(id),
+        propagation_future_hours: propagationFutureHours,
+        propagation_past_seconds: propagationPastSeconds,
+        propagation_past_hours: propagationPastSeconds / 3600,
         is_visible: !hiddenSatelliteIds.has(id),
         telemetry_age_ms: telemetryAgeMs,
         timestamp_ms: Date.now()
@@ -1297,7 +1408,7 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         return;
     }
 
-    if (!orbitConfig.orbit_future_show || !activeLayerSatelliteIds.has(id) || hiddenSatelliteIds.has(id)) {
+    if (!shouldShowFutureOrbit(id) || !activeLayerSatelliteIds.has(id) || hiddenSatelliteIds.has(id)) {
         if (state.orbitEntity) {
             viewer.entities.remove(state.orbitEntity);
             state.orbitEntity = null;
@@ -1327,7 +1438,7 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         ? Math.floor(announcedSamples)
         : orbit.length;
 
-    const horizonClippedOrbit = clipFutureOrbitByRequestedHorizon(orbit);
+    const horizonClippedOrbit = clipFutureOrbitByRequestedHorizon(id, orbit);
     const hiddenFutureSamples = getHiddenFutureSamples();
     const visibleOrbit = trimOrbitNearSatellite(horizonClippedOrbit, hiddenFutureSamples);
 
@@ -1343,7 +1454,8 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
     const smoothedOrbit = smoothTrail(orbitPositions, 1);
     const futureColor = getFutureOrbitColor(id);
     const referencePosition = state.entity?.position || orbitPositions[0];
-    const futureWidthBase = computeOrbitWidth(viewer, orbitConfig.orbit_future_line_width, referencePosition);
+    const configuredFutureWidth = Number(getSatelliteConfigValue(id, "orbit_future_line_width", orbitConfig.orbit_future_line_width));
+    const futureWidthBase = computeOrbitWidth(viewer, configuredFutureWidth, referencePosition);
     state.orbitBaseWidth = futureWidthBase;
     const futureWidth = getFutureOrbitRenderWidth(id, futureWidthBase);
 
@@ -1391,4 +1503,128 @@ function updateSatelliteOrbit(viewer, satData) {
     }
 
     renderFutureOrbitForState(viewer, id, state, state.lastOrbitPayload);
+}
+
+export function getSatelliteVisualizationConfig(id) {
+    const satId = String(id || "").trim();
+    if (!satId) {
+        return null;
+    }
+
+    const overrides = getSatelliteOverrides(satId) || {};
+    return {
+        satelliteId: satId,
+        effective: {
+            orbit_future_show: shouldShowFutureOrbit(satId),
+            orbit_past_show: shouldShowPastOrbit(satId),
+            orbit_future_line_width: Number(getSatelliteConfigValue(satId, "orbit_future_line_width", orbitConfig.orbit_future_line_width)),
+            orbit_past_line_width: Number(getSatelliteConfigValue(satId, "orbit_past_line_width", orbitConfig.orbit_past_line_width)),
+            orbit_future_color: String(getSatelliteConfigValue(satId, "orbit_future_color", orbitConfig.orbit_future_color) || "#7fd7ff"),
+            orbit_past_color: String(getSatelliteConfigValue(satId, "orbit_past_color", orbitConfig.orbit_past_color) || "#ff9a5a"),
+            orbit_selected_color: String(getSatelliteConfigValue(satId, "orbit_selected_color", orbitConfig.orbit_selected_color) || DEFAULT_SELECTED_ORBIT_COLOR),
+            propagation_hours: getPropagationHoursForSatellite(satId),
+            orbit_past_seconds: getPastSecondsForSatellite(satId),
+            satellite_label_size_px: getSatelliteLabelSize(satId),
+            satellite_model_scale: getModelScaleForSatellite(satId),
+            satellite_use_3d_model: shouldUse3DModelForSatellite(satId),
+            satellite_size_mode: getSatelliteSizeMode(satId)
+        },
+        overrides: { ...overrides }
+    };
+}
+
+export function setSatelliteVisualizationConfig(id, patch = {}) {
+    const satId = String(id || "").trim();
+    if (!satId) {
+        return;
+    }
+
+    const current = getSatelliteOverrides(satId) || {};
+    const next = { ...current };
+    const allowedFields = [
+        "orbit_future_show",
+        "orbit_past_show",
+        "orbit_future_line_width",
+        "orbit_past_line_width",
+        "orbit_future_color",
+        "orbit_past_color",
+        "orbit_selected_color",
+        "propagation_hours",
+        "orbit_past_seconds",
+        "satellite_label_size_px",
+        "satellite_model_scale",
+        "satellite_use_3d_model",
+        "satellite_size_mode"
+    ];
+
+    for (const field of allowedFields) {
+        if (!Object.prototype.hasOwnProperty.call(patch, field)) {
+            continue;
+        }
+        const value = patch[field];
+        if (value === null || value === undefined || value === "") {
+            delete next[field];
+        } else {
+            next[field] = value;
+        }
+    }
+
+    if (Object.keys(next).length) {
+        satelliteVisualOverridesById.set(satId, next);
+    } else {
+        satelliteVisualOverridesById.delete(satId);
+    }
+
+    const state = satelliteState[satId];
+    if (!state || !currentViewer) {
+        return;
+    }
+
+    if (state.entity) {
+        applyLabelStyle(state.entity, satId);
+        applyVisualStyle(state.entity);
+        if (shouldUse3DModelForSatellite(satId) && state.lastOrientation) {
+            state.entity.orientation = state.lastOrientation;
+        }
+    }
+
+    applySatelliteVisibility(satId, state);
+
+    if (!shouldShowPastOrbit(satId) && state.trailEntity) {
+        currentViewer.entities.remove(state.trailEntity);
+        state.trailEntity = null;
+    }
+
+    if (state.lastOrbitPayload) {
+        renderFutureOrbitForState(currentViewer, satId, state, state.lastOrbitPayload);
+    }
+}
+
+export function clearSatelliteVisualizationConfig(id) {
+    setSatelliteVisualizationConfig(id, {
+        orbit_future_show: null,
+        orbit_past_show: null,
+        orbit_future_line_width: null,
+        orbit_past_line_width: null,
+        orbit_future_color: null,
+        orbit_past_color: null,
+        orbit_selected_color: null,
+        propagation_hours: null,
+        orbit_past_seconds: null,
+        satellite_label_size_px: null,
+        satellite_model_scale: null,
+        satellite_use_3d_model: null,
+        satellite_size_mode: null
+    });
+}
+
+export function clearAllSatelliteVisualizationConfigs() {
+    if (!satelliteVisualOverridesById.size) {
+        return;
+    }
+
+    satelliteVisualOverridesById.clear();
+
+    // Reaplicar estilo global en todos los satélites activos tras limpiar overrides.
+    setOrbitConfig({});
 }

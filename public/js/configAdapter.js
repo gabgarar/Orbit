@@ -40,7 +40,8 @@ export function normalizeSystemConfig(rawSystem = {}) {
         recording_output_format: recording.output_format ?? rawSystem.recording_output_format,
 
         log_enabled: logging.enabled ?? rawSystem.log_enabled,
-        log_level: logging.level ?? rawSystem.log_level
+        log_level: logging.level ?? rawSystem.log_level,
+        log_show_top_clock: logging.show_top_clock ?? rawSystem.log_show_top_clock
     };
 }
 
@@ -71,7 +72,8 @@ export function toSectionedSystemConfig(rawSystem = {}) {
         },
         logging: {
             enabled: flat.log_enabled ?? true,
-            level: flat.log_level ?? "info"
+            level: flat.log_level ?? "info",
+            show_top_clock: flat.log_show_top_clock ?? true
         },
         rendering: {
             antialias_mode: flat.antialias_mode ?? (flat.antialias_enabled ? "fxaa" : "off"),

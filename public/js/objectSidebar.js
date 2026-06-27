@@ -15,13 +15,26 @@ function row(label, value, unit = "") {
     `;
 }
 
-function section(title, rowsHtml) {
+function section(sectionKey, title, rowsHtml, isOpen = true) {
+    const expanded = isOpen !== false;
     return `
-        <section class="object-info-section">
-            <h4 class="object-info-section-title">${title}</h4>
-            <div class="object-info-grid">${rowsHtml}</div>
+        <section class="object-info-section${expanded ? "" : " is-collapsed"}" data-info-section="${sectionKey}">
+            <button class="object-info-section-toggle" type="button" data-info-toggle="${sectionKey}" aria-expanded="${expanded ? "true" : "false"}">
+                <span class="object-info-section-title">${title}</span>
+                <span class="object-info-section-caret">${expanded ? "▾" : "▸"}</span>
+            </button>
+            <div class="object-info-grid"${expanded ? "" : " hidden"}>${rowsHtml}</div>
         </section>
     `;
+}
+
+function formatDurationHoursAndDays(hours) {
+    const safeHours = Number(hours);
+    if (!Number.isFinite(safeHours) || safeHours <= 0) {
+        return "-";
+    }
+    const days = safeHours / 24;
+    return `${formatNumber(safeHours, 2)} h (${formatNumber(days, 2)} dias)`;
 }
 
 function formatTleAgeHuman(ageDays) {
@@ -37,7 +50,7 @@ function formatTleAgeHuman(ageDays) {
     return `${Math.floor(ageDays)} dias`;
 }
 
-function buildInfoText(telemetry, orbitInfo = null, tleSummary = null) {
+function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOpenState = {}) {
     if (!telemetry) {
         return "<div class=\"object-info-empty\">Selecciona un objeto para ver telemetria en tiempo real.</div>";
     }
@@ -62,19 +75,30 @@ function buildInfoText(telemetry, orbitInfo = null, tleSummary = null) {
     const statusRows = [
         row("Distancia a camara", formatNumber(telemetry.distance_to_camera_m, 2), " m"),
         row("Puntos de estela", formatNumber(telemetry.trail_points, 0)),
-        row("Orbita futura", telemetry.has_future_orbit ? "Si" : "No"),
         row("Edad telemetria", formatNumber(telemetry.telemetry_age_ms, 0), " ms"),
         row("Propagacion", "SGP4"),
         row("Tipo orbita", orbitInfo?.label || "Desconocida")
+    ].join("");
+
+    const tleAgeDays = tleAgeDaysFromSummary(tleSummary);
+    const orbitRows = [
+        row("Propagacion futura", formatDurationHoursAndDays(telemetry.propagation_future_hours)),
+        row("Propagacion pasada", formatDurationHoursAndDays(telemetry.propagation_past_hours)),
+        row("Pasado configurado", formatNumber(telemetry.propagation_past_seconds, 1), " s"),
+        row("Tipo de orbita", orbitInfo?.label || "Desconocida"),
+        row("Altitud estimada", Number.isFinite(orbitInfo?.altitudeKm) ? formatNumber(orbitInfo.altitudeKm, 1) : "-", " km"),
+        row("Edad TLE", formatTleAgeHuman(tleAgeDays)),
+        row("Ventana recomendada", orbitInfo?.recommendedWindow || "Sin referencia")
     ].join("");
 
     const orbitTag = orbitInfo ? buildOrbitTypeTagHtml(orbitInfo) : "";
 
     return `
         <div class="object-info-title">${orbitTag}${escapeHtml(telemetry.id)}</div>
-        ${section("Geografica", geoRows)}
-        ${section("Cinematica", kinematicsRows)}
-        ${section("Estado", statusRows)}
+        ${section("geografica", "Geografica", geoRows, sectionOpenState.geografica !== false)}
+        ${section("cinematica", "Cinematica", kinematicsRows, sectionOpenState.cinematica !== false)}
+        ${section("orbita", "Orbita", orbitRows, sectionOpenState.orbita !== false)}
+        ${section("estado", "Estado", statusRows, sectionOpenState.estado !== false)}
     `;
 }
 
@@ -487,6 +511,7 @@ export function setupObjectSidebar({
     onHideAllObjects,
     onFocusObject,
     onSelectObject,
+    onOpenVisualizationOptions,
     isCatalogReady,
     getObjectTle,
     getObjectTleAsync,
@@ -523,6 +548,12 @@ export function setupObjectSidebar({
     let catalogLoadingPage = false;
     const catalogIndexById = new Map();
     const catalogMetaCache = new Map();
+    const infoSectionOpenState = {
+        geografica: true,
+        cinematica: true,
+        orbita: true,
+        estado: true
+    };
 
     function clearCatalogMetaCache() {
         catalogMetaCache.clear();
@@ -539,8 +570,17 @@ export function setupObjectSidebar({
 
         const tleSummary = parseTleSummary(tle);
         const orbitInfo = getOrbitInfoFromTleSummary(tleSummary, id);
+        const tleAgeDays = tleAgeDaysFromSummary(tleSummary);
+        const tleAgeCheck = checkTleOldAdaptive(tleSummary, orbitInfo);
         const missionInfo = inferMissionInfo(id);
-        const meta = { tleSummary, orbitInfo, missionInfo, hasTle };
+        const meta = {
+            tleSummary,
+            orbitInfo,
+            missionInfo,
+            hasTle,
+            tleAgeDays,
+            tleAgeWarning: Boolean(tleAgeCheck?.isOld)
+        };
         catalogMetaCache.set(id, meta);
         return meta;
     }
@@ -672,7 +712,7 @@ export function setupObjectSidebar({
     contextMenu.id = "catalogContextMenu";
     contextMenu.innerHTML = `
         <button class="catalog-context-action" id="contextExplainBtn" type="button">Explicar parametros orbitales (TLE)</button>
-        <button class="catalog-context-action" id="contextDetailsBtn" type="button">Detalles del satelite</button>
+        <button class="catalog-context-action" id="contextVizBtn" type="button">Opciones de visualizacion</button>
     `;
     document.body.appendChild(contextMenu);
 
@@ -696,6 +736,23 @@ export function setupObjectSidebar({
     const searchInput = sidebar.querySelector("#objectSearch");
     const listRoot = sidebar.querySelector("#objectList");
     const infoRoot = sidebar.querySelector("#objectInfo");
+    const onInfoTogglePointerDown = (event) => {
+        const toggleBtn = event.target?.closest?.("[data-info-toggle]");
+        if (!toggleBtn || !infoRoot.contains(toggleBtn)) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+
+        const key = toggleBtn.dataset.infoToggle;
+        if (!key) {
+            return;
+        }
+
+        infoSectionOpenState[key] = !(infoSectionOpenState[key] !== false);
+        renderInfo();
+    };
+    infoRoot.addEventListener("pointerdown", onInfoTogglePointerDown);
 
     const catalogCloseBtn = catalogModal.querySelector("#catalogCloseBtn");
     const catalogFiltersBtn = catalogModal.querySelector("#catalogFiltersBtn");
@@ -727,7 +784,7 @@ export function setupObjectSidebar({
     const catalogLoadingText = catalogLoadingModal.querySelector("p");
 
     const contextExplainBtn = contextMenu.querySelector("#contextExplainBtn");
-    const contextDetailsBtn = contextMenu.querySelector("#contextDetailsBtn");
+    const contextVizBtn = contextMenu.querySelector("#contextVizBtn");
 
     const tleInfoCloseBtn = tleInfoModal.querySelector("#tleInfoCloseBtn");
     const tleInfoContent = tleInfoModal.querySelector("#tleInfoContent");
@@ -1205,13 +1262,13 @@ export function setupObjectSidebar({
         openTleInfo(id, "explain");
     });
 
-    contextDetailsBtn.addEventListener("click", () => {
+    contextVizBtn.addEventListener("click", () => {
         if (!contextTargetId) {
             return;
         }
         const id = contextTargetId;
         closeContextMenu();
-        openTleInfo(id, "details");
+        onOpenVisualizationOptions?.(id);
     });
 
     tleInfoCloseBtn.addEventListener("click", () => {
@@ -1722,6 +1779,24 @@ export function setupObjectSidebar({
 
         nameEl.appendChild(document.createTextNode(id));
 
+        if (meta.tleAgeWarning) {
+            const warningEl = document.createElement("span");
+            warningEl.className = "catalog-old-warning";
+            warningEl.textContent = " ⚠";
+            warningEl.title = buildTleFreshnessMessage(meta.orbitInfo, meta.tleAgeDays);
+            nameEl.appendChild(warningEl);
+        }
+
+        const explainBtn = document.createElement("button");
+        explainBtn.type = "button";
+        explainBtn.className = "catalog-row-action-btn";
+        explainBtn.textContent = "TLE";
+        explainBtn.title = `Explicar parametros orbitales (TLE) de ${id}`;
+        explainBtn.addEventListener("click", (event) => {
+            event.stopPropagation();
+            openTleInfo(id, "explain");
+        });
+
         const indexInFiltered = catalogIndexById.get(id);
 
         rowEl.addEventListener("click", (event) => {
@@ -1776,10 +1851,15 @@ export function setupObjectSidebar({
 
         rowEl.addEventListener("contextmenu", (event) => {
             event.preventDefault();
+            if (!getObjectLayerActive(id)) {
+                closeContextMenu();
+                return;
+            }
             openContextMenu(id, event.clientX, event.clientY);
         });
 
         rowEl.appendChild(nameEl);
+        rowEl.appendChild(explainBtn);
         rowEl.appendChild(stateEl);
         catalogRowElements.set(id, rowEl);
         return rowEl;
@@ -1836,7 +1916,7 @@ export function setupObjectSidebar({
         const tle = selectedId && getObjectLayerActive(selectedId) ? getObjectTle?.(selectedId) : null;
         const summary = parseTleSummary(tle);
         const orbitInfo = getOrbitInfoFromTleSummary(summary, selectedId || "");
-        infoRoot.innerHTML = buildInfoText(telemetry, orbitInfo, summary);
+        infoRoot.innerHTML = buildInfoText(telemetry, orbitInfo, summary, infoSectionOpenState);
     }
 
     function selectObject(id) {
@@ -1874,6 +1954,7 @@ export function setupObjectSidebar({
                 catalogWaitInterval = null;
             }
             stopCatalogRefreshProgressTimer();
+            infoRoot.removeEventListener("pointerdown", onInfoTogglePointerDown);
             sidebar.remove();
             catalogModal.remove();
             confirmModal.remove();

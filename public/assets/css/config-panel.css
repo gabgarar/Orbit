@@ -109,6 +109,35 @@
     opacity: 0.9;
 }
 
+#timeHudWidget {
+    position: fixed;
+    top: calc(12px * var(--orbit-ui-scale));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10000;
+    border: 1px solid #3a4e72;
+    border-radius: 10px;
+    background: rgba(15, 21, 32, 0.92);
+    color: #eaf0ff;
+    padding: calc(7px * var(--orbit-ui-scale)) calc(9px * var(--orbit-ui-scale));
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+    display: grid;
+    gap: 4px;
+    min-width: calc(190px * var(--orbit-ui-scale));
+}
+
+.time-hud-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font: 600 calc(11px * var(--orbit-ui-scale))/1.2 sans-serif;
+}
+
+.time-hud-label {
+    color: #9fb4d8;
+}
+
 #appDialogModal {
     position: fixed;
     inset: 0;
@@ -186,6 +215,118 @@
     background: #1d5436;
 }
 
+#satelliteContextMenu {
+    position: fixed;
+    z-index: 10050;
+    display: none;
+    background: #0f1a2b;
+    border: 1px solid #33537c;
+    border-radius: 10px;
+    padding: 6px;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+}
+
+#satelliteContextMenu.open {
+    display: block;
+}
+
+#satelliteContextMenu button {
+    border: 1px solid #3b5c85;
+    background: #162a45;
+    color: #e6f0ff;
+    border-radius: 8px;
+    font: 700 calc(12px * var(--orbit-ui-scale))/1 sans-serif;
+    height: calc(32px * var(--orbit-ui-scale));
+    padding: 0 calc(12px * var(--orbit-ui-scale));
+    cursor: pointer;
+}
+
+#satelliteContextMenu button:hover {
+    background: #1e3860;
+}
+
+#satelliteVizModal {
+    position: fixed;
+    inset: 0;
+    z-index: 10040;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(4, 9, 16, 0.68);
+    padding: 12px;
+    box-sizing: border-box;
+}
+
+#satelliteVizModal.open {
+    display: flex;
+}
+
+#satelliteVizPanel {
+    width: min(760px, 96vw);
+    max-height: 92vh;
+    overflow: auto;
+    border-radius: 12px;
+    border: 1px solid #2d486b;
+    background: #0d1522;
+    color: #dfe9f3;
+    padding: 12px;
+}
+
+#satelliteVizHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+#satelliteVizHeader h4 {
+    margin: 0;
+    font: 700 calc(15px * var(--orbit-ui-scale)) sans-serif;
+}
+
+#satelliteVizCloseBtn {
+    width: calc(30px * var(--orbit-ui-scale));
+    height: calc(30px * var(--orbit-ui-scale));
+    border-radius: 50%;
+    border: 1px solid #3b5a81;
+    background: #17263e;
+    color: #dfe9f3;
+    cursor: pointer;
+}
+
+#satelliteVizTarget {
+    margin: 4px 2px 10px;
+    color: #9ec0f0;
+    font: 600 calc(12px * var(--orbit-ui-scale)) sans-serif;
+}
+
+#satelliteVizActions {
+    margin-top: 12px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+#satelliteVizActions button {
+    border: 1px solid #36547a;
+    background: #172940;
+    color: #e7f1ff;
+    border-radius: 9px;
+    height: calc(34px * var(--orbit-ui-scale));
+    padding: 0 12px;
+    font: 700 calc(12px * var(--orbit-ui-scale))/1 sans-serif;
+    cursor: pointer;
+}
+
+#satelliteVizApplyBtn {
+    border-color: #2f6f49;
+    background: #17402a;
+}
+
+#satelliteVizApplyBtn:hover {
+    background: #1d5336;
+}
+
 #configModal {
     position: fixed;
     inset: 0;
@@ -252,6 +393,42 @@
 #configPanelHeader h3 {
     margin: 0;
     font: 700 calc(16px * var(--orbit-ui-scale)) sans-serif;
+}
+
+.config-header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.config-apply-global-btn {
+    height: calc(34px * var(--orbit-ui-scale));
+    border-radius: calc(9px * var(--orbit-ui-scale));
+    border: 1px solid #2f6b45;
+    background: #173628;
+    color: #d8ffe8;
+    padding: 0 calc(10px * var(--orbit-ui-scale));
+    font: 700 calc(11px * var(--orbit-ui-scale))/1 sans-serif;
+    cursor: pointer;
+}
+
+.config-apply-global-btn:hover {
+    background: #1d4a36;
+}
+
+.config-reset-btn {
+    height: calc(34px * var(--orbit-ui-scale));
+    border-radius: calc(9px * var(--orbit-ui-scale));
+    border: 1px solid #5f4a2d;
+    background: #2b2114;
+    color: #ffe8c7;
+    padding: 0 calc(10px * var(--orbit-ui-scale));
+    font: 700 calc(11px * var(--orbit-ui-scale))/1 sans-serif;
+    cursor: pointer;
+}
+
+.config-reset-btn:hover {
+    background: #3b2c19;
 }
 
 .config-close-btn {
@@ -416,6 +593,52 @@
 
 .config-save-status.error {
     color: #ff8f8f;
+}
+
+.config-tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 0 2px 10px;
+}
+
+.config-tab-btn {
+    border: 1px solid #2f4666;
+    border-radius: 999px;
+    background: #111d2f;
+    color: #c9dbf6;
+    font: 700 calc(11px * var(--orbit-ui-scale))/1 sans-serif;
+    letter-spacing: 0.02em;
+    height: calc(30px * var(--orbit-ui-scale));
+    padding: 0 calc(12px * var(--orbit-ui-scale));
+    cursor: pointer;
+}
+
+.config-tab-btn:hover {
+    background: #172741;
+}
+
+.config-tab-btn.active {
+    border-color: #4f7ec0;
+    background: #204070;
+    color: #f1f6ff;
+}
+
+.config-tab-btn:focus-visible {
+    outline: 2px solid #79a8ff;
+    outline-offset: 1px;
+}
+
+.config-tab-panels {
+    display: grid;
+}
+
+.config-tab-panel {
+    display: block;
+}
+
+.config-tab-panel[hidden] {
+    display: none !important;
 }
 
 /* Scrollbar styling integrado con azul de la aplicación */

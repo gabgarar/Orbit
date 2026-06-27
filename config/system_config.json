@@ -1,16 +1,16 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 5,
+      "propagation_hours": 1,
       "future_show": true,
       "future_line_width": 1,
       "width_mode": "physical",
-      "future_color": "#7fd7ff",
+      "future_color": "#ecfe90",
       "selected_color": "#ff2d2d",
       "past_show": true,
-      "past_color": "#ff9a5a",
-      "past_seconds": 9000,
-      "past_line_width": 1
+      "past_color": "#c24a00",
+      "past_seconds": 6000,
+      "past_line_width": 2
     },
     "satellites": {
       "label_size_px": 8,
@@ -24,7 +24,8 @@
     },
     "logging": {
       "enabled": false,
-      "level": "info"
+      "level": "info",
+      "show_top_clock": false
     },
     "rendering": {
       "antialias_mode": "msaa",
