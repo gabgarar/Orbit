@@ -13,6 +13,7 @@ const PORT = 8100;
 const CONFIG_DIR = path.join(__dirname, "../config");
 const SYSTEM_CONFIG_PATH = path.join(CONFIG_DIR, "system_config.json");
 const DEFAULT_CATALOG_FILE = "catalog.json";
+const PYTHON_BACKEND_URL = "http://127.0.0.1:8765";
 
 const DEFAULT_CELESTRAK_GROUPS = [
     // Grupos de mayor cobertura
@@ -81,6 +82,9 @@ let catalogCache = {
     entries: []
 };
 
+let pythonProcess = null;
+let ownsPythonBackendProcess = false;
+
 function getUniqueSorted(values) {
     return Array.from(new Set(values.filter(Boolean).map((v) => String(v).trim().toLowerCase()))).sort();
 }
@@ -126,6 +130,85 @@ function parseTleCatalog(text) {
     }
 
     return entries;
+}
+
+async function isPythonBackendHealthy() {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1200);
+
+    try {
+        const response = await fetch(`${PYTHON_BACKEND_URL}/health`, {
+            signal: controller.signal,
+            headers: { Accept: "application/json" }
+        });
+        return response.ok;
+    } catch {
+        return false;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+async function reloadPythonBackend() {
+    if (pythonProcess && !pythonProcess.killed) {
+        pythonProcess.kill("SIGHUP");
+        return true;
+    }
+
+    if (!(await isPythonBackendHealthy())) {
+        return false;
+    }
+
+    try {
+        const response = await fetch(`${PYTHON_BACKEND_URL}/reload`, {
+            method: "POST",
+            headers: { Accept: "application/json" }
+        });
+        return response.ok;
+    } catch {
+        return false;
+    }
+}
+
+function stopOwnedPythonBackend(signalName = "SIGTERM") {
+    if (!ownsPythonBackendProcess || !pythonProcess || pythonProcess.killed) {
+        return;
+    }
+
+    try {
+        pythonProcess.kill(signalName);
+    } catch (error) {
+        console.warn("No se pudo detener el backend Python:", error);
+    }
+}
+
+async function ensurePythonBackend() {
+    if (await isPythonBackendHealthy()) {
+        console.log("[SERVER] Backend Python ya activo en puerto 8765. Se reutiliza el proceso existente.");
+        ownsPythonBackendProcess = false;
+        pythonProcess = null;
+        return;
+    }
+
+    console.log("🚀 Arrancando servidor Python SGP4...");
+    pythonProcess = spawn("python3", ["server.py"], {
+        cwd: path.join(__dirname, "./python")
+    });
+    ownsPythonBackendProcess = true;
+
+    pythonProcess.stdout.on("data", (data) => {
+        console.log("[SERVER]", data.toString());
+    });
+
+    pythonProcess.stderr.on("data", (data) => {
+        console.log("[SERVER]", data.toString());
+    });
+
+    pythonProcess.on("close", (code) => {
+        ownsPythonBackendProcess = false;
+        pythonProcess = null;
+        console.log(`⚠️ Python terminó con código ${code}`);
+    });
 }
 
 function computeTleChecksum(line) {
@@ -559,11 +642,12 @@ app.post("/api/system-config", async (req, res) => {
 
         // Forzar recarga inmediata de configuración en backend Python.
         try {
-            if (pythonProcess && !pythonProcess.killed) {
-                pythonProcess.kill("SIGHUP");
+            const reloaded = await reloadPythonBackend();
+            if (!reloaded) {
+                console.warn("No se pudo recargar el backend Python tras guardar configuracion.");
             }
         } catch (signalError) {
-            console.warn("No se pudo enviar SIGHUP a Python:", signalError);
+            console.warn("No se pudo recargar el backend Python:", signalError);
         }
 
         res.json({ ok: true });
@@ -585,23 +669,18 @@ app.listen(PORT, () => {
     console.log(`🌍 Servidor web en http://localhost:${PORT}`);
 });
 
-// ===============================
-// 2) Arrancar servidor Python
-// ===============================
-console.log("🚀 Arrancando servidor Python SGP4...");
-
-const pythonProcess = spawn("python3", ["server.py"], {
-    cwd: path.join(__dirname, "./python"),
+process.on("SIGINT", () => {
+    stopOwnedPythonBackend("SIGINT");
+    process.exit(0);
 });
 
-pythonProcess.stdout.on("data", (data) => {
-    console.log("[PYTHON]", data.toString());
+process.on("SIGTERM", () => {
+    stopOwnedPythonBackend("SIGTERM");
+    process.exit(0);
 });
 
-pythonProcess.stderr.on("data", (data) => {
-    console.error("[PYTHON ERROR]", data.toString());
+process.on("exit", () => {
+    stopOwnedPythonBackend("SIGTERM");
 });
 
-pythonProcess.on("close", (code) => {
-    console.log(`⚠️ Python terminó con código ${code}`);
-});
+await ensurePythonBackend();

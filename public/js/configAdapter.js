@@ -5,10 +5,12 @@ export function normalizeSystemConfig(rawSystem = {}) {
     const rendering = rawSystem.rendering || {};
     const logging = rawSystem.logging || {};
     const recording = rawSystem.recording || {};
+    const ui = rawSystem.ui || {};
 
     return {
         propagation_hours: orbit.propagation_hours ?? rawSystem.propagation_hours,
         orbit_future_show: orbit.future_show ?? rawSystem.orbit_future_show,
+        orbit_ground_track_show: orbit.ground_track_show ?? rawSystem.orbit_ground_track_show,
         orbit_future_line_width: orbit.future_line_width ?? rawSystem.orbit_future_line_width,
         orbit_future_color: orbit.future_color ?? rawSystem.orbit_future_color,
         orbit_selected_color: orbit.selected_color ?? rawSystem.orbit_selected_color,
@@ -25,6 +27,7 @@ export function normalizeSystemConfig(rawSystem = {}) {
         satellite_model_scale: satellites.model_scale ?? rawSystem.satellite_model_scale,
         satellite_use_3d_model: satellites.use_3d_model ?? rawSystem.satellite_use_3d_model,
         satellite_size_mode: satellites.size_mode ?? rawSystem.satellite_size_mode,
+        max_satellites_visible: satellites.max_visible ?? rawSystem.max_satellites_visible,
 
         websocket_state_interval_seconds: realtime.state_interval_seconds ?? rawSystem.websocket_state_interval_seconds,
         websocket_orbit_interval_seconds: realtime.orbit_interval_seconds ?? rawSystem.websocket_orbit_interval_seconds,
@@ -41,7 +44,10 @@ export function normalizeSystemConfig(rawSystem = {}) {
 
         log_enabled: logging.enabled ?? rawSystem.log_enabled,
         log_level: logging.level ?? rawSystem.log_level,
-        log_show_top_clock: logging.show_top_clock ?? rawSystem.log_show_top_clock
+        log_show_top_clock: logging.show_top_clock ?? rawSystem.log_show_top_clock,
+
+        ui_language: ui.language ?? rawSystem.ui_language,
+        ui_theme: ui.theme ?? rawSystem.ui_theme
     };
 }
 
@@ -51,6 +57,7 @@ export function toSectionedSystemConfig(rawSystem = {}) {
         orbit: {
             propagation_hours: flat.propagation_hours ?? 0.5,
             future_show: flat.orbit_future_show ?? true,
+            ground_track_show: flat.orbit_ground_track_show ?? true,
             future_line_width: flat.orbit_future_line_width ?? 2,
             width_mode: flat.orbit_width_mode ?? "visual",
             future_color: flat.orbit_future_color ?? "#7fd7ff",
@@ -64,7 +71,8 @@ export function toSectionedSystemConfig(rawSystem = {}) {
             label_size_px: flat.satellite_label_size_px ?? 10,
             model_scale: flat.satellite_model_scale ?? 1.0,
             use_3d_model: flat.satellite_use_3d_model ?? true,
-            size_mode: flat.satellite_size_mode ?? "visual"
+            size_mode: flat.satellite_size_mode ?? "visual",
+            max_visible: flat.max_satellites_visible ?? 100
         },
         realtime: {
             state_interval_seconds: flat.websocket_state_interval_seconds ?? 1,
@@ -86,6 +94,10 @@ export function toSectionedSystemConfig(rawSystem = {}) {
         recording: {
             quality: flat.recording_quality ?? "medium",
             output_format: flat.recording_output_format ?? "webm"
+        },
+        ui: {
+            language: flat.ui_language === "en" ? "en" : "es",
+            theme: flat.ui_theme === "light" ? "light" : "dark"
         }
     };
 }

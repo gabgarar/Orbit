@@ -3,6 +3,7 @@ const CONFIG_SCHEMA = {
         { key: "propagation_hours", label: "Propagation Hours", type: "number", step: "0.1", min: "0", max: "240" },
         { key: "width_mode", label: "Orbit Width Mode", type: "select", options: ["visual", "physical"] },
         { key: "future_show", label: "Future Show", type: "checkbox" },
+        { key: "ground_track_show", label: "Ground Track Show", type: "checkbox" },
         { key: "future_line_width", label: "Future Line Width", type: "number", step: "0.1", min: "0.1" },
         { key: "future_color", label: "Future Color", type: "color" },
         { key: "selected_color", label: "Selected Orbit Color", type: "color" },
@@ -15,7 +16,8 @@ const CONFIG_SCHEMA = {
         { key: "label_size_px", label: "Label Size (px)", type: "number", step: "1", min: "0" },
         { key: "model_scale", label: "Model Scale", type: "number", step: "1", min: "0.000001" },
         { key: "use_3d_model", label: "Use 3D Model", type: "checkbox" },
-        { key: "size_mode", label: "Size Mode", type: "select", options: ["visual", "physical"] }
+        { key: "size_mode", label: "Size Mode", type: "select", options: ["visual", "physical"] },
+        { key: "max_visible", label: "Max Active Layers", type: "number", step: "1", min: "1" }
     ],
     realtime: [
         { key: "state_interval_seconds", label: "State Interval (s)", type: "number", step: "0.1", min: "0.1" },
@@ -36,6 +38,10 @@ const CONFIG_SCHEMA = {
     recording: [
         { key: "quality", label: "Recording Quality", type: "select", options: ["low", "medium", "high"] },
         { key: "output_format", label: "Output Format", type: "select", options: ["webm", "mp4"] }
+    ],
+    ui: [
+        { key: "language", label: "Idioma / Language", type: "select", options: ["es", "en"] },
+        { key: "theme", label: "Tema / Theme", type: "select", options: ["dark", "light"] }
     ]
 };
 
@@ -43,7 +49,7 @@ const CONFIG_TABS = [
     { id: "orbital", label: "Orbital", sections: ["orbit", "realtime"] },
     { id: "objetos", label: "Objetos", sections: ["satellites"] },
     { id: "escena", label: "Escena", sections: ["rendering", "recording"] },
-    { id: "sistema", label: "Sistema", sections: ["logging"] }
+    { id: "sistema", label: "Sistema", sections: ["logging", "ui"] }
 ];
 
 const SECTION_TITLES = {
@@ -52,12 +58,14 @@ const SECTION_TITLES = {
     realtime: "Tiempo real",
     logging: "Logs",
     rendering: "Render",
-    recording: "Grabacion"
+    recording: "Grabacion",
+    ui: "Interfaz"
 };
 
 const FIELD_HELP = {
     "orbit.propagation_hours": "Horas de proyeccion de la orbita futura. Rango permitido: 0 a 240 horas.",
     "orbit.future_show": "Muestra u oculta la orbita futura.",
+    "orbit.ground_track_show": "Muestra u oculta la traza de suelo y footprint del satelite en 2D y 3D.",
     "orbit.future_line_width": "Grosor de la linea de orbita futura.",
     "orbit.width_mode": "visual: grosor fijo en pantalla. physical: grosor aparente cambia con distancia.",
     "orbit.future_color": "Color de la orbita futura.",
@@ -71,6 +79,7 @@ const FIELD_HELP = {
     "satellites.model_scale": "Escala visual del modelo 3D del satelite.",
     "satellites.use_3d_model": "Si esta activo, el satelite se renderiza como modelo 3D. Si no, se dibuja como punto.",
     "satellites.size_mode": "visual: mantiene visibilidad por pixel. physical: respeta mas el tamano angular real por distancia.",
+    "satellites.max_visible": "Numero maximo de capas activas permitidas al mismo tiempo. Al alcanzarlo, no se pueden anadir mas hasta quitar alguna.",
 
     "realtime.state_interval_seconds": "Cada cuantos segundos llega el estado por WebSocket.",
     "realtime.orbit_interval_seconds": "Cada cuantos segundos llega la orbita por WebSocket.",
@@ -86,7 +95,10 @@ const FIELD_HELP = {
     "rendering.stars_enabled": "Muestra el fondo de estrellas.",
 
     "recording.quality": "Calidad de video de grabacion: low (24 FPS, ligero), medium (30 FPS, equilibrado), high (hasta 60 FPS, mas fluido).",
-    "recording.output_format": "Formato de salida preferido. Si no es compatible con el navegador, se usa webm automaticamente."
+    "recording.output_format": "Formato de salida preferido. Si no es compatible con el navegador, se usa webm automaticamente.",
+
+    "ui.language": "Idioma principal de la interfaz. es = Espanol, en = English.",
+    "ui.theme": "Tema visual de la interfaz: oscuro o claro."
 };
 
 function cloneConfig(obj) {
@@ -109,20 +121,20 @@ function createPanelMarkup() {
     panel.id = "configPanel";
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-modal", "true");
-    panel.setAttribute("aria-label", "Configuracion en tiempo real");
+    panel.setAttribute("aria-label", uiTextCallback("configPanelTitle"));
 
     panel.innerHTML = `
         <div id="configPanelHeader">
-            <h3>Configuracion en tiempo real</h3>
+            <h3>${uiTextCallback("configPanelTitle")}</h3>
             <div class="config-header-actions">
-                <button class="config-apply-global-btn" id="configApplyGlobalBtn" type="button" title="Aplicar configuracion global a todos los satelites">Aplicar global a todos</button>
-                <button class="config-reset-btn" id="configResetBtn" type="button" title="Restaurar parametros por defecto">Reiniciar parametros</button>
-                <button class="config-close-btn" id="configCloseBtn" type="button" aria-label="Cerrar panel" title="Cerrar">✕</button>
+                <button class="config-apply-global-btn" id="configApplyGlobalBtn" type="button" title="${uiTextCallback("configApplyGlobal")}">${uiTextCallback("configApplyGlobal")}</button>
+                <button class="config-reset-btn" id="configResetBtn" type="button" title="${uiTextCallback("configResetParams")}">${uiTextCallback("configResetParams")}</button>
+                <button class="config-close-btn" id="configCloseBtn" type="button" aria-label="${uiTextCallback("configClose")}" title="${uiTextCallback("configClose")}">✕</button>
             </div>
         </div>
-        <div id="configHint">Los cambios se aplican al instante en la vista y se guardan en disco.</div>
+        <div id="configHint">${uiTextCallback("configHint")}</div>
         <div id="configValidationBanner" class="config-validation-banner" hidden aria-live="assertive"></div>
-        <div id="configSaveStatus" class="config-save-status idle" aria-live="polite">Estado: sincronizado</div>
+        <div id="configSaveStatus" class="config-save-status idle" aria-live="polite">${uiTextCallback("configSaved")}</div>
         <div id="configForm"></div>
     `;
 
@@ -177,13 +189,13 @@ function setSaveStatus(saveStatusElement, state, message) {
     }
 
     if (nextState === "saving") {
-        saveStatusElement.textContent = "Estado: guardando...";
+        saveStatusElement.textContent = uiTextCallback("configSaving");
     } else if (nextState === "saved") {
-        saveStatusElement.textContent = "Estado: guardado";
+        saveStatusElement.textContent = uiTextCallback("configSavedState");
     } else if (nextState === "error") {
-        saveStatusElement.textContent = "Estado: error al guardar";
+        saveStatusElement.textContent = uiTextCallback("configError");
     } else {
-        saveStatusElement.textContent = "Estado: sincronizado";
+        saveStatusElement.textContent = uiTextCallback("configSaved");
     }
 }
 
@@ -201,8 +213,8 @@ function createFieldElement(sectionName, field, currentSystemConfig, onChange, o
     helpIcon.textContent = "i";
     helpIcon.tabIndex = 0;
     helpIcon.setAttribute("role", "img");
-    helpIcon.setAttribute("aria-label", "Ayuda del parametro");
-    helpIcon.title = FIELD_HELP[`${sectionName}.${field.key}`] || "Sin descripcion disponible.";
+    helpIcon.setAttribute("aria-label", uiTextCallback("helpParam"));
+    helpIcon.title = FIELD_HELP[`${sectionName}.${field.key}`] || uiTextCallback("noDesc");
 
     let input;
     if (field.type === "select") {
@@ -363,7 +375,8 @@ function renderConfigSection(sectionName, fields, currentSystemConfig, onChange,
             "width_mode",
             "future_color",
             "selected_color",
-            "future_show"
+            "future_show",
+            "ground_track_show"
         ];
 
         const usedFuture = new Set();
@@ -371,7 +384,7 @@ function renderConfigSection(sectionName, fields, currentSystemConfig, onChange,
             const f = fieldByKey.get(key);
             if (f) {
                 const el = createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk);
-                if (key === "future_color" || key === "future_show") {
+                if (key === "future_color" || key === "future_show" || key === "ground_track_show") {
                     el.classList.add("align-left");
                 }
                 futureGrid.appendChild(el);
@@ -602,13 +615,23 @@ function makePanelDraggable(panelHeader, panel) {
     window.addEventListener("touchend", endDrag);
 }
 
+let uiTextCallback = null;
+
 export function setupRuntimeConfigPanel({
     initialSystemConfig,
     defaultSystemConfig,
     onSystemConfigChange,
     onResetSpecificConfig,
-    onApplyGlobalToAll
+    onApplyGlobalToAll,
+    getUiText
 }) {
+    // getUiText es una función que devuelve el traductor actual: () => (key) => string
+    // Resolvemos el traductor en cada llamada para reaccionar a cambios de idioma.
+    const uiTextProvider = typeof getUiText === "function" ? getUiText : () => (key) => key;
+    uiTextCallback = (key) => {
+        const translator = uiTextProvider();
+        return typeof translator === "function" ? translator(key) : key;
+    };
     let currentSystemConfig = cloneConfig(initialSystemConfig || {});
     const defaultConfigSnapshot = cloneConfig(defaultSystemConfig || initialSystemConfig || {});
     const { toggleBtn, modal, panel, panelHeader, applyGlobalBtn, resetBtn, closeBtn, validationBanner, saveStatus, formRoot } = createPanelMarkup();
@@ -638,22 +661,22 @@ export function setupRuntimeConfigPanel({
     toggleBtn.addEventListener("click", openModal);
     applyGlobalBtn.addEventListener("click", async () => {
         try {
-            setSaveStatus(saveStatus, "saving", "Estado: aplicando global a todos...");
+            setSaveStatus(saveStatus, "saving", uiTextCallback("applyingGlobal"));
             hideValidationBanner(validationBanner);
 
             if (typeof onApplyGlobalToAll === "function") {
                 await onApplyGlobalToAll();
             }
 
-            setSaveStatus(saveStatus, "saved", "Estado: global aplicado a todos");
+            setSaveStatus(saveStatus, "saved", uiTextCallback("globalApplied"));
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
-            setSaveStatus(saveStatus, "error", `Estado: error al aplicar global (${detail})`);
+            setSaveStatus(saveStatus, "error", uiTextCallback("globalError") + ": " + detail);
         }
     });
     resetBtn.addEventListener("click", async () => {
         try {
-            setSaveStatus(saveStatus, "saving", "Estado: reiniciando parametros...");
+            setSaveStatus(saveStatus, "saving", uiTextCallback("resettingParams"));
             hideValidationBanner(validationBanner);
 
             currentSystemConfig = cloneConfig(defaultConfigSnapshot);
@@ -664,10 +687,10 @@ export function setupRuntimeConfigPanel({
                 await onResetSpecificConfig();
             }
 
-            setSaveStatus(saveStatus, "saved", "Estado: parametros reiniciados");
+            setSaveStatus(saveStatus, "saved", uiTextCallback("paramsReset"));
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
-            setSaveStatus(saveStatus, "error", `Estado: error al reiniciar (${detail})`);
+            setSaveStatus(saveStatus, "error", uiTextCallback("resetError") + ": " + detail);
         }
     });
     closeBtn.addEventListener("click", closeModal);
@@ -686,6 +709,19 @@ export function setupRuntimeConfigPanel({
         },
         setSaveState(state, message) {
             setSaveStatus(saveStatus, state, message);
+        },
+        open() {
+            openModal();
+        },
+        close() {
+            closeModal();
+        },
+        toggle() {
+            if (modal.classList.contains("open")) {
+                closeModal();
+            } else {
+                openModal();
+            }
         }
     };
 }

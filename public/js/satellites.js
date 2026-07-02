@@ -32,6 +32,15 @@ const SAT_POINT_PIXEL_SIZE = 5;
 const SAT_POINT_OUTLINE_WIDTH = 1;
 const DEFAULT_SELECTED_ORBIT_COLOR = "#ff2d2d";
 const SELECTED_ORBIT_WIDTH_BOOST_PX = 2;
+const GROUND_TRACK_WIDTH_FACTOR = 0.85;
+const FOOTPRINT_FILL_ALPHA = 0.32;
+const FOOTPRINT_OUTLINE_ALPHA = 0.95;
+const FOOTPRINT_CIRCLE_SEGMENTS = 128;
+// Altura sobre el elipsoide a la que se dibuja la huella. Suficiente para evitar
+// el z-fighting con la textura de la Tierra sin que el círculo parezca flotar
+// (la huella mide miles de km, unos pocos km de altura son imperceptibles).
+const FOOTPRINT_SURFACE_HEIGHT = 30000;
+const DEFAULT_MAX_ACTIVE_SATELLITES = 100;
 const PROPAGATION_HOURS_MIN = 0;
 const PROPAGATION_HOURS_MAX = 240;
 const PAST_SECONDS_MIN = 0;
@@ -125,7 +134,9 @@ class EntityPool {
             entity,
             trailPositions: [position],
             trailEntity: null,
-            orbitEntity: null
+            orbitEntity: null,
+            groundTrackEntity: null,
+            footprintEntity: null
         });
 
         logger.debug(`Satélite adquirido: ${id} (activos: ${this.activeEntities.size})`);
@@ -136,7 +147,7 @@ class EntityPool {
         const state = this.activeEntities.get(id);
         if (!state) return;
 
-        const { entity, trailEntity, orbitEntity } = state;
+        const { entity, trailEntity, orbitEntity, groundTrackEntity, footprintEntity } = state;
 
         // Limpiar polylines
         if (trailEntity) {
@@ -144,6 +155,12 @@ class EntityPool {
         }
         if (orbitEntity) {
             this.viewer.entities.remove(orbitEntity);
+        }
+        if (groundTrackEntity) {
+            this.viewer.entities.remove(groundTrackEntity);
+        }
+        if (footprintEntity) {
+            this.viewer.entities.remove(footprintEntity);
         }
 
         // Resetear entidad
@@ -200,6 +217,7 @@ let satelliteLabelSizePx = 14;
 let satelliteModelScale = 1.0;
 let satelliteUse3DModel = true;
 let satelliteSizeMode = "visual";
+let maxActiveSatellites = DEFAULT_MAX_ACTIVE_SATELLITES;
 let lastUpdateTime = Date.now();
 let animationFrameId = null;
 let sourceFutureOrbitHours = null;
@@ -208,6 +226,7 @@ let selectedOrbitSatelliteId = null;
 const satelliteVisualOverridesById = new Map();
 let orbitConfig = {
     orbit_future_show: true,
+    orbit_ground_track_show: true,
     orbit_past_show: true,
     orbit_width_mode: ORBIT_WIDTH_MODE_VISUAL,
     orbit_future_line_width: 3,
@@ -237,6 +256,11 @@ function getSatelliteConfigValue(id, key, fallbackValue) {
 
 function shouldShowFutureOrbit(id) {
     return getSatelliteConfigValue(id, "orbit_future_show", orbitConfig.orbit_future_show) !== false
+        && getPropagationHoursForSatellite(id) > 0;
+}
+
+function shouldShowGroundTrack(id) {
+    return getSatelliteConfigValue(id, "orbit_ground_track_show", orbitConfig.orbit_ground_track_show) !== false
         && getPropagationHoursForSatellite(id) > 0;
 }
 
@@ -299,10 +323,68 @@ function applySatelliteVisibility(id, state) {
         state.trailEntity.show = visible && shouldShowPastOrbit(id);
     }
     if (state.orbitEntity) {
-        state.orbitEntity.show = visible && shouldShowFutureOrbit(id);
+        state.orbitEntity.show = visible && shouldShowFutureOrbit(id) && !isViewerIn2D(currentViewer);
+    }
+    if (state.groundTrackEntity) {
+        state.groundTrackEntity.show = visible && shouldShowGroundTrack(id);
+    }
+    if (state.footprintEntity) {
+        state.footprintEntity.show = visible && shouldShowGroundTrack(id);
     }
 
     return visible;
+}
+
+function normalizeMaxActiveSatellites(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+        return DEFAULT_MAX_ACTIVE_SATELLITES;
+    }
+    return Math.max(1, Math.floor(parsed));
+}
+
+function getAvailableActiveSatelliteSlots() {
+    return Math.max(0, maxActiveSatellites - activeLayerSatelliteIds.size);
+}
+
+function trimActiveSatelliteLayersToLimit() {
+    if (activeLayerSatelliteIds.size <= maxActiveSatellites) {
+        return [];
+    }
+
+    const activeIds = Array.from(activeLayerSatelliteIds);
+    const idsToRemove = activeIds.slice(maxActiveSatellites);
+
+    for (const id of idsToRemove) {
+        activeLayerSatelliteIds.delete(id);
+        wsClient?.unsubscribe([id]);
+
+        const state = satelliteState[id];
+        if (!state) {
+            continue;
+        }
+
+        if (state.trailEntity && currentViewer) {
+            currentViewer.entities.remove(state.trailEntity);
+            state.trailEntity = null;
+        }
+        if (state.orbitEntity && currentViewer) {
+            currentViewer.entities.remove(state.orbitEntity);
+            state.orbitEntity = null;
+        }
+        if (currentViewer) {
+            remove2DOverlays(currentViewer, state);
+        }
+        if (state.entity) {
+            state.entity.show = false;
+        }
+    }
+
+    if (idsToRemove.length) {
+        activeLayerIdsDirty = true;
+    }
+
+    return idsToRemove;
 }
 
 export function setOrbitConfig(config) {
@@ -343,6 +425,8 @@ export function setOrbitConfig(config) {
     satelliteUse3DModel = config?.satellite_use_3d_model !== false;
 
     satelliteSizeMode = config?.satellite_size_mode === "physical" ? "physical" : "visual";
+    maxActiveSatellites = normalizeMaxActiveSatellites(config?.max_satellites_visible);
+    trimActiveSatelliteLayersToLimit();
 
     // Reaplicar estilo en entidades activas cuando cambia configuración
     if (entityPool) {
@@ -375,10 +459,23 @@ export function setOrbitConfig(config) {
                 }
             }
 
+            if (state && !shouldShowGroundTrack(id)) {
+                remove2DOverlays(entityPool.viewer, state);
+            }
+
+            // Refrescar de inmediato el color de la estela pasada al cambiar la configuración global.
+            if (state && state.trailEntity && shouldShowPastOrbit(id)) {
+                const configuredPastColor = String(getSatelliteConfigValue(id, "orbit_past_color", orbitConfig.orbit_past_color) || "#ff0000");
+                const trailColor = getOpaqueColor(configuredPastColor, "#ff0000");
+                state.trailEntity.polyline.material = createOrbitMaterial(trailColor);
+                state.trailEntity.polyline.depthFailMaterial = createOrbitMaterial(trailColor);
+                state.trailColorCss = configuredPastColor;
+            }
+
             // Si hay órbita cacheada, re-renderizar con la nueva configuración local.
             if (
                 state
-                && shouldShowFutureOrbit(id)
+                && (shouldShowFutureOrbit(id) || shouldShowGroundTrack(id))
                 && state.lastOrbitPayload
                 && currentViewer
             ) {
@@ -610,6 +707,212 @@ function trimOrbitNearSatellite(orbitPoints, hideSamples) {
     const trimmed = [startPoint];
     trimmed.push(...orbitPoints.slice(whole + 1));
     return trimmed;
+}
+
+function isViewerIn2D(viewer) {
+    return viewer?.scene?.mode === Cesium.SceneMode.SCENE2D;
+}
+
+function remove2DOverlays(viewer, state) {
+    if (!viewer || !state) {
+        return;
+    }
+
+    if (state.groundTrackEntity) {
+        viewer.entities.remove(state.groundTrackEntity);
+        state.groundTrackEntity = null;
+    }
+
+    if (state.footprintEntity) {
+        viewer.entities.remove(state.footprintEntity);
+        state.footprintEntity = null;
+    }
+}
+
+function resolveCartesianPosition(positionLike) {
+    if (!positionLike) {
+        return null;
+    }
+
+    if (positionLike instanceof Cesium.Cartesian3) {
+        return positionLike;
+    }
+
+    if (typeof positionLike.getValue === "function") {
+        try {
+            const value = positionLike.getValue(Cesium.JulianDate.now());
+            return value instanceof Cesium.Cartesian3 ? value : null;
+        } catch {
+            return null;
+        }
+    }
+
+    return null;
+}
+
+function toSurfaceGroundTrack(orbitPoints) {
+    if (!Array.isArray(orbitPoints)) {
+        return [];
+    }
+
+    const positions = [];
+    for (const point of orbitPoints) {
+        if (!point) {
+            continue;
+        }
+
+        const cart = new Cesium.Cartesian3(point.x, point.y, point.z);
+        const cartographic = Cesium.Cartographic.fromCartesian(cart);
+        if (!cartographic) {
+            continue;
+        }
+
+        const lon = Number(cartographic.longitude);
+        const lat = Number(cartographic.latitude);
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+            continue;
+        }
+
+        positions.push(Cesium.Cartesian3.fromRadians(lon, lat, 0));
+    }
+
+    return positions;
+}
+
+function computeFootprintAngularRadius(position) {
+    if (!position) {
+        return 0;
+    }
+
+    const cartographic = Cesium.Cartographic.fromCartesian(position);
+    if (!cartographic) {
+        return 0;
+    }
+
+    const altitude = Math.max(0, Number(cartographic.height) || 0);
+    if (altitude <= 0) {
+        return 0;
+    }
+
+    const radius = Cesium.Ellipsoid.WGS84.maximumRadius;
+    // Ángulo central Tierra-satélite: define el radio angular de la huella (footprint).
+    return Math.acos(radius / (radius + altitude));
+}
+
+function computeFootprintCirclePositions(centerCartographic, angularRadius, segments = FOOTPRINT_CIRCLE_SEGMENTS) {
+    if (!centerCartographic || !(angularRadius > 0)) {
+        return [];
+    }
+
+    const lat1 = centerCartographic.latitude;
+    const lon1 = centerCartographic.longitude;
+    const sinLat1 = Math.sin(lat1);
+    const cosLat1 = Math.cos(lat1);
+    const sinR = Math.sin(angularRadius);
+    const cosR = Math.cos(angularRadius);
+
+    const positions = [];
+    for (let i = 0; i <= segments; i += 1) {
+        const bearing = (i / segments) * Cesium.Math.TWO_PI;
+        const sinLat2 = sinLat1 * cosR + cosLat1 * sinR * Math.cos(bearing);
+        const lat2 = Math.asin(Cesium.Math.clamp(sinLat2, -1, 1));
+        const y = Math.sin(bearing) * sinR * cosLat1;
+        const x = cosR - sinLat1 * sinLat2;
+        const lon2 = lon1 + Math.atan2(y, x);
+        positions.push(Cesium.Cartesian3.fromRadians(lon2, lat2, FOOTPRINT_SURFACE_HEIGHT));
+    }
+
+    return positions;
+}
+
+function updateGroundTrackAndFootprint(viewer, id, state, visibleOrbit) {
+    if (!viewer || !state) {
+        return;
+    }
+
+    if (!shouldShowGroundTrack(id) || hiddenSatelliteIds.has(id) || !activeLayerSatelliteIds.has(id)) {
+        remove2DOverlays(viewer, state);
+        return;
+    }
+
+    const trackPositions = toSurfaceGroundTrack(visibleOrbit);
+    if (trackPositions.length < 2) {
+        remove2DOverlays(viewer, state);
+        return;
+    }
+
+    const baseColor = getFutureOrbitColor(id);
+    const trackColor = baseColor.withAlpha(0.95);
+    const trackWidth = Math.max(
+        ORBIT_MIN_PIXEL_WIDTH,
+        Number(state.orbitBaseWidth || ORBIT_MIN_PIXEL_WIDTH) * GROUND_TRACK_WIDTH_FACTOR
+    );
+
+    if (!state.groundTrackEntity) {
+        state.groundTrackEntity = viewer.entities.add({
+            id: `${id}-ground-track`,
+            polyline: {
+                positions: trackPositions,
+                width: trackWidth,
+                material: createOrbitMaterial(trackColor),
+                arcType: Cesium.ArcType.NONE,
+                clampToGround: false
+            }
+        });
+    } else {
+        state.groundTrackEntity.polyline.positions = trackPositions;
+        state.groundTrackEntity.polyline.width = trackWidth;
+        state.groundTrackEntity.polyline.material = createOrbitMaterial(trackColor);
+        state.groundTrackEntity.show = true;
+    }
+
+    const center = state.renderPosition
+        || state.targetPosition
+        || resolveCartesianPosition(state.entity?.position);
+    const footprintAngularRadius = computeFootprintAngularRadius(center);
+    const footprintRadiusMeters = Cesium.Ellipsoid.WGS84.maximumRadius * footprintAngularRadius;
+    if (!(footprintRadiusMeters > 10) || !center) {
+        if (state.footprintEntity) {
+            viewer.entities.remove(state.footprintEntity);
+            state.footprintEntity = null;
+        }
+        return;
+    }
+
+    const cartographic = Cesium.Cartographic.fromCartesian(center);
+    const footprintPositions = computeFootprintCirclePositions(cartographic, footprintAngularRadius);
+    if (footprintPositions.length < 3) {
+        if (state.footprintEntity) {
+            viewer.entities.remove(state.footprintEntity);
+            state.footprintEntity = null;
+        }
+        return;
+    }
+
+    const fillColor = baseColor.withAlpha(FOOTPRINT_FILL_ALPHA);
+    const outlineColor = baseColor.withAlpha(FOOTPRINT_OUTLINE_ALPHA);
+    const footprintHierarchy = new Cesium.PolygonHierarchy(footprintPositions);
+
+    if (!state.footprintEntity) {
+        state.footprintEntity = viewer.entities.add({
+            id: `${id}-footprint`,
+            polygon: {
+                hierarchy: footprintHierarchy,
+                material: fillColor,
+                height: FOOTPRINT_SURFACE_HEIGHT,
+                outline: true,
+                outlineColor,
+                outlineWidth: 2,
+                arcType: Cesium.ArcType.GEODESIC
+            }
+        });
+    } else {
+        state.footprintEntity.polygon.hierarchy = footprintHierarchy;
+        state.footprintEntity.polygon.material = fillColor;
+        state.footprintEntity.polygon.outlineColor = outlineColor;
+        state.footprintEntity.polygon.height = FOOTPRINT_SURFACE_HEIGHT;
+        state.footprintEntity.show = true;
+    }
 }
 
 export function initSatelliteReceiver(viewer) {
@@ -923,7 +1226,14 @@ function ensureSatelliteState(viewer, id, cart, orientation) {
 
     // Crear nuevo en pool
     const entity = entityPool.acquire(id, cart, orientation);
-    const state = entityPool.getState(id) || { entity, trailPositions: [cart], trailEntity: null, orbitEntity: null };
+    const state = entityPool.getState(id) || {
+        entity,
+        trailPositions: [cart],
+        trailEntity: null,
+        orbitEntity: null,
+        groundTrackEntity: null,
+        footprintEntity: null
+    };
     state.entity = entity;
     state.previousPosition = cart;
     state.targetPosition = cart;
@@ -1298,13 +1608,20 @@ export function isSatelliteLayerActive(id) {
 
 export function setSatelliteLayerActive(id, active) {
     if (!id) {
-        return;
+        return false;
     }
 
     if (active) {
+        if (activeLayerSatelliteIds.has(id)) {
+            return true;
+        }
+        if (activeLayerSatelliteIds.size >= maxActiveSatellites) {
+            return false;
+        }
         activeLayerSatelliteIds.add(id);
         activeLayerIdsDirty = true;
         wsClient?.subscribe([id]);
+        return true;
     } else {
         activeLayerSatelliteIds.delete(id);
         activeLayerIdsDirty = true;
@@ -1315,29 +1632,41 @@ export function setSatelliteLayerActive(id, active) {
         if (state) {
             if (state.trailEntity && currentViewer) {
                 currentViewer.entities.remove(state.trailEntity);
+                state.trailEntity = null;
             }
             if (state.orbitEntity && currentViewer) {
                 currentViewer.entities.remove(state.orbitEntity);
+                state.orbitEntity = null;
+            }
+            if (currentViewer) {
+                remove2DOverlays(currentViewer, state);
             }
             if (state.entity) {
                 state.entity.show = false;
             }
         }
+        return true;
     }
 }
 
 export function setAllSatelliteLayersActive(active) {
     const ids = getSatelliteIds();
     if (!ids.length) {
-        return;
+        return { added: 0, skipped: 0, limitReached: false, maxActiveSatellites };
     }
 
     if (active) {
+        const nextIds = ids.slice(0, maxActiveSatellites);
         activeLayerSatelliteIds.clear();
-        ids.forEach((id) => activeLayerSatelliteIds.add(id));
+        nextIds.forEach((id) => activeLayerSatelliteIds.add(id));
         activeLayerIdsDirty = true;
-        wsClient?.setSubscriptions(ids);
-        return;
+        wsClient?.setSubscriptions(nextIds);
+        return {
+            added: nextIds.length,
+            skipped: Math.max(0, ids.length - nextIds.length),
+            limitReached: ids.length > nextIds.length,
+            maxActiveSatellites
+        };
     }
 
     activeLayerSatelliteIds.clear();
@@ -1358,10 +1687,23 @@ export function setAllSatelliteLayersActive(active) {
             currentViewer.entities.remove(state.orbitEntity);
             state.orbitEntity = null;
         }
+        if (currentViewer) {
+            remove2DOverlays(currentViewer, state);
+        }
         if (state.entity) {
             state.entity.show = false;
         }
     }
+
+    return { added: 0, skipped: 0, limitReached: false, maxActiveSatellites };
+}
+
+export function getMaxActiveSatellites() {
+    return maxActiveSatellites;
+}
+
+export function getAvailableActiveSatelliteLayerSlots() {
+    return getAvailableActiveSatelliteSlots();
 }
 
 export function setAllSatellitesVisible(visible) {
@@ -1408,11 +1750,15 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         return;
     }
 
-    if (!shouldShowFutureOrbit(id) || !activeLayerSatelliteIds.has(id) || hiddenSatelliteIds.has(id)) {
+    const futureOrbitVisible = shouldShowFutureOrbit(id);
+    const groundTrackVisible = shouldShowGroundTrack(id);
+
+    if ((!futureOrbitVisible && !groundTrackVisible) || !activeLayerSatelliteIds.has(id) || hiddenSatelliteIds.has(id)) {
         if (state.orbitEntity) {
             viewer.entities.remove(state.orbitEntity);
             state.orbitEntity = null;
         }
+        remove2DOverlays(viewer, state);
         return;
     }
 
@@ -1422,6 +1768,7 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
             viewer.entities.remove(state.orbitEntity);
             state.orbitEntity = null;
         }
+        remove2DOverlays(viewer, state);
         return;
     }
 
@@ -1447,6 +1794,7 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
             viewer.entities.remove(state.orbitEntity);
             state.orbitEntity = null;
         }
+        remove2DOverlays(viewer, state);
         return;
     }
 
@@ -1459,13 +1807,41 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
     state.orbitBaseWidth = futureWidthBase;
     const futureWidth = getFutureOrbitRenderWidth(id, futureWidthBase);
 
-    if (!state.orbitEntity) {
+    if (futureOrbitVisible && !state.orbitEntity) {
         state.orbitEntity = createOrbitEntity(viewer, id, smoothedOrbit, futureColor, futureWidth);
-    } else {
+    } else if (futureOrbitVisible && state.orbitEntity) {
         state.orbitEntity.polyline.positions = smoothedOrbit;
         state.orbitEntity.polyline.material = createOrbitMaterial(futureColor);
         state.orbitEntity.polyline.width = futureWidth;
-        state.orbitEntity.show = true;
+    } else {
+        if (state.orbitEntity) {
+            viewer.entities.remove(state.orbitEntity);
+            state.orbitEntity = null;
+        }
+    }
+
+    if (state.orbitEntity) {
+        state.orbitEntity.show = !isViewerIn2D(viewer);
+    }
+
+    updateGroundTrackAndFootprint(viewer, id, state, visibleOrbit);
+}
+
+export function refreshSatelliteOverlays(viewer = currentViewer) {
+    if (!viewer) {
+        return;
+    }
+
+    for (const [id, state] of Object.entries(satelliteState)) {
+        if (!state) {
+            continue;
+        }
+
+        if (state.lastOrbitPayload) {
+            renderFutureOrbitForState(viewer, id, state, state.lastOrbitPayload);
+        } else {
+            remove2DOverlays(viewer, state);
+        }
     }
 }
 
@@ -1516,6 +1892,7 @@ export function getSatelliteVisualizationConfig(id) {
         satelliteId: satId,
         effective: {
             orbit_future_show: shouldShowFutureOrbit(satId),
+            orbit_ground_track_show: shouldShowGroundTrack(satId),
             orbit_past_show: shouldShowPastOrbit(satId),
             orbit_future_line_width: Number(getSatelliteConfigValue(satId, "orbit_future_line_width", orbitConfig.orbit_future_line_width)),
             orbit_past_line_width: Number(getSatelliteConfigValue(satId, "orbit_past_line_width", orbitConfig.orbit_past_line_width)),
@@ -1543,6 +1920,7 @@ export function setSatelliteVisualizationConfig(id, patch = {}) {
     const next = { ...current };
     const allowedFields = [
         "orbit_future_show",
+        "orbit_ground_track_show",
         "orbit_past_show",
         "orbit_future_line_width",
         "orbit_past_line_width",
@@ -1595,6 +1973,18 @@ export function setSatelliteVisualizationConfig(id, patch = {}) {
         state.trailEntity = null;
     }
 
+    if (!shouldShowGroundTrack(satId)) {
+        remove2DOverlays(currentViewer, state);
+    }
+
+    if (state.trailEntity && shouldShowPastOrbit(satId)) {
+        const configuredPastColor = String(getSatelliteConfigValue(satId, "orbit_past_color", orbitConfig.orbit_past_color) || "#ff0000");
+        const trailColor = getOpaqueColor(configuredPastColor, "#ff0000");
+        state.trailEntity.polyline.material = createOrbitMaterial(trailColor);
+        state.trailEntity.polyline.depthFailMaterial = createOrbitMaterial(trailColor);
+        state.trailColorCss = configuredPastColor;
+    }
+
     if (state.lastOrbitPayload) {
         renderFutureOrbitForState(currentViewer, satId, state, state.lastOrbitPayload);
     }
@@ -1603,6 +1993,7 @@ export function setSatelliteVisualizationConfig(id, patch = {}) {
 export function clearSatelliteVisualizationConfig(id) {
     setSatelliteVisualizationConfig(id, {
         orbit_future_show: null,
+        orbit_ground_track_show: null,
         orbit_past_show: null,
         orbit_future_line_width: null,
         orbit_past_line_width: null,

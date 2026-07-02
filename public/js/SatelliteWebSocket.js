@@ -6,7 +6,7 @@ export class SatelliteWebSocket {
 
     constructor(onMessageCallback) {
         const host = window.location.hostname.replace("-8100", "-8765");
-        this.url = `wss://${host}`;
+        this.url = `wss://${host}/ws`;
         this.onMessageCallback = onMessageCallback;
         this.ws = null;
         this.reconnectAttempts = 0;

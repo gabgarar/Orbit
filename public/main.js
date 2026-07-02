@@ -17,7 +17,10 @@ import {
     setSatelliteLayerActive,
     setAllSatelliteLayersActive,
     setAllSatellitesVisible,
+    getMaxActiveSatellites,
+    getAvailableActiveSatelliteLayerSlots,
     setSelectedOrbitSatelliteId,
+    refreshSatelliteOverlays,
     getSatelliteVisualizationConfig,
     setSatelliteVisualizationConfig,
     clearSatelliteVisualizationConfig,
@@ -139,6 +142,10 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
     scene3DOnly: false
 });
 
+viewer.scene.morphComplete.addEventListener(() => {
+    refreshSatelliteOverlays(viewer);
+});
+
 if (viewer?.cesiumWidget?.creditContainer) {
     viewer.cesiumWidget.creditContainer.style.display = "none";
     viewer.cesiumWidget.creditContainer.setAttribute("aria-hidden", "true");
@@ -185,6 +192,224 @@ let satelliteVizCurrentTargetId = null;
 let timeHudWidget = null;
 let timeHudTimer = null;
 let earth2kmTilesAvailable = false;
+let quickToolbarRoot = null;
+let quickToolbarPanel = null;
+let selectedSatelliteId = null;
+let currentUiLanguage = "es";
+let currentUiTheme = "dark";
+let presentationModeActive = false;
+let updatePersistedSystemConfig = null;
+
+const UI_TEXT = {
+    es: {
+        toolbarToggle: "Herramientas rapidas",
+        future: "Futuro",
+        past: "Pasado",
+        ground: "Ground",
+        presentation: "Presentacion",
+        theme: "Tema",
+        recordStart: "Grabar",
+        recordStop: "Detener",
+        selectedScope: "Seleccionado",
+        globalScope: "Global",
+        timeLabel: "Fecha y hora",
+        recordSessionStart: "Iniciar grabacion de la sesion",
+        recordSessionStop: "Detener grabacion de la sesion",
+        recordSessionProcessing: "Procesando grabacion de sesion",
+        recordSessionProcessingTitle: "Procesando grabacion",
+        cameraModeToggle: "Cambiar modo de navegacion de camara",
+        recordingInProgress: "Grabacion en curso. Pulsar para detener",
+        recordingStopTitle: "Detener grabacion de la sesion",
+        recordingUnsupported: "Tu navegador no soporta grabacion de pantalla con MediaRecorder.",
+        recordingUnavailableTitle: "Grabacion no disponible",
+        recordingNoStream: "No se pudo iniciar la grabacion: captureStream no esta disponible.",
+        recordingErrorTitle: "Error de grabacion",
+        recordingEmpty: "La grabacion termino sin datos para guardar.",
+        recordingEmptyTitle: "Grabacion vacia",
+        sessionSaveQuestion: "¿Quieres guardar la sesion?",
+        sessionSaveTitle: "Guardar sesion",
+        recordingError: "Ocurrio un error durante la grabacion de la sesion.",
+        recordingStartError: "No se pudo iniciar la grabacion de la sesion.",
+        navFree: "Navegacion: Libre (WASD)",
+        navCentered: "Navegacion: Centrada",
+        navFreeDesc: "Modo libre: WASD mueve, Q/E sube-baja, flechas orientan, arrastre izq mira",
+        navCenteredDesc: "Modo centrado: navegacion clasica alrededor del globo",
+        navFreeAria: "Modo libre activo. Pulsar para volver a modo centrado",
+        navCenteredAria: "Modo centrado activo. Pulsar para activar modo libre",
+        alertTitle: "Aviso",
+        confirmTitle: "Confirmacion",
+        vizOptions: "Opciones de visualizacion",
+        configPanelTitle: "Configuracion en tiempo real",
+        configHint: "Los cambios se aplican al instante en la vista y se guardan en disco.",
+        configApplyGlobal: "Aplicar configuracion global a todos los satelites",
+        configResetParams: "Restaurar parametros por defecto",
+        configClose: "Cerrar",
+        configSaved: "Estado: sincronizado",
+        configSaving: "Estado: guardando...",
+        configSavedState: "Estado: guardado",
+        configError: "Estado: error al guardar",
+        applyingGlobal: "Estado: aplicando global a todos...",
+        globalApplied: "Estado: global aplicado a todos",
+        globalError: "Estado: error al aplicar global",
+        resettingParams: "Estado: reiniciando parametros...",
+        paramsReset: "Estado: parametros reiniciados",
+        resetError: "Estado: error al reiniciar",
+        helpParam: "Ayuda del parametro",
+        noDesc: "Sin descripcion disponible.",
+        satResetBtn: "Resetear satelite",
+        applyBtn: "Aplicar",
+        explainParams: "Explicar parametros orbitales (TLE)",
+        satInfoTitle: "Informacion satelite",
+        confirmBtn: "Aceptar",
+        cancelBtn: "Cancelar",
+        updateCatalog: "Actualizar Catalogo",
+        updateCatalogMsg: "Se descargaran TLEs de CelesTrak y se sobrescribira el catalogo local. Quieres continuar?",
+        updateBtn: "Actualizar",
+        updatingCatalog: "Actualizando catalogo...",
+        downloadingTles: "Descargando TLEs desde CelesTrak...",
+        removeAllLayers: "Quitar Todas Las Capas",
+        removeAllLayersMsg: "Se quitaran {total} capas activas. Esta accion no se puede deshacer.",
+        removeAllBtn: "Quitar todo",
+        confirmInclusion: "Confirmar Inclusion",
+        includeElementsMsg: "Se incluiran {count} elementos. {skipped} se omitiran para respetar el limite de {maxLayers} capas activas.",
+        includeElementsMsgNoSkip: "Se incluiran {count} elementos que aun no estan en capas activas.",
+        includeBtn: "Incluir",
+        addingLayers: "Anadiendo capas...",
+        layersAdded: "Se anadieron {count} capas. {skipped} quedaron fuera por el limite de {maxLayers} activas.",
+        latLabel: "Latitud",
+        lonLabel: "Longitud",
+        altLabel: "Altitud",
+        velXLabel: "Velocidad X",
+        velYLabel: "Velocidad Y",
+        velZLabel: "Velocidad Z",
+        speedLabel: "Modulo velocidad",
+        speedKmhLabel: "Velocidad",
+        distToCameraLabel: "Distancia a camara",
+        trailPointsLabel: "Puntos de estela",
+        telemetryAgeLabel: "Edad telemetria",
+        propagationLabel: "Propagacion",
+        orbitTypeLabel: "Tipo orbita",
+        futurePropLabel: "Propagacion futura",
+        pastPropLabel: "Propagacion pasada",
+        pastConfiguredLabel: "Pasado configurado",
+        orbitTypeLabel2: "Tipo de orbita",
+        estAltLabel: "Altitud estimada",
+        tleAgeLabel: "Edad TLE",
+        recWindowLabel: "Ventana recomendada",
+        unknownLabel: "Desconocida",
+        noRefLabel: "Sin referencia",
+        tleFreshMsg: "Edad del TLE: {age}. Recomendado para {orbit}: {rec}.",
+        catalogLoadingLabel: "Cargando catalogo",
+        closeCatalogLabel: "Cerrar catalogo",
+        closeFiltersLabel: "Cerrar filtros",
+        removeLayerLabel: "Quitar capa",
+        noResultsLabel: "Sin resultados"
+    },
+    en: {
+        toolbarToggle: "Quick tools",
+        future: "Future",
+        past: "Past",
+        ground: "Ground",
+        presentation: "Presentation",
+        theme: "Theme",
+        recordStart: "Record",
+        recordStop: "Stop",
+        selectedScope: "Selected",
+        globalScope: "Global",
+        timeLabel: "Date and time",
+        recordSessionStart: "Start session recording",
+        recordSessionStop: "Stop session recording",
+        recordSessionProcessing: "Processing session recording",
+        recordSessionProcessingTitle: "Processing recording",
+        cameraModeToggle: "Toggle camera navigation mode",
+        recordingInProgress: "Recording in progress. Click to stop.",
+        recordingStopTitle: "Stop session recording",
+        recordingUnsupported: "Your browser does not support screen recording with MediaRecorder.",
+        recordingUnavailableTitle: "Recording unavailable",
+        recordingNoStream: "Could not start recording: captureStream not available.",
+        recordingErrorTitle: "Recording error",
+        recordingEmpty: "Recording ended without data to save.",
+        recordingEmptyTitle: "Empty recording",
+        sessionSaveQuestion: "Do you want to save the session?",
+        sessionSaveTitle: "Save session",
+        recordingError: "An error occurred during session recording.",
+        recordingStartError: "Could not start session recording.",
+        navFree: "Navigation: Free (WASD)",
+        navCentered: "Navigation: Centered",
+        navFreeDesc: "Free mode: WASD moves, Q/E up/down, arrows look, left drag look",
+        navCenteredDesc: "Centered mode: classic navigation around the globe",
+        navFreeAria: "Free mode active. Click to return to centered mode",
+        navCenteredAria: "Centered mode active. Click to activate free mode",
+        alertTitle: "Notice",
+        confirmTitle: "Confirmation",
+        vizOptions: "Visualization options",
+        configPanelTitle: "Real-time Configuration",
+        configHint: "Changes apply instantly to the view and are saved to disk.",
+        configApplyGlobal: "Apply configuration globally to all satellites",
+        configResetParams: "Restore default parameters",
+        configClose: "Close",
+        configSaved: "State: synchronized",
+        configSaving: "State: saving...",
+        configSavedState: "State: saved",
+        configError: "State: save error",
+        applyingGlobal: "State: applying global to all...",
+        globalApplied: "State: global applied to all",
+        globalError: "State: error applying global",
+        resettingParams: "State: resetting parameters...",
+        paramsReset: "State: parameters reset",
+        resetError: "State: error resetting",
+        helpParam: "Parameter help",
+        noDesc: "No description available.",
+        satResetBtn: "Reset satellite",
+        applyBtn: "Apply",
+        explainParams: "Explain orbital parameters (TLE)",
+        satInfoTitle: "Satellite information",
+        confirmBtn: "Accept",
+        cancelBtn: "Cancel",
+        updateCatalog: "Update Catalog",
+        updateCatalogMsg: "TLEs will be downloaded from CelesTrak and the local catalog will be overwritten. Do you want to continue?",
+        updateBtn: "Update",
+        updatingCatalog: "Updating catalog...",
+        downloadingTles: "Downloading TLEs from CelesTrak...",
+        removeAllLayers: "Remove All Layers",
+        removeAllLayersMsg: "Will remove {total} active layers. This action cannot be undone.",
+        removeAllBtn: "Remove All",
+        confirmInclusion: "Confirm Inclusion",
+        includeElementsMsg: "Will include {count} elements. {skipped} will be skipped to respect the limit of {maxLayers} active layers.",
+        includeElementsMsgNoSkip: "Will include {count} elements that are not yet in active layers.",
+        includeBtn: "Include",
+        addingLayers: "Adding layers...",
+        layersAdded: "Added {count} layers. {skipped} were left out due to the limit of {maxLayers} active layers.",
+        latLabel: "Latitude",
+        lonLabel: "Longitude",
+        altLabel: "Altitude",
+        velXLabel: "Velocity X",
+        velYLabel: "Velocity Y",
+        velZLabel: "Velocity Z",
+        speedLabel: "Speed magnitude",
+        speedKmhLabel: "Speed",
+        distToCameraLabel: "Distance to camera",
+        trailPointsLabel: "Trail points",
+        telemetryAgeLabel: "Telemetry age",
+        propagationLabel: "Propagation",
+        orbitTypeLabel: "Orbit type",
+        futurePropLabel: "Future propagation",
+        pastPropLabel: "Past propagation",
+        pastConfiguredLabel: "Past configured",
+        orbitTypeLabel2: "Orbit type",
+        estAltLabel: "Estimated altitude",
+        tleAgeLabel: "TLE age",
+        recWindowLabel: "Recommended window",
+        unknownLabel: "Unknown",
+        noRefLabel: "No reference",
+        tleFreshMsg: "TLE age: {age}. Recommended for {orbit}: {rec}.",
+        catalogLoadingLabel: "Loading catalog",
+        closeCatalogLabel: "Close catalog",
+        closeFiltersLabel: "Close filters",
+        removeLayerLabel: "Remove layer",
+        noResultsLabel: "No results"
+    }
+};
 
 function isEditableTarget(target) {
     if (!target || !(target instanceof HTMLElement)) {
@@ -292,7 +517,6 @@ function ensureCameraModeToggleButton() {
     button.type = "button";
     button.className = "camera-mode-toggle centered";
     button.setAttribute("aria-live", "polite");
-    button.title = "Cambiar modo de navegacion de camara";
     button.addEventListener("click", () => {
         const nextMode = cameraNavigationMode === "centered" ? "free" : "centered";
         applyCameraNavigationMode(nextMode);
@@ -300,7 +524,14 @@ function ensureCameraModeToggleButton() {
 
     document.body.appendChild(button);
     cameraModeToggleBtn = button;
+    updateCameraModeToggleTitle();
     return button;
+}
+
+function updateCameraModeToggleTitle() {
+    if (cameraModeToggleBtn) {
+        cameraModeToggleBtn.title = uiText("cameraModeToggle");
+    }
 }
 
 function ensureSessionRecordButton() {
@@ -313,13 +544,18 @@ function ensureSessionRecordButton() {
     button.type = "button";
     button.className = "session-record-btn idle";
     button.setAttribute("aria-live", "polite");
-    button.title = "Iniciar grabacion de la sesion";
     button.addEventListener("click", () => {
         toggleSessionRecording();
     });
 
-    document.body.appendChild(button);
+    const toolbarSlot = document.querySelector("#quickRecordSlot");
+    if (toolbarSlot) {
+        toolbarSlot.appendChild(button);
+    } else {
+        document.body.appendChild(button);
+    }
     sessionRecordButton = button;
+    updateSessionRecordButtonLabel();
     return button;
 }
 
@@ -345,12 +581,20 @@ function ensureTimeHudWidget() {
     const root = document.createElement("div");
     root.id = "timeHudWidget";
     root.innerHTML = `
-        <div class="time-hud-row"><span class="time-hud-label">Fecha y hora</span><span id="timeHudNow">--/--/---- --:--:--</span></div>
+        <div class="time-hud-row"><span class="time-hud-label"></span><span id="timeHudNow">--/--/---- --:--:--</span></div>
     `;
 
     document.body.appendChild(root);
     timeHudWidget = root;
+    updateTimeHudLabel();
     return root;
+}
+
+function updateTimeHudLabel() {
+    const timeHudLabel = document.querySelector(".time-hud-label");
+    if (timeHudLabel) {
+        timeHudLabel.textContent = uiText("timeLabel");
+    }
 }
 
 function updateTimeHudWidget() {
@@ -375,12 +619,12 @@ function updateSessionRecordButtonLabel(options = {}) {
     const isProcessing = options.processing === true;
 
     if (isProcessing) {
-        button.textContent = "Procesando...";
+        button.textContent = "...";
         button.disabled = true;
         button.classList.remove("idle", "recording");
         button.classList.add("processing");
-        button.setAttribute("aria-label", "Procesando grabacion de sesion");
-        button.title = "Procesando grabacion";
+        button.setAttribute("aria-label", uiText("recordSessionProcessing"));
+        button.title = uiText("recordSessionProcessingTitle");
         return;
     }
 
@@ -388,19 +632,420 @@ function updateSessionRecordButtonLabel(options = {}) {
     button.classList.remove("processing");
 
     if (isSessionRecording) {
-        button.textContent = "Detener grabacion";
+        button.textContent = "Ⅱ";
         button.classList.remove("idle");
         button.classList.add("recording");
-        button.setAttribute("aria-label", "Grabacion en curso. Pulsar para detener");
-        button.title = "Detener grabacion de la sesion";
+        button.setAttribute("aria-label", uiText("recordingInProgress"));
+        button.title = uiText("recordSessionStop");
         return;
     }
 
-    button.textContent = "Grabar sesion";
+    button.textContent = "●";
     button.classList.remove("recording");
     button.classList.add("idle");
-    button.setAttribute("aria-label", "Iniciar grabacion de sesion");
-    button.title = "Iniciar grabacion de la sesion";
+    button.setAttribute("aria-label", uiText("recordSessionStart"));
+    button.title = uiText("recordSessionStart");
+}
+
+function uiText(key) {
+    const lang = currentUiLanguage === "en" ? "en" : "es";
+    return UI_TEXT[lang]?.[key] || UI_TEXT.es[key] || key;
+}
+
+function getToolbarScopeLabel() {
+    return selectedSatelliteId ? uiText("selectedScope") : uiText("globalScope");
+}
+
+function applyUiTheme(theme) {
+    currentUiTheme = theme === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = currentUiTheme;
+    localStorage.setItem("orbit-theme", currentUiTheme);
+}
+
+function applyUiLanguage(language) {
+    currentUiLanguage = language === "en" ? "en" : "es";
+    document.documentElement.lang = currentUiLanguage;
+    document.title = "Orbit Tracker";
+    localStorage.setItem("orbit-language", currentUiLanguage);
+    updateTimeHudLabel();
+    updateSessionRecordButtonLabel();
+    updateCameraModeToggleTitle();
+    updateQuickToolbarLabels();
+    updateSatelliteContextMenuLang();
+    updateSatelliteVizModalLang();
+}
+
+function persistSystemSectionPatch(sectionName, patch) {
+    if (typeof updatePersistedSystemConfig === "function") {
+        updatePersistedSystemConfig(sectionName, patch);
+    }
+}
+
+function getOrbitToggleState(kind) {
+    const selectedConfig = selectedSatelliteId ? getSatelliteVisualizationConfig(selectedSatelliteId) : null;
+    const effectiveKey = kind === "ground" ? "orbit_ground_track_show" : (kind === "future" ? "orbit_future_show" : "orbit_past_show");
+
+    if (selectedConfig) {
+        return Boolean(selectedConfig.effective[effectiveKey]);
+    }
+
+    return Boolean(runtimeSystemConfig?.[effectiveKey]);
+}
+
+function setOrbitVisibilityFromToolbar(kind) {
+    const currentValue = getOrbitToggleState(kind);
+    const nextValue = !currentValue;
+    const overrideKey = kind === "ground" ? "orbit_ground_track_show" : (kind === "future" ? "orbit_future_show" : "orbit_past_show");
+    const globalKey = kind === "ground" ? "ground_track_show" : (kind === "future" ? "future_show" : "past_show");
+
+    if (selectedSatelliteId) {
+        setSatelliteVisualizationConfig(selectedSatelliteId, {
+            [overrideKey]: nextValue
+        });
+    } else {
+        persistSystemSectionPatch("orbit", {
+            [globalKey]: nextValue
+        });
+    }
+
+    updateQuickToolbarLabels();
+    updateTopToolbarState();
+}
+
+function togglePresentationMode() {
+    presentationModeActive = !presentationModeActive;
+    document.body.classList.toggle("presentation-mode", presentationModeActive);
+    updateQuickToolbarLabels();
+    updateTopToolbarState();
+}
+
+function toggleUiThemeFromToolbar() {
+    const nextTheme = currentUiTheme === "light" ? "dark" : "light";
+    applyUiTheme(nextTheme);
+    persistSystemSectionPatch("ui", { theme: nextTheme });
+    updateQuickToolbarLabels();
+    updateTopToolbarState();
+}
+
+function initUiTheme() {
+    const savedTheme = localStorage.getItem("orbit-theme");
+    if (savedTheme === "light" || savedTheme === "dark") {
+        applyUiTheme(savedTheme);
+    } else {
+        applyUiTheme("dark");
+    }
+}
+
+function initUiLanguage() {
+    const savedLanguage = localStorage.getItem("orbit-language");
+    if (savedLanguage === "en" || savedLanguage === "es") {
+        currentUiLanguage = savedLanguage;
+        document.documentElement.lang = currentUiLanguage;
+    } else {
+        currentUiLanguage = "es";
+        document.documentElement.lang = "es";
+    }
+}
+
+function setQuickButtonState(button, enabled) {
+    if (!button) {
+        return;
+    }
+
+    button.classList.toggle("enabled", Boolean(enabled));
+    button.classList.toggle("blocked", !enabled);
+}
+
+function updateQuickToolbarLabels() {
+    if (!quickToolbarRoot) {
+        return;
+    }
+
+    const toggle = quickToolbarRoot.querySelector("#quickToolbarToggle");
+    if (toggle) {
+        toggle.title = uiText("toolbarToggle");
+        toggle.setAttribute("aria-label", uiText("toolbarToggle"));
+    }
+
+    const scope = quickToolbarRoot.querySelector("#quickToolbarScope");
+    if (scope) {
+        scope.textContent = selectedSatelliteId ? `${getToolbarScopeLabel()}: ${selectedSatelliteId}` : getToolbarScopeLabel();
+    }
+
+    const future = quickToolbarRoot.querySelector("#quickToggleFutureBtn");
+    if (future) {
+        future.textContent = uiText("future");
+        setQuickButtonState(future, getOrbitToggleState("future"));
+    }
+    const past = quickToolbarRoot.querySelector("#quickTogglePastBtn");
+    if (past) {
+        past.textContent = uiText("past");
+        setQuickButtonState(past, getOrbitToggleState("past"));
+    }
+    const presentation = quickToolbarRoot.querySelector("#quickPresentationBtn");
+    if (presentation) {
+        presentation.textContent = uiText("presentation");
+        presentation.classList.toggle("active", presentationModeActive);
+        setQuickButtonState(presentation, presentationModeActive);
+    }
+    const ground = quickToolbarRoot.querySelector("#quickGroundTrackBtn");
+    if (ground) {
+        ground.textContent = uiText("ground");
+        setQuickButtonState(ground, getOrbitToggleState("ground"));
+    }
+
+    updateSessionRecordButtonLabel();
+}
+
+function ensureTopToolbar() {
+    // Asegurar que la clase esté siempre presente
+    document.body.classList.add("with-toolbars");
+    
+    const existing = document.getElementById("topToolbar");
+    if (existing) return existing;
+
+    const toolbar = document.createElement("div");
+    toolbar.id = "topToolbar";
+    toolbar.innerHTML = `
+        <div class="toolbar-brand">ORBIT</div>
+        <button id="topConfigBtn" class="toolbar-btn" type="button" title="Configuración">
+            <span>⚙</span>
+            <span>Config</span>
+        </button>
+        <button id="topCameraModeBtn" class="toolbar-btn" type="button" title="Modo de cámara">
+            <span>🎥</span>
+            <span>Camera</span>
+        </button>
+        <div class="toolbar-separator"></div>
+        <button id="topGroundBtn" class="toolbar-btn" type="button" title="Traza de suelo">Ground</button>
+        <div class="toolbar-separator"></div>
+        <button id="topRecordBtn" class="toolbar-btn" type="button" title="Grabar sesión">
+            <span>●</span>
+            <span>Grabar</span>
+        </button>
+        <div class="toolbar-spacer"></div>
+        <div class="toolbar-search-wrap">
+            <span class="toolbar-search-icon">🔍</span>
+            <input id="objectSearch" class="toolbar-search" type="text" placeholder="Buscar satélite..." autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="toolbar-spacer"></div>
+        <div id="topTimeInfo" class="toolbar-info">--/--/---- --:--:--</div>
+    `;
+
+    document.body.appendChild(toolbar);
+    document.body.classList.add("with-toolbars");
+
+    toolbar.querySelector("#topConfigBtn")?.addEventListener("click", () => {
+        if (runtimeConfigPanelApi?.toggle) {
+            runtimeConfigPanelApi.toggle();
+        }
+    });
+
+    toolbar.querySelector("#topCameraModeBtn")?.addEventListener("click", () => {
+        const nextMode = cameraNavigationMode === "centered" ? "free" : "centered";
+        applyCameraNavigationMode(nextMode);
+        updateTopToolbarState();
+    });
+
+    toolbar.querySelector("#topGroundBtn")?.addEventListener("click", () => {
+        setOrbitVisibilityFromToolbar("ground");
+        updateTopToolbarState();
+    });
+
+    toolbar.querySelector("#topRecordBtn")?.addEventListener("click", () => {
+        toggleSessionRecording();
+    });
+
+    updateTopToolbarState();
+    updateTopToolbarTime();
+    return toolbar;
+}
+
+function updateTopToolbarState() {
+    const toolbar = document.getElementById("topToolbar");
+    if (!toolbar) return;
+
+    const groundBtn = toolbar.querySelector("#topGroundBtn");
+    const recordBtn = toolbar.querySelector("#topRecordBtn");
+    const cameraModeBtn = toolbar.querySelector("#topCameraModeBtn");
+
+    if (groundBtn) {
+        groundBtn.classList.toggle("active", getOrbitToggleState("ground"));
+    }
+    if (recordBtn) {
+        recordBtn.classList.toggle("recording", isSessionRecording);
+        const recordIcon = recordBtn.querySelector("span:first-child");
+        const recordText = recordBtn.querySelector("span:last-child");
+        if (isSessionRecording) {
+            if (recordIcon) recordIcon.textContent = "⏸";
+            if (recordText) recordText.textContent = "Detener";
+        } else {
+            if (recordIcon) recordIcon.textContent = "●";
+            if (recordText) recordText.textContent = "Grabar";
+        }
+    }
+    if (cameraModeBtn) {
+        const modeText = cameraModeBtn.querySelector("span:last-child");
+        if (modeText) {
+            modeText.textContent = cameraNavigationMode === "free" ? "Libre" : "Centrado";
+        }
+    }
+}
+
+function updateTopToolbarTime() {
+    const timeInfo = document.getElementById("topTimeInfo");
+    if (timeInfo) {
+        const now = new Date();
+        timeInfo.textContent = formatTimeHudDate(now);
+    }
+}
+
+function ensureLeftSidebar() {
+    // Asegurar que la clase esté siempre presente
+    document.body.classList.add("with-toolbars");
+    
+    const existing = document.getElementById("leftSidebar");
+    if (existing) return existing;
+
+    const sidebar = document.createElement("div");
+    sidebar.id = "leftSidebar";
+    sidebar.innerHTML = `
+        <button id="leftSatellitesBtn" class="sidebar-btn" type="button" title="Satélites" aria-label="Satélites">
+            <span>🛰</span>
+        </button>
+        <button id="leftInfoBtn" class="sidebar-btn" type="button" title="Telemetría" aria-label="Telemetría">
+            <span>ℹ</span>
+        </button>
+        <button id="leftViewBtn" class="sidebar-btn" type="button" title="Vista" aria-label="Vista">
+            <span>👁</span>
+        </button>
+        <div class="sidebar-spacer"></div>
+        <button id="leftSettingsBtn" class="sidebar-btn" type="button" title="Configuración" aria-label="Configuración">
+            <span>⚙</span>
+        </button>
+    `;
+
+    document.body.appendChild(sidebar);
+
+    // Los paneles se anexan directamente al body (fuera del sidebar de iconos)
+    // para evitar que queden contenidos/comprimidos dentro de los 48px.
+    const satellitesPanel = document.createElement("div");
+    satellitesPanel.id = "leftSatellitesPanel";
+    satellitesPanel.className = "sidebar-panel";
+    satellitesPanel.innerHTML = `
+        <div class="sidebar-panel-header">
+            <div class="sidebar-panel-title">SATÉLITES</div>
+            <div class="sidebar-panel-actions">
+                <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">✕</button>
+                <button class="object-global-eye-btn" id="toggleAllVisibilityBtn" type="button" title="Ocultar todas las capas" aria-label="Ocultar todas las capas">👁</button>
+                <button class="object-add-btn" id="openCatalogBtn" type="button" title="Añadir desde catálogo" aria-label="Añadir desde catálogo">+</button>
+                <button class="sidebar-panel-close" type="button" title="Plegar panel" aria-label="Plegar panel">‹</button>
+            </div>
+        </div>
+        <div id="leftSatellitesPanelContent" class="sidebar-panel-content"></div>
+    `;
+    document.body.appendChild(satellitesPanel);
+
+    // Panel de telemetría (pestaña separada)
+    const infoPanel = document.createElement("div");
+    infoPanel.id = "leftInfoPanel";
+    infoPanel.className = "sidebar-panel";
+    infoPanel.innerHTML = `
+        <div class="sidebar-panel-header">
+            <div class="sidebar-panel-title">TELEMETRÍA</div>
+            <button class="sidebar-panel-close" type="button" aria-label="Cerrar">✕</button>
+        </div>
+        <div id="leftInfoPanelContent" class="sidebar-panel-content"></div>
+    `;
+    document.body.appendChild(infoPanel);
+
+    const satellitesBtn = sidebar.querySelector("#leftSatellitesBtn");
+    const infoBtn = sidebar.querySelector("#leftInfoBtn");
+
+    // Registro de paneles para gestionarlos como acordeón (solo uno abierto)
+    const panels = [
+        { btn: satellitesBtn, panel: satellitesPanel },
+        { btn: infoBtn, panel: infoPanel }
+    ];
+
+    const setActivePanel = (target) => {
+        const willOpen = !target.panel.classList.contains("open");
+        panels.forEach(({ btn, panel }) => {
+            const isTarget = panel === target.panel;
+            const open = isTarget && willOpen;
+            panel.classList.toggle("open", open);
+            btn.classList.toggle("active", open);
+        });
+    };
+
+    satellitesBtn?.addEventListener("click", () => setActivePanel(panels[0]));
+    infoBtn?.addEventListener("click", () => setActivePanel(panels[1]));
+
+    satellitesPanel.querySelector(".sidebar-panel-close")?.addEventListener("click", () => {
+        satellitesPanel.classList.remove("open");
+        satellitesBtn.classList.remove("active");
+    });
+
+    infoPanel.querySelector(".sidebar-panel-close")?.addEventListener("click", () => {
+        infoPanel.classList.remove("open");
+        infoBtn.classList.remove("active");
+    });
+
+    sidebar.querySelector("#leftViewBtn")?.addEventListener("click", () => {
+        showAppAlert("Panel de vista próximamente disponible.", "Vista");
+    });
+
+    sidebar.querySelector("#leftSettingsBtn")?.addEventListener("click", () => {
+        if (runtimeConfigPanelApi?.toggle) {
+            runtimeConfigPanelApi.toggle();
+        }
+    });
+
+    return sidebar;
+}
+
+function ensureQuickToolbar() {
+    if (quickToolbarRoot) {
+        return quickToolbarRoot;
+    }
+
+    const root = document.createElement("div");
+    root.id = "quickToolbar";
+    root.className = "quick-toolbar collapsed";
+    root.style.display = "none";
+    root.innerHTML = `
+        <button id="quickToolbarToggle" class="quick-toolbar-toggle" type="button" aria-expanded="false">☰</button>
+        <div id="quickToolbarPanel" class="quick-toolbar-panel">
+            <div id="quickToolbarScope" class="quick-toolbar-scope">Global</div>
+            <button id="quickToggleFutureBtn" class="quick-tool-btn" type="button"></button>
+            <button id="quickTogglePastBtn" class="quick-tool-btn" type="button"></button>
+            <button id="quickPresentationBtn" class="quick-tool-btn" type="button"></button>
+            <button id="quickGroundTrackBtn" class="quick-tool-btn" type="button"></button>
+            <span id="quickRecordSlot" class="quick-record-slot"></span>
+        </div>
+    `;
+
+    document.body.appendChild(root);
+    quickToolbarRoot = root;
+    quickToolbarPanel = root.querySelector("#quickToolbarPanel");
+
+    const toggle = root.querySelector("#quickToolbarToggle");
+    toggle.addEventListener("click", () => {
+        const collapsed = root.classList.toggle("collapsed");
+        toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    });
+    root.querySelector("#quickToggleFutureBtn")?.addEventListener("click", () => setOrbitVisibilityFromToolbar("future"));
+    root.querySelector("#quickTogglePastBtn")?.addEventListener("click", () => setOrbitVisibilityFromToolbar("past"));
+    root.querySelector("#quickPresentationBtn")?.addEventListener("click", togglePresentationMode);
+    root.querySelector("#quickGroundTrackBtn")?.addEventListener("click", () => setOrbitVisibilityFromToolbar("ground"));
+
+    updateQuickToolbarLabels();
+    return root;
+}
+
+function setCurrentSelectedSatellite(id) {
+    selectedSatelliteId = id ? String(id) : null;
+    updateQuickToolbarLabels();
 }
 
 function resolveSupportedRecordingMimeType(preferredOutputFormat = "webm") {
@@ -523,11 +1168,11 @@ function openAppDialog({ title, message, showCancel }) {
     });
 }
 
-function showAppAlert(message, title = "Aviso") {
+function showAppAlert(message, title = uiText("alertTitle")) {
     return openAppDialog({ title, message, showCancel: false });
 }
 
-function showAppConfirm(message, title = "Confirmacion") {
+function showAppConfirm(message, title = uiText("confirmTitle")) {
     return openAppDialog({ title, message, showCancel: true });
 }
 
@@ -546,7 +1191,7 @@ function ensureSatelliteContextMenu() {
 
     const menu = document.createElement("div");
     menu.id = "satelliteContextMenu";
-    menu.innerHTML = "<button id=\"satCtxVizBtn\" type=\"button\">Opciones de visualizacion</button>";
+    menu.innerHTML = `<button id="satCtxVizBtn" type="button">${uiText("vizOptions")}</button>`;
     document.body.appendChild(menu);
 
     const vizButton = menu.querySelector("#satCtxVizBtn");
@@ -573,6 +1218,13 @@ function ensureSatelliteContextMenu() {
     window.addEventListener("scroll", () => hideSatelliteContextMenu(), { passive: true });
 
     return satelliteContextMenu;
+}
+
+function updateSatelliteContextMenuLang() {
+    const vizButton = satelliteContextMenu?.querySelector("#satCtxVizBtn");
+    if (vizButton) {
+        vizButton.textContent = uiText("vizOptions");
+    }
 }
 
 function showSatelliteContextMenuAt(satelliteId, x, y) {
@@ -602,8 +1254,8 @@ function ensureSatelliteVisualizationModal() {
     modal.innerHTML = `
         <div id="satelliteVizPanel" role="dialog" aria-modal="true" aria-labelledby="satelliteVizTitle">
             <div id="satelliteVizHeader">
-                <h4 id="satelliteVizTitle">Opciones de visualizacion</h4>
-                <button id="satelliteVizCloseBtn" type="button" aria-label="Cerrar">✕</button>
+                <h4 id="satelliteVizTitle"></h4>
+                <button id="satelliteVizCloseBtn" type="button" aria-label="${uiText("closeBtn")}"></button>
             </div>
             <div id="satelliteVizTarget"></div>
             <div id="satelliteVizForm" class="config-grid">
@@ -621,14 +1273,16 @@ function ensureSatelliteVisualizationModal() {
                 <div class="config-field checkbox"><input id="satVizPastShow" type="checkbox"><label for="satVizPastShow">Past Show</label></div>
             </div>
             <div id="satelliteVizActions">
-                <button id="satelliteVizResetBtn" type="button">Resetear satelite</button>
-                <button id="satelliteVizApplyBtn" type="button">Aplicar</button>
+                <button id="satelliteVizResetBtn" type="button"></button>
+                <button id="satelliteVizApplyBtn" type="button"></button>
             </div>
         </div>
     `;
 
     document.body.appendChild(modal);
     satelliteVizModal = modal;
+
+    updateSatelliteVizModalLang();
 
     const closeButton = modal.querySelector("#satelliteVizCloseBtn");
     closeButton.addEventListener("click", () => closeSatelliteVisualizationModal());
@@ -671,6 +1325,16 @@ function ensureSatelliteVisualizationModal() {
     });
 
     return modal;
+}
+
+function updateSatelliteVizModalLang() {
+    if (!satelliteVizModal) return;
+    const titleEl = satelliteVizModal.querySelector("#satelliteVizTitle");
+    if (titleEl) titleEl.textContent = uiText("vizOptions");
+    const resetBtn = satelliteVizModal.querySelector("#satelliteVizResetBtn");
+    if (resetBtn) resetBtn.textContent = uiText("satResetBtn");
+    const applyBtn = satelliteVizModal.querySelector("#satelliteVizApplyBtn");
+    if (applyBtn) applyBtn.textContent = uiText("applyBtn");
 }
 
 function closeSatelliteVisualizationModal() {
@@ -752,13 +1416,13 @@ async function startSessionRecording() {
     }
 
     if (typeof MediaRecorder === "undefined") {
-        await showAppAlert("Tu navegador no soporta grabacion de pantalla con MediaRecorder.", "Grabacion no disponible");
+        await showAppAlert(uiText("recordingUnsupported"), uiText("recordingUnavailableTitle"));
         return;
     }
 
     const canvas = viewer?.scene?.canvas;
     if (!canvas || typeof canvas.captureStream !== "function") {
-        await showAppAlert("No se pudo iniciar la grabacion: captureStream no esta disponible.", "Error de grabacion");
+        await showAppAlert(uiText("recordingNoStream"), uiText("recordingErrorTitle"));
         return;
     }
 
@@ -802,12 +1466,12 @@ async function startSessionRecording() {
             resetSessionRecordingState();
 
             if (!chunks.length) {
-                showAppAlert("La grabacion termino sin datos para guardar.", "Grabacion vacia");
+                showAppAlert(uiText("recordingEmpty"), uiText("recordingEmptyTitle"));
                 return;
             }
 
             const recordingBlob = new Blob(chunks, { type: mimeType });
-            const shouldSave = await showAppConfirm("¿Quieres guardar la sesion?", "Guardar sesion");
+            const shouldSave = await showAppConfirm(uiText("sessionSaveQuestion"), uiText("sessionSaveTitle"));
 
             if (shouldSave) {
                 downloadSessionRecording(recordingBlob, mimeType);
@@ -819,18 +1483,19 @@ async function startSessionRecording() {
 
         sessionRecorder.onerror = (event) => {
             logger.error("Error en MediaRecorder:", event);
-            showAppAlert("Ocurrio un error durante la grabacion de la sesion.", "Error de grabacion");
+            showAppAlert(uiText("recordingError"), uiText("recordingErrorTitle"));
             resetSessionRecordingState();
         };
 
         sessionRecorder.start(1000);
         isSessionRecording = true;
         updateSessionRecordButtonLabel();
+        updateTopToolbarState();
         logger.info("Grabacion de sesion iniciada.");
     } catch (error) {
         logger.error("No se pudo iniciar la grabacion de sesion:", error);
-        const detail = error instanceof Error ? error.message : "No se pudo iniciar la grabacion de la sesion.";
-        await showAppAlert(detail, "Error de grabacion");
+        const detail = error instanceof Error ? error.message : uiText("recordingStartError");
+        await showAppAlert(detail, uiText("recordingErrorTitle"));
         resetSessionRecordingState();
     }
 }
@@ -843,6 +1508,7 @@ function stopSessionRecording() {
 
     isSessionRecording = false;
     updateSessionRecordButtonLabel({ processing: true });
+    updateTopToolbarState();
     sessionRecorder.stop();
     logger.info("Deteniendo grabacion de sesion...");
 }
@@ -859,13 +1525,15 @@ function toggleSessionRecording() {
 function updateCameraModeButtonLabel() {
     const button = ensureCameraModeToggleButton();
     const isFreeMode = cameraNavigationMode === "free";
-    button.textContent = isFreeMode ? "Navegacion: Libre (WASD)" : "Navegacion: Centrada";
+    const navFree = uiText("navFree");
+    const navCentered = uiText("navCentered");
+    button.textContent = isFreeMode ? navFree : navCentered;
     button.classList.toggle("free", isFreeMode);
     button.classList.toggle("centered", !isFreeMode);
     button.title = isFreeMode
-        ? "Modo libre: WASD mueve, Q/E sube-baja, flechas orientan, arrastre izq mira"
-        : "Modo centrado: navegacion clasica alrededor del globo";
-    button.setAttribute("aria-label", isFreeMode ? "Modo libre activo. Pulsar para volver a modo centrado" : "Modo centrado activo. Pulsar para activar modo libre");
+        ? uiText("navFreeDesc")
+        : uiText("navCenteredDesc");
+    button.setAttribute("aria-label", isFreeMode ? uiText("navFreeAria") : uiText("navCenteredAria"));
 }
 
 function applyCameraNavigationMode(mode, options = {}) {
@@ -912,6 +1580,7 @@ function applyCameraNavigationMode(mode, options = {}) {
 
     cameraNavigationMode = nextMode;
     updateCameraModeButtonLabel();
+    updateTopToolbarState();
     logger.info(`Modo de navegacion de camara: ${nextMode}`);
 }
 
@@ -924,11 +1593,11 @@ function setConfigSaveState(state, message) {
 function schedulePersistSystemConfig(nextSectionedSystemConfig) {
     const serialized = JSON.stringify(nextSectionedSystemConfig || {});
     if (serialized === lastPersistedSystemConfigSerialized) {
-        setConfigSaveState("saved", "Estado: guardado");
+        setConfigSaveState("saved", uiText("configSavedState"));
         return;
     }
 
-    setConfigSaveState("saving", "Estado: guardando...");
+    setConfigSaveState("saving", uiText("configSaving"));
 
     if (persistConfigTimeoutId !== null) {
         clearTimeout(persistConfigTimeoutId);
@@ -943,12 +1612,12 @@ function schedulePersistSystemConfig(nextSectionedSystemConfig) {
             const hh = String(savedAt.getHours()).padStart(2, "0");
             const mm = String(savedAt.getMinutes()).padStart(2, "0");
             const ss = String(savedAt.getSeconds()).padStart(2, "0");
-            setConfigSaveState("saved", `Estado: guardado ${hh}:${mm}:${ss}`);
+            setConfigSaveState("saved", `${uiText("configSavedState")} ${hh}:${mm}:${ss}`);
         } catch (error) {
             logger.error("No se pudo persistir system_config en servidor:", error);
             const detail = error instanceof Error ? error.message : String(error);
             const shortDetail = detail.length > 56 ? `${detail.slice(0, 56)}...` : detail;
-            setConfigSaveState("error", `Estado: error al guardar (${shortDetail})`);
+            setConfigSaveState("error", `${uiText("configError")} (${shortDetail})`);
         }
     }, 250);
 }
@@ -1165,6 +1834,8 @@ function applyEarthBaseLayers() {
 }
 
 function applySystemRuntimeConfig(systemConfigRaw) {
+    initUiTheme();
+    initUiLanguage();
     const systemConfig = normalizeSystemConfig(systemConfigRaw);
     runtimeSystemConfig = systemConfig;
     runtimeRecordingConfig = {
@@ -1177,6 +1848,8 @@ function applySystemRuntimeConfig(systemConfigRaw) {
     configureLogger(systemConfig);
     setOrbitConfig(systemConfig);
     applyTimeHudVisibilityConfig(systemConfig);
+    applyUiTheme(systemConfig.ui_theme || currentUiTheme);
+    applyUiLanguage(systemConfig.ui_language || currentUiLanguage);
 
     applyResolutionScaleConfig(systemConfig);
     applyUiScaleConfig(systemConfig);
@@ -1232,16 +1905,11 @@ viewer.scene.skyAtmosphere.show = true;
 viewer.scene.globe.enableLighting = true;
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
 viewer.scene.globe.depthTestAgainstTerrain = true;
-ensureCameraModeToggleButton();
+
 applyCameraNavigationMode("centered", { keepTrackedEntity: true });
-ensureSessionRecordButton();
-updateSessionRecordButtonLabel();
-ensureTimeHudWidget();
-updateTimeHudWidget();
-if (timeHudTimer) {
-    clearInterval(timeHudTimer);
-}
-timeHudTimer = setInterval(updateTimeHudWidget, 1000);
+
+// Mantener quickToolbar oculto (legacy)
+ensureQuickToolbar();
 
 const activeLayer = viewer.scene.imageryLayers.get(0);
 if (activeLayer && activeLayer.imageryProvider) {
@@ -1312,6 +1980,23 @@ function firstPersonSatellite(entity) {
     };
     currentRuntimeDataConfig = currentConfig?.data || { satellites_catalog_file: "catalog.json" };
     lastPersistedSystemConfigSerialized = JSON.stringify(currentConfig.system || {});
+    updatePersistedSystemConfig = (sectionName, patch) => {
+        if (!sectionName || !patch || typeof patch !== "object") {
+            return;
+        }
+
+        currentConfig.system = {
+            ...currentConfig.system,
+            [sectionName]: {
+                ...(currentConfig.system?.[sectionName] || {}),
+                ...patch
+            }
+        };
+
+        runtimeConfigPanelApi?.setSystemConfig(currentConfig.system);
+        applySystemRuntimeConfig(currentConfig.system);
+        schedulePersistSystemConfig(currentConfig.system);
+    };
 
     let objectSidebar = null;
 
@@ -1328,11 +2013,24 @@ function firstPersonSatellite(entity) {
         },
         onResetSpecificConfig: async () => {
             clearAllSatelliteVisualizationConfigs();
-        }
+        },
+        getUiText: () => uiText
     });
-    setConfigSaveState("idle", "Estado: sincronizado");
+    setConfigSaveState("idle", uiText("configSaved"));
 
     applySystemRuntimeConfig(currentConfig.system);
+
+    // Inicializar toolbars después de setupRuntimeConfigPanel
+    ensureTopToolbar();
+    ensureLeftSidebar();
+    
+    // Timer para actualizar la toolbar superior
+    if (timeHudTimer) {
+        clearInterval(timeHudTimer);
+    }
+    timeHudTimer = setInterval(() => {
+        updateTopToolbarTime();
+    }, 1000);
 
     const configuredCatalogFile = currentConfig?.data?.satellites_catalog_file || "catalog.json";
     const catalogUrl = configuredCatalogFile.startsWith("/")
@@ -1346,6 +2044,11 @@ function firstPersonSatellite(entity) {
     }
 
     initSatelliteReceiver(viewer);
+    
+    // Obtener los contenedores de los paneles de la sidebar izquierda
+    const satellitesPanelContent = document.getElementById("leftSatellitesPanelContent");
+    const infoPanelContent = document.getElementById("leftInfoPanelContent");
+    
     objectSidebar = setupObjectSidebar({
         getCatalogIds: () => getSatelliteIds(),
         fetchCatalogPage: (params) => fetchCatalogPage(params),
@@ -1355,6 +2058,8 @@ function firstPersonSatellite(entity) {
         onToggleObjectVisibility: (id, visible) => setSatelliteVisible(id, visible),
         getObjectLayerActive: (id) => isSatelliteLayerActive(id),
         onToggleObjectLayer: (id, active) => setSatelliteLayerActive(id, active),
+        getMaxActiveLayers: () => getMaxActiveSatellites(),
+        getAvailableLayerSlots: () => getAvailableActiveSatelliteLayerSlots(),
         onAddAllLayers: () => setAllSatelliteLayersActive(true),
         onRemoveAllLayers: () => setAllSatelliteLayersActive(false),
         onShowAllObjects: () => setAllSatellitesVisible(true),
@@ -1364,6 +2069,7 @@ function firstPersonSatellite(entity) {
             if (!entity) {
                 return;
             }
+            setCurrentSelectedSatellite(id);
             setSelectedOrbitSatelliteId(id);
             focusSatellite(entity);
         },
@@ -1372,6 +2078,7 @@ function firstPersonSatellite(entity) {
             if (!entity) {
                 return;
             }
+            setCurrentSelectedSatellite(id);
             setSelectedOrbitSatelliteId(id);
             viewer.selectedEntity = entity;
         },
@@ -1384,7 +2091,10 @@ function firstPersonSatellite(entity) {
         isCatalogReady: () => isCatalogLoaded(),
         getObjectTle: (id) => getSatelliteTle(id),
         getObjectTleAsync: (id) => getSatelliteTleAsync(id),
-        onRefreshCatalog: () => refreshSatelliteCatalog(catalogUrl)
+        onRefreshCatalog: () => refreshSatelliteCatalog(catalogUrl),
+        getUiText: () => uiText,
+        containerElement: satellitesPanelContent,
+        infoContainerElement: infoPanelContent
     });
 
     const resolvePickedSatelliteId = (picked) => {
@@ -1400,7 +2110,7 @@ function firstPersonSatellite(entity) {
             return null;
         }
 
-        const suffixes = ["-orbit", "-trail"];
+        const suffixes = ["-orbit", "-trail", "-ground-track", "-footprint"];
         for (const suffix of suffixes) {
             if (!rawId.endsWith(suffix)) {
                 continue;
@@ -1422,12 +2132,14 @@ function firstPersonSatellite(entity) {
             objectSidebar.selectObject(pickedId);
             const entity = getSatelliteEntity(pickedId);
             if (entity) {
+                setCurrentSelectedSatellite(pickedId);
                 setSelectedOrbitSatelliteId(pickedId);
                 viewer.selectedEntity = entity;
             }
             return;
         }
 
+        setCurrentSelectedSatellite(null);
         setSelectedOrbitSatelliteId(null);
         viewer.selectedEntity = undefined;
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
@@ -1446,6 +2158,7 @@ function firstPersonSatellite(entity) {
             return;
         }
 
+        setCurrentSelectedSatellite(pickedId);
         setSelectedOrbitSatelliteId(pickedId);
         viewer.selectedEntity = entity;
         firstPersonSatellite(entity);
@@ -1461,6 +2174,7 @@ function firstPersonSatellite(entity) {
         }
 
         objectSidebar.selectObject(pickedId);
+    setCurrentSelectedSatellite(pickedId);
         setSelectedOrbitSatelliteId(pickedId);
 
         const canvasRect = viewer.scene.canvas.getBoundingClientRect();
@@ -1488,6 +2202,7 @@ function firstPersonSatellite(entity) {
             }
 
             objectSidebar.selectObject(pickedId);
+            setCurrentSelectedSatellite(pickedId);
             setSelectedOrbitSatelliteId(pickedId);
             showSatelliteContextMenuAt(pickedId, event.clientX, event.clientY);
         });

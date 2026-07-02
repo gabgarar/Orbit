@@ -506,6 +506,8 @@ export function setupObjectSidebar({
     onToggleObjectVisibility,
     getObjectLayerActive,
     onToggleObjectLayer,
+    getMaxActiveLayers,
+    getAvailableLayerSlots,
     onRemoveAllLayers,
     onShowAllObjects,
     onHideAllObjects,
@@ -515,8 +517,18 @@ export function setupObjectSidebar({
     isCatalogReady,
     getObjectTle,
     getObjectTleAsync,
-    onRefreshCatalog
+    onRefreshCatalog,
+    getUiText,
+    containerElement = null,
+    infoContainerElement = null
 }) {
+    // getUiText es una función que devuelve el traductor actual: () => (key) => string
+    // Resolvemos el traductor en cada llamada para reaccionar a cambios de idioma.
+    const uiTextProvider = typeof getUiText === "function" ? getUiText : () => (key) => key;
+    const uiText = (key) => {
+        const translator = uiTextProvider();
+        return typeof translator === "function" ? translator(key) : key;
+    };
     let selectedId = null;
     let layerFilterText = "";
     let globalLayersVisible = true;
@@ -602,25 +614,45 @@ export function setupObjectSidebar({
 
     const catalogRowElements = new Map();
 
-    const sidebar = document.createElement("aside");
-    sidebar.id = "objectSidebar";
-    sidebar.innerHTML = `
-        <div class="object-sidebar-header" id="objectSidebarHeader" role="button" tabindex="0" aria-expanded="false">
-            <h3 class="object-sidebar-title">Objetos en simulacion</h3>
-            <div class="object-sidebar-header-actions">
-                <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">✕</button>
-                <button class="object-global-eye-btn" id="toggleAllVisibilityBtn" type="button" title="Ocultar todas las capas" aria-label="Ocultar todas las capas">👁</button>
-                <button class="object-add-btn" id="openCatalogBtn" type="button" title="Añadir desde catalogo" aria-label="Añadir desde catalogo">+</button>
-                <span class="object-sidebar-caret" aria-hidden="true">▾</span>
+    // Si se proporciona un contenedor, usar ese; si no, crear el aside legacy
+    const useContainer = Boolean(containerElement);
+    const useSeparateInfo = Boolean(infoContainerElement);
+    let sidebar;
+    
+    if (useContainer) {
+        sidebar = containerElement;
+        sidebar.innerHTML = `
+            <div class="object-sidebar-body-compact">
+                <div id="objectList"></div>
+                ${useSeparateInfo ? "" : `<div id="objectInfo">Selecciona un objeto para ver telemetria en tiempo real.</div>`}
             </div>
-        </div>
-        <div class="object-sidebar-body">
-            <input id="objectSearch" type="text" placeholder="Buscar capa activa..." />
-            <div id="objectList"></div>
-            <div id="objectInfo">Selecciona un objeto para ver telemetria en tiempo real.</div>
-        </div>
-    `;
-    document.body.appendChild(sidebar);
+        `;
+
+        // Renderizar la telemetría en un contenedor separado (otra pestaña)
+        if (useSeparateInfo) {
+            infoContainerElement.innerHTML = `<div id="objectInfo" class="object-info-standalone">Selecciona un objeto para ver telemetria en tiempo real.</div>`;
+        }
+    } else {
+        sidebar = document.createElement("aside");
+        sidebar.id = "objectSidebar";
+        sidebar.innerHTML = `
+            <div class="object-sidebar-header" id="objectSidebarHeader" role="button" tabindex="0" aria-expanded="false">
+                <h3 class="object-sidebar-title">Objetos en simulacion</h3>
+                <div class="object-sidebar-header-actions">
+                    <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">✕</button>
+                    <button class="object-global-eye-btn" id="toggleAllVisibilityBtn" type="button" title="Ocultar todas las capas" aria-label="Ocultar todas las capas">👁</button>
+                    <button class="object-add-btn" id="openCatalogBtn" type="button" title="Añadir desde catalogo" aria-label="Añadir desde catalogo">+</button>
+                    <button class="object-sidebar-toggle-btn" aria-hidden="true" title="Plegar panel">◂</button>
+                </div>
+            </div>
+            <div class="object-sidebar-body">
+                <input id="objectSearch" type="text" placeholder="Buscar capa activa..." />
+                <div id="objectList"></div>
+                <div id="objectInfo">Selecciona un objeto para ver telemetria en tiempo real.</div>
+            </div>
+        `;
+        document.body.appendChild(sidebar);
+    }
 
     const catalogModal = document.createElement("div");
     catalogModal.id = "catalogModal";
@@ -711,18 +743,18 @@ export function setupObjectSidebar({
     const contextMenu = document.createElement("div");
     contextMenu.id = "catalogContextMenu";
     contextMenu.innerHTML = `
-        <button class="catalog-context-action" id="contextExplainBtn" type="button">Explicar parametros orbitales (TLE)</button>
-        <button class="catalog-context-action" id="contextVizBtn" type="button">Opciones de visualizacion</button>
+        <button class="catalog-context-action" id="contextExplainBtn" type="button">${uiText("explainParams")}</button>
+        <button class="catalog-context-action" id="contextVizBtn" type="button">${uiText("vizOptions")}</button>
     `;
     document.body.appendChild(contextMenu);
 
     const tleInfoModal = document.createElement("div");
     tleInfoModal.id = "tleInfoModal";
     tleInfoModal.innerHTML = `
-        <div class="tle-info-panel" role="dialog" aria-modal="true" aria-label="Informacion satelite">
+        <div class="tle-info-panel" role="dialog" aria-modal="true" aria-label="${uiText("satInfoTitle")}">
             <div class="tle-info-header">
-                <h3>Informacion satelite</h3>
-                <button class="catalog-close-btn" id="tleInfoCloseBtn" type="button" aria-label="Cerrar" title="Cerrar">✕</button>
+                <h3>${uiText("satInfoTitle")}</h3>
+                <button class="catalog-close-btn" id="tleInfoCloseBtn" type="button" aria-label="${uiText("configClose")}"></button>
             </div>
             <div class="tle-info-content" id="tleInfoContent"></div>
         </div>
@@ -730,12 +762,14 @@ export function setupObjectSidebar({
     document.body.appendChild(tleInfoModal);
 
     const header = sidebar.querySelector("#objectSidebarHeader");
-    const removeAllLayersHeaderBtn = sidebar.querySelector("#removeAllLayersHeaderBtn");
-    const toggleAllVisibilityBtn = sidebar.querySelector("#toggleAllVisibilityBtn");
-    const openCatalogBtn = sidebar.querySelector("#openCatalogBtn");
-    const searchInput = sidebar.querySelector("#objectSearch");
+    const removeAllLayersHeaderBtn = sidebar.querySelector("#removeAllLayersHeaderBtn") || document.getElementById("removeAllLayersHeaderBtn");
+    const toggleAllVisibilityBtn = sidebar.querySelector("#toggleAllVisibilityBtn") || document.getElementById("toggleAllVisibilityBtn");
+    const openCatalogBtn = sidebar.querySelector("#openCatalogBtn") || document.getElementById("openCatalogBtn");
+    const searchInput = sidebar.querySelector("#objectSearch") || document.getElementById("objectSearch");
     const listRoot = sidebar.querySelector("#objectList");
-    const infoRoot = sidebar.querySelector("#objectInfo");
+    const infoRoot = useSeparateInfo
+        ? infoContainerElement.querySelector("#objectInfo")
+        : sidebar.querySelector("#objectInfo");
     const onInfoTogglePointerDown = (event) => {
         const toggleBtn = event.target?.closest?.("[data-info-toggle]");
         if (!toggleBtn || !infoRoot.contains(toggleBtn)) {
@@ -789,7 +823,7 @@ export function setupObjectSidebar({
     const tleInfoCloseBtn = tleInfoModal.querySelector("#tleInfoCloseBtn");
     const tleInfoContent = tleInfoModal.querySelector("#tleInfoContent");
 
-    function askConfirmation({ title, message, confirmText = "Aceptar", cancelText = "Cancelar" }) {
+    function askConfirmation({ title, message, confirmText, cancelText }) {
         return new Promise((resolve) => {
             const close = (result) => {
                 confirmModal.classList.remove("open");
@@ -809,8 +843,8 @@ export function setupObjectSidebar({
 
             confirmTitle.textContent = title;
             confirmMessage.textContent = message;
-            confirmAcceptBtn.textContent = confirmText;
-            confirmCancelBtn.textContent = cancelText;
+            confirmAcceptBtn.textContent = confirmText || uiText("confirmBtn");
+            confirmCancelBtn.textContent = cancelText || uiText("cancelBtn");
 
             confirmCancelBtn.addEventListener("click", onCancel);
             confirmAcceptBtn.addEventListener("click", onAccept);
@@ -821,16 +855,25 @@ export function setupObjectSidebar({
     }
 
     const openSidebar = () => {
-        sidebar.classList.add("open");
-        header.setAttribute("aria-expanded", "true");
+        if (!useContainer) {
+            sidebar.classList.add("open");
+            if (header) {
+                header.setAttribute("aria-expanded", "true");
+            }
+        }
     };
 
     const closeSidebar = () => {
-        sidebar.classList.remove("open");
-        header.setAttribute("aria-expanded", "false");
+        if (!useContainer) {
+            sidebar.classList.remove("open");
+            if (header) {
+                header.setAttribute("aria-expanded", "false");
+            }
+        }
     };
 
     const toggleSidebar = () => {
+        if (useContainer) return;
         if (sidebar.classList.contains("open")) {
             closeSidebar();
         } else {
@@ -996,6 +1039,21 @@ export function setupObjectSidebar({
         showToast(message, "info", 3800);
     }
 
+    function getLayerCapacity() {
+        const maxLayers = Number(getMaxActiveLayers?.());
+        const safeMaxLayers = Number.isFinite(maxLayers) && maxLayers > 0
+            ? Math.floor(maxLayers)
+            : 100;
+        const availableSlots = Number(getAvailableLayerSlots?.());
+        const safeAvailableSlots = Number.isFinite(availableSlots) && availableSlots >= 0
+            ? Math.floor(availableSlots)
+            : Math.max(0, safeMaxLayers - (Array.isArray(getLayerIds?.()) ? getLayerIds().length : 0));
+        return {
+            maxLayers: safeMaxLayers,
+            availableSlots: safeAvailableSlots
+        };
+    }
+
     function stopCatalogRefreshProgressTimer() {
         if (catalogRefreshTimer) {
             clearInterval(catalogRefreshTimer);
@@ -1019,10 +1077,10 @@ export function setupObjectSidebar({
         }
 
         const ok = await askConfirmation({
-            title: "Actualizar Catalogo",
-            message: "Se descargaran TLEs de CelesTrak y se sobrescribira el catalogo local. Quieres continuar?",
-            confirmText: "Actualizar",
-            cancelText: "Cancelar"
+            title: uiText("updateCatalog"),
+            message: uiText("updateCatalogMsg"),
+            confirmText: uiText("updateBtn"),
+            cancelText: uiText("cancelBtn")
         });
 
         if (!ok) {
@@ -1030,14 +1088,13 @@ export function setupObjectSidebar({
         }
 
         catalogRefreshBusy = true;
-        // ocultar el selector de búsqueda mientras dura la actualización y mostrar la barra
         if (catalogSearchInput) catalogSearchInput.hidden = true;
-        setCatalogBusyState(true, "Actualizando catalogo...");
+        setCatalogBusyState(true, uiText("updatingCatalog"));
 
         let progress = 4;
         setCatalogRefreshState({
             visible: true,
-            text: "Descargando TLEs desde CelesTrak...",
+            text: uiText("downloadingTles"),
             value: progress
         });
 
@@ -1186,13 +1243,16 @@ export function setupObjectSidebar({
         openCatalogModal();
     }
 
-    header.addEventListener("click", toggleSidebar);
-    header.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            toggleSidebar();
-        }
-    });
+    // Event listeners para el header (solo en modo legacy)
+    if (header) {
+        header.addEventListener("click", toggleSidebar);
+        header.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                toggleSidebar();
+            }
+        });
+    }
 
     openCatalogBtn.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -1208,10 +1268,10 @@ export function setupObjectSidebar({
         }
 
         const ok = await askConfirmation({
-            title: "Quitar Todas Las Capas",
-            message: `Se quitaran ${total} capas activas. Esta accion no se puede deshacer.`,
-            confirmText: "Quitar todo",
-            cancelText: "Cancelar"
+            title: uiText("removeAllLayers"),
+            message: uiText("removeAllLayersMsg").replace("{total}", total),
+            confirmText: uiText("removeAllBtn"),
+            cancelText: uiText("cancelBtn")
         });
 
         if (!ok) {
@@ -1364,25 +1424,36 @@ export function setupObjectSidebar({
             return;
         }
 
+        const { maxLayers, availableSlots } = getLayerCapacity();
+        if (availableSlots <= 0) {
+            showErrorPopup(`Has alcanzado el limite de ${maxLayers} capas activas. Quita alguna capa antes de anadir mas.`);
+            return;
+        }
+
+        const idsToAdd = ids.slice(0, availableSlots);
+        const skippedCount = Math.max(0, ids.length - idsToAdd.length);
+
         const ok = await askConfirmation({
-            title: "Confirmar Inclusion",
-            message: `Se incluiran ${ids.length} elementos que aun no estan en capas activas.`,
-            confirmText: "Incluir",
-            cancelText: "Cancelar"
+            title: uiText("confirmInclusion"),
+            message: skippedCount > 0
+                ? uiText("includeElementsMsg").replace("{count}", idsToAdd.length).replace("{skipped}", skippedCount).replace("{maxLayers}", maxLayers)
+                : uiText("includeElementsMsgNoSkip").replace("{count}", idsToAdd.length),
+            confirmText: uiText("includeBtn"),
+            cancelText: uiText("cancelBtn")
         });
 
         if (!ok) {
             return;
         }
 
-        setCatalogBusyState(true, `Anadiendo capas... 0/${ids.length}`);
+        setCatalogBusyState(true, `${uiText("addingLayers")} 0/${idsToAdd.length}`);
 
         processInChunks(
-            ids,
+            idsToAdd,
             (id) => onToggleObjectLayer(id, true),
-            (done, total) => setCatalogBusyState(true, `Anadiendo capas... ${done}/${total}`)
+            (done, total) => setCatalogBusyState(true, `${uiText("addingLayers")} ${done}/${total}`)
         ).then(() => {
-            selectedId = ids[0];
+            selectedId = idsToAdd[0];
             onSelectObject?.(selectedId);
             selectedCatalogIds.clear();
             catalogAnchorIndex = null;
@@ -1393,6 +1464,9 @@ export function setupObjectSidebar({
             renderInfo();
             renderCatalogList();
             closeCatalogModal();
+            if (skippedCount > 0) {
+                showInfoPopup(uiText("layersAdded").replace("{count}", idsToAdd.length).replace("{skipped}", skippedCount).replace("{maxLayers}", maxLayers));
+            }
         });
     });
 
@@ -1631,6 +1705,21 @@ export function setupObjectSidebar({
 
             listRoot.appendChild(rowEl);
         }
+
+        // Última fila: acción "+" con aspecto de satélite que abre el catálogo.
+        const addRow = document.createElement("div");
+        addRow.className = "object-list-row object-list-row-add";
+        const addItem = document.createElement("button");
+        addItem.type = "button";
+        addItem.className = "object-list-item object-list-add-item";
+        addItem.title = "Añadir satélite desde el catálogo";
+        addItem.setAttribute("aria-label", "Añadir satélite desde el catálogo");
+        addItem.innerHTML = `<span class="object-list-add-plus">+</span><span>Añadir satélite</span>`;
+        addItem.addEventListener("click", () => {
+            waitAndOpenCatalog();
+        });
+        addRow.appendChild(addItem);
+        listRoot.appendChild(addRow);
 
         if (selectedId && !ids.includes(selectedId)) {
             selectedId = null;

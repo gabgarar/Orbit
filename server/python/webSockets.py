@@ -1,8 +1,7 @@
-# webSockets.py
-import asyncio
-import json
-import zlib
-import websockets
+# DEPRECATED — sustituido por FastAPI WebSocket en server.py
+# Este archivo ya no se importa ni se usa.
+# Se mantiene como referencia histórica.
+
 
 class WebSocketServer:
 

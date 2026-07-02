@@ -1,4 +1,5 @@
 watchdog
-websockets
 sgp4
 Pillow
+fastapi
+uvicorn[standard]
