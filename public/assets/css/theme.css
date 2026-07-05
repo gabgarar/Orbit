@@ -213,6 +213,20 @@
     max-width: 40vw;
 }
 
+#topToolbar .toolbar-time-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    min-width: calc(260px * var(--orbit-ui-scale));
+}
+
+#topToolbar .toolbar-subinfo {
+    font: 500 calc(10px * var(--orbit-ui-scale))/1 sans-serif;
+    color: var(--orbit-text-muted);
+    padding: 0 calc(8px * var(--orbit-ui-scale));
+}
+
 #topToolbar .toolbar-search-icon {
     position: absolute;
     left: calc(10px * var(--orbit-ui-scale));
@@ -242,6 +256,230 @@
     outline: none;
     border-color: var(--orbit-text-accent);
     background: var(--orbit-bg-hover);
+}
+
+#topSearchSuggestions {
+    position: absolute;
+    top: calc(30px * var(--orbit-ui-scale));
+    left: 0;
+    right: 0;
+    display: none;
+    max-height: 40vh;
+    overflow-y: auto;
+    border: 1px solid var(--orbit-border-secondary);
+    border-radius: 8px;
+    background: var(--orbit-bg-modal);
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
+    z-index: 10120;
+}
+
+#topSearchSuggestions.open {
+    display: grid;
+    grid-auto-rows: minmax(30px, auto);
+}
+
+#topSearchSuggestions .toolbar-search-option,
+#topSearchSuggestions .toolbar-search-empty {
+    border: 0;
+    border-bottom: 1px solid var(--orbit-border-primary);
+    background: transparent;
+    color: var(--orbit-text-primary);
+    text-align: left;
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font: 600 12px/1.25 sans-serif;
+}
+
+#topSearchSuggestions .toolbar-search-empty {
+    justify-content: center;
+    color: var(--orbit-text-tertiary);
+}
+
+#topSearchSuggestions .toolbar-search-option {
+    cursor: pointer;
+}
+
+#topSearchSuggestions .toolbar-search-option:hover,
+#topSearchSuggestions .toolbar-search-option.active {
+    background: var(--orbit-bg-hover);
+}
+
+#topSearchSuggestions .toolbar-search-option-name {
+    color: var(--orbit-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#topSearchSuggestions .toolbar-search-option-meta {
+    color: var(--orbit-text-tertiary);
+    font-weight: 500;
+    font-size: 11px;
+}
+
+#simulationControlDock {
+    position: fixed;
+    left: 62px;
+    right: calc(14px * var(--orbit-ui-scale));
+    bottom: calc(14px * var(--orbit-ui-scale));
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--orbit-bg-toolbar) 92%, transparent);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
+    padding: 10px 12px;
+    z-index: 10075;
+    backdrop-filter: blur(6px);
+    display: grid;
+    gap: 8px;
+    transform-origin: left bottom;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+#simulationControlDock.collapsed {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(12px) scale(0.98);
+}
+
+#simulationControlDock.open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+}
+
+#simulationControlDock .sim-controls-row,
+#simulationControlDock .sim-timeline-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+#simulationControlDock button,
+#simulationControlDock input[type="datetime-local"] {
+    height: 30px;
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 8px;
+    background: var(--orbit-bg-tertiary);
+    color: var(--orbit-text-primary);
+    padding: 0 10px;
+    font: 600 11px/1 sans-serif;
+}
+
+#simulationControlDock button {
+    cursor: pointer;
+}
+
+#simulationControlDock button:hover {
+    background: var(--orbit-bg-hover);
+}
+
+#simulationControlDock button.active {
+    border-color: var(--orbit-border-focus);
+    background: var(--orbit-bg-active);
+    color: var(--orbit-text-accent);
+}
+
+#simulationControlDock .sim-mode-group,
+#simulationControlDock .sim-actions-group,
+#simulationControlDock .sim-speed-group,
+#simulationControlDock .sim-range-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+#simulationControlDock .sim-domain-indicator {
+    display: inline-flex;
+    align-items: center;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--orbit-bg-tertiary) 88%, transparent);
+    color: var(--orbit-text-tertiary);
+    font: 700 11px/1 sans-serif;
+    letter-spacing: 0.2px;
+}
+
+#simulationControlDock .sim-domain-indicator.is-oem {
+    border-color: color-mix(in srgb, #ffb36b 70%, var(--orbit-border-focus));
+    color: #ffd4a8;
+    background: color-mix(in srgb, #6a3a12 26%, var(--orbit-bg-tertiary));
+}
+
+#simulationControlDock .sim-actions-group {
+    margin-inline: auto;
+}
+
+#simulationControlDock .sim-icon-btn {
+    width: 32px;
+    min-width: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+#simulationControlDock [hidden] {
+    display: none !important;
+}
+
+#simulationControlDock[data-mode="realtime"] .sim-range-group,
+#simulationControlDock[data-mode="realtime"] .sim-actions-group,
+#simulationControlDock[data-mode="realtime"] .sim-timeline-row {
+    display: none;
+}
+
+#simulationControlDock .sim-range-group label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--orbit-text-tertiary);
+    font: 600 11px/1 sans-serif;
+}
+
+#simulationControlDock #simTimeline {
+    flex: 1;
+    min-width: 240px;
+    accent-color: var(--orbit-text-accent);
+}
+
+#simulationControlDock .sim-timeline-info {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--orbit-text-tertiary);
+    font: 600 11px/1.2 sans-serif;
+}
+
+@media (max-width: 1200px) {
+    #topToolbar .toolbar-time-wrap {
+        min-width: calc(180px * var(--orbit-ui-scale));
+    }
+
+    #simulationControlDock {
+        left: 54px;
+        right: calc(10px * var(--orbit-ui-scale));
+        padding: 8px;
+    }
+
+    #simulationControlDock .sim-range-group {
+        width: 100%;
+    }
+
+    #simulationControlDock .sim-range-group label {
+        flex: 1;
+    }
+
+    #simulationControlDock input[type="datetime-local"] {
+        width: 100%;
+        min-width: 130px;
+    }
 }
 
 @keyframes pulse-recording {

@@ -8,6 +8,7 @@ import {
     isCatalogLoaded,
     getSatelliteTle,
     getSatelliteTleAsync,
+    getCatalogEntryMeta,
     getActiveSatelliteLayerIds,
     getSatelliteEntity,
     getSatelliteTelemetry,
@@ -24,7 +25,11 @@ import {
     getSatelliteVisualizationConfig,
     setSatelliteVisualizationConfig,
     clearSatelliteVisualizationConfig,
-    clearAllSatelliteVisualizationConfigs
+    clearAllSatelliteVisualizationConfigs,
+    setSimulationTimelineProvider,
+    importOemEphemerisTrack,
+    hasLoadedOemEphemerisTracks,
+    getLoadedOemEphemerisTimeBounds
 } from "./js/satellites.js";
 import { setupRuntimeConfigPanel } from "./js/configPanel.js";
 import { setupObjectSidebar } from "./js/objectSidebar.js";
@@ -94,6 +99,25 @@ async function persistSystemConfigWithRetry(sectionedSystemConfig, dataConfig, r
 
 logger.info("Creando SingleTileImageryProvider para assets/earth3km.jpg...");
 
+const initialBootConfig = await loadConfig();
+const offlineModeEnabledAtBoot = initialBootConfig?.data?.offline_mode === true;
+
+async function resolveTerrainProviderForBoot() {
+    if (offlineModeEnabledAtBoot) {
+        logger.warn("Modo offline activo: usando terreno elipsoidal local.");
+        return new Cesium.EllipsoidTerrainProvider();
+    }
+
+    try {
+        return await Cesium.createWorldTerrainAsync();
+    } catch (error) {
+        logger.warn("No se pudo cargar Cesium World Terrain. Se usa terreno elipsoidal local.", error);
+        return new Cesium.EllipsoidTerrainProvider();
+    }
+}
+
+const startupTerrainProvider = await resolveTerrainProviderForBoot();
+
 const localProvider = new Cesium.SingleTileImageryProvider({
     url: "assets/earth3km.jpg",
     rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90)
@@ -126,7 +150,7 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
     sceneModePicker: true,
     fullscreenButton: false,
     homeButton: true,
-    terrainProvider: await Cesium.createWorldTerrainAsync(),
+    terrainProvider: startupTerrainProvider,
     contextOptions: {
         webgl: {
             antialias: true,
@@ -161,7 +185,7 @@ let runtimeSystemConfig = null;
 let lastAppliedResolutionScale = null;
 let lastAppliedUiScale = null;
 let resizeAnimationFrameId = null;
-let currentRuntimeDataConfig = { satellites_catalog_file: "catalog.json" };
+let currentRuntimeDataConfig = { satellites_catalog_file: "catalog.json", offline_mode: false };
 let persistConfigTimeoutId = null;
 let lastPersistedSystemConfigSerialized = "";
 let runtimeConfigPanelApi = null;
@@ -199,6 +223,36 @@ let currentUiLanguage = "es";
 let currentUiTheme = "dark";
 let presentationModeActive = false;
 let updatePersistedSystemConfig = null;
+let topSearchSuggestionsRoot = null;
+let topSearchSuggestions = [];
+let topSearchSelectedIndex = -1;
+let topSearchDebounceId = null;
+let topSearchRequestToken = 0;
+let topSearchLastQuery = "";
+const topSearchCache = new Map();
+const tleEpochCacheBySatelliteId = new Map();
+let simulationControlRoot = null;
+let simulationTickTimer = null;
+let simulationUiBusy = false;
+let simulationDockOpen = false;
+let simulationLayoutObserver = null;
+let topSearchInitialized = false;
+
+const SIMULATION_MODE_REALTIME = "realtime";
+const SIMULATION_MODE_RANGE = "range";
+const SIMULATION_SPEED_VALUES = [1, 10, 100, 1000];
+const SIMULATION_TIMELINE_STEPS = 10000;
+
+const simulationState = {
+    mode: SIMULATION_MODE_REALTIME,
+    isPlaying: true,
+    speed: 1,
+    rewind: false,
+    startDate: new Date(Date.now() - 60 * 60 * 1000),
+    endDate: new Date(Date.now() + 60 * 60 * 1000),
+    currentDate: new Date(),
+    lastTickTimestamp: Date.now()
+};
 
 const UI_TEXT = {
     es: {
@@ -258,7 +312,7 @@ const UI_TEXT = {
         noDesc: "Sin descripcion disponible.",
         satResetBtn: "Resetear satelite",
         applyBtn: "Aplicar",
-        explainParams: "Explicar parametros orbitales (TLE)",
+        explainParams: "Explicar parametros orbitales",
         satInfoTitle: "Informacion satelite",
         confirmBtn: "Aceptar",
         cancelBtn: "Cancelar",
@@ -303,7 +357,24 @@ const UI_TEXT = {
         closeCatalogLabel: "Cerrar catalogo",
         closeFiltersLabel: "Cerrar filtros",
         removeLayerLabel: "Quitar capa",
-        noResultsLabel: "Sin resultados"
+        noResultsLabel: "Sin resultados",
+        globalSearchPlaceholder: "Buscar satélite por nombre o NORAD...",
+        globalSearchNoResults: "Sin coincidencias",
+        globalSearchAddHint: "Pulsa Enter para seleccionar",
+        simRealtime: "Tiempo real",
+        simRange: "Rango",
+        simHistorical: "Histórico",
+        simPlay: "Play",
+        simPause: "Pausa",
+        simRewind: "Rewind",
+        simUseTleEpoch: "Usar epoch TLE",
+        simStart: "Inicio",
+        simEnd: "Fin",
+        simCurrent: "Actual",
+        simApplyRange: "Aplicar",
+        epochDelta: "Delta epoch",
+        simPanelToggle: "Panel temporal",
+        simDomainLabel: "Dominio temporal"
     },
     en: {
         toolbarToggle: "Quick tools",
@@ -362,7 +433,7 @@ const UI_TEXT = {
         noDesc: "No description available.",
         satResetBtn: "Reset satellite",
         applyBtn: "Apply",
-        explainParams: "Explain orbital parameters (TLE)",
+        explainParams: "Explain orbital parameters",
         satInfoTitle: "Satellite information",
         confirmBtn: "Accept",
         cancelBtn: "Cancel",
@@ -407,7 +478,24 @@ const UI_TEXT = {
         closeCatalogLabel: "Close catalog",
         closeFiltersLabel: "Close filters",
         removeLayerLabel: "Remove layer",
-        noResultsLabel: "No results"
+        noResultsLabel: "No results",
+        globalSearchPlaceholder: "Search satellite by name or NORAD...",
+        globalSearchNoResults: "No matches",
+        globalSearchAddHint: "Press Enter to select",
+        simRealtime: "Realtime",
+        simRange: "Range",
+        simHistorical: "Historical",
+        simPlay: "Play",
+        simPause: "Pause",
+        simRewind: "Rewind",
+        simUseTleEpoch: "Use TLE epoch",
+        simStart: "Start",
+        simEnd: "End",
+        simCurrent: "Current",
+        simApplyRange: "Apply",
+        epochDelta: "Epoch delta",
+        simPanelToggle: "Time panel",
+        simDomainLabel: "Time domain"
     }
 };
 
@@ -573,6 +661,819 @@ function formatTimeHudDate(dateValue) {
     return `${dd}/${mmDate}/${yyyy} ${hh}:${mmTime}:${ss}`;
 }
 
+function formatDateTimeLocalInput(dateValue) {
+    const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+        return "";
+    }
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    const hh = String(date.getHours()).padStart(2, "0");
+    const min = String(date.getMinutes()).padStart(2, "0");
+    const ss = String(date.getSeconds()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}`;
+}
+
+function parseDateTimeLocalInput(rawValue) {
+    const parsed = new Date(String(rawValue || "").trim());
+    if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) {
+        return null;
+    }
+    return parsed;
+}
+
+function parseTleEpochDate(line1) {
+    const raw = String(line1 || "");
+    if (raw.length < 32) {
+        return null;
+    }
+
+    const yy = Number.parseInt(raw.slice(18, 20), 10);
+    const dayOfYear = Number.parseFloat(raw.slice(20, 32));
+    if (!Number.isFinite(yy) || !Number.isFinite(dayOfYear) || dayOfYear <= 0) {
+        return null;
+    }
+
+    const year = yy < 57 ? 2000 + yy : 1900 + yy;
+    const yearStartUtcMs = Date.UTC(year, 0, 1, 0, 0, 0, 0);
+    const epochMs = yearStartUtcMs + (dayOfYear - 1) * 24 * 60 * 60 * 1000;
+    const epochDate = new Date(epochMs);
+    return Number.isNaN(epochDate.getTime()) ? null : epochDate;
+}
+
+function formatDurationCompact(msDiff) {
+    if (!Number.isFinite(msDiff)) {
+        return "--";
+    }
+    const sign = msDiff >= 0 ? "+" : "-";
+    const totalSeconds = Math.floor(Math.abs(msDiff) / 1000);
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (days > 0) {
+        return `${sign}${days}d ${hours}h`;
+    }
+    if (hours > 0) {
+        return `${sign}${hours}h ${minutes}m`;
+    }
+    if (minutes > 0) {
+        return `${sign}${minutes}m ${seconds}s`;
+    }
+    return `${sign}${seconds}s`;
+}
+
+function getSimulationModeLabel() {
+    if (simulationState.mode === SIMULATION_MODE_RANGE) {
+        return uiText("simRange");
+    }
+    return uiText("simRealtime");
+}
+
+function openLeftSatellitesPanel() {
+    const satellitesPanel = document.getElementById("leftSatellitesPanel");
+    const satellitesBtn = document.getElementById("leftSatellitesBtn");
+    const infoPanel = document.getElementById("leftInfoPanel");
+    const infoBtn = document.getElementById("leftInfoBtn");
+
+    if (satellitesPanel) {
+        satellitesPanel.classList.add("open");
+    }
+    if (satellitesBtn) {
+        satellitesBtn.classList.add("active");
+    }
+    if (infoPanel) {
+        infoPanel.classList.remove("open");
+    }
+    if (infoBtn) {
+        infoBtn.classList.remove("active");
+    }
+}
+
+function getDisplayedSimulationDate() {
+    if (simulationState.mode === SIMULATION_MODE_REALTIME) {
+        return new Date();
+    }
+    const date = simulationState.currentDate instanceof Date ? simulationState.currentDate : new Date(simulationState.currentDate);
+    return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function getTimelineRatioByDate(dateValue) {
+    const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+    const startMs = simulationState.startDate.getTime();
+    const endMs = simulationState.endDate.getTime();
+    const span = Math.max(1000, endMs - startMs);
+    return clamp((date.getTime() - startMs) / span, 0, 1);
+}
+
+function getDateFromTimelineRatio(ratio) {
+    const clamped = clamp(Number(ratio) || 0, 0, 1);
+    const startMs = simulationState.startDate.getTime();
+    const endMs = simulationState.endDate.getTime();
+    const span = Math.max(1000, endMs - startMs);
+    return new Date(startMs + span * clamped);
+}
+
+function applySimulationDateToViewer(date) {
+    if (!viewer?.clock || !(date instanceof Date) || Number.isNaN(date.getTime())) {
+        return;
+    }
+    viewer.clock.currentTime = Cesium.JulianDate.fromDate(date);
+}
+
+async function resolveSatelliteEpochDate(satelliteId) {
+    const satId = String(satelliteId || "").trim();
+    if (!satId) {
+        return null;
+    }
+    if (tleEpochCacheBySatelliteId.has(satId)) {
+        return tleEpochCacheBySatelliteId.get(satId);
+    }
+
+    const tle = getSatelliteTle(satId) || await getSatelliteTleAsync(satId);
+    const epochDate = parseTleEpochDate(tle?.line1);
+    tleEpochCacheBySatelliteId.set(satId, epochDate);
+    return epochDate;
+}
+
+async function updateSelectedEpochInfo() {
+    const infoEl = document.getElementById("topEpochInfo");
+    if (!infoEl) {
+        return;
+    }
+
+    if (!selectedSatelliteId) {
+        infoEl.textContent = `${uiText("epochDelta")}: ${uiText("noRefLabel")}`;
+        return;
+    }
+
+    const epochDate = await resolveSatelliteEpochDate(selectedSatelliteId);
+    if (!epochDate) {
+        infoEl.textContent = `${uiText("epochDelta")}: ${uiText("unknownLabel")}`;
+        return;
+    }
+
+    const current = getDisplayedSimulationDate();
+    infoEl.textContent = `${uiText("epochDelta")}: ${formatDurationCompact(current.getTime() - epochDate.getTime())}`;
+}
+
+function getNoradIdFromCatalogItem(item) {
+    const direct = String(item?.noradId || "").trim();
+    if (direct) {
+        return direct;
+    }
+    const fallback = String(item?.line1 || "").slice(2, 7).trim();
+    return /^\d+$/.test(fallback) ? fallback : "";
+}
+
+function closeTopSearchSuggestions() {
+    if (!topSearchSuggestionsRoot) {
+        return;
+    }
+    topSearchSuggestionsRoot.classList.remove("open");
+    topSearchSelectedIndex = -1;
+}
+
+function renderTopSearchSuggestions() {
+    if (!topSearchSuggestionsRoot) {
+        return;
+    }
+
+    const items = topSearchSuggestions.slice(0, 12);
+    topSearchSuggestionsRoot.innerHTML = "";
+
+    if (!items.length) {
+        const empty = document.createElement("div");
+        empty.className = "toolbar-search-empty";
+        empty.textContent = uiText("globalSearchNoResults");
+        topSearchSuggestionsRoot.appendChild(empty);
+        topSearchSuggestionsRoot.classList.add("open");
+        return;
+    }
+
+    items.forEach((item, index) => {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = `toolbar-search-option${index === topSearchSelectedIndex ? " active" : ""}`;
+        const noradId = getNoradIdFromCatalogItem(item);
+        option.innerHTML = `
+            <span class="toolbar-search-option-name">${item.name}</span>
+            <span class="toolbar-search-option-meta">${noradId ? `NORAD ${noradId}` : uiText("globalSearchAddHint")}</span>
+        `;
+        option.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+        });
+        option.addEventListener("click", () => {
+            selectSatelliteFromGlobalSearch(item);
+        });
+        topSearchSuggestionsRoot.appendChild(option);
+    });
+
+    topSearchSuggestionsRoot.classList.add("open");
+}
+
+async function fetchTopSearchSuggestions(query) {
+    const normalized = String(query || "").trim().toLowerCase();
+    if (!normalized) {
+        return [];
+    }
+
+    const cacheKey = normalized;
+    if (topSearchCache.has(cacheKey)) {
+        return topSearchCache.get(cacheKey);
+    }
+
+    const params = new URLSearchParams({ offset: "0", limit: "15", search: normalized });
+    const response = await fetch(`/api/catalog/page?${params.toString()}`, { cache: "no-cache" });
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    const normalizedItems = items
+        .map((item) => ({
+            name: String(item?.name || "").trim(),
+            line1: String(item?.line1 || "").trim(),
+            line2: String(item?.line2 || "").trim(),
+            noradId: String(item?.noradId || "").trim()
+        }))
+        .filter((item) => item.name);
+
+    topSearchCache.set(cacheKey, normalizedItems);
+    return normalizedItems;
+}
+
+function activateSatelliteSelection(satelliteId, focus = true) {
+    const satId = String(satelliteId || "").trim();
+    if (!satId) {
+        return;
+    }
+
+    objectSidebar?.selectObject?.(satId);
+    setCurrentSelectedSatellite(satId);
+    setSelectedOrbitSatelliteId(satId);
+
+    const tryFocus = (attempt = 0) => {
+        const entity = getSatelliteEntity(satId);
+        if (entity) {
+            viewer.selectedEntity = entity;
+            if (focus) {
+                focusSatellite(entity);
+            }
+            return;
+        }
+        if (attempt >= 30) {
+            return;
+        }
+        setTimeout(() => tryFocus(attempt + 1), 120);
+    };
+
+    tryFocus();
+}
+
+async function selectSatelliteFromGlobalSearch(item) {
+    const satId = String(item?.name || "").trim();
+    if (!satId) {
+        return;
+    }
+
+    const searchInput = document.getElementById("objectSearch");
+    if (searchInput) {
+        searchInput.value = "";
+    }
+    closeTopSearchSuggestions();
+
+    const alreadyActive = isSatelliteLayerActive(satId);
+    if (!alreadyActive) {
+        const added = setSatelliteLayerActive(satId, true);
+        if (!added) {
+            await showAppAlert(`No hay hueco para activar la capa de ${satId}.`, uiText("alertTitle"));
+            return;
+        }
+    }
+
+    openLeftSatellitesPanel();
+    activateSatelliteSelection(satId, true);
+}
+
+function setupTopSearchAutocomplete() {
+    const searchInput = document.getElementById("objectSearch");
+    const searchWrap = document.querySelector("#topToolbar .toolbar-search-wrap");
+    if (!searchInput || !searchWrap) {
+        return;
+    }
+
+    searchInput.placeholder = uiText("globalSearchPlaceholder");
+    searchInput.dataset.globalSearchMode = "true";
+
+    if (topSearchInitialized) {
+        return;
+    }
+
+    if (!topSearchSuggestionsRoot) {
+        topSearchSuggestionsRoot = document.getElementById("topSearchSuggestions");
+    }
+    if (!topSearchSuggestionsRoot) {
+        topSearchSuggestionsRoot = document.createElement("div");
+        topSearchSuggestionsRoot.id = "topSearchSuggestions";
+        searchWrap.appendChild(topSearchSuggestionsRoot);
+    }
+
+    const runSearch = async (rawQuery) => {
+        const query = String(rawQuery || "").trim();
+        topSearchLastQuery = query;
+        if (!query) {
+            topSearchSuggestions = [];
+            closeTopSearchSuggestions();
+            return;
+        }
+
+        const token = ++topSearchRequestToken;
+        try {
+            const items = await fetchTopSearchSuggestions(query);
+            if (token !== topSearchRequestToken) {
+                return;
+            }
+            topSearchSuggestions = items;
+            topSearchSelectedIndex = items.length ? 0 : -1;
+            renderTopSearchSuggestions();
+        } catch (error) {
+            logger.warn("Busqueda global: error cargando sugerencias", error);
+            topSearchSuggestions = [];
+            topSearchSelectedIndex = -1;
+            renderTopSearchSuggestions();
+        }
+    };
+
+    searchInput.addEventListener("input", () => {
+        if (topSearchDebounceId) {
+            clearTimeout(topSearchDebounceId);
+        }
+        topSearchDebounceId = setTimeout(() => {
+            runSearch(searchInput.value);
+        }, 120);
+    });
+
+    searchInput.addEventListener("focus", () => {
+        if (searchInput.value.trim()) {
+            runSearch(searchInput.value);
+        }
+    });
+
+    searchInput.addEventListener("keydown", (event) => {
+        if (!topSearchSuggestions.length) {
+            if (event.key === "Enter") {
+                const raw = String(searchInput.value || "").trim();
+                if (raw) {
+                    selectSatelliteFromGlobalSearch({ name: raw });
+                }
+            }
+            return;
+        }
+
+        if (event.key === "ArrowDown") {
+            event.preventDefault();
+            topSearchSelectedIndex = (topSearchSelectedIndex + 1) % topSearchSuggestions.length;
+            renderTopSearchSuggestions();
+            return;
+        }
+
+        if (event.key === "ArrowUp") {
+            event.preventDefault();
+            topSearchSelectedIndex = (topSearchSelectedIndex - 1 + topSearchSuggestions.length) % topSearchSuggestions.length;
+            renderTopSearchSuggestions();
+            return;
+        }
+
+        if (event.key === "Enter") {
+            event.preventDefault();
+            const selected = topSearchSuggestions[topSearchSelectedIndex] || topSearchSuggestions[0];
+            if (selected) {
+                selectSatelliteFromGlobalSearch(selected);
+            }
+            return;
+        }
+
+        if (event.key === "Escape") {
+            closeTopSearchSuggestions();
+        }
+    });
+
+    document.addEventListener("click", (event) => {
+        if (!searchWrap.contains(event.target)) {
+            closeTopSearchSuggestions();
+        }
+    });
+
+    topSearchInitialized = true;
+}
+
+function updateSimulationTimelineUi() {
+    const root = simulationControlRoot;
+    if (!root) {
+        return;
+    }
+
+    const timeline = root.querySelector("#simTimeline");
+    const currentInfo = root.querySelector("#simCurrentInfo");
+    const modeInfo = root.querySelector("#simModeInfo");
+    const speedInfo = root.querySelector("#simSpeedInfo");
+    if (timeline) {
+        const ratio = getTimelineRatioByDate(getDisplayedSimulationDate());
+        timeline.value = String(Math.floor(ratio * SIMULATION_TIMELINE_STEPS));
+    }
+    if (currentInfo) {
+        currentInfo.textContent = `${uiText("simCurrent")}: ${formatTimeHudDate(getDisplayedSimulationDate())}`;
+    }
+    if (modeInfo) {
+        modeInfo.textContent = getSimulationModeLabel();
+    }
+    if (speedInfo) {
+        speedInfo.textContent = simulationState.mode === SIMULATION_MODE_REALTIME
+            ? ""
+            : `x${simulationState.speed}`;
+    }
+}
+
+function updateSimulationDockLayout() {
+    if (!simulationControlRoot) {
+        return;
+    }
+
+    const satPanelOpen = document.getElementById("leftSatellitesPanel")?.classList.contains("open");
+    const infoPanelOpen = document.getElementById("leftInfoPanel")?.classList.contains("open");
+    const panelOpen = satPanelOpen || infoPanelOpen;
+    const leftOffset = panelOpen ? 390 : 62;
+
+    simulationControlRoot.style.left = `${leftOffset}px`;
+}
+
+function setSimulationDockOpen(open) {
+    simulationDockOpen = Boolean(open);
+    if (!simulationControlRoot) {
+        return;
+    }
+
+    simulationControlRoot.classList.toggle("open", simulationDockOpen);
+    simulationControlRoot.classList.toggle("collapsed", !simulationDockOpen);
+    updateSimulationDockLayout();
+}
+
+function toggleSimulationDock() {
+    setSimulationDockOpen(!simulationDockOpen);
+    updateTopToolbarState();
+}
+
+function refreshSimulationControlsUi() {
+    const root = simulationControlRoot;
+    if (!root || simulationUiBusy) {
+        return;
+    }
+
+    simulationUiBusy = true;
+    root.classList.toggle("open", simulationDockOpen);
+    root.classList.toggle("collapsed", !simulationDockOpen);
+
+    const startInput = root.querySelector("#simStartInput");
+    const endInput = root.querySelector("#simEndInput");
+    const playBtn = root.querySelector("#simPlayPauseBtn");
+    const stopBtn = root.querySelector("#simStopBtn");
+    const restartBtn = root.querySelector("#simRestartBtn");
+    const modeButtons = root.querySelectorAll(".sim-mode-btn");
+    const speedButtons = root.querySelectorAll(".sim-speed-btn");
+    const rangeGroup = root.querySelector("#simRangeGroup, .sim-range-group");
+    const actionsGroup = root.querySelector("#simActionsGroup, .sim-actions-group");
+    const timelineRow = root.querySelector("#simTimelineRow, .sim-timeline-row");
+    const domainIndicator = root.querySelector("#simDomainIndicator");
+    const isRealtimeMode = simulationState.mode === SIMULATION_MODE_REALTIME;
+    const isRangeMode = simulationState.mode === SIMULATION_MODE_RANGE;
+    const oemDomainActive = hasLoadedOemEphemerisTracks();
+
+    root.dataset.mode = simulationState.mode;
+
+    if (rangeGroup) {
+        rangeGroup.hidden = !isRangeMode;
+    }
+    if (actionsGroup) {
+        actionsGroup.hidden = isRealtimeMode;
+    }
+    if (timelineRow) {
+        timelineRow.hidden = isRealtimeMode;
+    }
+    if (domainIndicator) {
+        const domainText = oemDomainActive ? "OEM" : "General";
+        domainIndicator.textContent = `${uiText("simDomainLabel")}: ${domainText}`;
+        domainIndicator.classList.toggle("is-oem", oemDomainActive);
+    }
+
+    if (startInput && document.activeElement !== startInput && startInput.dataset.userEdited !== "true") {
+        startInput.value = formatDateTimeLocalInput(simulationState.startDate);
+    }
+    if (endInput && document.activeElement !== endInput && endInput.dataset.userEdited !== "true") {
+        endInput.value = formatDateTimeLocalInput(simulationState.endDate);
+    }
+    if (playBtn) {
+        playBtn.textContent = simulationState.isPlaying ? "⏸" : "▶";
+        playBtn.title = simulationState.isPlaying ? uiText("simPause") : uiText("simPlay");
+    }
+    if (stopBtn) {
+        stopBtn.classList.toggle("active", !simulationState.isPlaying);
+        stopBtn.title = uiText("simPause");
+    }
+    if (restartBtn) {
+        restartBtn.title = uiText("simRewind");
+    }
+
+    modeButtons.forEach((btn) => {
+        const mode = btn.getAttribute("data-mode");
+        btn.classList.toggle("active", mode === simulationState.mode);
+    });
+    speedButtons.forEach((btn) => {
+        const speedValue = Number(btn.getAttribute("data-speed"));
+        btn.classList.toggle("active", speedValue === simulationState.speed);
+    });
+
+    updateSimulationTimelineUi();
+    updateSimulationDockLayout();
+    simulationUiBusy = false;
+}
+
+function setSimulationMode(mode) {
+    const previousMode = simulationState.mode;
+    const normalized = [SIMULATION_MODE_REALTIME, SIMULATION_MODE_RANGE].includes(mode)
+        ? mode
+        : SIMULATION_MODE_REALTIME;
+
+    if (normalized === SIMULATION_MODE_REALTIME && hasLoadedOemEphemerisTracks()) {
+        const bounds = getLoadedOemEphemerisTimeBounds();
+        if (bounds) {
+            applySimulationRange(new Date(bounds.startTimeMs), new Date(bounds.endTimeMs));
+        }
+        simulationState.mode = SIMULATION_MODE_RANGE;
+        showAppAlert("No se puede usar tiempo real mientras haya OEMs cargados. Usa modo Rango.", uiText("alertTitle"));
+        simulationState.lastTickTimestamp = Date.now();
+        applySimulationDateToViewer(getDisplayedSimulationDate());
+        updateTopToolbarTime();
+        refreshSimulationControlsUi();
+        return;
+    }
+
+    simulationState.mode = normalized;
+
+    if (normalized === SIMULATION_MODE_REALTIME) {
+        simulationState.isPlaying = true;
+        simulationState.rewind = false;
+        simulationState.speed = 1;
+        simulationState.currentDate = new Date();
+    } else {
+        if (previousMode !== SIMULATION_MODE_RANGE) {
+            simulationState.currentDate = new Date(simulationState.startDate);
+        } else {
+            const now = getDisplayedSimulationDate();
+            if (now < simulationState.startDate) {
+                simulationState.currentDate = new Date(simulationState.startDate);
+            } else if (now > simulationState.endDate) {
+                simulationState.currentDate = new Date(simulationState.endDate);
+            } else {
+                simulationState.currentDate = now;
+            }
+        }
+
+        if (!(simulationState.currentDate instanceof Date) || Number.isNaN(simulationState.currentDate.getTime())) {
+            simulationState.currentDate = new Date(simulationState.startDate);
+        }
+    }
+
+    simulationState.lastTickTimestamp = Date.now();
+    applySimulationDateToViewer(getDisplayedSimulationDate());
+    updateTopToolbarTime();
+    refreshSimulationControlsUi();
+}
+
+function applySimulationRange(startDate, endDate) {
+    let startMs = startDate.getTime();
+    let endMs = endDate.getTime();
+
+    if (hasLoadedOemEphemerisTracks()) {
+        const bounds = getLoadedOemEphemerisTimeBounds();
+        if (bounds) {
+            startMs = Number(bounds.startTimeMs);
+            endMs = Number(bounds.endTimeMs);
+        }
+    }
+
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+        return false;
+    }
+
+    simulationState.startDate = new Date(startMs);
+    simulationState.endDate = new Date(endMs);
+    simulationState.currentDate = new Date(clamp(getDisplayedSimulationDate().getTime(), startMs, endMs));
+    simulationState.rewind = false;
+
+    const rangeHours = (endMs - startMs) / (1000 * 60 * 60);
+    const targetHours = clamp(rangeHours, 0, 240);
+    if (Number.isFinite(targetHours) && targetHours > 0) {
+        setOrbitConfig({ propagation_hours: targetHours });
+    }
+
+    if (simulationState.mode === SIMULATION_MODE_REALTIME) {
+        simulationState.mode = SIMULATION_MODE_RANGE;
+    }
+    applySimulationDateToViewer(simulationState.currentDate);
+    refreshSimulationControlsUi();
+    updateTopToolbarTime();
+    return true;
+}
+
+function tickSimulationClock() {
+    const nowTs = Date.now();
+    const deltaMs = Math.max(0, nowTs - simulationState.lastTickTimestamp);
+    simulationState.lastTickTimestamp = nowTs;
+
+    if (simulationState.mode === SIMULATION_MODE_REALTIME) {
+        simulationState.currentDate = new Date();
+        applySimulationDateToViewer(simulationState.currentDate);
+        return;
+    }
+
+    if (!simulationState.isPlaying) {
+        return;
+    }
+
+    const direction = simulationState.rewind ? -1 : 1;
+    const nextMs = simulationState.currentDate.getTime() + deltaMs * simulationState.speed * direction;
+    const startMs = simulationState.startDate.getTime();
+    const endMs = simulationState.endDate.getTime();
+
+    if (nextMs <= startMs) {
+        simulationState.currentDate = new Date(startMs);
+        simulationState.isPlaying = false;
+    } else if (nextMs >= endMs) {
+        simulationState.currentDate = new Date(endMs);
+        simulationState.isPlaying = false;
+    } else {
+        simulationState.currentDate = new Date(nextMs);
+    }
+
+    applySimulationDateToViewer(simulationState.currentDate);
+}
+
+function ensureSimulationControlDock() {
+    if (simulationControlRoot) {
+        return simulationControlRoot;
+    }
+
+    const root = document.createElement("div");
+    root.id = "simulationControlDock";
+    root.innerHTML = `
+        <div class="sim-controls-row">
+            <div class="sim-mode-group">
+                <button class="sim-mode-btn" data-mode="realtime" type="button">${uiText("simRealtime")}</button>
+                <button class="sim-mode-btn" data-mode="range" type="button">${uiText("simRange")}</button>
+            </div>
+            <div id="simDomainIndicator" class="sim-domain-indicator" aria-live="polite"></div>
+            <div id="simRangeGroup" class="sim-range-group">
+                <label>${uiText("simStart")}<input id="simStartInput" type="datetime-local"></label>
+                <label>${uiText("simEnd")}<input id="simEndInput" type="datetime-local"></label>
+            </div>
+            <div id="simActionsGroup" class="sim-actions-group">
+                <button id="simPlayPauseBtn" class="sim-icon-btn" type="button" title="${uiText("simPlay")}">▶</button>
+                <button id="simStopBtn" class="sim-icon-btn" type="button" title="${uiText("simPause")}">⏹</button>
+                <button id="simRestartBtn" class="sim-icon-btn" type="button" title="${uiText("simRewind")}">⏮</button>
+                <div class="sim-speed-group">
+                    ${SIMULATION_SPEED_VALUES.map((value) => `<button class="sim-speed-btn" data-speed="${value}" type="button">x${value}</button>`).join("")}
+                </div>
+            </div>
+        </div>
+        <div id="simTimelineRow" class="sim-timeline-row">
+            <input id="simTimeline" type="range" min="0" max="${SIMULATION_TIMELINE_STEPS}" step="1" value="0">
+            <div class="sim-timeline-info">
+                <span id="simModeInfo"></span>
+                <span id="simSpeedInfo"></span>
+                <span id="simCurrentInfo"></span>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(root);
+    simulationControlRoot = root;
+
+    root.querySelectorAll(".sim-mode-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const mode = btn.getAttribute("data-mode");
+            setSimulationMode(mode);
+        });
+    });
+
+    const tryApplySimulationRangeFromInputs = () => {
+        const startInput = root.querySelector("#simStartInput");
+        const endInput = root.querySelector("#simEndInput");
+        const startDate = parseDateTimeLocalInput(startInput?.value);
+        const endDate = parseDateTimeLocalInput(endInput?.value);
+        if (!startDate || !endDate || endDate <= startDate) {
+            return false;
+        }
+        applySimulationRange(startDate, endDate);
+        if (startInput) {
+            startInput.dataset.userEdited = "false";
+        }
+        if (endInput) {
+            endInput.dataset.userEdited = "false";
+        }
+        setSimulationMode(SIMULATION_MODE_RANGE);
+        return true;
+    };
+
+    root.querySelector("#simStartInput")?.addEventListener("input", (event) => {
+        const input = event.currentTarget;
+        if (input) {
+            input.dataset.userEdited = "true";
+        }
+        tryApplySimulationRangeFromInputs();
+    });
+
+    root.querySelector("#simEndInput")?.addEventListener("input", (event) => {
+        const input = event.currentTarget;
+        if (input) {
+            input.dataset.userEdited = "true";
+        }
+        tryApplySimulationRangeFromInputs();
+    });
+
+    root.querySelector("#simPlayPauseBtn")?.addEventListener("click", () => {
+        simulationState.isPlaying = !simulationState.isPlaying;
+        simulationState.rewind = false;
+        simulationState.lastTickTimestamp = Date.now();
+        refreshSimulationControlsUi();
+        updateTopToolbarTime();
+    });
+
+    root.querySelector("#simStopBtn")?.addEventListener("click", () => {
+        simulationState.isPlaying = false;
+        simulationState.rewind = false;
+        simulationState.lastTickTimestamp = Date.now();
+        refreshSimulationControlsUi();
+        updateTopToolbarTime();
+    });
+
+    root.querySelector("#simRestartBtn")?.addEventListener("click", () => {
+        if (simulationState.mode === SIMULATION_MODE_RANGE) {
+            simulationState.currentDate = new Date(simulationState.startDate);
+        } else {
+            simulationState.currentDate = new Date();
+        }
+        simulationState.isPlaying = false;
+        simulationState.rewind = false;
+        simulationState.lastTickTimestamp = Date.now();
+        applySimulationDateToViewer(simulationState.currentDate);
+        refreshSimulationControlsUi();
+        updateTopToolbarTime();
+    });
+
+    root.querySelectorAll(".sim-speed-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const nextSpeed = Number(btn.getAttribute("data-speed")) || 1;
+            simulationState.speed = nextSpeed;
+            simulationState.lastTickTimestamp = Date.now();
+            refreshSimulationControlsUi();
+            updateTopToolbarTime();
+        });
+    });
+
+    root.querySelector("#simTimeline")?.addEventListener("input", (event) => {
+        const rawValue = Number(event.target?.value);
+        const ratio = clamp(rawValue / SIMULATION_TIMELINE_STEPS, 0, 1);
+        simulationState.currentDate = getDateFromTimelineRatio(ratio);
+        simulationState.isPlaying = false;
+        if (simulationState.mode === SIMULATION_MODE_REALTIME) {
+            simulationState.mode = SIMULATION_MODE_RANGE;
+        }
+        applySimulationDateToViewer(simulationState.currentDate);
+        refreshSimulationControlsUi();
+        updateTopToolbarTime();
+    });
+
+    const leftSatellitesPanel = document.getElementById("leftSatellitesPanel");
+    const leftInfoPanel = document.getElementById("leftInfoPanel");
+    if (leftSatellitesPanel || leftInfoPanel) {
+        simulationLayoutObserver = new MutationObserver(() => {
+            updateSimulationDockLayout();
+        });
+        if (leftSatellitesPanel) {
+            simulationLayoutObserver.observe(leftSatellitesPanel, { attributes: true, attributeFilter: ["class"] });
+        }
+        if (leftInfoPanel) {
+            simulationLayoutObserver.observe(leftInfoPanel, { attributes: true, attributeFilter: ["class"] });
+        }
+    }
+
+    refreshSimulationControlsUi();
+    return root;
+}
+
 function ensureTimeHudWidget() {
     if (timeHudWidget) {
         return timeHudWidget;
@@ -673,6 +1574,8 @@ function applyUiLanguage(language) {
     updateQuickToolbarLabels();
     updateSatelliteContextMenuLang();
     updateSatelliteVizModalLang();
+    setupTopSearchAutocomplete();
+    refreshSimulationControlsUi();
 }
 
 function persistSystemSectionPatch(sectionName, patch) {
@@ -818,6 +1721,10 @@ function ensureTopToolbar() {
         </button>
         <div class="toolbar-separator"></div>
         <button id="topGroundBtn" class="toolbar-btn" type="button" title="Traza de suelo">Ground</button>
+        <button id="topSimCtrlBtn" class="toolbar-btn" type="button" title="Panel temporal">
+            <span>⏱</span>
+            <span>Tiempo</span>
+        </button>
         <div class="toolbar-separator"></div>
         <button id="topRecordBtn" class="toolbar-btn" type="button" title="Grabar sesión">
             <span>●</span>
@@ -827,9 +1734,12 @@ function ensureTopToolbar() {
         <div class="toolbar-search-wrap">
             <span class="toolbar-search-icon">🔍</span>
             <input id="objectSearch" class="toolbar-search" type="text" placeholder="Buscar satélite..." autocomplete="off" spellcheck="false" />
+            <div id="topSearchSuggestions"></div>
         </div>
         <div class="toolbar-spacer"></div>
-        <div id="topTimeInfo" class="toolbar-info">--/--/---- --:--:--</div>
+        <div class="toolbar-time-wrap">
+            <div id="topTimeInfo" class="toolbar-info">--/--/---- --:--:--</div>
+        </div>
     `;
 
     document.body.appendChild(toolbar);
@@ -852,9 +1762,15 @@ function ensureTopToolbar() {
         updateTopToolbarState();
     });
 
+    toolbar.querySelector("#topSimCtrlBtn")?.addEventListener("click", () => {
+        toggleSimulationDock();
+    });
+
     toolbar.querySelector("#topRecordBtn")?.addEventListener("click", () => {
         toggleSessionRecording();
     });
+
+    setupTopSearchAutocomplete();
 
     updateTopToolbarState();
     updateTopToolbarTime();
@@ -866,11 +1782,16 @@ function updateTopToolbarState() {
     if (!toolbar) return;
 
     const groundBtn = toolbar.querySelector("#topGroundBtn");
+    const simCtrlBtn = toolbar.querySelector("#topSimCtrlBtn");
     const recordBtn = toolbar.querySelector("#topRecordBtn");
     const cameraModeBtn = toolbar.querySelector("#topCameraModeBtn");
 
     if (groundBtn) {
         groundBtn.classList.toggle("active", getOrbitToggleState("ground"));
+    }
+    if (simCtrlBtn) {
+        simCtrlBtn.classList.toggle("active", simulationDockOpen);
+        simCtrlBtn.title = uiText("simPanelToggle");
     }
     if (recordBtn) {
         recordBtn.classList.toggle("recording", isSessionRecording);
@@ -895,9 +1816,14 @@ function updateTopToolbarState() {
 function updateTopToolbarTime() {
     const timeInfo = document.getElementById("topTimeInfo");
     if (timeInfo) {
-        const now = new Date();
-        timeInfo.textContent = formatTimeHudDate(now);
+        const current = getDisplayedSimulationDate();
+        const speedLabel = simulationState.mode === SIMULATION_MODE_REALTIME
+            ? ""
+            : ` · x${simulationState.speed}${simulationState.isPlaying ? "" : " (pausa)"}`;
+        timeInfo.textContent = `${formatTimeHudDate(current)} · ${getSimulationModeLabel()}${speedLabel}`;
     }
+
+    updateSimulationTimelineUi();
 }
 
 function ensureLeftSidebar() {
@@ -1046,6 +1972,7 @@ function ensureQuickToolbar() {
 function setCurrentSelectedSatellite(id) {
     selectedSatelliteId = id ? String(id) : null;
     updateQuickToolbarLabels();
+    updateSelectedEpochInfo();
 }
 
 function resolveSupportedRecordingMimeType(preferredOutputFormat = "webm") {
@@ -1260,17 +2187,17 @@ function ensureSatelliteVisualizationModal() {
             <div id="satelliteVizTarget"></div>
             <div id="satelliteVizForm" class="config-grid">
                 <div class="config-field"><label for="satVizFutureColor">Future Color</label><input id="satVizFutureColor" type="color"></div>
-                <div class="config-field"><label for="satVizPastColor">Past Color</label><input id="satVizPastColor" type="color"></div>
+                <div class="config-field" id="satVizFieldPastColor"><label for="satVizPastColor">Past Color</label><input id="satVizPastColor" type="color"></div>
                 <div class="config-field"><label for="satVizFutureLineWidth">Future Line Width</label><input id="satVizFutureLineWidth" type="number" step="0.1" min="0.1"></div>
-                <div class="config-field"><label for="satVizPastLineWidth">Past Line Width</label><input id="satVizPastLineWidth" type="number" step="0.1" min="0.1"></div>
-                <div class="config-field"><label for="satVizPropagationHours">Propagation Hours</label><input id="satVizPropagationHours" type="number" step="0.1" min="0" max="240"></div>
-                <div class="config-field"><label for="satVizPastSeconds">Past Duration (s)</label><input id="satVizPastSeconds" type="number" step="0.1" min="0" max="86400"></div>
+                <div class="config-field" id="satVizFieldPastLineWidth"><label for="satVizPastLineWidth">Past Line Width</label><input id="satVizPastLineWidth" type="number" step="0.1" min="0.1"></div>
+                <div class="config-field" id="satVizFieldPropagationHours"><label for="satVizPropagationHours">Propagation Hours</label><input id="satVizPropagationHours" type="number" step="0.1" min="0" max="240"></div>
+                <div class="config-field" id="satVizFieldPastSeconds"><label for="satVizPastSeconds">Past Duration (s)</label><input id="satVizPastSeconds" type="number" step="0.1" min="0" max="86400"></div>
                 <div class="config-field"><label for="satVizLabelSize">Label Size (px)</label><input id="satVizLabelSize" type="number" step="1" min="0"></div>
                 <div class="config-field"><label for="satVizModelScale">Model Scale</label><input id="satVizModelScale" type="number" step="1" min="0.000001"></div>
                 <div class="config-field checkbox"><input id="satVizUse3D" type="checkbox"><label for="satVizUse3D">Use 3D Model</label></div>
                 <div class="config-field"><label for="satVizSizeMode">Size Mode</label><select id="satVizSizeMode"><option value="visual">visual</option><option value="physical">physical</option></select></div>
                 <div class="config-field checkbox"><input id="satVizFutureShow" type="checkbox"><label for="satVizFutureShow">Future Show</label></div>
-                <div class="config-field checkbox"><input id="satVizPastShow" type="checkbox"><label for="satVizPastShow">Past Show</label></div>
+                <div class="config-field checkbox" id="satVizFieldPastShow"><input id="satVizPastShow" type="checkbox"><label for="satVizPastShow">Past Show</label></div>
             </div>
             <div id="satelliteVizActions">
                 <button id="satelliteVizResetBtn" type="button"></button>
@@ -1297,19 +2224,27 @@ function ensureSatelliteVisualizationModal() {
             return;
         }
 
+        const entryMeta = getCatalogEntryMeta(satelliteVizCurrentTargetId) || null;
+        const sourceFormat = String(entryMeta?.sourceFormat || "TLE").toUpperCase();
+        const isOem = sourceFormat === "OEM";
+        const oemDomainActive = hasLoadedOemEphemerisTracks()
+            || Boolean(getLoadedOemEphemerisTimeBounds())
+            || simulationControlRoot?.querySelector("#simDomainIndicator")?.classList.contains("is-oem") === true;
+        const hidePastAndPropagation = isOem || oemDomainActive;
+
         const patch = {
             orbit_future_color: modal.querySelector("#satVizFutureColor").value,
-            orbit_past_color: modal.querySelector("#satVizPastColor").value,
+            orbit_past_color: hidePastAndPropagation ? null : modal.querySelector("#satVizPastColor").value,
             orbit_future_line_width: Number(modal.querySelector("#satVizFutureLineWidth").value),
-            orbit_past_line_width: Number(modal.querySelector("#satVizPastLineWidth").value),
-            propagation_hours: Number(modal.querySelector("#satVizPropagationHours").value),
-            orbit_past_seconds: Number(modal.querySelector("#satVizPastSeconds").value),
+            orbit_past_line_width: hidePastAndPropagation ? null : Number(modal.querySelector("#satVizPastLineWidth").value),
+            propagation_hours: hidePastAndPropagation ? null : Number(modal.querySelector("#satVizPropagationHours").value),
+            orbit_past_seconds: hidePastAndPropagation ? null : Number(modal.querySelector("#satVizPastSeconds").value),
             satellite_label_size_px: Number(modal.querySelector("#satVizLabelSize").value),
             satellite_model_scale: Number(modal.querySelector("#satVizModelScale").value),
             satellite_use_3d_model: modal.querySelector("#satVizUse3D").checked,
             satellite_size_mode: modal.querySelector("#satVizSizeMode").value,
             orbit_future_show: modal.querySelector("#satVizFutureShow").checked,
-            orbit_past_show: modal.querySelector("#satVizPastShow").checked
+            orbit_past_show: hidePastAndPropagation ? null : modal.querySelector("#satVizPastShow").checked
         };
 
         setSatelliteVisualizationConfig(satelliteVizCurrentTargetId, patch);
@@ -1352,6 +2287,14 @@ function openSatelliteVisualizationModal(satelliteId) {
         return;
     }
 
+    const entryMeta = getCatalogEntryMeta(satelliteId) || null;
+    const sourceFormat = String(entryMeta?.sourceFormat || "TLE").toUpperCase();
+    const isOem = sourceFormat === "OEM";
+    const oemDomainActive = hasLoadedOemEphemerisTracks()
+        || Boolean(getLoadedOemEphemerisTimeBounds())
+        || simulationControlRoot?.querySelector("#simDomainIndicator")?.classList.contains("is-oem") === true;
+    const hidePastAndPropagation = isOem || oemDomainActive;
+
     satelliteVizCurrentTargetId = satelliteId;
     modal.querySelector("#satelliteVizTarget").textContent = `Satelite: ${satelliteId}`;
 
@@ -1368,6 +2311,43 @@ function openSatelliteVisualizationModal(satelliteId) {
     modal.querySelector("#satVizSizeMode").value = effective.satellite_size_mode;
     modal.querySelector("#satVizFutureShow").checked = effective.orbit_future_show === true;
     modal.querySelector("#satVizPastShow").checked = effective.orbit_past_show === true;
+
+    const oemOnlyHiddenFields = [
+        "#satVizFieldPastColor",
+        "#satVizFieldPastLineWidth",
+        "#satVizFieldPropagationHours",
+        "#satVizFieldPastSeconds",
+        "#satVizFieldPastShow"
+    ];
+
+    const oemOnlyInputs = [
+        "#satVizPastColor",
+        "#satVizPastLineWidth",
+        "#satVizPropagationHours",
+        "#satVizPastSeconds",
+        "#satVizPastShow"
+    ];
+
+    for (const selector of oemOnlyHiddenFields) {
+        const field = modal.querySelector(selector);
+        if (field) {
+            field.hidden = hidePastAndPropagation;
+            field.style.display = hidePastAndPropagation ? "none" : "";
+        }
+    }
+
+    for (const selector of oemOnlyInputs) {
+        const input = modal.querySelector(selector);
+        if (!input) {
+            continue;
+        }
+        const wrapper = input.closest(".config-field");
+        if (wrapper) {
+            wrapper.hidden = hidePastAndPropagation;
+            wrapper.style.display = hidePastAndPropagation ? "none" : "";
+        }
+        input.disabled = hidePastAndPropagation;
+    }
 
     modal.classList.add("open");
 }
@@ -1973,12 +2953,12 @@ function firstPersonSatellite(entity) {
 }
 
 (async function init() {
-    const config = await loadConfig();
+    const config = initialBootConfig || await loadConfig();
     const currentConfig = {
         ...(config || {}),
         system: toSectionedSystemConfig(config?.system || {})
     };
-    currentRuntimeDataConfig = currentConfig?.data || { satellites_catalog_file: "catalog.json" };
+    currentRuntimeDataConfig = currentConfig?.data || { satellites_catalog_file: "catalog.json", offline_mode: false };
     lastPersistedSystemConfigSerialized = JSON.stringify(currentConfig.system || {});
     updatePersistedSystemConfig = (sectionName, patch) => {
         if (!sectionName || !patch || typeof patch !== "object") {
@@ -2023,6 +3003,14 @@ function firstPersonSatellite(entity) {
     // Inicializar toolbars después de setupRuntimeConfigPanel
     ensureTopToolbar();
     ensureLeftSidebar();
+    ensureSimulationControlDock();
+    setSimulationTimelineProvider(() => ({
+        date: getDisplayedSimulationDate(),
+        mode: simulationState.mode,
+        rangeStart: simulationState.startDate,
+        rangeEnd: simulationState.endDate
+    }));
+    setSimulationDockOpen(false);
     
     // Timer para actualizar la toolbar superior
     if (timeHudTimer) {
@@ -2031,6 +3019,15 @@ function firstPersonSatellite(entity) {
     timeHudTimer = setInterval(() => {
         updateTopToolbarTime();
     }, 1000);
+
+    if (simulationTickTimer) {
+        clearInterval(simulationTickTimer);
+    }
+    simulationState.lastTickTimestamp = Date.now();
+    simulationTickTimer = setInterval(() => {
+        tickSimulationClock();
+        refreshSimulationControlsUi();
+    }, 120);
 
     const configuredCatalogFile = currentConfig?.data?.satellites_catalog_file || "catalog.json";
     const catalogUrl = configuredCatalogFile.startsWith("/")
@@ -2091,7 +3088,29 @@ function firstPersonSatellite(entity) {
         isCatalogReady: () => isCatalogLoaded(),
         getObjectTle: (id) => getSatelliteTle(id),
         getObjectTleAsync: (id) => getSatelliteTleAsync(id),
+        getCatalogEntryMeta: (id) => getCatalogEntryMeta(id),
         onRefreshCatalog: () => refreshSatelliteCatalog(catalogUrl),
+        getLoadedOemTimeBounds: () => getLoadedOemEphemerisTimeBounds(),
+        onAlignToOemTimeDomain: () => {
+            const bounds = getLoadedOemEphemerisTimeBounds();
+            if (!bounds) {
+                return false;
+            }
+            applySimulationRange(new Date(bounds.startTimeMs), new Date(bounds.endTimeMs));
+            setSimulationMode(SIMULATION_MODE_RANGE);
+            setSimulationDockOpen(true);
+            return true;
+        },
+        onImportOemEphemeris: (content, fileName) => {
+            const imported = importOemEphemerisTrack(content, fileName);
+            const bounds = getLoadedOemEphemerisTimeBounds();
+            if (bounds) {
+                applySimulationRange(new Date(bounds.startTimeMs), new Date(bounds.endTimeMs));
+            }
+            setSimulationMode(SIMULATION_MODE_RANGE);
+            setSimulationDockOpen(true);
+            return imported;
+        },
         getUiText: () => uiText,
         containerElement: satellitesPanelContent,
         infoContainerElement: infoPanelContent

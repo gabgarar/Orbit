@@ -1,7 +1,7 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 0.5,
+      "propagation_hours": 5,
       "future_show": true,
       "ground_track_show": false,
       "future_line_width": 2,
@@ -14,15 +14,15 @@
       "past_line_width": 2
     },
     "satellites": {
-      "label_size_px": 10,
+      "label_size_px": 15,
       "model_scale": 1,
       "use_3d_model": true,
       "size_mode": "visual",
-      "max_visible": 100
+      "max_visible": 1000
     },
     "realtime": {
       "state_interval_seconds": 1,
-      "orbit_interval_seconds": 1
+      "orbit_interval_seconds": 5
     },
     "logging": {
       "enabled": true,
@@ -30,12 +30,12 @@
       "show_top_clock": true
     },
     "rendering": {
-      "antialias_mode": "off",
+      "antialias_mode": "msaa",
       "antialias_enabled": true,
       "background_color": "#03070d",
       "sky_atmosphere": false,
       "globe_lighting": true,
-      "stars_enabled": false
+      "stars_enabled": true
     },
     "recording": {
       "quality": "medium",

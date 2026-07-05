@@ -6,12 +6,12 @@ Listado de ideas y mejoras ordenadas por área. Marca con `[x]` cuando se implem
 
 ## 🕐 Simulación y control de tiempo
 
-- [ ] **Modo simulación por rango de fechas**: seleccionar fecha/hora de inicio y fin, ejecutar la simulación y ver la evolución de las órbitas en ese intervalo.
-- [ ] **Modo tiempo real**: seguimiento live con actualización continua usando la hora del sistema (sin necesidad de arrcar el propagador manualmente).
-- [ ] **Control de velocidad de reproducción**: ×1, ×10, ×100, ×1000, rewind y pausa desde la UI.
-- [ ] **Timeline visual** en pantalla: barra scrubable para navegar por la simulación como en un vídeo.
-- [ ] **Modo histórico / replay**: reproducir el estado de la constelación en un instante pasado dado un TLE de esa época.
-- [ ] **Epoch de TLE vs. hora actual**: indicar en el HUD la diferencia entre la época del TLE y la hora simulada para advertir de inexactitud.
+- [x] **Modo simulación por rango de fechas**: seleccionar fecha/hora de inicio y fin, ejecutar la simulación y ver la evolución de las órbitas en ese intervalo.
+- [x] **Modo tiempo real**: seguimiento live con actualización continua usando la hora del sistema (sin necesidad de arrcar el propagador manualmente).
+- [x] **Control de velocidad de reproducción**: ×1, ×10, ×100, ×1000, rewind y pausa desde la UI.
+- [x] **Timeline visual** en pantalla: barra scrubable para navegar por la simulación como en un vídeo.
+- [x] **Modo histórico / replay**: reproducir el estado de la constelación en un instante pasado dado un TLE de esa época.
+- [x] **Epoch de TLE vs. hora actual**: indicar en el HUD la diferencia entre la época del TLE y la hora simulada para advertir de inexactitud.
 
 ---
 
@@ -22,7 +22,7 @@ Listado de ideas y mejoras ordenadas por área. Marca con `[x]` cuando se implem
 - [ ] **J2 analítico simple**: propagador analítico de baja fidelidad para comparación rápida.
 - [ ] **Integrador numérico RK4/RK45**: propagación de alta fidelidad con fuerza gravitacional completa.
 - [ ] **Comparador de propagadores**: mostrar simultáneamente la trayectoria de un mismo satélite con dos propagadores distintos, en colores diferentes, para evaluar desviación.
-- [ ] **Exportar efeméredes**: descargar CSV/JSON con posición y velocidad para un rango de tiempo dado.
+- [x] **Exportar efeméredes**: descargar CSV/JSON con posición y velocidad para un rango de tiempo dado.
 
 ---
 
@@ -82,41 +82,40 @@ Listado de ideas y mejoras ordenadas por área. Marca con `[x]` cuando se implem
 
 ## 🌐 Fuentes de datos
 
-- [ ] **Actualización automática de TLEs**: obtener TLEs frescos de CelesTrak o Space-Track directamente desde la app, con periodicidad configurable.
-- [ ] **Importar TLE desde archivo local**: drag & drop de un fichero `.tle` o `.txt`.
-- [ ] **Soporte de OMM (Orbital Mean-Elements Message)**: formato JSON/XML estándar de Space-Track.
-- [ ] **Catálogos predefinidos**: ISS, Starlink, OneWeb, GPS, GLONASS, Galileo, debris, etc., seleccionables con un click.
-- [ ] **Filtro por operador/propietario**: mostrar solo los satélites de una agencia o empresa concreta.
+- [x] **Actualización automática de TLEs**: obtener TLEs frescos de CelesTrak o Space-Track directamente desde la app, con periodicidad configurable.
+- [x] **Importar TLE desde archivo local**: drag & drop de un fichero `.tle` o `.txt`.
+- [x] **Soporte de OMM (Orbital Mean-Elements Message)**: formato JSON/XML estándar de Space-Track.
+- [x] **Catálogos predefinidos**: ISS, Starlink, OneWeb, GPS, GLONASS, Galileo, debris, etc., seleccionables con un click.
+- [x] **Filtro por operador/propietario**: mostrar solo los satélites de una agencia o empresa concreta.
 - [ ] **Alertas de decay**: notificación cuando un TLE en el catálogo tiene perigeo < umbral configurable.
+- [ ] **Soporte OCM**: Elementos + metadatos + parámetros físicos. Operaciones avanzadas
+- [ ] **Soporte OEM**: Elementos + metadatos + parámetros físicos. Operaciones avanzadas
+- [ ] **Filtro TLE/OMM/OCM/OEM**: Filtrados por tipo de datos
+- [ ] **Exportar TLE/OMM/OCM/OEM en distintos formatos**: Filtrados por tipo de datos
 
 ---
 
 ## ⚙️ Infraestructura y rendimiento
 
 - [x] **Migrar backend Python a FastAPI + uvicorn**: reemplazar el servidor HTTP casero y el WebSocket manual por FastAPI (Starlette), ganando endpoints REST tipados con Pydantic, documentación OpenAPI automática y mejor integración con asyncio. Base necesaria para la API de propagación, efeméridas y análisis orbital.
-  - ✅ `server.py` completamente reescrito con FastAPI/uvicorn
-  - ✅ WebSocket endpoint `/ws` nativo (Starlette)
-  - ✅ Endpoints REST `/health` y `/catalog`
-  - ✅ `requirements.txt` actualizado (fastapi, uvicorn[standard])
-  - ✅ `webSockets.py` marcado como deprecated
-  - ✅ Carga de 18.970 satélites funcional
-- [ ] **Documentación API interactiva**: habilitar Swagger en `/docs` (generado automáticamente por FastAPI)
-- [ ] **Endpoints REST adicionales**: `/propagate/{sat_id}`, `/orbits/{sat_id}`, `/aos-los`, `/ephemeris`
-- [ ] **Caché de efeméridas pre-calculadas**: precalcular posiciones para el rango de simulación antes de reproducir.
-- [ ] **Backend propagation API**: endpoint REST que acepta TLE + rango de tiempo y devuelve la efemérides, para desacoplar cálculo de render.
-- [ ] **Modo offline**: funcionalidad completa sin conexión a internet (TLEs almacenados localmente, tiles offline).
-- [ ] **Perfiles de configuración guardados**: guardar/restaurar sets completos de configuración (colores, propagador, perturbaciones) como presets con nombre.
+- [x] **Documentación API interactiva**: habilitar Swagger en `/docs` (generado automáticamente por FastAPI)
+- [x] **Endpoints REST adicionales**: `/propagate/{sat_id}`, `/orbits/{sat_id}`, `/aos-los`, `/ephemeris`
+- [x] **Caché de efeméridas pre-calculadas**: precalcular posiciones para el rango de simulación antes de reproducir.
+- [x] **Backend propagation API**: endpoint REST que acepta TLE + rango de tiempo y devuelve la efemérides, para desacoplar cálculo de render.
+- [x] **Modo offline**: funcionalidad completa sin conexión a internet (TLEs almacenados localmente, tiles offline).
+- [x] **Perfiles de configuración guardados**: guardar/restaurar sets completos de configuración (colores, propagador, perturbaciones) como presets con nombre.
 
 ---
 
 ## 🖥️ UX / Interfaz
 
-- [ ] **Búsqueda rápida de satélite**: cuadro de búsqueda global (NORAD ID, nombre) que centra la cámara en el objeto.
+- [x] **Búsqueda rápida de satélite**: cuadro de búsqueda global (NORAD ID, nombre) que centra la cámara en el objeto.
 - [x] **Modo presentación**: ocultar toda la UI excepto el globo para capturas y vídeos limpios.
 - [ ] **Atajos de teclado**: documentados y configurables (foco, pausa, velocidad, modo cámara…).
 - [ ] **Tour guiado**: tutorial interactivo para nuevos usuarios que explique las funciones principales.
 - [x] **Soporte multiidioma**: i18n básica (ES/EN).
 - [x] **Tema oscuro/claro**: toggle de apariencia para la UI (paneles, sidebar).
+- [ ] **Mostrar BIT y notificaciones**: notificar eventos y errores.
 
 ---
 
@@ -130,4 +129,4 @@ Listado de ideas y mejoras ordenadas por área. Marca con `[x]` cuando se implem
 
 ---
 
-*Última actualización: 2026-06-28*
+*Última actualización: 2026-07-02*

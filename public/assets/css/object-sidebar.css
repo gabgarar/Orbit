@@ -306,6 +306,95 @@ body.with-toolbars #objectSidebar.collapsed {
     gap: 4px;
 }
 
+#catalogExportModal {
+    position: fixed;
+    inset: 0;
+    z-index: 10140;
+    background: var(--orbit-bg-overlay);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+#catalogExportModal.open {
+    display: flex;
+}
+
+.catalog-export-panel {
+    width: min(calc(700px * var(--orbit-ui-scale)), 96vw);
+    max-height: 88vh;
+    overflow: auto;
+    border: 1px solid var(--orbit-border-accent);
+    border-radius: calc(14px * var(--orbit-ui-scale));
+    background: linear-gradient(180deg, var(--orbit-bg-modal) 0%, var(--orbit-bg-secondary) 100%);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    color: var(--orbit-text-primary);
+    padding: calc(14px * var(--orbit-ui-scale));
+    display: grid;
+    gap: 12px;
+}
+
+.catalog-export-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.catalog-export-header h3 {
+    margin: 0;
+    font: 700 15px sans-serif;
+}
+
+.catalog-export-target {
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 9px;
+    background: var(--orbit-bg-input);
+    color: var(--orbit-text-accent);
+    padding: 8px 10px;
+    font: 700 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.catalog-export-source {
+    font: 600 11px/1.4 sans-serif;
+    color: var(--orbit-text-secondary);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.catalog-export-section {
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 10px;
+    background: var(--orbit-bg-elevated);
+    padding: 10px;
+    display: grid;
+    gap: 10px;
+}
+
+.catalog-export-section h4 {
+    margin: 0;
+    font: 700 12px sans-serif;
+    color: var(--orbit-text-secondary);
+}
+
+.catalog-export-buttons {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 8px;
+}
+
+.catalog-export-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 8px;
+}
+
+.catalog-export-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
 .catalog-context-action {
     border: 1px solid transparent;
     border-radius: 8px;
@@ -447,6 +536,45 @@ body.with-toolbars #objectSidebar.collapsed {
     display: flex;
 }
 
+#globalCatalogDropOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10160;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    background: rgba(12, 24, 44, 0.48);
+    backdrop-filter: blur(2px);
+}
+
+#globalCatalogDropOverlay.open {
+    display: flex;
+}
+
+.global-drop-overlay-panel {
+    width: min(620px, 92vw);
+    border: 2px dashed var(--orbit-border-focus);
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(19, 31, 54, 0.92) 0%, rgba(13, 24, 44, 0.92) 100%);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+    padding: 28px 24px;
+    text-align: center;
+}
+
+.global-drop-overlay-panel h3 {
+    margin: 0 0 8px;
+    color: var(--orbit-text-primary);
+    font: 700 22px/1.2 sans-serif;
+    letter-spacing: 0.02em;
+}
+
+.global-drop-overlay-panel p {
+    margin: 0;
+    color: var(--orbit-text-secondary);
+    font: 600 13px/1.5 sans-serif;
+}
+
 .catalog-modal-panel {
     width: min(calc(620px * var(--orbit-ui-scale)), 96vw);
     max-height: 88vh;
@@ -572,6 +700,20 @@ body.with-toolbars #objectSidebar.collapsed {
     transform: scale(1.06);
 }
 
+.catalog-format-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--orbit-border-accent);
+    background: var(--orbit-bg-active);
+    color: var(--orbit-text-accent);
+    font: 700 10px/1.2 sans-serif;
+    letter-spacing: 0.3px;
+}
+
 .catalog-filter-chip-remove:active {
     transform: scale(0.92) rotate(-12deg);
 }
@@ -630,6 +772,17 @@ body.with-toolbars #objectSidebar.collapsed {
     color: var(--orbit-text-primary);
     padding: 7px 8px;
     font: 12px sans-serif;
+}
+
+.catalog-filter-field.checkbox {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.catalog-filter-field.checkbox input[type="checkbox"] {
+    margin: 0;
 }
 
 .catalog-filter-actions {
@@ -1138,6 +1291,8 @@ body.with-toolbars #objectSidebar.collapsed {
     display: grid;
     grid-template-columns: 1fr auto auto;
     align-items: center;
+    flex: 0 0 auto;
+    min-height: 36px;
     background: var(--orbit-bg-secondary);
     border: 1px solid var(--orbit-border-primary);
     border-radius: 6px;

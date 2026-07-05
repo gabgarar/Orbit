@@ -10,8 +10,8 @@ Convención propuesta:
 Estado actual:
 - Total de commits: 26
 - Última versión en develop: v0.1.0
-- Próxima versión en preparación: v0.1.1 (lista para commit)
-- Cambios en curso: ninguno. v0.1.1 recoge las mejoras de UI (paletas clara/oscura, toolbar simplificada, footprint corregido, lista de satélites con scroll y fila "+") — ver entrada v0.1.1 abajo.ción temporal activo), centrado en la parte superior para mejorar legibilidad y con opción en Sistema para mostrarlo/ocultarlo. En telemetría se añade una sección nueva "Orbita" con datos de propagación hacia delante y hacia atrás (en horas/días), junto a métricas orbitales adicionales; y todas las secciones pasan a ser plegables para ahorrar espacio. Se corrige la interacción de plegado para que las secciones realmente se abran/cierren de forma estable pese al refresco periódico de la telemetría, y se ajusta el CSS para que al estar colapsadas no se renderice la grilla de contenido. Se habilita propagación 0 para futuro/pasado (global y específica), tratándola como sin propagación efectiva; la telemetría muestra "-" en esos campos cuando vale 0 y se eliminan de Estado los indicadores redundantes de órbita futura/pasada en formato Sí/No. Se elimina además una reasignación innecesaria en el render de la estela pasada que podía provocar parpadeo visual al modificar su grosor, se evita recrear su material en cada update para estabilizar la línea durante cambios de ancho y se añade `depthFailMaterial` + umbral de actualización de grosor para reducir titileo cuando la órbita futura está desactivada. Para el caso de `Orbit Width Mode = physical`, se añade suavizado temporal del grosor de la estela pasada para minimizar jitter por variaciones continuas de distancia cámara-satélite y, cuando la órbita futura está apagada, se fija el ancho de la estela pasada al valor configurado para evitar oscilaciones físicas residuales. Como refuerzo final, la estela pasada se renderiza sin test de profundidad y con actualización geométrica estable (sin suavizado extra por frame), copiando posiciones por actualización y usando `arcType: NONE` para evitar jitter por mutaciones in-place y recalculados de arco. Se integra soporte de capa de teselas locales `earth2km_tiles` para mejorar calidad al hacer zoom sin cargar una textura gigante completa, manteniendo fallback automático a `earth8km` cuando las teselas no están generadas.
+- Próxima versión en preparación: v0.1.2 (lista para commit)
+- Cambios en curso: ninguno. v0.1.2 corrige el z-fighting de la traza de suelo, elimina duplicados en la configuración Orbital y arregla el scroll de la lista de satélites — ver entrada v0.1.2 abajo.ción temporal activo), centrado en la parte superior para mejorar legibilidad y con opción en Sistema para mostrarlo/ocultarlo. En telemetría se añade una sección nueva "Orbita" con datos de propagación hacia delante y hacia atrás (en horas/días), junto a métricas orbitales adicionales; y todas las secciones pasan a ser plegables para ahorrar espacio. Se corrige la interacción de plegado para que las secciones realmente se abran/cierren de forma estable pese al refresco periódico de la telemetría, y se ajusta el CSS para que al estar colapsadas no se renderice la grilla de contenido. Se habilita propagación 0 para futuro/pasado (global y específica), tratándola como sin propagación efectiva; la telemetría muestra "-" en esos campos cuando vale 0 y se eliminan de Estado los indicadores redundantes de órbita futura/pasada en formato Sí/No. Se elimina además una reasignación innecesaria en el render de la estela pasada que podía provocar parpadeo visual al modificar su grosor, se evita recrear su material en cada update para estabilizar la línea durante cambios de ancho y se añade `depthFailMaterial` + umbral de actualización de grosor para reducir titileo cuando la órbita futura está desactivada. Para el caso de `Orbit Width Mode = physical`, se añade suavizado temporal del grosor de la estela pasada para minimizar jitter por variaciones continuas de distancia cámara-satélite y, cuando la órbita futura está apagada, se fija el ancho de la estela pasada al valor configurado para evitar oscilaciones físicas residuales. Como refuerzo final, la estela pasada se renderiza sin test de profundidad y con actualización geométrica estable (sin suavizado extra por frame), copiando posiciones por actualización y usando `arcType: NONE` para evitar jitter por mutaciones in-place y recalculados de arco. Se integra soporte de capa de teselas locales `earth2km_tiles` para mejorar calidad al hacer zoom sin cargar una textura gigante completa, manteniendo fallback automático a `earth8km` cuando las teselas no están generadas.
 
 ## Historial de versiones (1 commit = 1 versión)
 
@@ -159,9 +159,6 @@ Estado actual:
   - **Script `generate_earth2km_tiles.py`** optimizado: remuestreo por filas, desactivación de `MAX_IMAGE_PIXELS` para imágenes grandes, logs de progreso.
 
 ### v0.1.1
-- Fecha: 2026-07-02
-- Commit: PENDIENTE
-- Cambios: mejoras de UI y correcciones visuales (consolidado tras retirar VERSIONADO.md):
   - **Interfaz tipo VS Code**: toolbar superior, sidebar izquierda con pestañas de Satélites y Telemetría, buscador de satélites integrado en la toolbar.
   - **Dos paletas coherentes (clara/oscura)**: variables semánticas nuevas en `theme.css` y sustitución de colores oscuros hardcodeados en `config-panel.css` y `object-sidebar.css`, de modo que el modo claro deja de mostrar botones/zonas oscuras (diálogos, botones aplicar/reset, banner, menú de catálogo, modal TLE, chips, overlays).
   - **Toolbar superior simplificada**: eliminados los botones Futuro/Pasado (su función sigue en click derecho → visualización o en config global) y el botón de modo presentación que ocultaba la interfaz.
@@ -170,8 +167,35 @@ Estado actual:
   - **Lista de satélites**: barra de desplazamiento visible cuando hay muchos satélites y nueva fila final "+" (con aspecto de satélite) que abre el catálogo para añadir más.
   - **Telemetría en pestaña independiente** y rediseño estético del panel izquierdo (tarjetas de satélite, cabeceras unificadas, foco de búsqueda).
 
-  - **Corrección de estelas pasadas** detrás del globo: eliminado `disableDepthTestDistance: Infinity` en `createTrailEntity`.
-  - **Mezcla día/noche**: capa nocturna (`earthnight3km.jpg`) con `dayAlpha=0`/`nightAlpha=1`, sincronizada con `globe_lighting` del panel.
+  - **Fix de simulación temporal aplicada al movimiento**: el muestreo orbital para modos no realtime se mantiene activo aunque la órbita visual esté oculta, evitando que el satélite siga moviéndose solo con el stream WS en tiempo real mientras la hora de la UI cambia.
+### v0.1.2
+- Fecha: 2026-07-02
+- Commit: PENDIENTE
+- Cambios: mejoras de búsqueda, simulación temporal y estabilidad visual:
+  - **Búsqueda global profesional tipo VS Code** en la barra superior: desplegable incremental con sugerencias, navegación por teclado (↑/↓/Enter/Esc), y selección directa del objeto para activarlo/enfocarlo.
+  - **Búsqueda por nombre y NORAD ID**: el backend de `/api/catalog/page` ahora filtra por ambos campos y expone `noradId` en la respuesta de catálogo paginado.
+  - **Control temporal completo en UI** (dock inferior): modo Tiempo real, modo Rango y modo Histórico; rango inicio/fin editable, play/pause, rewind y velocidades x1/x10/x100/x1000.
+  - **Timeline visual scrubable**: barra para navegar como vídeo por el rango temporal simulado.
+  - **Modo histórico/replay por epoch TLE**: botón para centrar la simulación en la epoch del TLE del satélite seleccionado.
+  - **HUD de delta epoch**: indicador en la barra superior con la diferencia entre epoch TLE y tiempo mostrado en simulación.
+  - **Usabilidad del panel temporal corregida**: ahora se despliega/oculta desde botón propio en la toolbar (⏱), se recoloca automáticamente cuando se abre el panel izquierdo para evitar solape, y muestra únicamente los controles válidos según modo (realtime/range/historical).
+  - **Hotfix de controles por modo**: en `Realtime` ya no se muestran `Start/End`, acciones de reproducción ni timeline; se añadieron salvaguardas JS+CSS para evitar que vuelvan a aparecer por reglas de estilo o DOM legado.
+  - **Corrección de cinemática en simulación**: cuando el modo no es `Realtime`, la posición renderizada del satélite se calcula según la hora simulada del timeline (en lugar de seguir únicamente el stream realtime), alineando movimiento 3D con la hora mostrada en UI.
+  - **Selección desde buscador más clara**: al seleccionar un satélite desde búsqueda global se abre automáticamente el panel izquierdo de satélites (si estaba plegado) y se limpia el texto del buscador para evitar filtrado residual de la lista activa.
+  - **Modo Histórico retirado**: el control temporal queda simplificado a `Realtime` y `Range`, eliminando acciones y lógica del modo histórico para un flujo más directo.
+  - **Órbita en modo Range enfocada al intervalo**: en simulación entre fechas se oculta la órbita pasada y la órbita visible se recorta al rango temporal seleccionado siempre que exista cobertura de muestras.
+  - **Epoch reference ocultado en toolbar**: se elimina la línea secundaria de delta epoch en la barra superior para simplificar lectura durante simulación.
+  - **Controles de reproducción centrados con iconos**: el dock temporal usa botones compactos `play/pause`, `stop` y `volver al inicio` (⏮) centrados visualmente en la barra.
+  - **Fix de congelación a mitad de timeline**: en modo `Range`, el muestreo de posición 3D usa el ratio del propio intervalo seleccionado (start-end), evitando que el satélite llegue “al final” antes de que termine la barra temporal.
+  - **Autoajuste de horizonte al aplicar rango**: al definir `Start/End`, la propagación futura se ajusta al tamaño del rango para mejorar cobertura orbital en ese intervalo.
+  - **API de propagación ampliada**: nuevos endpoints REST en backend Python (`/propagate`, `/propagate/{sat_id}`, `/orbits`, `/orbits/{sat_id}`, `/aos-los`, `/ephemeris`) con soporte por `sat_id` o por TLE directo.
+  - **Swagger disponible desde la app web**: se habilita acceso a documentación interactiva en `/docs` (proxy Node -> FastAPI) más `/openapi.json` y `/redoc`.
+  - **Caché de efemérides pre-calculadas**: la API de `/ephemeris` y `/aos-los` reutiliza resultados en memoria con TTL y LRU para acelerar reproducciones repetidas del mismo rango temporal.
+  - **Backend propagation API desacoplada de render**: `/ephemeris` acepta `line1/line2 + start_time/end_time + step_seconds` y devuelve serie temporal de posición/velocidad lista para consumo en frontend o herramientas externas.
+  - **Modo offline en runtime**: al activar `data.offline_mode` se evita refresco remoto de catálogo y el visor cae a terreno elipsoidal local si no hay conectividad o se arranca explícitamente offline.
+  - **Traza de suelo (ground track) sin z-fighting**: la línea se eleva 20 km sobre el elipsoide (`GROUND_TRACK_SURFACE_HEIGHT`) para dejar de solaparse/parpadear con la textura del mapa, igual que ya se hizo con el círculo/footprint.
+  - **Duplicados en configuración eliminados**: "Ground Track Show" y "Selected Orbit Color" aparecían dos veces en la sección Orbital; se excluyen los campos ya renderizados para que salgan una sola vez.
+  - **Lista de satélites con scroll real**: con muchos satélites (p. ej. 500) las filas ya no se encogen ni se apelotonan; se fija `flex: 0 0 auto` y una altura mínima por fila para que el panel muestre una barra de desplazamiento vertical.
 
 
 ## Cómo mantener este documento

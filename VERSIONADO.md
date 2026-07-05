@@ -1,5 +1,240 @@
 # Versionado
 
+## 2026-07-05a
+
+- **Diagnóstico y fix: "no se pudo descargar ningún TLE válido"**
+  - Causa raíz: CelesTrak bloquea IPs de GitHub Codespaces y entornos cloud (HTTP:000, timeout puro).
+  - Se añade pre-check de conectividad rápido (8s) antes de lanzar todas las descargas.
+  - Si CelesTrak no es alcanzable, se devuelve error inmediato accionable en lugar de esperar 30+ timeouts.
+  - El frontend detecta `networkBlocked` y muestra instrucciones claras: importar TLE/OMM manualmente.
+
+## 2026-07-02ae
+
+- **Fix CelesTrak: “No se pudo descargar ningun TLE valido”**
+  - Se incrementa timeout remoto de descarga para evitar abortos prematuros en redes lentas.
+  - Se limita concurrencia de descargas (grupos/fuentes) para reducir bloqueos y respuestas de rate-limit del proveedor.
+  - Si no se obtiene catálogo válido, el error incluye contexto del primer fallo remoto para diagnóstico más claro.
+
+## 2026-07-02ad
+
+- **Fix crítico telemetría (panel vacío):**
+  - Se corrige una referencia runtime a función inexistente en el cálculo orbital desde telemetría (`inferMissionCategory`), reemplazada por la función válida (`inferMissionInfo`).
+  - Esto evitaba que `renderInfo` se actualizara correctamente en casos OEM/TLE y dejaba la telemetría en estado de error.
+
+## 2026-07-02ac
+
+- **Fix adicional modal de visualización en dominio OEM:**
+  - Se fuerza ocultación por `hidden` y por `style.display` de campos no válidos (pasado/propagación), y además se deshabilitan inputs para evitar incoherencias.
+  - Se endurece la detección de dominio OEM usando tanto tracks OEM como bounds e indicador de dominio.
+
+- **Fix estabilidad panel de telemetría:**
+  - `renderInfo` se protege con `try/catch` para evitar que una excepción puntual deje el panel en blanco.
+
+- **Fix robustez refresh catálogo ante 504:**
+  - Descarga de grupos/fuentes en paralelo y timeouts remotos activos.
+  - Discovery de grupos queda opcional en refresh manual (`discover=true`) para reducir latencia por defecto.
+
+## 2026-07-02ab
+
+- **Fix update catalog (HTTP 504 / bloqueo):**
+  - Se añade timeout de red en descargas remotas de CelesTrak para evitar requests colgadas.
+  - Descarga de grupos y fuentes en paralelo durante refresh para reducir duración total.
+  - La discovery automática de grupos pasa a ser opcional (`discover=true`) en refresco manual para evitar latencias excesivas por defecto.
+
+- **Fix opciones de visualización en dominio OEM:**
+  - Endurecida la detección de dominio OEM (estado de tracks + indicador visual del dock).
+  - Los campos no válidos (pasado/propagación) se ocultan y además se deshabilitan de forma forzada, incluyendo fallback por `closest(.config-field)`.
+  - La lógica de `Apply` usa el mismo criterio de dominio OEM para evitar incoherencias visuales/funcionales.
+
+## 2026-07-02aa
+
+- **Telemetría orbital más consistente (LEO/GEO/MEO/HEO):**
+  - Se mejora la clasificación de tipo de órbita con fallback dinámico por altitud de telemetría cuando no hay resumen TLE fiable (o en OEM).
+
+- **Modo OEM: limpieza de información/controles no relevantes para TLE/OMM:**
+  - En telemetría, cuando el dominio temporal OEM está activo, se ocultan filas de propagación futura/pasada que no aportan en ese contexto y se muestra estado de dominio OEM.
+  - En `click derecho > opciones de visualización`, si el dominio OEM está activo (o el objeto es OEM), se ocultan/desactivan opciones de pasado y propagación no aplicables.
+  - Al salir del dominio OEM, los controles vuelven a mostrarse con normalidad.
+
+- **Sincronización de catálogo ampliada (TLE + OMM + OEM):**
+  - La actualización desde CelesTrak incluye siempre fuentes por defecto OMM/OEM además de las configuradas por usuario.
+  - Se deduplican fuentes por `formato+url` para evitar descargas redundantes.
+
+## 2026-07-02z
+
+- **Indicador fijo de dominio temporal en panel de simulación:**
+  - Se añade una etiqueta visible en el dock temporal mostrando el dominio activo (`General` u `OEM`).
+  - Cuando hay OEM cargado, el indicador se resalta visualmente para dejar claro que la simulación está en dominio OEM.
+
+## 2026-07-02y
+
+- **Mezcla OEM + TLE/OMM con alineación automática de dominio temporal:**
+  - Al importar ficheros TLE/OMM mientras exista dominio OEM activo, la simulación se alinea automáticamente al rango temporal OEM.
+  - Al importar OEM (ephemeris nativa) con TLE/OMM activos, se informa que la propagación no OEM pasa al dominio temporal OEM.
+  - Mientras haya OEM cargado, el rango efectivo de simulación se fuerza al dominio temporal OEM para evitar desalineaciones.
+
+- **Warnings de incompatibilidad temporal orbital:**
+  - Se añade comprobación de compatibilidad temporal de TLE/OMM frente al rango OEM activo (usando epoch y ventana recomendada por tipo orbital).
+  - Si hay incompatibilidades o no se puede validar epoch, se avisa explícitamente al usuario.
+
+## 2026-07-02x
+
+- **OEM fuera de ventana temporal: ocultación estricta**
+  - Se fuerza que un OEM fuera de su ventana propia no se represente (ni satélite ni overlays de órbita/ground track/footprint).
+  - La visibilidad global ahora también respeta el estado "fuera de tiempo" para evitar reapariciones por refrescos de render.
+
+- **Simulación temporal sin botón Apply**
+  - Al editar `Inicio` y `Fin` en modo rango, el cambio se aplica automáticamente en cuanto el par de fechas es válido.
+  - Se elimina la dependencia de pulsar `Apply`.
+
+- **Opciones de visualización contextual para OEM**
+  - En `click derecho > opciones de visualización`, los OEM ya no muestran controles innecesarios de pasado ni propagación por horas.
+
+- **Explain orbital parameters y telemetría por formato real**
+  - La explicación orbital deja de asumir TLE en todos los casos y diferencia OEM/OMM/TLE.
+  - Para OEM se prioriza información del propio fichero importado (ventana temporal, frame, time system, muestras, etc.).
+  - La telemetría ahora incluye `source_format`, `source_origin` y bloque OEM específico, preparada para futuras operaciones OEM.
+
+## 2026-07-02w
+
+- **OEM fuera de ventana temporal ahora se oculta claramente:**
+  - Si en simulación `range` un OEM está fuera de su ventana propia de tiempo, se oculta completamente para evitar que parezca activo sin datos.
+  - Al reingresar en su ventana temporal, recupera su visualización normal automáticamente.
+- **Apertura automática del panel temporal al importar OEM:**
+  - Al cargar un OEM, además de pasar a modo `range` y ajustar el rango global, se abre directamente el panel de simulación temporal.
+
+## 2026-07-02v
+
+- **Estado visual fuera de tiempo para OEM en simulación range:**
+  - Cuando un satélite OEM está fuera de su ventana temporal (`start/end` propio), se mantiene visible en **gris claro** para indicar que no hay datos en ese instante.
+  - Mientras está fuera de tiempo, se ocultan su órbita/traza/ground-track/footprint para evitar interpretación incorrecta.
+  - Al volver a entrar en su ventana temporal, recupera automáticamente su estilo visual normal.
+
+## 2026-07-02u
+
+- **Fix OEM múltiple en simulación range (ventana temporal por satélite):**
+  - Cada OEM importado usa ahora su propio `start/end` para muestrear posición durante la simulación.
+  - Un OEM no avanza antes de su hora de inicio, aunque el rango global ya haya comenzado por otro OEM.
+  - Se mantiene el rango global como `min(start)` y `max(end)` entre todos los OEM cargados.
+
+## 2026-07-02t
+
+- **OEM ephemeris: nombres limpios, política temporal y simplificación de filtros:**
+  - Se elimina el sufijo visual `[OEM]` en el nombre importado; para duplicados se usa formato limpio `Nombre (2)`, `Nombre (3)`, etc.
+  - Con OEM ephemeris cargados, se bloquea el cambio a modo **Tiempo real** y se muestra aviso explícito.
+  - Al importar OEM ephemeris, la simulación pasa a modo **Rango** automáticamente.
+  - El rango temporal se ajusta con los límites globales de todos los OEM cargados (`min(start)` y `max(end)`).
+  - Al quitar una capa OEM ephemeris, se descarga también su track temporal del estado runtime.
+  - Se elimina de la UI el selector de filtro por origen `custom/catalog` (se mantiene filtro por formato).
+
+## 2026-07-02s
+
+- **Soporte OEM ephemeris puro como órbita temporal nativa (sin TLE embebido):**
+  - Si un `.oem` no contiene `TLE_LINE1/TLE_LINE2`, el frontend ya no falla: lo importa como trayectoria temporal nativa (track OEM) en Cesium.
+  - Se parsean muestras de estado del OEM (`time x y z`) y se crea una capa activa custom con `sourceFormat=OEM` y `sourceOrigin=CUSTOM`.
+  - La órbita se muestra directamente en la vista como polilínea temporal, seleccionable desde el panel de satélites.
+  - Se mantiene el flujo anterior para OEM con TLE embebido (importación a catálogo normal por backend).
+
+## 2026-07-02r
+
+- **Importación: warning por NORAD existente con otro nombre + error OEM ephemeris sin TLE embebido:**
+  - Al importar, si una entrada trae un NORAD que ya existe bajo otro nombre en catálogo, se devuelve y muestra un aviso explícito de conflicto (se mantiene el nombre ya presente en catálogo).
+  - Si se intenta importar un OEM sin `TLE_LINE1/TLE_LINE2` (OEM ephemeris puro), se devuelve error explícito indicando que ese caso aún no se importa como órbita nativa.
+
+## 2026-07-02q
+
+- **UX drag&drop: resaltado visual de zona de suelta global:**
+  - Se añade overlay visual de alto contraste al arrastrar ficheros sobre la aplicación (mensaje “Soltar para importar”).
+  - El overlay se muestra/oculta de forma estable usando contador de profundidad de drag para evitar parpadeos.
+  - Se evita doble importación cuando se suelta dentro del modal de catálogo (el drop global cede paso al drop local).
+
+## 2026-07-02p
+
+- **Fix importación por arrastre global + autoalta en vista de satélites:**
+  - El drag&drop global de archivos ahora captura correctamente eventos (`dragenter/dragover/drop` en captura) y evita silencios de importación.
+  - Si el arrastre no contiene archivos o falla la importación, se muestra mensaje de error explícito.
+  - La API de import devuelve `importedNames` para identificar satélites realmente importados.
+  - Al arrastrar un fichero directamente sobre la pantalla, además de guardarse en catálogo, los satélites importados se añaden automáticamente a la vista (respetando límite de capas activas) y se muestra resumen de añadidos/omitidos.
+
+## 2026-07-02o
+
+- **Catálogo: importación por arrastre global + origen custom/catalog + limpieza visual de filas:**
+  - Se habilita importar fichero de catálogo arrastrando y soltando en cualquier parte de la pantalla (no solo dentro del modal), con intento de carga directa y apertura del catálogo tras importación.
+  - Se elimina la duplicidad visual de la etiqueta **TLE** en cada fila del catálogo: el botón lateral pasa a **Info** para no repetir el formato.
+  - Nuevo concepto de origen de entrada en catálogo (`sourceOrigin`):
+    - `CUSTOM` para objetos importados manualmente.
+    - `CATALOG` para objetos provenientes de refresco remoto/fuentes de catálogo.
+  - Nuevo filtro en UI/API por origen (**Todos / Catalogo / Custom**), combinado con el filtro de formato (TLE/OMM/OEM).
+  - Al actualizar catálogo remoto, las entradas `CUSTOM` se preservan y no se eliminan.
+
+## 2026-07-02n
+
+- **Fix edición de fechas en simulación por rango:**
+  - Se evita que el refresco periódico del panel temporal (cada 120 ms) sobrescriba los campos `Inicio` y `Fin` mientras el usuario los está editando.
+  - Los campos vuelven a sincronizarse automáticamente con el estado interno al pulsar **Aplicar**.
+  - Resultado: ya se puede seleccionar días futuros (por ejemplo, del 02 al 07) sin que el input vuelva al valor anterior.
+
+## 2026-07-02m
+
+- **Fix simulación por rango (órbita completa entre fechas):**
+  - Se corrige el mapeo temporal de la órbita en modo `range` para usar como referencia el inicio real del rango y su duración total.
+  - Resultado: la órbita mostrada en simulación cubre correctamente todo el tramo entre `inicio` y `fin`, evitando recortes parciales cuando el rango incluye pasado/futuro respecto al instante actual.
+
+## 2026-07-02l
+
+- **Exportación condicionada por origen + metadatos en efemérides:**
+  - El modal de exportación ahora respeta el formato de origen del catálogo:
+    - **TLE**: solo permite exportar TLE.
+    - **OMM**: solo permite exportar OMM (JSON/XML).
+    - **OEM**: solo permite exportar OEM.
+  - Se añade indicador visual del **source** en el modal de exportación.
+  - Backend Node valida también estas reglas para evitar exportaciones cruzadas por URL directa.
+  - Nuevo endpoint `GET /api/export/oem/:satId` para exportación de origen OEM.
+  - En exportación de efemérides por rango (`/export/ephemeris`), las salidas JSON/CSV/OEM incluyen ahora:
+    - `source_format` (TLE/OMM/OEM)
+    - `propagator` (actualmente SGP4)
+
+## 2026-07-02k
+
+- **Filtro por formato y exportaciones orbitales desde menú contextual:**
+  - Nuevo filtro de catálogo por formato de origen (**Todos / TLE / OMM / OEM**), integrado en paginado, selección masiva y chips de resumen.
+  - Menú contextual con opción **Exportar...** que abre un modal de exportación con dos bloques:
+    - Exportar **TLE**, **OMM (JSON)**, **OMM (XML)** y **OCM** del satélite activo.
+    - Exportar **efemérides entre fechas** (inicio, fin, intervalo, formato CSV/JSON/OEM y propagador SGP4).
+  - Nuevos endpoints de export en backend Node/FastAPI para descarga directa de ficheros (`/api/export/tle/:satId`, `/api/export/omm/:satId`, `/api/export/ocm/:satId`, `/api/export/ephemeris/:satId`).
+  - FastAPI añade rutas de exportación equivalentes en `/export/*` con generación de contenido en texto/JSON/XML/OEM.
+
+## 2026-07-02j
+
+- **Limpieza documental de presets retirados:**
+  - Se elimina en `CHANGELOG.md` la mención residual a la API de presets de configuración, para dejar la documentación alineada con la retirada funcional ya aplicada en backend/UI.
+
+## 2026-07-02i
+
+- **Retirada completa de presets:**
+  - Se eliminan del backend los endpoints de presets de catálogo y de presets de configuración del sistema.
+  - Se eliminan utilidades y rutas asociadas para evitar código muerto.
+  - Se borra `config/system_config_presets.json`.
+  - Se elimina `data.catalog_preset` de `config/system_config.json`.
+
+## 2026-07-02h
+
+- **Ajustes de UX de catálogo y configuración por feedback de uso:**
+  - Se elimina la opción **Presets** del modal de catálogo.
+  - Se eliminan los filtros de **Operador** y **Propietario** del modal de filtros de catálogo.
+  - El filtro **Solo decay** mantiene la funcionalidad pero ahora muestra el checkbox a la derecha de su etiqueta para una lectura más natural.
+  - El botón **Actualizar catálogo** amplía la ingesta para incluir también fuentes remotas en formato **OMM/OEM** (además de TLE), con resumen de resultados por fuentes y advertencias unificadas.
+  - En el panel de configuración se eliminan los iconos "i" de ayuda y la descripción de cada parámetro pasa a mostrarse como tooltip al pasar el ratón por encima del propio label.
+
+## 2026-07-02g
+
+- **Catálogo avanzado con formatos, importación local y filtros de operador/propietario:**
+  - En el modal de catálogo se añaden acciones de **Presets** e **Importar**, con soporte de importación de fichero local por selector y por **drag & drop** hacia el modal.
+  - Se integran presets desde backend (`/api/catalog/presets` y `/api/catalog/use-preset`) para cambiar de catálogo predefinido sin salir del panel.
+  - Se añaden filtros de **operador**, **propietario** y **solo decay** (perigeo bajo), conectados al paginado remoto del catálogo.
+  - Las filas del catálogo y la lista activa de satélites muestran una etiqueta pequeña con el formato de origen (**TLE / OMM / OEM**).
+  - Se añaden estilos específicos para la insignia de formato (`.catalog-format-badge`) manteniendo la paleta del tema.
+
 ## 2026-07-02f
 
 - **Lista de satélites con scroll visible y fila "+" para añadir:**

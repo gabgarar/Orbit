@@ -30,6 +30,10 @@ const SAT_MODEL_BASE_MAX_SCALE = 50000000;
 const SAT_MODEL_MAX_USER_SCALE = 100000000;
 const SAT_POINT_PIXEL_SIZE = 5;
 const SAT_POINT_OUTLINE_WIDTH = 1;
+const SAT_OUT_OF_TIME_POINT_COLOR = "#d7dde3";
+const SAT_OUT_OF_TIME_POINT_OUTLINE_COLOR = "#8a93a0";
+const SAT_OUT_OF_TIME_LABEL_COLOR = "#cfd5dc";
+const SAT_OUT_OF_TIME_LABEL_OUTLINE_COLOR = "#4f5864";
 const DEFAULT_SELECTED_ORBIT_COLOR = "#ff2d2d";
 const SELECTED_ORBIT_WIDTH_BOOST_PX = 2;
 const GROUND_TRACK_WIDTH_FACTOR = 0.85;
@@ -40,6 +44,9 @@ const FOOTPRINT_CIRCLE_SEGMENTS = 128;
 // el z-fighting con la textura de la Tierra sin que el círculo parezca flotar
 // (la huella mide miles de km, unos pocos km de altura son imperceptibles).
 const FOOTPRINT_SURFACE_HEIGHT = 30000;
+// Altura a la que se eleva la traza de suelo (ground track) para evitar el
+// z-fighting con la textura del mapa. Se mantiene por debajo del footprint.
+const GROUND_TRACK_SURFACE_HEIGHT = 20000;
 const DEFAULT_MAX_ACTIVE_SATELLITES = 100;
 const PROPAGATION_HOURS_MIN = 0;
 const PROPAGATION_HOURS_MAX = 240;
@@ -206,6 +213,8 @@ const hiddenSatelliteIds = new Set();
 const catalogSatelliteIds = new Set();
 const activeLayerSatelliteIds = new Set();
 const tleBySatelliteId = new Map();
+const catalogEntryMetaBySatelliteId = new Map();
+const oemEphemerisTrackById = new Map();
 let catalogLoaded = false;
 let lastCatalogUrl = "/config/catalog.json";
 let cachedSatelliteIds = [];
@@ -220,6 +229,7 @@ let satelliteSizeMode = "visual";
 let maxActiveSatellites = DEFAULT_MAX_ACTIVE_SATELLITES;
 let lastUpdateTime = Date.now();
 let animationFrameId = null;
+let simulationTimelineProvider = null;
 let sourceFutureOrbitHours = null;
 let sourceFutureOrbitSamples = null;
 let selectedOrbitSatelliteId = null;
@@ -265,6 +275,9 @@ function shouldShowGroundTrack(id) {
 }
 
 function shouldShowPastOrbit(id) {
+    if (isRangeSimulationModeActive()) {
+        return false;
+    }
     return getSatelliteConfigValue(id, "orbit_past_show", orbitConfig.orbit_past_show) !== false
         && getPastSecondsForSatellite(id) > 0;
 }
@@ -310,13 +323,199 @@ function getSatelliteSizeMode(id) {
     return requested === "physical" ? "physical" : "visual";
 }
 
+function resolveSimulationTimelineContext() {
+    if (typeof simulationTimelineProvider !== "function") {
+        return null;
+    }
+
+    try {
+        const ctx = simulationTimelineProvider();
+        if (!ctx || typeof ctx !== "object") {
+            return null;
+        }
+        const date = ctx.date instanceof Date ? ctx.date : new Date(ctx.date || Date.now());
+        if (Number.isNaN(date.getTime())) {
+            return null;
+        }
+        const mode = String(ctx.mode || "realtime").toLowerCase();
+        const rangeStart = ctx.rangeStart instanceof Date ? ctx.rangeStart : new Date(ctx.rangeStart || NaN);
+        const rangeEnd = ctx.rangeEnd instanceof Date ? ctx.rangeEnd : new Date(ctx.rangeEnd || NaN);
+        return {
+            date,
+            mode,
+            rangeStart: Number.isNaN(rangeStart.getTime()) ? null : rangeStart,
+            rangeEnd: Number.isNaN(rangeEnd.getTime()) ? null : rangeEnd
+        };
+    } catch (error) {
+        logger.warn("No se pudo resolver contexto temporal de simulacion:", error);
+        return null;
+    }
+}
+
+function isRangeSimulationModeActive() {
+    const simulationCtx = resolveSimulationTimelineContext();
+    return Boolean(simulationCtx && simulationCtx.mode === "range");
+}
+
+function clipOrbitBySimulationRange(state, orbitPoints) {
+    const simulationCtx = resolveSimulationTimelineContext();
+    if (!simulationCtx || simulationCtx.mode !== "range") {
+        return orbitPoints;
+    }
+    if (!simulationCtx.rangeStart || !simulationCtx.rangeEnd) {
+        return orbitPoints;
+    }
+
+    const referenceMs = Number(state?.simOrbitReferenceMs);
+    const horizonSeconds = Number(state?.simOrbitHorizonSeconds);
+    if (!Number.isFinite(referenceMs) || !Number.isFinite(horizonSeconds) || horizonSeconds <= 0) {
+        return orbitPoints;
+    }
+    if (!Array.isArray(orbitPoints) || orbitPoints.length < 2) {
+        return orbitPoints;
+    }
+
+    const rangeStartMs = simulationCtx.rangeStart.getTime();
+    const rangeEndMs = simulationCtx.rangeEnd.getTime();
+    const startRatio = clamp((rangeStartMs - referenceMs) / (horizonSeconds * 1000), 0, 1);
+    const endRatio = clamp((rangeEndMs - referenceMs) / (horizonSeconds * 1000), 0, 1);
+    const fromRatio = Math.min(startRatio, endRatio);
+    const toRatio = Math.max(startRatio, endRatio);
+
+    const maxIndex = orbitPoints.length - 1;
+    const fromIndex = Math.max(0, Math.floor(fromRatio * maxIndex));
+    const toIndex = Math.min(maxIndex, Math.ceil(toRatio * maxIndex));
+
+    if (toIndex - fromIndex < 1) {
+        return orbitPoints.slice(Math.max(0, fromIndex - 1), Math.min(maxIndex + 1, toIndex + 2));
+    }
+
+    return orbitPoints.slice(fromIndex, toIndex + 1);
+}
+
+function sampleOrbitPositionForDate(state, simulationDate) {
+    if (!state || !(simulationDate instanceof Date)) {
+        return null;
+    }
+
+    const positions = state.simOrbitPositions;
+    if (!Array.isArray(positions) || positions.length < 2) {
+        return null;
+    }
+
+    const referenceMs = Number(state.simOrbitReferenceMs);
+    const horizonSeconds = Number(state.simOrbitHorizonSeconds);
+    if (!Number.isFinite(referenceMs) || !Number.isFinite(horizonSeconds) || horizonSeconds <= 0) {
+        return null;
+    }
+
+    const simulationCtx = resolveSimulationTimelineContext();
+    let ratio;
+
+    const trackStartMs = Number(state.simTrackStartMs);
+    const trackEndMs = Number(state.simTrackEndMs);
+    const hasTrackWindow = Number.isFinite(trackStartMs) && Number.isFinite(trackEndMs) && trackEndMs > trackStartMs;
+
+    if (hasTrackWindow) {
+        const simMs = simulationDate.getTime();
+        if (simMs < trackStartMs || simMs > trackEndMs) {
+            return null;
+        }
+
+        const spanMs = Math.max(1000, trackEndMs - trackStartMs);
+        ratio = clamp((simMs - trackStartMs) / spanMs, 0, 1);
+    } else if (simulationCtx && simulationCtx.mode === "range" && simulationCtx.rangeStart && simulationCtx.rangeEnd) {
+        const rangeStartMs = simulationCtx.rangeStart.getTime();
+        const rangeEndMs = simulationCtx.rangeEnd.getTime();
+        const spanMs = Math.max(1000, rangeEndMs - rangeStartMs);
+        ratio = clamp((simulationDate.getTime() - rangeStartMs) / spanMs, 0, 1);
+    } else {
+        const elapsedSeconds = (simulationDate.getTime() - referenceMs) / 1000;
+        ratio = clamp(elapsedSeconds / horizonSeconds, 0, 1);
+    }
+
+    const maxIndex = positions.length - 1;
+    const exactIndex = ratio * maxIndex;
+    const leftIndex = Math.floor(exactIndex);
+    const rightIndex = Math.min(maxIndex, leftIndex + 1);
+    const t = exactIndex - leftIndex;
+
+    return lerpCartesian(positions[leftIndex], positions[rightIndex], t);
+}
+
+function hasValidSimulationTrackWindow(state) {
+    const startMs = Number(state?.simTrackStartMs);
+    const endMs = Number(state?.simTrackEndMs);
+    return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs;
+}
+
+function isOutsideSimulationTrackWindow(state, simulationDate) {
+    if (!hasValidSimulationTrackWindow(state) || !(simulationDate instanceof Date)) {
+        return false;
+    }
+    const simMs = simulationDate.getTime();
+    if (!Number.isFinite(simMs)) {
+        return false;
+    }
+    const startMs = Number(state.simTrackStartMs);
+    const endMs = Number(state.simTrackEndMs);
+    return simMs < startMs || simMs > endMs;
+}
+
+function applyOutOfTimeVisualState(id, state, outOfTime) {
+    if (!state?.entity) {
+        return;
+    }
+    if (state.isOutOfTimeVisualState === outOfTime) {
+        return;
+    }
+
+    state.isOutOfTimeVisualState = outOfTime;
+    const entity = state.entity;
+
+    if (outOfTime) {
+        if (entity.model) {
+            entity.model.show = false;
+        }
+        if (entity.point) {
+            entity.point.show = true;
+            entity.point.color = Cesium.Color.fromCssColorString(SAT_OUT_OF_TIME_POINT_COLOR);
+            entity.point.outlineColor = Cesium.Color.fromCssColorString(SAT_OUT_OF_TIME_POINT_OUTLINE_COLOR);
+        }
+        if (entity.label) {
+            entity.label.fillColor = Cesium.Color.fromCssColorString(SAT_OUT_OF_TIME_LABEL_COLOR);
+            entity.label.outlineColor = Cesium.Color.fromCssColorString(SAT_OUT_OF_TIME_LABEL_OUTLINE_COLOR);
+        }
+        if (state.trailEntity) {
+            state.trailEntity.show = false;
+        }
+        if (state.orbitEntity) {
+            state.orbitEntity.show = false;
+        }
+        if (state.groundTrackEntity) {
+            state.groundTrackEntity.show = false;
+        }
+        if (state.footprintEntity) {
+            state.footprintEntity.show = false;
+        }
+        // Se oculta completamente para que la ausencia de datos temporales sea inequívoca.
+        entity.show = false;
+        return;
+    }
+
+    applyLabelStyle(entity, id);
+    applyVisualStyle(entity);
+    applySatelliteVisibility(id, state);
+}
+
 function applySatelliteVisibility(id, state) {
     if (!state || !state.entity) {
         return true;
     }
 
     const isActiveLayer = activeLayerSatelliteIds.has(id);
-    const visible = isActiveLayer && !hiddenSatelliteIds.has(id);
+    const outOfTime = state.isOutOfTimeVisualState === true;
+    const visible = isActiveLayer && !hiddenSatelliteIds.has(id) && !outOfTime;
     state.entity.show = visible;
 
     if (state.trailEntity) {
@@ -773,7 +972,7 @@ function toSurfaceGroundTrack(orbitPoints) {
             continue;
         }
 
-        positions.push(Cesium.Cartesian3.fromRadians(lon, lat, 0));
+        positions.push(Cesium.Cartesian3.fromRadians(lon, lat, GROUND_TRACK_SURFACE_HEIGHT));
     }
 
     return positions;
@@ -977,10 +1176,28 @@ function startSmoothUpdate(viewer) {
     /**Anima las posiciones de satélites entre updates del servidor*/
     function smoothUpdateFrame() {
         const now = Date.now();
+        const simulationCtx = resolveSimulationTimelineContext();
+        const useSimulationOrbit = Boolean(simulationCtx && simulationCtx.mode !== "realtime");
         
         for (const id in satelliteState) {
             const state = satelliteState[id];
-            if (!state.entity || !state.entity.show) continue;
+            if (!state.entity) continue;
+            if (!state.entity.show && !state.isOutOfTimeVisualState) continue;
+
+            const outsideTrackWindow = useSimulationOrbit && isOutsideSimulationTrackWindow(state, simulationCtx?.date);
+            applyOutOfTimeVisualState(id, state, outsideTrackWindow);
+
+            if (useSimulationOrbit) {
+                const sampled = sampleOrbitPositionForDate(state, simulationCtx.date);
+                if (sampled) {
+                    state.renderPosition = sampled;
+                    state.entity.position = sampled;
+                    continue;
+                }
+                if (outsideTrackWindow) {
+                    continue;
+                }
+            }
             
             // Calcular progreso de interpolación (0 a 1)
             const elapsed = now - state.lastUpdateTime;
@@ -1389,7 +1606,12 @@ export async function fetchCatalogPage({
     limit = 200,
     search = "",
     orbitKind = "",
-    mission = ""
+    mission = "",
+    sourceFormat = "",
+    sourceOrigin = "",
+    operator = "",
+    owner = "",
+    decayOnly = false
 } = {}) {
     const safeOffset = Math.max(0, Number.parseInt(String(offset), 10) || 0);
     const safeLimit = Math.max(1, Math.min(1000, Number.parseInt(String(limit), 10) || 200));
@@ -1402,10 +1624,19 @@ export async function fetchCatalogPage({
     const normalizedSearch = String(search || "").trim();
     const normalizedOrbit = String(orbitKind || "").trim().toLowerCase();
     const normalizedMission = String(mission || "").trim().toLowerCase();
+    const normalizedSourceFormat = String(sourceFormat || "").trim().toUpperCase();
+    const normalizedSourceOrigin = String(sourceOrigin || "").trim().toUpperCase();
+    const normalizedOperator = String(operator || "").trim().toLowerCase();
+    const normalizedOwner = String(owner || "").trim().toLowerCase();
 
     if (normalizedSearch) params.set("search", normalizedSearch);
     if (normalizedOrbit) params.set("orbitKind", normalizedOrbit);
     if (normalizedMission) params.set("mission", normalizedMission);
+    if (normalizedSourceFormat) params.set("sourceFormat", normalizedSourceFormat);
+    if (normalizedSourceOrigin) params.set("sourceOrigin", normalizedSourceOrigin);
+    if (normalizedOperator) params.set("operator", normalizedOperator);
+    if (normalizedOwner) params.set("owner", normalizedOwner);
+    if (decayOnly === true) params.set("decayOnly", "true");
 
     const response = await fetch(`/api/catalog/page?${params.toString()}`, { cache: "no-cache" });
     if (!response.ok) {
@@ -1429,6 +1660,14 @@ export async function fetchCatalogPage({
         if (line1 && line2) {
             tleBySatelliteId.set(name, { line1, line2 });
         }
+        catalogEntryMetaBySatelliteId.set(name, {
+            sourceFormat: String(item?.sourceFormat || item?.format || "TLE").toUpperCase(),
+            sourceOrigin: String(item?.sourceOrigin || item?.source_origin || "CATALOG").toUpperCase(),
+            operator: String(item?.operator || "").trim().toLowerCase(),
+            owner: String(item?.owner || "").trim().toLowerCase(),
+            perigee_km: Number.isFinite(Number(item?.perigee_km)) ? Number(item.perigee_km) : null,
+            decayRisk: item?.decayRisk === true
+        });
     }
 
     if (ids.length) {
@@ -1445,7 +1684,10 @@ export async function fetchCatalogPage({
         total,
         offset: Number(payload?.offset) || safeOffset,
         limit: Number(payload?.limit) || safeLimit,
-        hasMore: Boolean(payload?.hasMore)
+        hasMore: Boolean(payload?.hasMore),
+        operators: Array.isArray(payload?.operators) ? payload.operators : [],
+        owners: Array.isArray(payload?.owners) ? payload.owners : [],
+        decayPerigeeKm: Number(payload?.decayPerigeeKm) || null
     };
 }
 
@@ -1466,6 +1708,7 @@ export async function refreshSatelliteCatalog(catalogUrl = "/config/catalog.json
     lastCatalogUrl = catalogUrl || lastCatalogUrl;
     catalogSatelliteIds.clear();
     tleBySatelliteId.clear();
+    catalogEntryMetaBySatelliteId.clear();
     satelliteIdsDirty = true;
     catalogLoaded = false;
     const ok = await preloadSatelliteCatalog(lastCatalogUrl);
@@ -1525,6 +1768,14 @@ export async function getSatelliteTleAsync(id) {
         const tle = { line1, line2 };
         tleBySatelliteId.set(name, tle);
         catalogSatelliteIds.add(name);
+        catalogEntryMetaBySatelliteId.set(name, {
+            sourceFormat: String(item?.sourceFormat || "TLE").toUpperCase(),
+            sourceOrigin: String(item?.sourceOrigin || item?.source_origin || "CATALOG").toUpperCase(),
+            operator: String(item?.operator || "").trim().toLowerCase(),
+            owner: String(item?.owner || "").trim().toLowerCase(),
+            perigee_km: Number.isFinite(Number(item?.perigee_km)) ? Number(item.perigee_km) : null,
+            decayRisk: item?.decayRisk === true
+        });
         satelliteIdsDirty = true;
         catalogLoaded = true;
         return tle;
@@ -1532,6 +1783,13 @@ export async function getSatelliteTleAsync(id) {
         logger.warn(`No se pudo obtener TLE para ${id}:`, error);
         return null;
     }
+}
+
+export function getCatalogEntryMeta(id) {
+    if (!id) {
+        return null;
+    }
+    return catalogEntryMetaBySatelliteId.get(String(id)) || null;
 }
 
 export function getSatelliteTelemetry(id) {
@@ -1564,12 +1822,40 @@ export function getSatelliteTelemetry(id) {
 
     const speedKmS = speed / 1000;
     const speedKmH = speed * 3.6;
-    const telemetryAgeMs = Date.now() - (state.lastMessageTime || Date.now());
+    const nowMs = Date.now();
+    const telemetryAgeMs = nowMs - (state.lastMessageTime || nowMs);
+    const entryMeta = getCatalogEntryMeta(id) || {};
+    const sourceFormat = String(entryMeta.sourceFormat || "TLE").toUpperCase();
+    const sourceOrigin = String(entryMeta.sourceOrigin || "CATALOG").toUpperCase();
     const propagationFutureHours = getPropagationHoursForSatellite(id);
     const propagationPastSeconds = getPastSecondsForSatellite(id);
+    const oemTrack = oemEphemerisTrackById.get(id);
+
+    let oem = null;
+    if (sourceFormat === "OEM" && oemTrack) {
+        const startMs = Number(oemTrack.startTimeMs);
+        const endMs = Number(oemTrack.endTimeMs);
+        const hasWindow = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs;
+        oem = {
+            start_time_ms: hasWindow ? startMs : null,
+            end_time_ms: hasWindow ? endMs : null,
+            samples: Number.isFinite(Number(oemTrack.samples)) ? Number(oemTrack.samples) : null,
+            file_name: oemTrack.fileName || null,
+            object_name: oemTrack.objectName || null,
+            object_id: oemTrack.objectId || null,
+            center_name: oemTrack.centerName || null,
+            ref_frame: oemTrack.refFrame || null,
+            time_system: oemTrack.timeSystem || null,
+            start_time_raw: oemTrack.startTimeRaw || null,
+            stop_time_raw: oemTrack.stopTimeRaw || null,
+            is_in_time_window: hasWindow ? (nowMs >= startMs && nowMs <= endMs) : null
+        };
+    }
 
     return {
         id,
+        source_format: sourceFormat,
+        source_origin: sourceOrigin,
         position: {
             x: Number(position.x) || 0,
             y: Number(position.y) || 0,
@@ -1592,9 +1878,10 @@ export function getSatelliteTelemetry(id) {
         propagation_future_hours: propagationFutureHours,
         propagation_past_seconds: propagationPastSeconds,
         propagation_past_hours: propagationPastSeconds / 3600,
+        oem,
         is_visible: !hiddenSatelliteIds.has(id),
         telemetry_age_ms: telemetryAgeMs,
-        timestamp_ms: Date.now()
+        timestamp_ms: nowMs
     };
 }
 
@@ -1623,6 +1910,11 @@ export function setSatelliteLayerActive(id, active) {
         wsClient?.subscribe([id]);
         return true;
     } else {
+        if (oemEphemerisTrackById.has(id)) {
+            removeOemEphemerisTrack(id);
+            return true;
+        }
+
         activeLayerSatelliteIds.delete(id);
         activeLayerIdsDirty = true;
         wsClient?.unsubscribe([id]);
@@ -1750,18 +2042,6 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         return;
     }
 
-    const futureOrbitVisible = shouldShowFutureOrbit(id);
-    const groundTrackVisible = shouldShowGroundTrack(id);
-
-    if ((!futureOrbitVisible && !groundTrackVisible) || !activeLayerSatelliteIds.has(id) || hiddenSatelliteIds.has(id)) {
-        if (state.orbitEntity) {
-            viewer.entities.remove(state.orbitEntity);
-            state.orbitEntity = null;
-        }
-        remove2DOverlays(viewer, state);
-        return;
-    }
-
     const orbit = orbitPayload?.orbit;
     if (!Array.isArray(orbit) || orbit.length < 2) {
         if (state.orbitEntity) {
@@ -1786,8 +2066,63 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         : orbit.length;
 
     const horizonClippedOrbit = clipFutureOrbitByRequestedHorizon(id, orbit);
+    const effectiveHorizonHoursRaw = Number(getPropagationHoursForSatellite(id));
+    const effectiveHorizonHours = Number.isFinite(effectiveHorizonHoursRaw) && effectiveHorizonHoursRaw > 0
+        ? effectiveHorizonHoursRaw
+        : (Number.isFinite(sourceFutureOrbitHours) && sourceFutureOrbitHours > 0 ? sourceFutureOrbitHours : 12);
+
+    const simulationCtx = resolveSimulationTimelineContext();
+    const isOutOfTimeInRange = Boolean(
+        simulationCtx
+        && simulationCtx.mode === "range"
+        && isOutsideSimulationTrackWindow(state, simulationCtx.date)
+    );
+
+    applyOutOfTimeVisualState(id, state, isOutOfTimeInRange);
+    if (isOutOfTimeInRange) {
+        if (state.orbitEntity) {
+            viewer.entities.remove(state.orbitEntity);
+            state.orbitEntity = null;
+        }
+        remove2DOverlays(viewer, state);
+        return;
+    }
+
+    const hasRangeWindow = Boolean(
+        simulationCtx
+        && simulationCtx.mode === "range"
+        && simulationCtx.rangeStart
+        && simulationCtx.rangeEnd
+        && simulationCtx.rangeEnd.getTime() > simulationCtx.rangeStart.getTime()
+    );
+
+    state.simOrbitPositions = toCartesianArray(horizonClippedOrbit);
+    if (hasRangeWindow) {
+        const rangeStartMs = simulationCtx.rangeStart.getTime();
+        const rangeEndMs = simulationCtx.rangeEnd.getTime();
+        const spanSeconds = Math.max(1, (rangeEndMs - rangeStartMs) / 1000);
+        // En simulacion por rango, la orbita se mapea al tramo [inicio, fin].
+        state.simOrbitReferenceMs = rangeStartMs;
+        state.simOrbitHorizonSeconds = spanSeconds;
+    } else {
+        state.simOrbitReferenceMs = Date.now();
+        state.simOrbitHorizonSeconds = Math.max(1, effectiveHorizonHours * 3600);
+    }
+
+    const futureOrbitVisible = shouldShowFutureOrbit(id);
+    const groundTrackVisible = shouldShowGroundTrack(id);
+    if ((!futureOrbitVisible && !groundTrackVisible) || !activeLayerSatelliteIds.has(id) || hiddenSatelliteIds.has(id)) {
+        if (state.orbitEntity) {
+            viewer.entities.remove(state.orbitEntity);
+            state.orbitEntity = null;
+        }
+        remove2DOverlays(viewer, state);
+        return;
+    }
+
+    const simulationClippedOrbit = clipOrbitBySimulationRange(state, horizonClippedOrbit);
     const hiddenFutureSamples = getHiddenFutureSamples();
-    const visibleOrbit = trimOrbitNearSatellite(horizonClippedOrbit, hiddenFutureSamples);
+    const visibleOrbit = trimOrbitNearSatellite(simulationClippedOrbit, hiddenFutureSamples);
 
     if (visibleOrbit.length < 2) {
         if (state.orbitEntity) {
@@ -2018,4 +2353,214 @@ export function clearAllSatelliteVisualizationConfigs() {
 
     // Reaplicar estilo global en todos los satélites activos tras limpiar overrides.
     setOrbitConfig({});
+}
+
+function parseOemEphemerisContent(content, fileName = "") {
+    const text = String(content || "");
+    const objectName = /OBJECT_NAME\s*=\s*(.+)/i.exec(text)?.[1]?.trim()
+        || /OBJECT_ID\s*=\s*(.+)/i.exec(text)?.[1]?.trim()
+        || String(fileName || "OEM Imported").replace(/\.[^.]+$/, "").trim()
+        || "OEM Imported";
+
+    const metadata = {
+        objectName,
+        objectId: null,
+        centerName: null,
+        refFrame: null,
+        timeSystem: null,
+        startTimeRaw: null,
+        stopTimeRaw: null,
+        fileName: String(fileName || "").trim() || null
+    };
+
+    const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    const points = [];
+    for (const line of lines) {
+        const kvMatch = /^([A-Z_]+)\s*=\s*(.+)$/i.exec(line);
+        if (kvMatch) {
+            const key = String(kvMatch[1] || "").toUpperCase();
+            const value = String(kvMatch[2] || "").trim();
+            if (key === "OBJECT_NAME" && value) metadata.objectName = value;
+            if (key === "OBJECT_ID" && value) metadata.objectId = value;
+            if (key === "CENTER_NAME" && value) metadata.centerName = value;
+            if (key === "REF_FRAME" && value) metadata.refFrame = value;
+            if (key === "TIME_SYSTEM" && value) metadata.timeSystem = value;
+            if (key === "START_TIME" && value) metadata.startTimeRaw = value;
+            if (key === "STOP_TIME" && value) metadata.stopTimeRaw = value;
+        }
+
+        if (/^(CCSDS_|CREATION_DATE|ORIGINATOR|META_|OBJECT_|CENTER_|REF_FRAME|TIME_SYSTEM|START_TIME|STOP_TIME|COMMENT)/i.test(line)) {
+            continue;
+        }
+
+        const parts = line.split(/\s+/);
+        if (parts.length < 4) {
+            continue;
+        }
+
+        const time = new Date(parts[0]);
+        if (Number.isNaN(time.getTime())) {
+            continue;
+        }
+
+        const x = Number(parts[1]);
+        const y = Number(parts[2]);
+        const z = Number(parts[3]);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+            continue;
+        }
+
+        points.push({ timeMs: time.getTime(), x, y, z });
+    }
+
+    points.sort((a, b) => a.timeMs - b.timeMs);
+    return { objectName, points, metadata };
+}
+
+function buildUniqueCustomTrackId(baseName) {
+    const base = String(baseName || "OEM Imported").trim() || "OEM Imported";
+    if (!satelliteState[base]) {
+        return base;
+    }
+    let n = 2;
+    while (satelliteState[`${base} (${n})`]) {
+        n += 1;
+    }
+    return `${base} (${n})`;
+}
+
+export function importOemEphemerisTrack(content, fileName = "") {
+    if (!currentViewer) {
+        throw new Error("Viewer no inicializado.");
+    }
+
+    const parsed = parseOemEphemerisContent(content, fileName);
+    if (!Array.isArray(parsed.points) || parsed.points.length < 2) {
+        throw new Error("OEM invalido: no se encontraron suficientes muestras de ephemeris.");
+    }
+
+    const id = buildUniqueCustomTrackId(parsed.objectName);
+    const first = parsed.points[0];
+    const firstPosition = new Cesium.Cartesian3(first.x, first.y, first.z);
+    const state = ensureSatelliteState(currentViewer, id, firstPosition, Cesium.Quaternion.IDENTITY);
+    state.simTrackStartMs = parsed.points[0].timeMs;
+    state.simTrackEndMs = parsed.points[parsed.points.length - 1].timeMs;
+
+    const orbit = parsed.points.map((p) => ({ x: p.x, y: p.y, z: p.z }));
+    const spanHours = Math.max(1 / 3600, (parsed.points[parsed.points.length - 1].timeMs - parsed.points[0].timeMs) / 3600000);
+
+    state.lastOrbitPayload = {
+        orbit,
+        orbit_horizon_hours: spanHours,
+        orbit_samples: orbit.length
+    };
+
+    catalogSatelliteIds.add(id);
+    catalogEntryMetaBySatelliteId.set(id, {
+        sourceFormat: "OEM",
+        sourceOrigin: "CUSTOM",
+        operator: "",
+        owner: "",
+        perigee_km: null,
+        decayRisk: false
+    });
+
+    activeLayerSatelliteIds.add(id);
+    oemEphemerisTrackById.set(id, {
+        startTimeMs: parsed.points[0].timeMs,
+        endTimeMs: parsed.points[parsed.points.length - 1].timeMs,
+        samples: orbit.length,
+        fileName: parsed.metadata?.fileName || String(fileName || "").trim() || null,
+        objectName: parsed.metadata?.objectName || id,
+        objectId: parsed.metadata?.objectId || null,
+        centerName: parsed.metadata?.centerName || null,
+        refFrame: parsed.metadata?.refFrame || null,
+        timeSystem: parsed.metadata?.timeSystem || null,
+        startTimeRaw: parsed.metadata?.startTimeRaw || null,
+        stopTimeRaw: parsed.metadata?.stopTimeRaw || null
+    });
+    activeLayerIdsDirty = true;
+    hiddenSatelliteIds.delete(id);
+    satelliteIdsDirty = true;
+    catalogLoaded = true;
+
+    renderFutureOrbitForState(currentViewer, id, state, state.lastOrbitPayload);
+    applySatelliteVisibility(id, state);
+
+    return {
+        id,
+        points: orbit.length,
+        startTimeMs: parsed.points[0].timeMs,
+        endTimeMs: parsed.points[parsed.points.length - 1].timeMs
+    };
+}
+
+function removeOemEphemerisTrack(id) {
+    oemEphemerisTrackById.delete(id);
+    activeLayerSatelliteIds.delete(id);
+    hiddenSatelliteIds.delete(id);
+    catalogSatelliteIds.delete(id);
+    satelliteIdsDirty = true;
+    activeLayerIdsDirty = true;
+    catalogEntryMetaBySatelliteId.delete(id);
+    tleBySatelliteId.delete(id);
+
+    const state = satelliteState[id];
+    if (state && currentViewer) {
+        if (state.trailEntity) {
+            currentViewer.entities.remove(state.trailEntity);
+            state.trailEntity = null;
+        }
+        if (state.orbitEntity) {
+            currentViewer.entities.remove(state.orbitEntity);
+            state.orbitEntity = null;
+        }
+        remove2DOverlays(currentViewer, state);
+        if (state.entity) {
+            currentViewer.entities.remove(state.entity);
+        }
+    }
+
+    delete satelliteState[id];
+    delete satelliteEntities[id];
+}
+
+export function hasLoadedOemEphemerisTracks() {
+    return oemEphemerisTrackById.size > 0;
+}
+
+export function getLoadedOemEphemerisTimeBounds() {
+    if (!oemEphemerisTrackById.size) {
+        return null;
+    }
+
+    let minStart = Number.POSITIVE_INFINITY;
+    let maxEnd = Number.NEGATIVE_INFINITY;
+
+    for (const item of oemEphemerisTrackById.values()) {
+        const start = Number(item?.startTimeMs);
+        const end = Number(item?.endTimeMs);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) {
+            continue;
+        }
+        minStart = Math.min(minStart, start);
+        maxEnd = Math.max(maxEnd, end);
+    }
+
+    if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || maxEnd <= minStart) {
+        return null;
+    }
+
+    return {
+        startTimeMs: minStart,
+        endTimeMs: maxEnd
+    };
+}
+
+export function setSimulationTimelineProvider(provider) {
+    simulationTimelineProvider = typeof provider === "function" ? provider : null;
 }

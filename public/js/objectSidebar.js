@@ -50,13 +50,28 @@ function formatTleAgeHuman(ageDays) {
     return `${Math.floor(ageDays)} dias`;
 }
 
-function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOpenState = {}) {
+function formatUtcDateTime(ms) {
+    const value = Number(ms);
+    if (!Number.isFinite(value)) {
+        return "-";
+    }
+    try {
+        return new Date(value).toISOString();
+    } catch {
+        return "-";
+    }
+}
+
+function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOpenState = {}, oemDomainActive = false) {
     if (!telemetry) {
         return "<div class=\"object-info-empty\">Selecciona un objeto para ver telemetria en tiempo real.</div>";
     }
 
     const g = telemetry.geo || {};
     const v = telemetry.velocity;
+    const sourceFormat = String(telemetry.source_format || "TLE").toUpperCase();
+    const sourceOrigin = String(telemetry.source_origin || "CATALOG").toUpperCase();
+    const oem = telemetry.oem || null;
 
     const geoRows = [
         row("Latitud", formatNumber(g.latitude_deg, 6), " deg"),
@@ -76,20 +91,48 @@ function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOp
         row("Distancia a camara", formatNumber(telemetry.distance_to_camera_m, 2), " m"),
         row("Puntos de estela", formatNumber(telemetry.trail_points, 0)),
         row("Edad telemetria", formatNumber(telemetry.telemetry_age_ms, 0), " ms"),
-        row("Propagacion", "SGP4"),
+        row("Fuente orbital", sourceFormat),
+        row("Origen", sourceOrigin),
+        row("Propagacion", sourceFormat === "OEM" ? "OEM Ephemeris" : "SGP4"),
         row("Tipo orbita", orbitInfo?.label || "Desconocida")
     ].join("");
 
-    const tleAgeDays = tleAgeDaysFromSummary(tleSummary);
-    const orbitRows = [
-        row("Propagacion futura", formatDurationHoursAndDays(telemetry.propagation_future_hours)),
-        row("Propagacion pasada", formatDurationHoursAndDays(telemetry.propagation_past_hours)),
-        row("Pasado configurado", formatNumber(telemetry.propagation_past_seconds, 1), " s"),
-        row("Tipo de orbita", orbitInfo?.label || "Desconocida"),
-        row("Altitud estimada", Number.isFinite(orbitInfo?.altitudeKm) ? formatNumber(orbitInfo.altitudeKm, 1) : "-", " km"),
-        row("Edad TLE", formatTleAgeHuman(tleAgeDays)),
-        row("Ventana recomendada", orbitInfo?.recommendedWindow || "Sin referencia")
-    ].join("");
+    let orbitRows = "";
+    if (sourceFormat === "OEM") {
+        orbitRows = [
+            row("Tipo de fuente", "OEM"),
+            row("Inicio OEM", formatUtcDateTime(oem?.start_time_ms)),
+            row("Fin OEM", formatUtcDateTime(oem?.end_time_ms)),
+            row("Muestras OEM", formatNumber(oem?.samples, 0)),
+            row("Ref. frame", oem?.ref_frame || "-"),
+            row("Time system", oem?.time_system || "-"),
+            row("Estado temporal", oem?.is_in_time_window === true ? "En ventana" : "Sin datos en este instante")
+        ].join("");
+    } else if (sourceFormat === "OMM") {
+        orbitRows = [
+            row("Tipo de fuente", "OMM"),
+            ...(oemDomainActive ? [] : [row("Propagacion futura", formatDurationHoursAndDays(telemetry.propagation_future_hours))]),
+            row("Tipo de orbita", orbitInfo?.label || "Desconocida"),
+            row("Altitud estimada", Number.isFinite(orbitInfo?.altitudeKm) ? formatNumber(orbitInfo.altitudeKm, 1) : "-", " km"),
+            row("Ventana recomendada", orbitInfo?.recommendedWindow || "Sin referencia"),
+            ...(oemDomainActive ? [row("Dominio temporal", "OEM activo (rango forzado)")] : [])
+        ].join("");
+    } else {
+        const tleAgeDays = tleAgeDaysFromSummary(tleSummary);
+        orbitRows = [
+            row("Tipo de fuente", "TLE"),
+            ...(oemDomainActive ? [] : [
+                row("Propagacion futura", formatDurationHoursAndDays(telemetry.propagation_future_hours)),
+                row("Propagacion pasada", formatDurationHoursAndDays(telemetry.propagation_past_hours)),
+                row("Pasado configurado", formatNumber(telemetry.propagation_past_seconds, 1), " s")
+            ]),
+            row("Tipo de orbita", orbitInfo?.label || "Desconocida"),
+            row("Altitud estimada", Number.isFinite(orbitInfo?.altitudeKm) ? formatNumber(orbitInfo.altitudeKm, 1) : "-", " km"),
+            row("Edad TLE", formatTleAgeHuman(tleAgeDays)),
+            row("Ventana recomendada", orbitInfo?.recommendedWindow || "Sin referencia"),
+            ...(oemDomainActive ? [row("Dominio temporal", "OEM activo (rango forzado)")] : [])
+        ].join("");
+    }
 
     const orbitTag = orbitInfo ? buildOrbitTypeTagHtml(orbitInfo) : "";
 
@@ -287,6 +330,32 @@ function getOrbitInfoFromTleSummary(tleSummary, satelliteId = "") {
     };
 }
 
+function getOrbitInfoFromTelemetry(telemetry, satelliteId = "") {
+    const altitudeKmRaw = Number(telemetry?.geo?.altitude_m);
+    const altitudeKm = Number.isFinite(altitudeKmRaw) ? altitudeKmRaw / 1000 : null;
+    let kind = ORBIT_KIND.UNKNOWN;
+
+    if (Number.isFinite(altitudeKm)) {
+        if (altitudeKm < 2000) kind = ORBIT_KIND.LEO;
+        else if (altitudeKm < 30000) kind = ORBIT_KIND.MEO;
+        else if (altitudeKm < 42000) kind = ORBIT_KIND.GEO;
+        else kind = ORBIT_KIND.HEO;
+    }
+
+    const recommendation = getOrbitRecommendation(kind);
+    const veryLowOverride = Number.isFinite(altitudeKm) && altitudeKm < 300;
+    const mission = inferMissionInfo(satelliteId);
+
+    return {
+        kind,
+        label: recommendation.label,
+        altitudeKm,
+        recommendedWindow: veryLowOverride ? "< 24 horas" : recommendation.recommendedWindow,
+        recommendedMaxDays: veryLowOverride ? 1 : recommendation.recommendedMaxDays,
+        mission
+    };
+}
+
 function buildTleFreshnessMessage(orbitInfo, ageDays) {
     const ageText = formatTleAgeHuman(ageDays);
     const orbitLabel = orbitInfo?.label || "orbita desconocida";
@@ -354,6 +423,55 @@ function buildTleExplanationHtml(satelliteId, tleSummary) {
                 <li><strong>Anomalia media</strong>: posicion del satelite en la epoca.</li>
                 <li><strong>Movimiento medio</strong>: vueltas por dia.</li>
             </ul>
+        </section>
+    `;
+}
+
+function buildOemExplanationHtml(satelliteId, telemetry, sourceMeta = null) {
+    const oem = telemetry?.oem || {};
+    const sourceOrigin = String(sourceMeta?.sourceOrigin || telemetry?.source_origin || "CUSTOM").toUpperCase();
+
+    return `
+        <div class="tle-info-title">${escapeHtml(satelliteId)}</div>
+        <section class="tle-info-section">
+            <h4>Formato orbital</h4>
+            <div class="tle-info-grid">
+                <div><span>Fuente</span><strong>OEM</strong></div>
+                <div><span>Origen</span><strong>${escapeHtml(sourceOrigin)}</strong></div>
+                <div><span>Inicio</span><strong>${escapeHtml(formatUtcDateTime(oem.start_time_ms))}</strong></div>
+                <div><span>Fin</span><strong>${escapeHtml(formatUtcDateTime(oem.end_time_ms))}</strong></div>
+                <div><span>Muestras</span><strong>${escapeHtml(formatNumber(oem.samples, 0))}</strong></div>
+                <div><span>Frame</span><strong>${escapeHtml(oem.ref_frame || "-")}</strong></div>
+                <div><span>Time system</span><strong>${escapeHtml(oem.time_system || "-")}</strong></div>
+                <div><span>Estado temporal</span><strong>${oem.is_in_time_window === true ? "En ventana" : "Fuera de ventana"}</strong></div>
+            </div>
+        </section>
+        <section class="tle-info-section">
+            <h4>Interpretacion</h4>
+            <p class="tle-info-paragraph">Este objeto usa efemérides OEM del fichero importado, no una propagación TLE/SGP4.</p>
+            <p class="tle-info-paragraph">Cuando la simulación cae fuera del intervalo OEM, el objeto no se representa.</p>
+        </section>
+    `;
+}
+
+function buildOmmExplanationHtml(satelliteId, telemetry, sourceMeta = null, tleSummary = null) {
+    const sourceOrigin = String(sourceMeta?.sourceOrigin || telemetry?.source_origin || "CATALOG").toUpperCase();
+    const orbitInfo = getOrbitInfoFromTleSummary(tleSummary, satelliteId);
+
+    return `
+        <div class="tle-info-title">${buildOrbitTypeTagHtml(orbitInfo)}${escapeHtml(satelliteId)}</div>
+        <section class="tle-info-section">
+            <h4>Formato orbital</h4>
+            <div class="tle-info-grid">
+                <div><span>Fuente</span><strong>OMM</strong></div>
+                <div><span>Origen</span><strong>${escapeHtml(sourceOrigin)}</strong></div>
+                <div><span>Tipo orbita</span><strong>${escapeHtml(orbitInfo?.label || "Desconocida")}</strong></div>
+                <div><span>Altitud estimada</span><strong>${Number.isFinite(orbitInfo?.altitudeKm) ? `${escapeHtml(formatNumber(orbitInfo.altitudeKm, 1))} km` : "-"}</strong></div>
+            </div>
+        </section>
+        <section class="tle-info-section">
+            <h4>Interpretacion</h4>
+            <p class="tle-info-paragraph">Este objeto está marcado como OMM. La explicación prioriza metadatos de fuente y no asume TLE crudo.</p>
         </section>
     `;
 }
@@ -517,7 +635,11 @@ export function setupObjectSidebar({
     isCatalogReady,
     getObjectTle,
     getObjectTleAsync,
+    getCatalogEntryMeta,
     onRefreshCatalog,
+    onImportOemEphemeris,
+    getLoadedOemTimeBounds,
+    onAlignToOemTimeDomain,
     getUiText,
     containerElement = null,
     infoContainerElement = null
@@ -536,7 +658,9 @@ export function setupObjectSidebar({
     const catalogFilterState = {
         name: "",
         orbitKind: "",
-        mission: ""
+        mission: "",
+        sourceFormat: "",
+        decayOnly: false
     };
 
     const CATALOG_PAGE_SIZE = 200;
@@ -551,6 +675,7 @@ export function setupObjectSidebar({
     let catalogAnchorIndex = null;
     let catalogWaitInterval = null;
     let contextTargetId = null;
+    let exportSourceFormat = "TLE";
     let lastRenderedCatalogIds = [];
     let catalogServerTotal = 0;
     let catalogOffset = 0;
@@ -558,6 +683,7 @@ export function setupObjectSidebar({
     let catalogTotalPages = 1;
     let catalogHasMore = false;
     let catalogLoadingPage = false;
+    let globalFileDragDepth = 0;
     const catalogIndexById = new Map();
     const catalogMetaCache = new Map();
     const infoSectionOpenState = {
@@ -566,6 +692,111 @@ export function setupObjectSidebar({
         orbita: true,
         estado: true
     };
+
+    function normalizeImportFormat(rawFormat) {
+        const raw = String(rawFormat || "").trim().toUpperCase();
+        if (raw === "OMM_JSON" || raw === "OMM_XML" || raw === "OMM") {
+            return "OMM";
+        }
+        if (raw === "OEM") {
+            return "OEM";
+        }
+        return "TLE";
+    }
+
+    function getSourceFormatForId(id) {
+        const meta = getCatalogEntryMeta?.(id);
+        return String(meta?.sourceFormat || "TLE").trim().toUpperCase();
+    }
+
+    function getActiveFormatsSummary() {
+        const activeIds = Array.isArray(getLayerIds?.()) ? getLayerIds() : [];
+        let oem = 0;
+        let nonOem = 0;
+        for (const id of activeIds) {
+            if (getSourceFormatForId(id) === "OEM") {
+                oem += 1;
+            } else {
+                nonOem += 1;
+            }
+        }
+        return { activeIds, oem, nonOem };
+    }
+
+    async function resolveTleSummaryForSatellite(satelliteId) {
+        const tle = await resolveTle(satelliteId);
+        return parseTleSummary(tle);
+    }
+
+    function evaluateTleCompatibilityWithOemBounds(tleSummary, bounds) {
+        if (!bounds || !tleSummary?.epoch) {
+            return { compatible: null, reason: "missing-data" };
+        }
+
+        const epochDate = tleEpochToDate(tleSummary.epoch);
+        if (!epochDate || Number.isNaN(epochDate.getTime())) {
+            return { compatible: null, reason: "invalid-epoch" };
+        }
+
+        const orbitInfo = getOrbitInfoFromTleSummary(tleSummary);
+        const maxDays = Number.isFinite(orbitInfo?.recommendedMaxDays)
+            ? Number(orbitInfo.recommendedMaxDays)
+            : 14;
+
+        const startMs = Number(bounds.startTimeMs);
+        const endMs = Number(bounds.endTimeMs);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+            return { compatible: null, reason: "invalid-bounds" };
+        }
+
+        const epochMs = epochDate.getTime();
+        const deltaStartDays = Math.abs(epochMs - startMs) / (24 * 3600 * 1000);
+        const deltaEndDays = Math.abs(epochMs - endMs) / (24 * 3600 * 1000);
+        const worstDeltaDays = Math.max(deltaStartDays, deltaEndDays);
+
+        return {
+            compatible: worstDeltaDays <= maxDays,
+            worstDeltaDays,
+            maxDays,
+            orbitLabel: orbitInfo?.label || "Desconocida"
+        };
+    }
+
+    async function warnTemporalIncompatibilitiesWithOemRange(candidateIds, bounds) {
+        if (!bounds || !Array.isArray(candidateIds) || candidateIds.length === 0) {
+            return;
+        }
+
+        const unique = [...new Set(candidateIds.map((id) => String(id || "").trim()).filter(Boolean))];
+        const incompatible = [];
+        const unresolved = [];
+
+        for (const id of unique.slice(0, 30)) {
+            if (getSourceFormatForId(id) === "OEM") {
+                continue;
+            }
+
+            const tleSummary = await resolveTleSummaryForSatellite(id);
+            const check = evaluateTleCompatibilityWithOemBounds(tleSummary, bounds);
+            if (check.compatible === false) {
+                incompatible.push(`${id} (${formatNumber(check.worstDeltaDays, 1)}d > ${formatNumber(check.maxDays, 1)}d)`);
+            } else if (check.compatible === null) {
+                unresolved.push(id);
+            }
+        }
+
+        if (incompatible.length > 0) {
+            const sample = incompatible.slice(0, 5).join(", ");
+            const suffix = incompatible.length > 5 ? ` +${incompatible.length - 5} mas` : "";
+            showErrorPopup(`Aviso temporal: hay TLE/OMM fuera de ventana recomendable para el dominio OEM. ${sample}${suffix}.`);
+        }
+
+        if (unresolved.length > 0) {
+            const sample = unresolved.slice(0, 5).join(", ");
+            const suffix = unresolved.length > 5 ? ` +${unresolved.length - 5} mas` : "";
+            showErrorPopup(`Aviso temporal: no se pudo validar epoca orbital de ${sample}${suffix} frente al rango OEM.`);
+        }
+    }
 
     function clearCatalogMetaCache() {
         catalogMetaCache.clear();
@@ -661,12 +892,14 @@ export function setupObjectSidebar({
             <div class="catalog-modal-header">
                 <h3>Catalogo</h3>
                 <div class="catalog-modal-header-actions">
+                    <button class="catalog-header-btn" id="catalogImportBtn" type="button">Importar</button>
                     <button class="catalog-header-btn" id="catalogFiltersBtn" type="button">Filtros</button>
                     <button class="catalog-header-btn" id="catalogRefreshBtn" type="button">Actualizar catalogo</button>
                     <button class="catalog-header-btn" id="catalogSelectAllBtn" type="button">Seleccionar todo</button>
                     <button class="catalog-close-btn" id="catalogCloseBtn" type="button" aria-label="Cerrar catalogo" title="Cerrar">✕</button>
                 </div>
             </div>
+            <input id="catalogImportFileInput" type="file" accept=".tle,.txt,.json,.xml,.omm,.oem" hidden />
             <input id="catalogSearch" type="text" placeholder="Buscar en catalogo..." />
             <div class="catalog-filter-summary" id="catalogFilterSummary" hidden></div>
             <div class="catalog-refresh-status" id="catalogRefreshStatus" hidden>
@@ -708,6 +941,14 @@ export function setupObjectSidebar({
                     <span>Tipo de mision</span>
                     <select id="catalogMissionFilter"></select>
                 </label>
+                <label class="catalog-filter-field">
+                    <span>Formato</span>
+                    <select id="catalogSourceFormatFilter"></select>
+                </label>
+                <label class="catalog-filter-field checkbox">
+                    <span>Solo decay (perigeo bajo)</span>
+                    <input id="catalogDecayOnlyFilter" type="checkbox" />
+                </label>
             </div>
             <div class="catalog-filter-actions">
                 <button class="catalog-header-btn" id="catalogFilterClearBtn" type="button">Limpiar filtros</button>
@@ -740,13 +981,83 @@ export function setupObjectSidebar({
     `;
     document.body.appendChild(catalogLoadingModal);
 
+    const globalDropOverlay = document.createElement("div");
+    globalDropOverlay.id = "globalCatalogDropOverlay";
+    globalDropOverlay.innerHTML = `
+        <div class="global-drop-overlay-panel">
+            <h3>Soltar para importar</h3>
+            <p>Se importara al catalogo y se intentara anadir a la vista.</p>
+        </div>
+    `;
+    document.body.appendChild(globalDropOverlay);
+
     const contextMenu = document.createElement("div");
     contextMenu.id = "catalogContextMenu";
     contextMenu.innerHTML = `
         <button class="catalog-context-action" id="contextExplainBtn" type="button">${uiText("explainParams")}</button>
         <button class="catalog-context-action" id="contextVizBtn" type="button">${uiText("vizOptions")}</button>
+        <button class="catalog-context-action" id="contextExportBtn" type="button">Exportar...</button>
     `;
     document.body.appendChild(contextMenu);
+
+    const exportModal = document.createElement("div");
+    exportModal.id = "catalogExportModal";
+    exportModal.innerHTML = `
+        <div class="catalog-export-panel" role="dialog" aria-modal="true" aria-label="Exportar satelite">
+            <div class="catalog-export-header">
+                <h3>Exportar satelite</h3>
+                <button class="catalog-close-btn" id="catalogExportCloseBtn" type="button" aria-label="Cerrar exportacion" title="Cerrar">✕</button>
+            </div>
+            <div class="catalog-export-target" id="catalogExportTarget">-</div>
+            <div class="catalog-export-source" id="catalogExportSource">Source: -</div>
+
+            <section class="catalog-export-section">
+                <h4>Exportar fichero de origen</h4>
+                <div class="catalog-export-buttons">
+                    <button class="catalog-header-btn" id="exportTleBtn" type="button">Exportar TLE</button>
+                    <button class="catalog-header-btn" id="exportOmmJsonBtn" type="button">Exportar OMM (JSON)</button>
+                    <button class="catalog-header-btn" id="exportOmmXmlBtn" type="button">Exportar OMM (XML)</button>
+                    <button class="catalog-header-btn" id="exportOemBtn" type="button">Exportar OEM</button>
+                </div>
+            </section>
+
+            <section class="catalog-export-section">
+                <h4>Exportar efemerides entre dos fechas</h4>
+                <div class="catalog-export-grid">
+                    <label class="catalog-filter-field">
+                        <span>Fecha inicio</span>
+                        <input id="exportEphemStart" type="datetime-local" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Fecha fin</span>
+                        <input id="exportEphemEnd" type="datetime-local" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Intervalo (s)</span>
+                        <input id="exportEphemStep" type="number" min="1" max="3600" step="1" value="10" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Formato</span>
+                        <select id="exportEphemFormat">
+                            <option value="csv">CSV</option>
+                            <option value="json">JSON</option>
+                            <option value="oem">OEM</option>
+                        </select>
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Propagador</span>
+                        <select id="exportEphemPropagator">
+                            <option value="sgp4">SGP4</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="catalog-export-actions">
+                    <button class="catalog-action-btn" id="exportEphemerisBtn" type="button">Exportar efemerides</button>
+                </div>
+            </section>
+        </div>
+    `;
+    document.body.appendChild(exportModal);
 
     const tleInfoModal = document.createElement("div");
     tleInfoModal.id = "tleInfoModal";
@@ -789,6 +1100,8 @@ export function setupObjectSidebar({
     infoRoot.addEventListener("pointerdown", onInfoTogglePointerDown);
 
     const catalogCloseBtn = catalogModal.querySelector("#catalogCloseBtn");
+    const catalogImportBtn = catalogModal.querySelector("#catalogImportBtn");
+    const catalogImportFileInput = catalogModal.querySelector("#catalogImportFileInput");
     const catalogFiltersBtn = catalogModal.querySelector("#catalogFiltersBtn");
     const catalogRefreshBtn = catalogModal.querySelector("#catalogRefreshBtn");
     const catalogSelectAllBtn = catalogModal.querySelector("#catalogSelectAllBtn");
@@ -808,6 +1121,8 @@ export function setupObjectSidebar({
     const catalogFilterNameInput = catalogFilterModal.querySelector("#catalogFilterName");
     const catalogOrbitFilter = catalogFilterModal.querySelector("#catalogOrbitFilter");
     const catalogMissionFilter = catalogFilterModal.querySelector("#catalogMissionFilter");
+    const catalogSourceFormatFilter = catalogFilterModal.querySelector("#catalogSourceFormatFilter");
+    const catalogDecayOnlyFilter = catalogFilterModal.querySelector("#catalogDecayOnlyFilter");
     const catalogFilterClearBtn = catalogFilterModal.querySelector("#catalogFilterClearBtn");
 
     const confirmTitle = confirmModal.querySelector("#sidebarConfirmTitle");
@@ -819,6 +1134,21 @@ export function setupObjectSidebar({
 
     const contextExplainBtn = contextMenu.querySelector("#contextExplainBtn");
     const contextVizBtn = contextMenu.querySelector("#contextVizBtn");
+    const contextExportBtn = contextMenu.querySelector("#contextExportBtn");
+
+    const catalogExportCloseBtn = exportModal.querySelector("#catalogExportCloseBtn");
+    const catalogExportTarget = exportModal.querySelector("#catalogExportTarget");
+    const catalogExportSource = exportModal.querySelector("#catalogExportSource");
+    const exportTleBtn = exportModal.querySelector("#exportTleBtn");
+    const exportOmmJsonBtn = exportModal.querySelector("#exportOmmJsonBtn");
+    const exportOmmXmlBtn = exportModal.querySelector("#exportOmmXmlBtn");
+    const exportOemBtn = exportModal.querySelector("#exportOemBtn");
+    const exportEphemStartInput = exportModal.querySelector("#exportEphemStart");
+    const exportEphemEndInput = exportModal.querySelector("#exportEphemEnd");
+    const exportEphemStepInput = exportModal.querySelector("#exportEphemStep");
+    const exportEphemFormatSelect = exportModal.querySelector("#exportEphemFormat");
+    const exportEphemPropagatorSelect = exportModal.querySelector("#exportEphemPropagator");
+    const exportEphemerisBtn = exportModal.querySelector("#exportEphemerisBtn");
 
     const tleInfoCloseBtn = tleInfoModal.querySelector("#tleInfoCloseBtn");
     const tleInfoContent = tleInfoModal.querySelector("#tleInfoContent");
@@ -936,6 +1266,8 @@ export function setupObjectSidebar({
         if (catalogFilterState.name) chips.push(buildFilterChip("name", "Nombre", catalogFilterState.name));
         if (catalogFilterState.orbitKind) chips.push(buildFilterChip("orbitKind", "Orbita", orbitFilterLabel(catalogFilterState.orbitKind)));
         if (catalogFilterState.mission) chips.push(buildFilterChip("mission", "Mision", missionFilterLabel(catalogFilterState.mission)));
+        if (catalogFilterState.sourceFormat) chips.push(buildFilterChip("sourceFormat", "Formato", catalogFilterState.sourceFormat));
+        if (catalogFilterState.decayOnly) chips.push(buildFilterChip("decayOnly", "Decay", "Perigeo bajo"));
         catalogFilterSummary.innerHTML = chips.join("");
         catalogFilterSummary.hidden = chips.length === 0;
     }
@@ -969,11 +1301,14 @@ export function setupObjectSidebar({
             value,
             label: missionFilterLabel(value)
         }));
+        const sourceFormatOptions = ["TLE", "OMM", "OEM"].map((value) => ({ value, label: value }));
 
         catalogFilterState.orbitKind = populateCatalogSelect(catalogOrbitFilter, orbitOptions, catalogFilterState.orbitKind, "Todas las orbitas");
         catalogFilterState.mission = populateCatalogSelect(catalogMissionFilter, missionOptions, catalogFilterState.mission, "Todas las misiones");
+        catalogFilterState.sourceFormat = populateCatalogSelect(catalogSourceFormatFilter, sourceFormatOptions, catalogFilterState.sourceFormat, "Todos los formatos");
         catalogSearchInput.value = catalogFilterState.name;
         catalogFilterNameInput.value = catalogFilterState.name;
+        catalogDecayOnlyFilter.checked = catalogFilterState.decayOnly === true;
         updateCatalogFilterSummary();
     }
 
@@ -987,6 +1322,12 @@ export function setupObjectSidebar({
         if (Object.prototype.hasOwnProperty.call(nextState, "mission")) {
             catalogFilterState.mission = String(nextState.mission || "");
         }
+        if (Object.prototype.hasOwnProperty.call(nextState, "sourceFormat")) {
+            catalogFilterState.sourceFormat = String(nextState.sourceFormat || "").toUpperCase();
+        }
+        if (Object.prototype.hasOwnProperty.call(nextState, "decayOnly")) {
+            catalogFilterState.decayOnly = nextState.decayOnly === true;
+        }
 
         syncCatalogFilterControls();
         renderCatalogList();
@@ -995,6 +1336,78 @@ export function setupObjectSidebar({
     function closeContextMenu() {
         contextMenu.classList.remove("open");
         contextTargetId = null;
+    }
+
+    function isFileDragEvent(event) {
+        const types = event?.dataTransfer?.types;
+        return Boolean(types && Array.from(types).includes("Files"));
+    }
+
+    function setGlobalDropOverlayVisible(visible) {
+        globalDropOverlay.classList.toggle("open", visible === true);
+    }
+
+    function toDatetimeLocalValue(date) {
+        const d = new Date(date);
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    function openExportModal(id) {
+        if (!id) {
+            return;
+        }
+        const entryMeta = getCatalogEntryMeta?.(id) || null;
+        const sourceFormat = String(entryMeta?.sourceFormat || "TLE").trim().toUpperCase();
+        exportSourceFormat = sourceFormat === "OMM" || sourceFormat === "OEM" ? sourceFormat : "TLE";
+
+        catalogExportTarget.textContent = id;
+        catalogExportSource.textContent = `Source: ${exportSourceFormat}`;
+        exportTleBtn.hidden = exportSourceFormat !== "TLE";
+        exportOmmJsonBtn.hidden = exportSourceFormat !== "OMM";
+        exportOmmXmlBtn.hidden = exportSourceFormat !== "OMM";
+        exportOemBtn.hidden = exportSourceFormat !== "OEM";
+
+        const now = new Date();
+        const tomorrow = new Date(now.getTime() + (24 * 3600 * 1000));
+        exportEphemStartInput.value = toDatetimeLocalValue(now);
+        exportEphemEndInput.value = toDatetimeLocalValue(tomorrow);
+        exportEphemStepInput.value = "10";
+        exportEphemFormatSelect.value = "oem";
+        exportEphemPropagatorSelect.value = "sgp4";
+        exportModal.classList.add("open");
+    }
+
+    function closeExportModal() {
+        exportModal.classList.remove("open");
+    }
+
+    async function downloadFromUrl(url, fallbackFileName) {
+        const response = await fetch(url, { cache: "no-cache" });
+        if (!response.ok) {
+            let detail = "";
+            try {
+                const payload = await response.json();
+                detail = payload?.error || payload?.detail || "";
+            } catch {
+                detail = "";
+            }
+            throw new Error(detail || `HTTP ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const contentDisposition = response.headers.get("content-disposition") || "";
+        const match = /filename=\"?([^\";]+)\"?/i.exec(contentDisposition);
+        const fileName = (match?.[1] || fallbackFileName || "export.dat").trim();
+
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(blobUrl);
     }
 
     function showToast(message, type = "info", duration = 4500) {
@@ -1094,7 +1507,7 @@ export function setupObjectSidebar({
         let progress = 4;
         setCatalogRefreshState({
             visible: true,
-            text: uiText("downloadingTles"),
+            text: "Descargando TLE/OMM/OEM...",
             value: progress
         });
 
@@ -1115,8 +1528,14 @@ export function setupObjectSidebar({
             const payload = await response.json().catch(() => null);
 
             if (!response.ok || !payload?.ok) {
-                const errorMessage = payload?.error || `Error HTTP ${response.status}`;
-                throw new Error(errorMessage);
+                const rawError = payload?.error || `Error HTTP ${response.status}`;
+                const isNetworkBlocked = payload?.networkBlocked === true
+                    || /bloquea|block|timeout de conexion|cloud|Codespace/i.test(rawError);
+                if (isNetworkBlocked) {
+                    showErrorPopup(`⚠️ CelesTrak no es accesible desde esta red.\n\nAlternativas:\n• Importa un fichero .tle/.json/.xml/.omm directamente arrastrándolo aquí.\n• Usa un entorno con acceso directo a internet (no cloud/Codespace).\n\nDetalle: ${rawError}`);
+                    return;
+                }
+                throw new Error(rawError);
             }
 
             setCatalogRefreshState({
@@ -1136,10 +1555,16 @@ export function setupObjectSidebar({
             renderInfo();
 
             const failedCount = Array.isArray(payload.failedGroups) ? payload.failedGroups.length : 0;
+            const failedSourcesCount = Array.isArray(payload.failedSources) ? payload.failedSources.length : 0;
             const discardedInvalid = Number(payload.discardedInvalidEntries) || 0;
-            const warningSuffix = failedCount > 0 ? ` (${failedCount} grupos con fallo)` : "";
+            const warningGroups = failedCount > 0 ? `${failedCount} grupos con fallo` : "";
+            const warningSources = failedSourcesCount > 0 ? `${failedSourcesCount} fuentes con fallo` : "";
+            const warningSuffix = [warningGroups, warningSources].filter(Boolean).join(", ");
+            const sourcesInfo = Array.isArray(payload.successfulSources) && payload.successfulSources.length
+                ? `, ${payload.successfulSources.length} fuentes procesadas`
+                : "";
 
-            const summaryMsg = `Catalogo actualizado: ${payload.writtenEntries || 0} TLEs${warningSuffix}${discardedInvalid > 0 ? `, ${discardedInvalid} descartados` : ""}`;
+            const summaryMsg = `Catalogo actualizado: ${payload.writtenEntries || 0} entradas${sourcesInfo}${warningSuffix ? ` (${warningSuffix})` : ""}${discardedInvalid > 0 ? `, ${discardedInvalid} descartadas` : ""}`;
 
             setCatalogRefreshState({
                 visible: true,
@@ -1150,16 +1575,17 @@ export function setupObjectSidebar({
             // mostrar popup con resultado
             showInfoPopup(summaryMsg);
 
-            if (failedCount > 0) {
-                const failedNames = payload.failedGroups
+            if (failedCount > 0 || failedSourcesCount > 0) {
+                const failedNames = (payload.failedGroups || [])
                     .map((item) => item.group)
-                    .slice(0, 8)
+                    .concat((payload.failedSources || []).map((item) => item.source || item.url))
+                    .slice(0, 10)
                     .join(", ");
-                showErrorPopup(`Actualizacion completada con advertencias. Grupos con fallo: ${failedNames}`);
+                showErrorPopup(`Actualizacion completada con advertencias. Fallos en: ${failedNames}`);
             }
 
             if (discardedInvalid > 0) {
-                showErrorPopup(`Se descartaron ${discardedInvalid} TLEs con formato invalido durante la actualizacion.`);
+                showErrorPopup(`Se descartaron ${discardedInvalid} entradas con formato invalido durante la actualizacion.`);
             }
         } catch (error) {
             setCatalogRefreshState({
@@ -1206,9 +1632,23 @@ export function setupObjectSidebar({
     async function openTleInfo(satelliteId, mode) {
         openInfoModalWithHtml(`<div class="tle-info-empty">Cargando informacion...</div>`);
 
+        const sourceMeta = getCatalogEntryMeta?.(satelliteId) || null;
+        const sourceFormat = String(sourceMeta?.sourceFormat || "TLE").toUpperCase();
+        const telemetry = getObjectTelemetry?.(satelliteId) || null;
+
+        if (sourceFormat === "OEM") {
+            openInfoModalWithHtml(buildOemExplanationHtml(satelliteId, telemetry, sourceMeta));
+            return;
+        }
+
         const tleForOrbit = await resolveTle(satelliteId);
         const tleSummaryForOrbit = parseTleSummary(tleForOrbit);
         const orbitInfo = getOrbitInfoFromTleSummary(tleSummaryForOrbit, satelliteId);
+
+        if (sourceFormat === "OMM") {
+            openInfoModalWithHtml(buildOmmExplanationHtml(satelliteId, telemetry, sourceMeta, tleSummaryForOrbit));
+            return;
+        }
 
         if (mode === "details") {
             const details = await fetchCelestrakDetails(satelliteId) || await fetchWikipediaDetails(satelliteId);
@@ -1299,6 +1739,223 @@ export function setupObjectSidebar({
     });
 
     catalogCloseBtn.addEventListener("click", closeCatalogModal);
+
+    async function addImportedSatellitesToView(importedIds = []) {
+        const uniqueIds = [...new Set(importedIds.map((id) => String(id || "").trim()).filter(Boolean))];
+        const candidates = uniqueIds.filter((id) => !getObjectLayerActive(id));
+        if (!candidates.length) {
+            return { added: 0, skipped: 0, requested: uniqueIds.length };
+        }
+
+        const { availableSlots } = getLayerCapacity();
+        if (availableSlots <= 0) {
+            return { added: 0, skipped: candidates.length, requested: uniqueIds.length };
+        }
+
+        const idsToAdd = candidates.slice(0, availableSlots);
+        const skipped = Math.max(0, candidates.length - idsToAdd.length);
+
+        setCatalogBusyState(true, `Anadiendo importados... 0/${idsToAdd.length}`);
+        await processInChunks(
+            idsToAdd,
+            (id) => onToggleObjectLayer(id, true),
+            (done, total) => setCatalogBusyState(true, `Anadiendo importados... ${done}/${total}`)
+        );
+
+        if (idsToAdd.length > 0) {
+            selectedId = idsToAdd[0];
+            onSelectObject?.(selectedId);
+        }
+
+        return { added: idsToAdd.length, skipped, requested: uniqueIds.length };
+    }
+
+    async function importCatalogFile(file, { autoAddToView = false, announce = true } = {}) {
+        if (!file) {
+            if (announce) {
+                showErrorPopup("No se detecto ningun fichero para importar.");
+            }
+            return;
+        }
+
+        const beforeFormats = getActiveFormatsSummary();
+
+        try {
+            const content = await file.text();
+            setCatalogBusyState(true, "Importando catalogo...");
+            const response = await fetch("/api/catalog/import", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ fileName: file.name, content, merge: true })
+            });
+            const payload = await response.json().catch(() => ({}));
+            const isOemNoTleError =
+                file.name.toLowerCase().endsWith(".oem")
+                && String(payload?.error || "").includes("OEM no contiene TLE embebido");
+
+            if ((!response.ok || payload?.ok === false) && isOemNoTleError && typeof onImportOemEphemeris === "function") {
+                const importedTrack = onImportOemEphemeris(content, file.name);
+                const importedId = String(importedTrack?.id || "").trim();
+                if (importedId) {
+                    const aligned = onAlignToOemTimeDomain?.() === true;
+                    if (beforeFormats.nonOem > 0) {
+                        const msg = aligned
+                            ? "Aviso: al mezclar OEM con TLE/OMM, la simulacion pasa al dominio temporal OEM y las orbitas no OEM se propagan en ese rango."
+                            : "Aviso: se ha cargado OEM junto a TLE/OMM; el dominio temporal objetivo es OEM para propagacion. Revisa el rango temporal activo.";
+                        showErrorPopup(msg);
+                    }
+
+                    const oemBounds = getLoadedOemTimeBounds?.() || null;
+                    const activeIdsNow = Array.isArray(getLayerIds?.()) ? getLayerIds() : [];
+                    const nonOemCandidates = activeIdsNow.filter((id) => getSourceFormatForId(id) !== "OEM");
+                    await warnTemporalIncompatibilitiesWithOemRange(nonOemCandidates, oemBounds);
+
+                    selectedId = importedId;
+                    onSelectObject?.(selectedId);
+                    renderList();
+                    renderInfo();
+                    renderCatalogList();
+                    if (announce) {
+                        showInfoPopup(`OEM importado como orbita temporal: ${importedId} (${importedTrack?.points || 0} muestras).`);
+                    }
+                    return;
+                }
+            }
+
+            if (!response.ok || payload?.ok === false) {
+                throw new Error(payload?.error || `HTTP ${response.status}`);
+            }
+
+            await onRefreshCatalog?.();
+            clearCatalogMetaCache();
+            renderCatalogList();
+            renderList();
+            renderInfo();
+
+            const importedNames = Array.isArray(payload?.importedNames) ? payload.importedNames : [];
+            const importedFormat = normalizeImportFormat(payload?.format);
+            const renamedConflicts = Array.isArray(payload?.renamedConflicts) ? payload.renamedConflicts : [];
+            let addResult = { added: 0, skipped: 0, requested: importedNames.length };
+            if (autoAddToView && importedNames.length > 0) {
+                addResult = await addImportedSatellitesToView(importedNames);
+                renderList();
+                renderInfo();
+                renderCatalogList();
+            }
+
+            const oemBounds = getLoadedOemTimeBounds?.() || null;
+            const hasOemDomainActive = Boolean(oemBounds);
+            if (hasOemDomainActive && importedFormat !== "OEM") {
+                const aligned = onAlignToOemTimeDomain?.() === true;
+                const msg = aligned
+                    ? "Aviso: hay OEM cargado; los nuevos TLE/OMM se propagan en el dominio temporal OEM."
+                    : "Aviso: hay OEM cargado; revisa que la simulacion este en rango OEM para propagar TLE/OMM correctamente.";
+                showErrorPopup(msg);
+                await warnTemporalIncompatibilitiesWithOemRange(importedNames, oemBounds);
+            }
+
+            if (renamedConflicts.length > 0) {
+                const sample = renamedConflicts.slice(0, 3)
+                    .map((item) => `${item.importedName} -> ${item.existingName} (NORAD ${item.norad})`)
+                    .join("; ");
+                const suffix = renamedConflicts.length > 3 ? ` +${renamedConflicts.length - 3} mas` : "";
+                showErrorPopup(`Aviso: ${renamedConflicts.length} entradas ya existian con otro nombre y se mantuvo el nombre de catalogo. ${sample}${suffix}`);
+            }
+
+            if (announce) {
+                const importedCount = Number(payload?.imported) || importedNames.length;
+                if (autoAddToView) {
+                    showInfoPopup(`Importado ${file.name}: ${importedCount} entradas. Anadidas a vista: ${addResult.added}${addResult.skipped > 0 ? `, omitidas por limite: ${addResult.skipped}` : ""}.`);
+                } else {
+                    showInfoPopup(`Importado ${file.name}: ${importedCount} entradas al catalogo.`);
+                }
+            }
+        } catch (error) {
+            showErrorPopup(`No se pudo importar ${file?.name || "fichero"}: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+            if (catalogImportFileInput) {
+                catalogImportFileInput.value = "";
+            }
+            setCatalogBusyState(false, "");
+        }
+    }
+
+    catalogImportBtn.addEventListener("click", () => {
+        catalogImportFileInput?.click();
+    });
+
+    catalogImportFileInput?.addEventListener("change", async (event) => {
+        const file = event?.target?.files?.[0];
+        await importCatalogFile(file, { autoAddToView: false, announce: true });
+    });
+
+    catalogModal.addEventListener("dragover", (event) => {
+        event.preventDefault();
+    });
+
+    catalogModal.addEventListener("drop", async (event) => {
+        event.preventDefault();
+        const file = event?.dataTransfer?.files?.[0];
+        await importCatalogFile(file, { autoAddToView: false, announce: true });
+    });
+
+    const onGlobalFileDragEnter = (event) => {
+        if (!isFileDragEvent(event)) {
+            return;
+        }
+        event.preventDefault();
+        globalFileDragDepth += 1;
+        setGlobalDropOverlayVisible(true);
+    };
+
+    const onGlobalFileDragLeave = (event) => {
+        if (!isFileDragEvent(event)) {
+            return;
+        }
+        event.preventDefault();
+        globalFileDragDepth = Math.max(0, globalFileDragDepth - 1);
+        if (globalFileDragDepth === 0) {
+            setGlobalDropOverlayVisible(false);
+        }
+    };
+
+    const onGlobalFileDragOver = (event) => {
+        if (!isFileDragEvent(event)) {
+            return;
+        }
+        event.preventDefault();
+        if (event?.dataTransfer) {
+            event.dataTransfer.dropEffect = "copy";
+        }
+        setGlobalDropOverlayVisible(true);
+    };
+
+    const onGlobalFileDrop = async (event) => {
+        if (!isFileDragEvent(event)) {
+            return;
+        }
+        event.preventDefault();
+        globalFileDragDepth = 0;
+        setGlobalDropOverlayVisible(false);
+
+        if (catalogModal.contains(event.target)) {
+            return;
+        }
+
+        const files = event?.dataTransfer?.files;
+        if (!files || files.length === 0) {
+            showErrorPopup("No se detectaron archivos en el arrastre.");
+            return;
+        }
+        const file = files[0];
+        await importCatalogFile(file, { autoAddToView: true, announce: true });
+    };
+
+    document.addEventListener("dragenter", onGlobalFileDragEnter, true);
+    document.addEventListener("dragleave", onGlobalFileDragLeave, true);
+    document.addEventListener("dragover", onGlobalFileDragOver, true);
+    document.addEventListener("drop", onGlobalFileDrop, true);
+
     catalogFiltersBtn.addEventListener("click", openCatalogFilterModal);
     catalogModal.addEventListener("click", (event) => {
         if (event.target === catalogModal) {
@@ -1331,6 +1988,101 @@ export function setupObjectSidebar({
         onOpenVisualizationOptions?.(id);
     });
 
+    contextExportBtn.addEventListener("click", () => {
+        if (!contextTargetId) {
+            return;
+        }
+        const id = contextTargetId;
+        closeContextMenu();
+        openExportModal(id);
+    });
+
+    catalogExportCloseBtn.addEventListener("click", closeExportModal);
+
+    exportModal.addEventListener("click", (event) => {
+        if (event.target === exportModal) {
+            closeExportModal();
+        }
+    });
+
+    exportTleBtn.addEventListener("click", async () => {
+        const id = String(catalogExportTarget.textContent || "").trim();
+        if (!id) return;
+        try {
+            await downloadFromUrl(`/api/export/tle/${encodeURIComponent(id)}`, `${id}.tle`);
+            showInfoPopup("Exportacion TLE completada.");
+        } catch (error) {
+            showErrorPopup(`No se pudo exportar TLE: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
+
+    exportOmmJsonBtn.addEventListener("click", async () => {
+        const id = String(catalogExportTarget.textContent || "").trim();
+        if (!id) return;
+        try {
+            await downloadFromUrl(`/api/export/omm/${encodeURIComponent(id)}?format=json`, `${id}.omm.json`);
+            showInfoPopup("Exportacion OMM (JSON) completada.");
+        } catch (error) {
+            showErrorPopup(`No se pudo exportar OMM (JSON): ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
+
+    exportOmmXmlBtn.addEventListener("click", async () => {
+        const id = String(catalogExportTarget.textContent || "").trim();
+        if (!id) return;
+        try {
+            await downloadFromUrl(`/api/export/omm/${encodeURIComponent(id)}?format=xml`, `${id}.omm.xml`);
+            showInfoPopup("Exportacion OMM (XML) completada.");
+        } catch (error) {
+            showErrorPopup(`No se pudo exportar OMM (XML): ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
+
+    exportOemBtn.addEventListener("click", async () => {
+        const id = String(catalogExportTarget.textContent || "").trim();
+        if (!id) return;
+        try {
+            await downloadFromUrl(`/api/export/oem/${encodeURIComponent(id)}`, `${id}.oem`);
+            showInfoPopup("Exportacion OEM completada.");
+        } catch (error) {
+            showErrorPopup(`No se pudo exportar OEM: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
+
+    exportEphemerisBtn.addEventListener("click", async () => {
+        const id = String(catalogExportTarget.textContent || "").trim();
+        if (!id) return;
+
+        const t0Raw = String(exportEphemStartInput.value || "").trim();
+        const t1Raw = String(exportEphemEndInput.value || "").trim();
+        const dt = Number(exportEphemStepInput.value || 10);
+        const format = String(exportEphemFormatSelect.value || "csv").trim().toLowerCase();
+        const propagator = String(exportEphemPropagatorSelect.value || "sgp4").trim().toLowerCase();
+
+        if (!t0Raw || !t1Raw || !Number.isFinite(dt) || dt <= 0) {
+            showErrorPopup("Revisa fechas e intervalo para exportar efemerides.");
+            return;
+        }
+
+        const t0Iso = new Date(t0Raw).toISOString();
+        const t1Iso = new Date(t1Raw).toISOString();
+        const params = new URLSearchParams({
+            t0: t0Iso,
+            t1: t1Iso,
+            dt: String(dt),
+            format,
+            propagator,
+            sourceFormat: exportSourceFormat
+        });
+
+        try {
+            await downloadFromUrl(`/api/export/ephemeris/${encodeURIComponent(id)}?${params.toString()}`, `${id}-ephemeris.${format}`);
+            showInfoPopup("Exportacion de efemerides completada.");
+        } catch (error) {
+            showErrorPopup(`No se pudo exportar efemerides: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
+
     tleInfoCloseBtn.addEventListener("click", () => {
         tleInfoModal.classList.remove("open");
     });
@@ -1352,6 +2104,10 @@ export function setupObjectSidebar({
     });
 
     searchInput.addEventListener("input", () => {
+        if (searchInput.dataset.globalSearchMode === "true") {
+            layerFilterText = "";
+            return;
+        }
         layerFilterText = (searchInput.value || "").toLowerCase();
         renderList();
     });
@@ -1382,8 +2138,22 @@ export function setupObjectSidebar({
         applyCatalogFilters({ mission: catalogMissionFilter.value || "" });
     });
 
+    catalogSourceFormatFilter.addEventListener("change", () => {
+        applyCatalogFilters({ sourceFormat: catalogSourceFormatFilter.value || "" });
+    });
+
+    catalogDecayOnlyFilter.addEventListener("change", () => {
+        applyCatalogFilters({ decayOnly: catalogDecayOnlyFilter.checked === true });
+    });
+
     catalogFilterClearBtn.addEventListener("click", () => {
-        applyCatalogFilters({ name: "", orbitKind: "", mission: "" });
+        applyCatalogFilters({
+            name: "",
+            orbitKind: "",
+            mission: "",
+            sourceFormat: "",
+            decayOnly: false
+        });
     });
 
     catalogFilterSummary.addEventListener("click", (event) => {
@@ -1397,7 +2167,11 @@ export function setupObjectSidebar({
             return;
         }
 
-        applyCatalogFilters({ [key]: "" });
+        if (key === "decayOnly") {
+            applyCatalogFilters({ decayOnly: false });
+        } else {
+            applyCatalogFilters({ [key]: "" });
+        }
     });
 
     catalogPrevPageBtn.addEventListener("click", () => {
@@ -1541,7 +2315,9 @@ export function setupObjectSidebar({
                 limit,
                 search: catalogFilterState.name,
                 orbitKind: catalogFilterState.orbitKind,
-                mission: catalogFilterState.mission
+                mission: catalogFilterState.mission,
+                sourceFormat: catalogFilterState.sourceFormat,
+                decayOnly: catalogFilterState.decayOnly
             });
 
             const pageIds = Array.isArray(result?.ids) ? result.ids : [];
@@ -1604,12 +2380,15 @@ export function setupObjectSidebar({
         catalogAddSelectedBtn.disabled = isBusy || selectedCatalogIds.size === 0;
         catalogSelectAllBtn.disabled = isBusy;
         catalogRefreshBtn.disabled = isBusy;
+        catalogImportBtn.disabled = isBusy;
         catalogFiltersBtn.disabled = isBusy;
         catalogCloseBtn.disabled = isBusy;
         catalogSearchInput.disabled = isBusy;
         catalogFilterNameInput.disabled = isBusy;
         catalogOrbitFilter.disabled = isBusy;
         catalogMissionFilter.disabled = isBusy;
+        catalogSourceFormatFilter.disabled = isBusy;
+        catalogDecayOnlyFilter.disabled = isBusy;
         catalogFilterClearBtn.disabled = isBusy;
         catalogProgress.textContent = text;
     }
@@ -1647,7 +2426,17 @@ export function setupObjectSidebar({
             const item = document.createElement("button");
             item.type = "button";
             item.className = `object-list-item${id === selectedId ? " active" : ""}`;
-            item.textContent = id;
+            item.textContent = "";
+            item.appendChild(document.createTextNode(id));
+            const listEntryMeta = getCatalogEntryMeta?.(id) || null;
+            if (listEntryMeta?.sourceFormat) {
+                const formatBadge = document.createElement("span");
+                formatBadge.className = "catalog-format-badge";
+                formatBadge.textContent = String(listEntryMeta.sourceFormat || "TLE").toUpperCase();
+                formatBadge.title = `Formato: ${formatBadge.textContent}`;
+                item.appendChild(document.createTextNode(" "));
+                item.appendChild(formatBadge);
+            }
             item.addEventListener("click", () => {
                 selectedId = id;
                 onSelectObject?.(selectedId);
@@ -1786,7 +2575,9 @@ export function setupObjectSidebar({
                 limit: CATALOG_PAGE_SIZE,
                 search: catalogFilterState.name,
                 orbitKind: catalogFilterState.orbitKind,
-                mission: catalogFilterState.mission
+                mission: catalogFilterState.mission,
+                sourceFormat: catalogFilterState.sourceFormat,
+                decayOnly: catalogFilterState.decayOnly
             });
 
             if (token !== catalogQueryToken) {
@@ -1851,6 +2642,7 @@ export function setupObjectSidebar({
         const active = getObjectLayerActive(id);
         const selected = !active && selectedCatalogIds.has(id);
         const meta = getCatalogMeta(id);
+        const entryMeta = getCatalogEntryMeta?.(id) || null;
         const orbitInfo = meta.orbitInfo;
         if (active) rowEl.classList.add("is-added");
         else if (selected) rowEl.classList.add("is-selected");
@@ -1868,6 +2660,15 @@ export function setupObjectSidebar({
 
         nameEl.appendChild(document.createTextNode(id));
 
+        if (entryMeta?.sourceFormat) {
+            const formatBadge = document.createElement("span");
+            formatBadge.className = "catalog-format-badge";
+            formatBadge.textContent = String(entryMeta.sourceFormat || "TLE").toUpperCase();
+            formatBadge.title = `Formato: ${formatBadge.textContent}`;
+            nameEl.appendChild(document.createTextNode(" "));
+            nameEl.appendChild(formatBadge);
+        }
+
         if (meta.tleAgeWarning) {
             const warningEl = document.createElement("span");
             warningEl.className = "catalog-old-warning";
@@ -1879,8 +2680,8 @@ export function setupObjectSidebar({
         const explainBtn = document.createElement("button");
         explainBtn.type = "button";
         explainBtn.className = "catalog-row-action-btn";
-        explainBtn.textContent = "TLE";
-        explainBtn.title = `Explicar parametros orbitales (TLE) de ${id}`;
+        explainBtn.textContent = "Info";
+        explainBtn.title = `Ver info orbital de ${id}`;
         explainBtn.addEventListener("click", (event) => {
             event.stopPropagation();
             openTleInfo(id, "explain");
@@ -1999,13 +2800,26 @@ export function setupObjectSidebar({
     }
 
     function renderInfo() {
-        const telemetry = selectedId && getObjectLayerActive(selectedId)
-            ? getObjectTelemetry(selectedId)
-            : null;
-        const tle = selectedId && getObjectLayerActive(selectedId) ? getObjectTle?.(selectedId) : null;
-        const summary = parseTleSummary(tle);
-        const orbitInfo = getOrbitInfoFromTleSummary(summary, selectedId || "");
-        infoRoot.innerHTML = buildInfoText(telemetry, orbitInfo, summary, infoSectionOpenState);
+        try {
+            const telemetry = selectedId && getObjectLayerActive(selectedId)
+                ? getObjectTelemetry(selectedId)
+                : null;
+            const oemDomainActive = Boolean(getLoadedOemTimeBounds?.());
+            const sourceFormat = String(telemetry?.source_format || getCatalogEntryMeta?.(selectedId)?.sourceFormat || "TLE").toUpperCase();
+            const tle = selectedId && getObjectLayerActive(selectedId) && sourceFormat !== "OEM"
+                ? getObjectTle?.(selectedId)
+                : null;
+            const summary = parseTleSummary(tle);
+            const orbitInfoFromTle = getOrbitInfoFromTleSummary(summary, selectedId || "");
+            const useTelemetryFallback = !orbitInfoFromTle || orbitInfoFromTle.kind === ORBIT_KIND.UNKNOWN || sourceFormat === "OEM";
+            const orbitInfo = useTelemetryFallback
+                ? getOrbitInfoFromTelemetry(telemetry, selectedId || "")
+                : orbitInfoFromTle;
+            infoRoot.innerHTML = buildInfoText(telemetry, orbitInfo, summary, infoSectionOpenState, oemDomainActive);
+        } catch (error) {
+            console.warn("No se pudo renderizar telemetria:", error);
+            infoRoot.innerHTML = "<div class=\"object-info-empty\">No se pudo actualizar la telemetria. Reintenta seleccionando el satelite.</div>";
+        }
     }
 
     function selectObject(id) {
@@ -2013,13 +2827,21 @@ export function setupObjectSidebar({
             return;
         }
 
+        if (searchInput) {
+            searchInput.value = "";
+        }
+        layerFilterText = "";
         selectedId = id;
         onSelectObject?.(id);
-        if (!sidebar.classList.contains("open")) {
+        if (!useContainer && !sidebar.classList.contains("open")) {
             openSidebar();
         }
         renderList();
         renderInfo();
+    }
+
+    function openPanel() {
+        openSidebar();
     }
 
     renderList();
@@ -2032,6 +2854,7 @@ export function setupObjectSidebar({
 
     return {
         selectObject,
+        openPanel,
         destroy() {
             clearInterval(listInterval);
             clearInterval(infoInterval);
@@ -2044,11 +2867,17 @@ export function setupObjectSidebar({
             }
             stopCatalogRefreshProgressTimer();
             infoRoot.removeEventListener("pointerdown", onInfoTogglePointerDown);
+            document.removeEventListener("dragenter", onGlobalFileDragEnter, true);
+            document.removeEventListener("dragleave", onGlobalFileDragLeave, true);
+            document.removeEventListener("dragover", onGlobalFileDragOver, true);
+            document.removeEventListener("drop", onGlobalFileDrop, true);
             sidebar.remove();
             catalogModal.remove();
             confirmModal.remove();
             catalogLoadingModal.remove();
+            globalDropOverlay.remove();
             contextMenu.remove();
+            exportModal.remove();
             tleInfoModal.remove();
         }
     };

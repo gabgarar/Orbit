@@ -207,14 +207,7 @@ function createFieldElement(sectionName, field, currentSystemConfig, onChange, o
     const label = document.createElement("label");
     label.setAttribute("for", inputId);
     label.textContent = field.label;
-
-    const helpIcon = document.createElement("span");
-    helpIcon.className = "config-help-icon";
-    helpIcon.textContent = "i";
-    helpIcon.tabIndex = 0;
-    helpIcon.setAttribute("role", "img");
-    helpIcon.setAttribute("aria-label", uiTextCallback("helpParam"));
-    helpIcon.title = FIELD_HELP[`${sectionName}.${field.key}`] || uiTextCallback("noDesc");
+    label.title = FIELD_HELP[`${sectionName}.${field.key}`] || uiTextCallback("noDesc");
 
     let input;
     if (field.type === "select") {
@@ -311,13 +304,8 @@ function createFieldElement(sectionName, field, currentSystemConfig, onChange, o
     if (field.type === "checkbox") {
         wrapper.appendChild(input);
         wrapper.appendChild(label);
-        wrapper.appendChild(helpIcon);
     } else {
-        const labelRow = document.createElement("div");
-        labelRow.className = "config-label-row";
-        labelRow.appendChild(label);
-        labelRow.appendChild(helpIcon);
-        wrapper.appendChild(labelRow);
+        wrapper.appendChild(label);
         wrapper.appendChild(input);
     }
 
@@ -414,7 +402,7 @@ function renderConfigSection(sectionName, fields, currentSystemConfig, onChange,
             }
         }
 
-        const otherFiltered = otherOrbitFields.filter((f) => String(f.key) !== "width_mode");
+        const otherFiltered = otherOrbitFields.filter((f) => String(f.key) !== "width_mode" && !usedFuture.has(String(f.key)));
         for (const f of otherFiltered) {
             futureGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk));
         }

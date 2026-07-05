@@ -632,33 +632,6 @@ body.with-toolbars #quickToolbar {
     color: var(--orbit-text-secondary);
 }
 
-.config-label-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.config-help-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: calc(15px * var(--orbit-ui-scale));
-    height: calc(15px * var(--orbit-ui-scale));
-    border-radius: 50%;
-    border: 1px solid var(--orbit-border-primary);
-    color: var(--orbit-text-tertiary);
-    font: 700 calc(10px * var(--orbit-ui-scale)) sans-serif;
-    cursor: help;
-    user-select: none;
-    background: var(--orbit-bg-input);
-    line-height: 1;
-}
-
-.config-help-icon:focus-visible {
-    outline: 2px solid var(--orbit-border-focus);
-    outline-offset: 1px;
-}
-
 .config-field input,
 .config-field select {
     border: 1px solid var(--orbit-border-primary);
