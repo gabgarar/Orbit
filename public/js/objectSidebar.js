@@ -6,11 +6,42 @@ function formatNumber(value, decimals = 2) {
     return n.toFixed(decimals);
 }
 
-function row(label, value, unit = "") {
+const INFO_FIELD_HELP = {
+    "Nombre": "Nombre visible de la capa/objeto en el panel.",
+    "Latitud": "Coordenada geodesica norte/sur en grados decimales.",
+    "Longitud": "Coordenada geodesica este/oeste en grados decimales.",
+    "Altitud": "Altura sobre el elipsoide de referencia.",
+    "Mascara elev.": "Elevacion minima para considerar visibilidad util de enlace.",
+    "Satelites visibles": "Numero de satelites por encima de la mascara de elevacion en este instante.",
+    "Satelites activos": "Numero de satelites activos considerados en el calculo de visibilidad.",
+    "Mejor elevacion": "Mayor elevacion angular instantanea entre los satelites visibles.",
+    "Mejor rango": "Distancia al satelite visible con mejor elevacion.",
+    "Mejor enlace": "Estimacion simple de potencia recibida usando perdida de espacio libre.",
+    "Frecuencia": "Frecuencia central usada para la estimacion del enlace.",
+    "Potencia TX": "Potencia de transmision de la estacion en dBm.",
+    "Ganancia TX": "Ganancia de antena transmisora en dBi.",
+    "Ganancia RX": "Ganancia de antena receptora en dBi.",
+    "Velocidad": "Modulo de velocidad instantanea del satelite.",
+    "Distancia a camara": "Distancia geometrica desde el objeto a la camara actual.",
+    "Edad telemetria": "Tiempo transcurrido desde la ultima muestra de telemetria recibida.",
+    "Fuente orbital": "Formato de datos de la orbita (TLE/OMM/OEM/otros).",
+    "Propagacion": "Metodo de propagacion usado para posicionar el objeto.",
+    "Tipo orbita": "Clasificacion orbital aproximada (LEO/MEO/GEO/HEO).",
+    "Tipo de orbita": "Clasificacion orbital aproximada (LEO/MEO/GEO/HEO).",
+    "Edad TLE": "Antiguedad del elemento TLE frente al tiempo actual.",
+    "Ventana recomendada": "Rango temporal recomendado para mantener precision de propagacion."
+};
+
+function getInfoHelp(label) {
+    return INFO_FIELD_HELP[String(label || "")] || "Informacion de campo de telemetria en tiempo real.";
+}
+
+function row(label, value, unit = "", helpText = "") {
+    const tooltip = escapeHtml(helpText || getInfoHelp(label));
     return `
-        <div class="object-info-row">
-            <span class="object-info-key">${label}</span>
-            <span class="object-info-value">${value}${unit}</span>
+        <div class="object-info-row" title="${tooltip}">
+            <span class="object-info-key" title="${tooltip}">${label}</span>
+            <span class="object-info-value" title="${tooltip}">${value}${unit}</span>
         </div>
     `;
 }
@@ -62,9 +93,72 @@ function formatUtcDateTime(ms) {
     }
 }
 
+function buildGroundStationInfoText(telemetry, sectionOpenState = {}) {
+    const station = telemetry?.station || {};
+    const realtime = telemetry?.realtime || {};
+    const nextPasses = Array.isArray(telemetry?.next_passes) ? telemetry.next_passes : [];
+
+    const stationRows = [
+        row("Nombre", station.name || telemetry?.id || "-"),
+        row("Latitud", formatNumber(station.latitude_deg, 6), " deg"),
+        row("Longitud", formatNumber(station.longitude_deg, 6), " deg"),
+        row("Altitud", formatNumber(station.altitude_m, 1), " m"),
+        row("Mascara elev.", formatNumber(station.min_elevation_deg, 1), " deg")
+    ].join("");
+
+    const realtimeRows = [
+        row("Satelites visibles", formatNumber(realtime.visible_satellites, 0)),
+        row("Satelites activos", formatNumber(realtime.active_satellites, 0)),
+        row("Mejor elevacion", formatNumber(realtime.best_elevation_deg, 1), " deg"),
+        row("Mejor rango", formatNumber(realtime.best_range_km, 1), " km"),
+        row("Mejor enlace", Number.isFinite(realtime.best_link_dbm) ? formatNumber(realtime.best_link_dbm, 1) : "-", " dBm")
+    ].join("");
+
+    const radioRows = [
+        row("Frecuencia", formatNumber(station.frequency_mhz, 2), " MHz"),
+        row("Potencia TX", formatNumber(station.tx_power_dbm, 1), " dBm"),
+        row("Ganancia TX", formatNumber(station.tx_gain_dbi, 1), " dBi"),
+        row("Ganancia RX", formatNumber(station.rx_gain_dbi, 1), " dBi")
+    ].join("");
+
+    const passesRows = nextPasses.length
+        ? nextPasses.slice(0, 6).map((pass, index) => {
+            const title = pass?.satellite || `SAT-${index + 1}`;
+            const aos = pass?.aos || "-";
+            const los = pass?.los || "-";
+            const maxEl = Number.isFinite(pass?.max_elevation_deg) ? `${formatNumber(pass.max_elevation_deg, 1)} deg` : "-";
+            const aosText = escapeHtml(String(aos).replace("T", " ").replace("+00:00", " UTC"));
+            const losText = escapeHtml(String(los).replace("T", " ").replace("+00:00", " UTC"));
+            return `
+                <article class="object-pass-card" title="Ventana de visibilidad estimada para ${escapeHtml(title)}">
+                    <div class="object-pass-card-header">
+                        <span class="object-pass-satellite">${escapeHtml(title)}</span>
+                        <span class="object-pass-maxel">MAX ${escapeHtml(maxEl)}</span>
+                    </div>
+                    <div class="object-pass-row"><strong>AOS</strong><span>${aosText}</span></div>
+                    <div class="object-pass-row"><strong>LOS</strong><span>${losText}</span></div>
+                </article>
+            `;
+        }).join("")
+        : row("Pases", "Sin datos (se estan calculando o no hay visibilidad)");
+
+    return `
+        <div class="object-info-title">${escapeHtml(telemetry?.id || station.name || "Estacion terrestre")}</div>
+        ${section("station", "Estacion", stationRows, sectionOpenState.station !== false)}
+        ${section("realtime", "Tiempo real", realtimeRows, sectionOpenState.realtime !== false)}
+        ${section("radio", "Radio", radioRows, sectionOpenState.radio !== false)}
+        ${section("passes", "Tabla de pases (AOS/LOS)", passesRows, sectionOpenState.passes !== false)}
+    `;
+}
+
 function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOpenState = {}, oemDomainActive = false) {
     if (!telemetry) {
         return "<div class=\"object-info-empty\">Selecciona un objeto para ver telemetria en tiempo real.</div>";
+    }
+
+    const sourceFormatForKind = String(telemetry.source_format || "TLE").toUpperCase();
+    if (sourceFormatForKind === "GROUND_STATION") {
+        return buildGroundStationInfoText(telemetry, sectionOpenState);
     }
 
     const g = telemetry.geo || {};
@@ -632,6 +726,14 @@ export function setupObjectSidebar({
     onFocusObject,
     onSelectObject,
     onOpenVisualizationOptions,
+    onRequestAddSatellite,
+    onRequestCreateGroundStation,
+    onRequestUpdateGroundStation,
+    onRequestDuplicateLayer,
+    onRequestRenameLayer,
+    getLayerDisplayName,
+    getLayerType,
+    getGroundStationParams,
     isCatalogReady,
     getObjectTle,
     getObjectTleAsync,
@@ -675,6 +777,7 @@ export function setupObjectSidebar({
     let catalogAnchorIndex = null;
     let catalogWaitInterval = null;
     let contextTargetId = null;
+    let editingGroundStationId = null;
     let exportSourceFormat = "TLE";
     let lastRenderedCatalogIds = [];
     let catalogServerTotal = 0;
@@ -690,7 +793,11 @@ export function setupObjectSidebar({
         geografica: true,
         cinematica: true,
         orbita: true,
-        estado: true
+        estado: true,
+        station: true,
+        realtime: true,
+        radio: true,
+        passes: true
     };
 
     function normalizeImportFormat(rawFormat) {
@@ -994,11 +1101,100 @@ export function setupObjectSidebar({
     const contextMenu = document.createElement("div");
     contextMenu.id = "catalogContextMenu";
     contextMenu.innerHTML = `
+        <button class="catalog-context-action" id="contextRenameBtn" type="button">Renombrar capa</button>
+        <button class="catalog-context-action" id="contextUpdateStationBtn" type="button">Update parameters</button>
         <button class="catalog-context-action" id="contextExplainBtn" type="button">${uiText("explainParams")}</button>
         <button class="catalog-context-action" id="contextVizBtn" type="button">${uiText("vizOptions")}</button>
         <button class="catalog-context-action" id="contextExportBtn" type="button">Exportar...</button>
     `;
     document.body.appendChild(contextMenu);
+
+    const addMenu = document.createElement("div");
+    addMenu.id = "layerAddMenu";
+    addMenu.innerHTML = `
+        <button class="catalog-context-action" id="addSatelliteLayerBtn" type="button">Añadir satelite</button>
+        <button class="catalog-context-action" id="addGroundStationBtn" type="button">Añadir estacion de tierra</button>
+    `;
+    document.body.appendChild(addMenu);
+
+    const groundStationModal = document.createElement("div");
+    groundStationModal.id = "groundStationModal";
+    groundStationModal.innerHTML = `
+        <div class="catalog-filter-panel ground-station-panel" role="dialog" aria-modal="true" aria-label="Nueva estacion terrestre" id="groundStationPanel">
+            <div class="catalog-filter-header">
+                <h3 id="groundStationTitle">Nueva estacion terrestre</h3>
+                <button class="catalog-close-btn" id="groundStationCloseBtn" type="button" aria-label="Cerrar">✕</button>
+            </div>
+            <div class="catalog-filter-grid ground-station-grid">
+                <label class="catalog-filter-field">
+                    <span>Nombre de capa</span>
+                    <input id="gsNameInput" type="text" placeholder="Estacion Madrid" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Latitud (deg)</span>
+                    <input id="gsLatInput" type="number" step="0.000001" min="-90" max="90" value="40.4168" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Longitud (deg)</span>
+                    <input id="gsLonInput" type="number" step="0.000001" min="-180" max="180" value="-3.7038" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Altitud (m)</span>
+                    <input id="gsAltInput" type="number" step="1" min="0" value="667" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Mascara elevacion (deg)</span>
+                    <input id="gsMaskInput" type="number" step="0.1" min="0" max="90" value="10" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Frecuencia (MHz)</span>
+                    <input id="gsFreqInput" type="number" step="0.1" min="1" value="2200" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Potencia TX (dBm)</span>
+                    <input id="gsTxPowerInput" type="number" step="0.1" value="38" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Ganancia TX (dBi)</span>
+                    <input id="gsTxGainInput" type="number" step="0.1" value="18" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Ganancia RX (dBi)</span>
+                    <input id="gsRxGainInput" type="number" step="0.1" value="21" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Radio cobertura (km)</span>
+                    <input id="gsCoverageRadiusInput" type="number" step="1" min="1" value="1200" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Tamano simbolo (px)</span>
+                    <input id="gsPointSizeInput" type="number" step="1" min="4" max="48" value="11" />
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Simbolo</span>
+                    <select id="gsPointSymbolInput">
+                        <option value="circle">Circulo</option>
+                        <option value="square">Cuadrado</option>
+                        <option value="triangle">Triangulo</option>
+                        <option value="diamond">Diamante</option>
+                        <option value="star">Estrella</option>
+                    </select>
+                </label>
+                <label class="catalog-filter-field">
+                    <span>Color simbolo</span>
+                    <input id="gsPointColorInput" type="color" value="#3cc4ff" />
+                </label>
+                <label class="catalog-filter-field checkbox">
+                    <span>Heat map acumulado</span>
+                    <input id="gsHeatEnabledInput" type="checkbox" checked />
+                </label>
+            </div>
+            <div class="catalog-filter-actions">
+                <button class="catalog-action-btn" id="groundStationCreateBtn" type="button">Crear estacion</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(groundStationModal);
 
     const exportModal = document.createElement("div");
     exportModal.id = "catalogExportModal";
@@ -1135,6 +1331,30 @@ export function setupObjectSidebar({
     const contextExplainBtn = contextMenu.querySelector("#contextExplainBtn");
     const contextVizBtn = contextMenu.querySelector("#contextVizBtn");
     const contextExportBtn = contextMenu.querySelector("#contextExportBtn");
+    const contextRenameBtn = contextMenu.querySelector("#contextRenameBtn");
+    const contextUpdateStationBtn = contextMenu.querySelector("#contextUpdateStationBtn");
+
+    const addSatelliteLayerBtn = addMenu.querySelector("#addSatelliteLayerBtn");
+    const addGroundStationBtn = addMenu.querySelector("#addGroundStationBtn");
+
+    const groundStationCloseBtn = groundStationModal.querySelector("#groundStationCloseBtn");
+    const groundStationCreateBtn = groundStationModal.querySelector("#groundStationCreateBtn");
+    const groundStationTitle = groundStationModal.querySelector("#groundStationTitle");
+    const groundStationPanel = groundStationModal.querySelector("#groundStationPanel");
+    const gsNameInput = groundStationModal.querySelector("#gsNameInput");
+    const gsLatInput = groundStationModal.querySelector("#gsLatInput");
+    const gsLonInput = groundStationModal.querySelector("#gsLonInput");
+    const gsAltInput = groundStationModal.querySelector("#gsAltInput");
+    const gsMaskInput = groundStationModal.querySelector("#gsMaskInput");
+    const gsFreqInput = groundStationModal.querySelector("#gsFreqInput");
+    const gsTxPowerInput = groundStationModal.querySelector("#gsTxPowerInput");
+    const gsTxGainInput = groundStationModal.querySelector("#gsTxGainInput");
+    const gsRxGainInput = groundStationModal.querySelector("#gsRxGainInput");
+    const gsCoverageRadiusInput = groundStationModal.querySelector("#gsCoverageRadiusInput");
+    const gsPointSizeInput = groundStationModal.querySelector("#gsPointSizeInput");
+    const gsPointSymbolInput = groundStationModal.querySelector("#gsPointSymbolInput");
+    const gsPointColorInput = groundStationModal.querySelector("#gsPointColorInput");
+    const gsHeatEnabledInput = groundStationModal.querySelector("#gsHeatEnabledInput");
 
     const catalogExportCloseBtn = exportModal.querySelector("#catalogExportCloseBtn");
     const catalogExportTarget = exportModal.querySelector("#catalogExportTarget");
@@ -1152,6 +1372,153 @@ export function setupObjectSidebar({
 
     const tleInfoCloseBtn = tleInfoModal.querySelector("#tleInfoCloseBtn");
     const tleInfoContent = tleInfoModal.querySelector("#tleInfoContent");
+
+    const notificationCenter = document.createElement("div");
+    notificationCenter.id = "sidebarNotificationCenter";
+    notificationCenter.innerHTML = `
+        <button id="sidebarNotificationToggle" type="button">Alertas (0)</button>           
+        <div id="sidebarNotificationPanel" hidden>
+            <div class="sidebar-notification-actions">
+                <button id="sidebarNotificationClearAll" type="button">Limpiar todo</button>
+            </div>
+            <div id="sidebarNotificationList"></div>
+        </div>
+    `;
+    document.body.appendChild(notificationCenter);
+
+    const notificationToggle = notificationCenter.querySelector("#sidebarNotificationToggle");
+    const notificationPanel = notificationCenter.querySelector("#sidebarNotificationPanel");
+    const notificationList = notificationCenter.querySelector("#sidebarNotificationList");
+    const notificationClearAll = notificationCenter.querySelector("#sidebarNotificationClearAll");
+    const notificationState = {
+        sequence: 1,
+        open: false,
+        entries: []
+    };
+
+    function renderNotifications() {
+        const total = notificationState.entries.length;
+        notificationToggle.textContent = `Alertas (${total})`;
+        if (total === 0) {
+            notificationState.open = false;
+        }
+        notificationPanel.hidden = !notificationState.open;
+        notificationCenter.classList.toggle("has-alerts", total > 0);
+        notificationCenter.classList.toggle("open", notificationState.open);
+
+        notificationList.innerHTML = "";
+        for (const entry of notificationState.entries) {
+            const item = document.createElement("article");
+            item.className = `sidebar-notification-item ${entry.type === "error" ? "is-error" : "is-info"}`;
+            item.innerHTML = `
+                <div class="sidebar-notification-head">
+                    <strong>${entry.type === "error" ? "Error" : "Info"}</strong>
+                    <button type="button" data-dismiss-id="${entry.id}" aria-label="Cerrar alerta">✕</button>
+                </div>
+                <pre>${escapeHtml(entry.message)}</pre>
+            `;
+            notificationList.appendChild(item);
+        }
+    }
+
+    function dismissNotification(id) {
+        notificationState.entries = notificationState.entries.filter((entry) => entry.id !== id);
+        renderNotifications();
+    }
+
+    function pushNotification(message, type = "info", { sticky = false, autoHideMs = 0 } = {}) {
+        const entry = {
+            id: notificationState.sequence++,
+            type,
+            message: String(message || "")
+        };
+        notificationState.entries.unshift(entry);
+        notificationState.entries = notificationState.entries.slice(0, 80);
+        renderNotifications();
+
+        if (!sticky && Number(autoHideMs) > 0) {
+            setTimeout(() => dismissNotification(entry.id), Number(autoHideMs));
+        }
+    }
+
+    notificationToggle.addEventListener("click", () => {
+        notificationState.open = !notificationState.open;
+        renderNotifications();
+    });
+
+    notificationList.addEventListener("click", (event) => {
+        const btn = event.target.closest("[data-dismiss-id]");
+        if (!btn) {
+            return;
+        }
+        dismissNotification(Number(btn.dataset.dismissId));
+    });
+
+    notificationClearAll.addEventListener("click", () => {
+        notificationState.entries = [];
+        renderNotifications();
+    });
+
+    renderNotifications();
+
+    function makeMovablePanel(modalRoot, panelNode, dragHandleNode) {
+        let dragging = false;
+        let startX = 0;
+        let startY = 0;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        const applyTransform = () => {
+            panelNode.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+        };
+
+        const onPointerMove = (event) => {
+            if (!dragging) {
+                return;
+            }
+            const clientX = Number(event.clientX);
+            const clientY = Number(event.clientY);
+            if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+                return;
+            }
+            offsetX += clientX - startX;
+            offsetY += clientY - startY;
+            startX = clientX;
+            startY = clientY;
+            applyTransform();
+        };
+
+        const stop = () => {
+            dragging = false;
+            window.removeEventListener("pointermove", onPointerMove);
+            window.removeEventListener("pointerup", stop);
+        };
+
+        dragHandleNode.addEventListener("pointerdown", (event) => {
+            if (event.button !== 0) {
+                return;
+            }
+            if (event.target.closest("button")) {
+                return;
+            }
+            dragging = true;
+            startX = event.clientX;
+            startY = event.clientY;
+            window.addEventListener("pointermove", onPointerMove);
+            window.addEventListener("pointerup", stop);
+            event.preventDefault();
+        });
+
+        modalRoot.addEventListener("transitionend", () => {
+            if (!modalRoot.classList.contains("open")) {
+                panelNode.style.transform = "translate(0px, 0px)";
+                offsetX = 0;
+                offsetY = 0;
+            }
+        });
+    }
+
+    makeMovablePanel(groundStationModal, groundStationPanel, groundStationPanel.querySelector(".catalog-filter-header"));
 
     function askConfirmation({ title, message, confirmText, cancelText }) {
         return new Promise((resolve) => {
@@ -1338,6 +1705,140 @@ export function setupObjectSidebar({
         contextTargetId = null;
     }
 
+    function closeAddMenu() {
+        addMenu.classList.remove("open");
+    }
+
+    function openAddMenu(anchorElement) {
+        if (!anchorElement) {
+            return;
+        }
+        const rect = anchorElement.getBoundingClientRect();
+        const menuWidth = 280;
+        const menuHeight = 92;
+        const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - menuWidth - 8));
+        const top = Math.min(Math.max(8, rect.bottom + 6), Math.max(8, window.innerHeight - menuHeight - 8));
+        addMenu.style.left = `${left}px`;
+        addMenu.style.top = `${top}px`;
+        addMenu.classList.add("open");
+    }
+
+    function openGroundStationModal(layerId = null) {
+        closeAddMenu();
+        editingGroundStationId = layerId ? String(layerId) : null;
+
+        const isEditing = Boolean(editingGroundStationId);
+        groundStationTitle.textContent = isEditing ? "Update parameters" : "Nueva estacion terrestre";
+        groundStationCreateBtn.textContent = isEditing ? "Guardar cambios" : "Crear estacion";
+
+        if (isEditing && typeof getGroundStationParams === "function") {
+            const current = getGroundStationParams(editingGroundStationId) || {};
+            gsNameInput.value = String(current.name || "");
+            gsLatInput.value = String(Number(current.latitude_deg ?? 0));
+            gsLonInput.value = String(Number(current.longitude_deg ?? 0));
+            gsAltInput.value = String(Number(current.altitude_m ?? 0));
+            gsMaskInput.value = String(Number(current.min_elevation_deg ?? 10));
+            gsFreqInput.value = String(Number(current.frequency_mhz ?? 2200));
+            gsTxPowerInput.value = String(Number(current.tx_power_dbm ?? 38));
+            gsTxGainInput.value = String(Number(current.tx_gain_dbi ?? 18));
+            gsRxGainInput.value = String(Number(current.rx_gain_dbi ?? 21));
+            gsCoverageRadiusInput.value = String(Number(current.coverage_radius_km ?? 1200));
+            gsPointSizeInput.value = String(Number(current.point_size_px ?? 11));
+            gsPointSymbolInput.value = String(current.point_symbol || "circle");
+            gsPointColorInput.value = String(current.point_color || "#3cc4ff");
+            gsHeatEnabledInput.checked = current.heatmap_enabled !== false;
+        } else {
+            gsNameInput.value = "";
+            gsLatInput.value = "40.4168";
+            gsLonInput.value = "-3.7038";
+            gsAltInput.value = "667";
+            gsMaskInput.value = "10";
+            gsFreqInput.value = "2200";
+            gsTxPowerInput.value = "38";
+            gsTxGainInput.value = "18";
+            gsRxGainInput.value = "21";
+            gsCoverageRadiusInput.value = "1200";
+            gsPointSizeInput.value = "11";
+            gsPointSymbolInput.value = "circle";
+            gsPointColorInput.value = "#3cc4ff";
+            gsHeatEnabledInput.checked = true;
+        }
+
+        groundStationModal.classList.add("open");
+        gsNameInput?.focus();
+    }
+
+    function closeGroundStationModal() {
+        editingGroundStationId = null;
+        groundStationModal.classList.remove("open");
+    }
+
+    async function submitGroundStation() {
+        const payload = {
+            name: String(gsNameInput?.value || "").trim() || "Estacion terrestre",
+            latitude_deg: Number(gsLatInput?.value),
+            longitude_deg: Number(gsLonInput?.value),
+            altitude_m: Number(gsAltInput?.value),
+            min_elevation_deg: Number(gsMaskInput?.value),
+            frequency_mhz: Number(gsFreqInput?.value),
+            tx_power_dbm: Number(gsTxPowerInput?.value),
+            tx_gain_dbi: Number(gsTxGainInput?.value),
+            rx_gain_dbi: Number(gsRxGainInput?.value),
+            coverage_radius_km: Number(gsCoverageRadiusInput?.value),
+            point_size_px: Number(gsPointSizeInput?.value),
+            point_symbol: String(gsPointSymbolInput?.value || "circle").trim(),
+            point_color: String(gsPointColorInput?.value || "#3cc4ff").trim(),
+            heatmap_enabled: gsHeatEnabledInput?.checked === true
+        };
+
+        if (!Number.isFinite(payload.latitude_deg) || payload.latitude_deg < -90 || payload.latitude_deg > 90) {
+            showErrorPopup("Latitud invalida para la estacion.");
+            return;
+        }
+
+        if (!Number.isFinite(payload.longitude_deg) || payload.longitude_deg < -180 || payload.longitude_deg > 180) {
+            showErrorPopup("Longitud invalida para la estacion.");
+            return;
+        }
+
+        if (editingGroundStationId) {
+            if (typeof onRequestUpdateGroundStation !== "function") {
+                showErrorPopup("La edicion de estaciones no esta disponible en este contexto.");
+                return;
+            }
+            const updated = await onRequestUpdateGroundStation(editingGroundStationId, payload);
+            if (!updated) {
+                showErrorPopup("No se pudo actualizar la estacion terrestre.");
+                return;
+            }
+            selectedId = editingGroundStationId;
+            onSelectObject?.(selectedId);
+            renderList();
+            renderInfo();
+            closeGroundStationModal();
+            showInfoPopup(`Estacion actualizada: ${payload.name}`);
+            return;
+        }
+
+        if (typeof onRequestCreateGroundStation !== "function") {
+            showErrorPopup("La creacion de estaciones no esta disponible en este contexto.");
+            return;
+        }
+
+        const createdId = await onRequestCreateGroundStation(payload);
+        if (!createdId) {
+            showErrorPopup("No se pudo crear la estacion terrestre.");
+            return;
+        }
+
+        selectedId = createdId;
+        onSelectObject?.(selectedId);
+        renderList();
+        renderInfo();
+        closeGroundStationModal();
+        showInfoPopup(`Estacion creada: ${payload.name}`);
+    }
+
     function isFileDragEvent(event) {
         const types = event?.dataTransfer?.types;
         return Boolean(types && Array.from(types).includes("Files"));
@@ -1410,46 +1911,12 @@ export function setupObjectSidebar({
         URL.revokeObjectURL(blobUrl);
     }
 
-    function showToast(message, type = "info", duration = 4500) {
-        try {
-            const toast = document.createElement("div");
-            toast.className = `sidebar-toast sidebar-toast-${type}`;
-            toast.textContent = message;
-            Object.assign(toast.style, {
-                position: "fixed",
-                right: "16px",
-                bottom: "16px",
-                background: type === "error" ? "#6b1f1f" : "#1f6f4f",
-                color: "#fff",
-                padding: "10px 14px",
-                borderRadius: "8px",
-                boxShadow: "0 6px 18px rgba(0,0,0,0.4)",
-                zIndex: 99999,
-                font: "600 13px sans-serif",
-                maxWidth: "480px",
-                wordBreak: "break-word"
-            });
-
-            document.body.appendChild(toast);
-
-            setTimeout(() => {
-                toast.style.transition = "opacity 220ms ease-out, transform 220ms ease-out";
-                toast.style.opacity = "0";
-                toast.style.transform = "translateY(10px)";
-                setTimeout(() => toast.remove(), 240);
-            }, duration);
-        } catch (e) {
-            // Fallback a alert si algo falla
-            try { window.alert(message); } catch (_) {}
-        }
-    }
-
     function showErrorPopup(message) {
-        showToast(message, "error", 6000);
+        pushNotification(message, "error", { sticky: true });
     }
 
     function showInfoPopup(message) {
-        showToast(message, "info", 3800);
+        pushNotification(message, "info", { sticky: false, autoHideMs: 6500 });
     }
 
     function getLayerCapacity() {
@@ -1608,9 +2075,19 @@ export function setupObjectSidebar({
     function openContextMenu(satelliteId, x, y) {
         contextTargetId = satelliteId;
         const menuWidth = 300;
-        const menuHeight = 128;
+        const menuHeight = 216;
         const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
         const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
+
+        const layerType = typeof getLayerType === "function"
+            ? String(getLayerType(satelliteId) || "SATELLITE").toUpperCase()
+            : "SATELLITE";
+
+        contextExplainBtn.hidden = layerType === "GROUND_STATION";
+        contextExportBtn.hidden = layerType === "GROUND_STATION";
+        contextUpdateStationBtn.hidden = layerType !== "GROUND_STATION";
+        contextVizBtn.hidden = layerType === "GROUND_STATION";
+
         contextMenu.style.left = `${left}px`;
         contextMenu.style.top = `${top}px`;
         contextMenu.classList.add("open");
@@ -1697,7 +2174,34 @@ export function setupObjectSidebar({
     openCatalogBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         openSidebar();
+        if (addMenu.classList.contains("open")) {
+            closeAddMenu();
+            return;
+        }
+        openAddMenu(openCatalogBtn);
+    });
+
+    addSatelliteLayerBtn?.addEventListener("click", () => {
+        closeAddMenu();
+        if (typeof onRequestAddSatellite === "function") {
+            onRequestAddSatellite();
+        }
         waitAndOpenCatalog();
+    });
+
+    addGroundStationBtn?.addEventListener("click", () => {
+        openGroundStationModal();
+    });
+
+    groundStationCloseBtn?.addEventListener("click", closeGroundStationModal);
+    groundStationCreateBtn?.addEventListener("click", () => {
+        submitGroundStation();
+    });
+
+    groundStationModal.addEventListener("click", (event) => {
+        if (event.target === groundStationModal) {
+            closeGroundStationModal();
+        }
     });
 
     removeAllLayersHeaderBtn.addEventListener("click", async (event) => {
@@ -1988,6 +2492,15 @@ export function setupObjectSidebar({
         onOpenVisualizationOptions?.(id);
     });
 
+    contextUpdateStationBtn.addEventListener("click", () => {
+        if (!contextTargetId) {
+            return;
+        }
+        const id = contextTargetId;
+        closeContextMenu();
+        openGroundStationModal(id);
+    });
+
     contextExportBtn.addEventListener("click", () => {
         if (!contextTargetId) {
             return;
@@ -1995,6 +2508,41 @@ export function setupObjectSidebar({
         const id = contextTargetId;
         closeContextMenu();
         openExportModal(id);
+    });
+
+    contextRenameBtn.addEventListener("click", async () => {
+        if (!contextTargetId) {
+            return;
+        }
+        const id = contextTargetId;
+        closeContextMenu();
+
+        const currentName = typeof getLayerDisplayName === "function" ? getLayerDisplayName(id) : id;
+        const nextName = window.prompt("Nuevo nombre de capa", String(currentName || "").trim());
+        if (nextName === null) {
+            return;
+        }
+
+        const trimmed = String(nextName || "").trim();
+        if (!trimmed) {
+            showErrorPopup("El nombre no puede quedar vacio.");
+            return;
+        }
+
+        if (typeof onRequestRenameLayer !== "function") {
+            showErrorPopup("El renombrado no esta disponible para esta capa.");
+            return;
+        }
+
+        const renamed = await onRequestRenameLayer(id, trimmed);
+        if (!renamed) {
+            showErrorPopup("No se pudo renombrar la capa.");
+            return;
+        }
+
+        renderList();
+        renderInfo();
+        renderCatalogList();
     });
 
     catalogExportCloseBtn.addEventListener("click", closeExportModal);
@@ -2095,12 +2643,22 @@ export function setupObjectSidebar({
 
     document.addEventListener("click", (event) => {
         if (!contextMenu.classList.contains("open")) {
+            if (addMenu.classList.contains("open") && !addMenu.contains(event.target) && event.target !== openCatalogBtn) {
+                closeAddMenu();
+            }
+            if (notificationState.open && !notificationCenter.contains(event.target)) {
+                notificationState.open = false;
+                renderNotifications();
+            }
             return;
         }
         if (contextMenu.contains(event.target)) {
             return;
         }
         closeContextMenu();
+        if (addMenu.classList.contains("open") && !addMenu.contains(event.target) && event.target !== openCatalogBtn) {
+            closeAddMenu();
+        }
     });
 
     searchInput.addEventListener("input", () => {
@@ -2193,10 +2751,13 @@ export function setupObjectSidebar({
             return;
         }
 
-        const ids = [...selectedCatalogIds].filter((id) => !getObjectLayerActive(id));
+        const ids = [...selectedCatalogIds];
         if (!ids.length) {
             return;
         }
+
+        const idsInactive = ids.filter((id) => !getObjectLayerActive(id));
+        const idsAlreadyActive = ids.filter((id) => getObjectLayerActive(id));
 
         const { maxLayers, availableSlots } = getLayerCapacity();
         if (availableSlots <= 0) {
@@ -2204,8 +2765,27 @@ export function setupObjectSidebar({
             return;
         }
 
-        const idsToAdd = ids.slice(0, availableSlots);
-        const skippedCount = Math.max(0, ids.length - idsToAdd.length);
+        let allowDuplicates = false;
+        if (idsAlreadyActive.length > 0) {
+            allowDuplicates = await askConfirmation({
+                title: "Capas ya activas",
+                message: `${idsAlreadyActive.length} capas ya estan activas. ¿Quieres añadir copias (por ejemplo ISS (2))?`,
+                confirmText: "Duplicar",
+                cancelText: "No duplicar"
+            });
+        }
+
+        const pending = [...idsInactive];
+        if (allowDuplicates && typeof onRequestDuplicateLayer === "function") {
+            pending.push(...idsAlreadyActive);
+        }
+
+        if (!pending.length) {
+            return;
+        }
+
+        const idsToAdd = pending.slice(0, availableSlots);
+        const skippedCount = Math.max(0, pending.length - idsToAdd.length);
 
         const ok = await askConfirmation({
             title: uiText("confirmInclusion"),
@@ -2222,12 +2802,25 @@ export function setupObjectSidebar({
 
         setCatalogBusyState(true, `${uiText("addingLayers")} 0/${idsToAdd.length}`);
 
+        let firstAddedId = null;
         processInChunks(
             idsToAdd,
-            (id) => onToggleObjectLayer(id, true),
+            (id) => {
+                if (getObjectLayerActive(id) && typeof onRequestDuplicateLayer === "function") {
+                    const duplicated = onRequestDuplicateLayer(id);
+                    if (!firstAddedId && duplicated) {
+                        firstAddedId = duplicated;
+                    }
+                    return;
+                }
+                onToggleObjectLayer(id, true);
+                if (!firstAddedId) {
+                    firstAddedId = id;
+                }
+            },
             (done, total) => setCatalogBusyState(true, `${uiText("addingLayers")} ${done}/${total}`)
         ).then(() => {
-            selectedId = idsToAdd[0];
+            selectedId = firstAddedId;
             onSelectObject?.(selectedId);
             selectedCatalogIds.clear();
             catalogAnchorIndex = null;
@@ -2267,7 +2860,7 @@ export function setupObjectSidebar({
             return;
         }
 
-        const toSelect = filteredIds.filter((id) => !getObjectLayerActive(id) && !selectedCatalogIds.has(id));
+        const toSelect = filteredIds.filter((id) => !selectedCatalogIds.has(id));
 
         if (!toSelect.length) {
             setCatalogBusyState(false);
@@ -2416,7 +3009,12 @@ export function setupObjectSidebar({
     function renderList() {
         const ids = getRenderableLayerIds();
         const activeFilterText = String(searchInput?.value || layerFilterText || "").toLowerCase().trim();
-        const filtered = ids.filter((id) => id.toLowerCase().includes(activeFilterText));
+        const filtered = ids.filter((id) => {
+            const displayName = typeof getLayerDisplayName === "function"
+                ? String(getLayerDisplayName(id) || id)
+                : String(id || "");
+            return displayName.toLowerCase().includes(activeFilterText) || String(id || "").toLowerCase().includes(activeFilterText);
+        });
 
         listRoot.innerHTML = "";
         for (const id of filtered) {
@@ -2427,7 +3025,24 @@ export function setupObjectSidebar({
             item.type = "button";
             item.className = `object-list-item${id === selectedId ? " active" : ""}`;
             item.textContent = "";
-            item.appendChild(document.createTextNode(id));
+            const displayName = typeof getLayerDisplayName === "function"
+                ? String(getLayerDisplayName(id) || id)
+                : String(id || "");
+            item.appendChild(document.createTextNode(displayName));
+
+            const layerType = typeof getLayerType === "function"
+                ? String(getLayerType(id) || "").toUpperCase()
+                : "";
+
+            if (layerType) {
+                const typeBadge = document.createElement("span");
+                typeBadge.className = "catalog-format-badge";
+                typeBadge.textContent = layerType === "GROUND_STATION" ? "GST" : (layerType === "POINT" ? "POINT" : "SAT");
+                typeBadge.title = `Tipo: ${typeBadge.textContent}`;
+                item.appendChild(document.createTextNode(" "));
+                item.appendChild(typeBadge);
+            }
+
             const listEntryMeta = getCatalogEntryMeta?.(id) || null;
             if (listEntryMeta?.sourceFormat) {
                 const formatBadge = document.createElement("span");
@@ -2501,11 +3116,12 @@ export function setupObjectSidebar({
         const addItem = document.createElement("button");
         addItem.type = "button";
         addItem.className = "object-list-item object-list-add-item";
-        addItem.title = "Añadir satélite desde el catálogo";
-        addItem.setAttribute("aria-label", "Añadir satélite desde el catálogo");
-        addItem.innerHTML = `<span class="object-list-add-plus">+</span><span>Añadir satélite</span>`;
-        addItem.addEventListener("click", () => {
-            waitAndOpenCatalog();
+        addItem.title = "Añadir capa";
+        addItem.setAttribute("aria-label", "Añadir capa");
+        addItem.innerHTML = `<span class="object-list-add-plus">+</span><span>Añadir capa</span>`;
+        addItem.addEventListener("click", (event) => {
+            event.stopPropagation();
+            openAddMenu(addItem);
         });
         addRow.appendChild(addItem);
         listRoot.appendChild(addRow);
@@ -2690,7 +3306,7 @@ export function setupObjectSidebar({
         const indexInFiltered = catalogIndexById.get(id);
 
         rowEl.addEventListener("click", (event) => {
-            if (catalogBusy || active) return;
+            if (catalogBusy) return;
 
             const isRangeSelection = event.shiftKey && catalogAnchorIndex !== null;
             const isMultiToggle = event.ctrlKey || event.metaKey;
@@ -2854,6 +3470,12 @@ export function setupObjectSidebar({
 
     return {
         selectObject,
+        openGroundStationEditor(layerId) {
+            if (!layerId) {
+                return;
+            }
+            openGroundStationModal(layerId);
+        },
         openPanel,
         destroy() {
             clearInterval(listInterval);
@@ -2877,6 +3499,9 @@ export function setupObjectSidebar({
             catalogLoadingModal.remove();
             globalDropOverlay.remove();
             contextMenu.remove();
+            addMenu.remove();
+            groundStationModal.remove();
+            notificationCenter.remove();
             exportModal.remove();
             tleInfoModal.remove();
         }

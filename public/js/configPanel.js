@@ -1,6 +1,6 @@
 const CONFIG_SCHEMA = {
     orbit: [
-        { key: "propagation_hours", label: "Propagation Hours", type: "number", step: "0.1", min: "0", max: "240" },
+        { key: "propagation_hours", label: "Propagation Hours", type: "number", step: "0.1", min: "0" },
         { key: "width_mode", label: "Orbit Width Mode", type: "select", options: ["visual", "physical"] },
         { key: "future_show", label: "Future Show", type: "checkbox" },
         { key: "ground_track_show", label: "Ground Track Show", type: "checkbox" },
@@ -17,7 +17,8 @@ const CONFIG_SCHEMA = {
         { key: "model_scale", label: "Model Scale", type: "number", step: "1", min: "0.000001" },
         { key: "use_3d_model", label: "Use 3D Model", type: "checkbox" },
         { key: "size_mode", label: "Size Mode", type: "select", options: ["visual", "physical"] },
-        { key: "max_visible", label: "Max Active Layers", type: "number", step: "1", min: "1" }
+        { key: "max_visible", label: "Max Active Layers", type: "number", step: "1", min: "1" },
+        { key: "decay_alert_perigee_km", label: "Decay Alert Perigee (km)", type: "number", step: "1", min: "50", max: "5000" }
     ],
     realtime: [
         { key: "state_interval_seconds", label: "State Interval (s)", type: "number", step: "0.1", min: "0.1" },
@@ -63,7 +64,7 @@ const SECTION_TITLES = {
 };
 
 const FIELD_HELP = {
-    "orbit.propagation_hours": "Horas de proyeccion de la orbita futura. Rango permitido: 0 a 240 horas.",
+    "orbit.propagation_hours": "Horas de proyeccion de la orbita futura. Si se configura un rango temporal grande, puede impactar en el rendimiento.",
     "orbit.future_show": "Muestra u oculta la orbita futura.",
     "orbit.ground_track_show": "Muestra u oculta la traza de suelo y footprint del satelite en 2D y 3D.",
     "orbit.future_line_width": "Grosor de la linea de orbita futura.",
@@ -80,6 +81,7 @@ const FIELD_HELP = {
     "satellites.use_3d_model": "Si esta activo, el satelite se renderiza como modelo 3D. Si no, se dibuja como punto.",
     "satellites.size_mode": "visual: mantiene visibilidad por pixel. physical: respeta mas el tamano angular real por distancia.",
     "satellites.max_visible": "Numero maximo de capas activas permitidas al mismo tiempo. Al alcanzarlo, no se pueden anadir mas hasta quitar alguna.",
+    "satellites.decay_alert_perigee_km": "Umbral de perigeo (km) para marcar objetos en riesgo de decaimiento en filtros y alertas.",
 
     "realtime.state_interval_seconds": "Cada cuantos segundos llega el estado por WebSocket.",
     "realtime.orbit_interval_seconds": "Cada cuantos segundos llega la orbita por WebSocket.",

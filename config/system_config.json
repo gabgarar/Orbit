@@ -1,7 +1,7 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 5,
+      "propagation_hours": 24,
       "future_show": true,
       "ground_track_show": false,
       "future_line_width": 2,
@@ -18,7 +18,8 @@
       "model_scale": 1,
       "use_3d_model": true,
       "size_mode": "visual",
-      "max_visible": 1000
+      "max_visible": 1000,
+      "decay_alert_perigee_km": 200
     },
     "realtime": {
       "state_interval_seconds": 1,
@@ -47,6 +48,7 @@
     }
   },
   "data": {
-    "satellites_catalog_file": "catalog.json"
+    "satellites_catalog_file": "catalog.json",
+    "decay_alert_perigee_km": 200
   }
 }

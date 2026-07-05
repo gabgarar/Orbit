@@ -49,12 +49,22 @@ Listado de ideas y mejoras ordenadas por área. Marca con `[x]` cuando se implem
 
 ## 📡 Estaciones terrestres y cobertura
 
-- [ ] **Gestor de estaciones terrestres**: añadir, nombrar y posicionar estaciones en el globo con máscara de elevación configurable.
-- [ ] **Ventanas de visibilidad (AOS/LOS)**: calcular y mostrar cuándo cada satélite es visible desde cada estación en el rango de simulación.
-- [ ] **Cono de cobertura del sensor**: visualizar el footprint/FOV de un satélite sobre la superficie terrestre en tiempo real.
-- [ ] **Zona de cobertura acumulada**: mapa de calor de cobertura acumulada de una constelación en un periodo de tiempo.
-- [ ] **Link budget básico**: potencia de señal estimada en función de distancia, ganancia de antena y frecuencia.
-- [ ] **Tabla de pases**: vista tabular con AOS, LOS, elevación máxima y azimut para cada par satélite–estación.
+- [x] **Gestor de estaciones terrestres**: añadir, nombrar y posicionar estaciones en el globo con máscara de elevación configurable.
+- [x] **Ventanas de visibilidad (AOS/LOS)**: calcular y mostrar cuándo cada satélite es visible desde cada estación en el rango de simulación.
+- [x] **Cono de cobertura del sensor**: visualizar el footprint/FOV de un satélite sobre la superficie terrestre en tiempo real.
+- [x] **Zona de cobertura acumulada**: mapa de calor de cobertura acumulada de una constelación en un periodo de tiempo. (MVP en 3D)
+- [x] **Link budget básico**: potencia de señal estimada en función de distancia, ganancia de antena y frecuencia.
+- [x] **Tabla de pases**: vista tabular con AOS, LOS, elevación máxima y azimut para cada par satélite–estación.
+- [ ] **Cobertura con DEM local**: incorporar modelos digitales de elevación para línea de vista realista por relieve local.
+
+---
+
+## 🗂️ Sistema de layers (GIS-like)
+
+- [x] **Alta de capa con menú `+`**: desplegable para elegir entre añadir satélite o estación terrestre.
+- [x] **Renombrar capa por contexto**: clic derecho sobre capa activa > renombrar.
+- [x] **Duplicado de capas satelitales**: permitir múltiples instancias del mismo satélite (ej: `ISS (2)`).
+- [x] **Update parameters en estación**: clic derecho sobre estación > edición de parámetros de operación y visualización.
 
 ---
 
@@ -88,10 +98,7 @@ Listado de ideas y mejoras ordenadas por área. Marca con `[x]` cuando se implem
 - [x] **Catálogos predefinidos**: ISS, Starlink, OneWeb, GPS, GLONASS, Galileo, debris, etc., seleccionables con un click.
 - [x] **Filtro por operador/propietario**: mostrar solo los satélites de una agencia o empresa concreta.
 - [ ] **Alertas de decay**: notificación cuando un TLE en el catálogo tiene perigeo < umbral configurable.
-- [ ] **Soporte OCM**: Elementos + metadatos + parámetros físicos. Operaciones avanzadas
-- [ ] **Soporte OEM**: Elementos + metadatos + parámetros físicos. Operaciones avanzadas
-- [ ] **Filtro TLE/OMM/OCM/OEM**: Filtrados por tipo de datos
-- [ ] **Exportar TLE/OMM/OCM/OEM en distintos formatos**: Filtrados por tipo de datos
+- [x] **Umbral de decay configurable**: ajuste del umbral de perigeo (km) desde panel de configuración runtime.
 
 ---
 
@@ -116,6 +123,7 @@ Listado de ideas y mejoras ordenadas por área. Marca con `[x]` cuando se implem
 - [x] **Soporte multiidioma**: i18n básica (ES/EN).
 - [x] **Tema oscuro/claro**: toggle de apariencia para la UI (paneles, sidebar).
 - [ ] **Mostrar BIT y notificaciones**: notificar eventos y errores.
+- [x] **Centro de alertas persistente**: avisos/errores acumulables en panel desplegable, cierre manual individual o global.
 
 ---
 

@@ -1,5 +1,105 @@
 # Versionado
 
+## 2026-07-05j
+
+- **Fix crítico: conversión TEME → ECEF en propagador**
+  - El propagador SGP4 devuelve posiciones en marco TEME (cuasi-inercial), pero Cesium trabaja en ECEF (fijo con la Tierra).
+  - Sin esta conversión, todas las órbitas aparecen apiladas en el mismo plano longitudinal porque la rotación terrestre no se aplicaba.
+  - Se añade la rotación GMST (Greenwich Mean Sidereal Time) en cada punto orbital: `R_z(GMST) × r_TEME`.
+  - También se aplica la corrección de Coriolis al vector velocidad: `v_ECEF = R_z(GMST) × v_TEME − ω_tierra × r_ECEF`.
+  - Validado: dos órbitas consecutivas de Sentinel-2 (~100 min) quedan separadas ~24.3° en longitud, conforme a la rotación real de la Tierra (~25°).
+
+## 2026-07-05i
+
+- **Fix backend para simulación range > 240h**
+  - Detectado límite duro en backend (`PROPAGATION_HOURS_MAX = 240`) que truncaba órbitas al simular rangos largos (p. ej. 14 días = 336h).
+  - Se amplía el máximo de propagación en backend a 1 año de referencia para evitar cortes silenciosos en modo `range`.
+  - Con esto, el rango temporal elegido en UI puede propagarse completo también del lado servidor.
+
+## 2026-07-05h
+
+- **Fix range vs propagation_hours (simulación temporal)**
+  - Corregido conflicto donde modo `range` podía seguir comportándose con el horizonte de propagación previo (ej. `25h`) en lugar del intervalo `[inicio, fin]` elegido por el usuario.
+  - En render de órbita, cuando el modo activo es `range`, ya no se recorta por `propagation_hours` local de capa.
+  - Al aplicar un nuevo rango, se sincroniza también `orbit.propagation_hours` en configuración persistida para alinear backend y frontend en el horizonte temporal.
+
+## 2026-07-05g
+
+- **Alertas condicionales en visor**
+  - El centro de alertas vuelve a comportamiento flotante en esquina inferior derecha.
+  - Ahora solo se muestra cuando existe al menos una alerta activa.
+  - Al limpiar todas las alertas, el bloque se oculta automáticamente.
+
+- **Simulación en range sin recorte silencioso**
+  - Se elimina el recorte duro de horas al aplicar fechas de inicio/fin en modo range.
+  - Si el intervalo temporal es grande, se muestra confirmación previa para evitar sobrecarga.
+  - Si se pulsa cancelar, no se aplica el nuevo rango y se restauran las fechas anteriores.
+
+- **Propagación orbital: tope ampliado en frontend**
+  - Se retira el límite fijo de 240 h en lógica de propagación de cliente.
+  - El panel de configuración también deja de imponer ese máximo en la entrada.
+
+## 2026-07-05f
+
+- **Alertas UI reubicadas**
+  - Se elimina el bloque flotante de alertas en la esquina inferior derecha.
+  - El centro de alertas se integra dentro del panel de Layers para no invadir el visor.
+
+- **Simulación por rango largo**
+  - Se elimina la limitación efectiva corta de horas aplicada al modo `range`.
+  - Ahora el rango temporal admite ventanas largas (hasta 1 año de referencia para configuración orbital en UI) sin cortar a pocos días.
+
+- **Estación remota + capas duplicadas**
+  - La telemetría de estación ahora contabiliza capas satelitales duplicadas como instancias independientes.
+  - Caso resuelto: si existen dos capas del mismo satélite (`ISS`, `ISS (2)`), al pasar por estación remota el conteo refleja `2`.
+
+## 2026-07-05e
+
+- **Estaciones terrestres: mejora visual y edición avanzada**
+  - El círculo de cobertura de estación se eleva sobre el terreno para evitar conflicto visual con texturas/base map.
+  - Nuevo `click derecho > Update parameters` en capas de estación, con ventana **movible**.
+  - Edición de parámetros operativos y visuales de estación: lat/lon/alt, máscara, RF, radio de cobertura, tamaño de símbolo, forma y color.
+
+- **AOS/LOS rediseñado**
+  - La tabla de pases se muestra en tarjetas más legibles (AOS/LOS/MAX elevación) con formato temporal más claro.
+
+- **Tooltips contextuales en telemetría/info**
+  - Hover en campos de información de satélites y estaciones para mostrar descripción rápida del dato.
+
+- **Heat map de cobertura acumulada (MVP)**
+  - Se añade mapa de calor acumulado en 3D para estaciones (muestreo temporal y color por ratio de cobertura).
+  - Integrado con visibilidad y estado de la estación.
+
+- **Centro de alertas persistente**
+  - Sustitución de toasts efímeros por centro de alertas desplegable, acumulable y gestionable manualmente.
+  - Cierre individual o limpieza global de avisos/errores.
+
+- **Decay configurable en runtime config**
+  - Nuevo campo de configuración para `decay_alert_perigee_km`, persistido y enviado al backend para filtros/alertas de decay.
+
+## 2026-07-05d
+
+- **Alta de capas con desplegable en `+` (sin salto directo a catálogo):**
+  - Nuevo menú de acción para elegir entre **Añadir satélite** o **Añadir estación de tierra**.
+  - Opción de satélite mantiene el flujo existente de catálogo.
+
+- **Gestor de estaciones terrestres (MVP funcional):**
+  - Nuevo modal de creación de estación con parámetros: nombre, lat/lon/alt, máscara de elevación y parámetros RF básicos.
+  - Alta y baja de estaciones como capas dentro del panel de Layers.
+  - Render de estación en globo + huella de cobertura visual (footprint/FOV aproximado en superficie).
+  - Telemetría específica de estación (no satelital): visibilidad en tiempo real, mejor elevación/rango y estimación de enlace.
+  - Integración con backend `/api/aos-los` para construir tabla de pases AOS/LOS básica por estación.
+
+- **Capas renombrables por clic derecho:**
+  - Nueva acción `Renombrar capa` en menú contextual para cualquier layer activo.
+
+- **Duplicados de capas satelitales:**
+  - Si una capa ya existe y se vuelve a añadir desde catálogo, se ofrece popup para **duplicar**.
+  - Las copias se añaden como capas independientes de UI con sufijo por defecto (`ISS (2)`, `ISS (3)`, ...), permitiendo además renombrado libre.
+
+- **Arquitectura de layers compuesta:**
+  - El sidebar opera ahora con capas compuestas (satélites base, duplicados y estaciones terrestres) manteniendo compatibilidad con el núcleo orbital existente.
+
 ## 2026-07-05a
 
 - **Diagnóstico y fix: "no se pudo descargar ningún TLE válido"**

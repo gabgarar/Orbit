@@ -237,11 +237,21 @@ let simulationUiBusy = false;
 let simulationDockOpen = false;
 let simulationLayoutObserver = null;
 let topSearchInitialized = false;
+const groundStationLayers = new Map();
+const satelliteDuplicateLayers = new Map();
+const layerDisplayNameOverrides = new Map();
+const groundStationPassCache = new Map();
+const groundStationHeatMapEntities = new Map();
+let groundStationSequence = 1;
+let satelliteDuplicateSequence = 1;
+let stationHeatMapTimer = null;
+let runtimeDecayAlertPerigeeKm = 200;
 
 const SIMULATION_MODE_REALTIME = "realtime";
 const SIMULATION_MODE_RANGE = "range";
 const SIMULATION_SPEED_VALUES = [1, 10, 100, 1000];
 const SIMULATION_TIMELINE_STEPS = 10000;
+const SIMULATION_LONG_RANGE_WARNING_HOURS = 24 * 7;
 
 const simulationState = {
     mode: SIMULATION_MODE_REALTIME,
@@ -374,7 +384,8 @@ const UI_TEXT = {
         simApplyRange: "Aplicar",
         epochDelta: "Delta epoch",
         simPanelToggle: "Panel temporal",
-        simDomainLabel: "Dominio temporal"
+        simDomainLabel: "Dominio temporal",
+        simLargeRangeWarning: "El rango seleccionado es de {days} dias ({hours} h). Puede sobrecargar la aplicacion. Quieres aplicarlo?"
     },
     en: {
         toolbarToggle: "Quick tools",
@@ -495,7 +506,8 @@ const UI_TEXT = {
         simApplyRange: "Apply",
         epochDelta: "Epoch delta",
         simPanelToggle: "Time panel",
-        simDomainLabel: "Time domain"
+        simDomainLabel: "Time domain",
+        simLargeRangeWarning: "The selected range is {days} days ({hours} h). It may overload the application. Do you want to apply it?"
     }
 };
 
@@ -725,6 +737,25 @@ function formatDurationCompact(msDiff) {
     return `${sign}${seconds}s`;
 }
 
+function formatSimulationRangeWarning(startDate, endDate) {
+    const diffMs = Math.max(0, endDate.getTime() - startDate.getTime());
+    const rangeHours = diffMs / (1000 * 60 * 60);
+    const rangeDays = rangeHours / 24;
+    return uiText("simLargeRangeWarning")
+        .replace("{days}", rangeDays.toFixed(1))
+        .replace("{hours}", rangeHours.toFixed(1));
+}
+
+async function confirmLargeSimulationRangeIfNeeded(startDate, endDate) {
+    const diffMs = Math.max(0, endDate.getTime() - startDate.getTime());
+    const rangeHours = diffMs / (1000 * 60 * 60);
+    if (!Number.isFinite(rangeHours) || rangeHours <= SIMULATION_LONG_RANGE_WARNING_HOURS) {
+        return true;
+    }
+    const message = formatSimulationRangeWarning(startDate, endDate);
+    return showAppConfirm(message, uiText("confirmTitle"));
+}
+
 function getSimulationModeLabel() {
     if (simulationState.mode === SIMULATION_MODE_RANGE) {
         return uiText("simRange");
@@ -784,7 +815,10 @@ function applySimulationDateToViewer(date) {
 }
 
 async function resolveSatelliteEpochDate(satelliteId) {
-    const satId = String(satelliteId || "").trim();
+    if (isGroundStationLayerId(satelliteId)) {
+        return null;
+    }
+    const satId = getSatelliteSourceIdFromLayerId(String(satelliteId || "").trim());
     if (!satId) {
         return null;
     }
@@ -904,6 +938,745 @@ async function fetchTopSearchSuggestions(query) {
 
     topSearchCache.set(cacheKey, normalizedItems);
     return normalizedItems;
+}
+
+function isGroundStationLayerId(layerId) {
+    return String(layerId || "").startsWith("gst:");
+}
+
+function isSatelliteDuplicateLayerId(layerId) {
+    return String(layerId || "").startsWith("satdup:");
+}
+
+function getSatelliteSourceIdFromLayerId(layerId) {
+    if (isSatelliteDuplicateLayerId(layerId)) {
+        return String(satelliteDuplicateLayers.get(layerId)?.sourceId || "").trim();
+    }
+    return String(layerId || "").trim();
+}
+
+function getLayerDisplayName(layerId) {
+    const key = String(layerId || "").trim();
+    if (!key) {
+        return "";
+    }
+
+    if (layerDisplayNameOverrides.has(key)) {
+        return String(layerDisplayNameOverrides.get(key) || key);
+    }
+
+    if (isGroundStationLayerId(key)) {
+        return String(groundStationLayers.get(key)?.name || key);
+    }
+
+    return key;
+}
+
+function getLayerType(layerId) {
+    if (isGroundStationLayerId(layerId)) {
+        return "GROUND_STATION";
+    }
+    return "SATELLITE";
+}
+
+function computeStationElevationDeg(stationCartesian, satCartesian) {
+    const los = Cesium.Cartesian3.subtract(satCartesian, stationCartesian, new Cesium.Cartesian3());
+    const losNorm = Cesium.Cartesian3.normalize(los, new Cesium.Cartesian3());
+    const zenith = Cesium.Cartesian3.normalize(stationCartesian, new Cesium.Cartesian3());
+    const dot = Cesium.Math.clamp(Cesium.Cartesian3.dot(losNorm, zenith), -1, 1);
+    return Cesium.Math.toDegrees(Math.asin(dot));
+}
+
+function computeFreeSpacePathLossDb(freqMhz, rangeKm) {
+    if (!Number.isFinite(freqMhz) || freqMhz <= 0 || !Number.isFinite(rangeKm) || rangeKm <= 0) {
+        return null;
+    }
+    return 32.45 + (20 * Math.log10(freqMhz)) + (20 * Math.log10(rangeKm));
+}
+
+function getCompositeLayerIds() {
+    const satelliteIds = getActiveSatelliteLayerIds();
+    const duplicateIds = [...satelliteDuplicateLayers.keys()];
+    const stationIds = [...groundStationLayers.keys()];
+    return [...satelliteIds, ...duplicateIds, ...stationIds];
+}
+
+function getCompositeLayerMeta(layerId) {
+    if (isGroundStationLayerId(layerId)) {
+        return { sourceFormat: "GROUND_STATION", sourceOrigin: "USER" };
+    }
+    const sourceId = getSatelliteSourceIdFromLayerId(layerId);
+    return getCatalogEntryMeta(sourceId) || { sourceFormat: "TLE", sourceOrigin: "CATALOG" };
+}
+
+function getCompositeLayerVisibility(layerId) {
+    if (isGroundStationLayerId(layerId)) {
+        return groundStationLayers.get(layerId)?.visible === true;
+    }
+    const sourceId = getSatelliteSourceIdFromLayerId(layerId);
+    return isSatelliteVisible(sourceId);
+}
+
+function setCompositeLayerVisibility(layerId, visible) {
+    if (isGroundStationLayerId(layerId)) {
+        const station = groundStationLayers.get(layerId);
+        if (!station) {
+            return;
+        }
+        station.visible = visible === true;
+        if (station.entity) station.entity.show = station.visible;
+        if (station.coverageEntity) station.coverageEntity.show = station.visible;
+        const heatEntities = groundStationHeatMapEntities.get(layerId) || [];
+        for (const entity of heatEntities) {
+            entity.show = station.visible;
+        }
+        return;
+    }
+    const sourceId = getSatelliteSourceIdFromLayerId(layerId);
+    setSatelliteVisible(sourceId, visible);
+}
+
+function isCompositeLayerActive(layerId) {
+    if (isGroundStationLayerId(layerId)) {
+        return groundStationLayers.has(layerId);
+    }
+    if (isSatelliteDuplicateLayerId(layerId)) {
+        return satelliteDuplicateLayers.has(layerId);
+    }
+    return isSatelliteLayerActive(layerId);
+}
+
+function removeGroundStationLayer(layerId) {
+    const station = groundStationLayers.get(layerId);
+    if (!station) {
+        return;
+    }
+    if (station.entity) viewer.entities.remove(station.entity);
+    if (station.coverageEntity) viewer.entities.remove(station.coverageEntity);
+    clearGroundStationHeatMap(layerId);
+    groundStationLayers.delete(layerId);
+    layerDisplayNameOverrides.delete(layerId);
+    groundStationPassCache.delete(layerId);
+}
+
+function setCompositeLayerActive(layerId, active) {
+    const isActive = active === true;
+    if (isGroundStationLayerId(layerId)) {
+        if (!isActive) {
+            removeGroundStationLayer(layerId);
+        }
+        return true;
+    }
+
+    if (isSatelliteDuplicateLayerId(layerId)) {
+        if (!isActive) {
+            satelliteDuplicateLayers.delete(layerId);
+            layerDisplayNameOverrides.delete(layerId);
+            return true;
+        }
+        return false;
+    }
+
+    if (!isActive) {
+        for (const [dupId, dup] of satelliteDuplicateLayers.entries()) {
+            if (dup.sourceId === layerId) {
+                satelliteDuplicateLayers.delete(dupId);
+                layerDisplayNameOverrides.delete(dupId);
+            }
+        }
+    }
+
+    return setSatelliteLayerActive(layerId, isActive);
+}
+
+function buildDuplicateLayerDefaultName(sourceId) {
+    const baseName = getLayerDisplayName(sourceId) || sourceId;
+    const duplicateCount = [...satelliteDuplicateLayers.values()].filter((entry) => entry.sourceId === sourceId).length;
+    return `${baseName} (${duplicateCount + 2})`;
+}
+
+function duplicateSatelliteLayer(sourceId) {
+    const satId = String(sourceId || "").trim();
+    if (!satId) {
+        return null;
+    }
+
+    if (!isSatelliteLayerActive(satId)) {
+        const added = setSatelliteLayerActive(satId, true);
+        if (!added) {
+            return null;
+        }
+    }
+
+    const duplicateId = `satdup:${satelliteDuplicateSequence++}`;
+    satelliteDuplicateLayers.set(duplicateId, { sourceId: satId });
+    layerDisplayNameOverrides.set(duplicateId, buildDuplicateLayerDefaultName(satId));
+    return duplicateId;
+}
+
+function renameLayer(layerId, nextName) {
+    const id = String(layerId || "").trim();
+    const name = String(nextName || "").trim();
+    if (!id || !name) {
+        return false;
+    }
+
+    layerDisplayNameOverrides.set(id, name);
+    if (isGroundStationLayerId(id)) {
+        const station = groundStationLayers.get(id);
+        if (station) {
+            station.name = name;
+            if (station.entity?.label) {
+                station.entity.label.text = name;
+            }
+        }
+    }
+    return true;
+}
+
+function createStationSymbolImage(symbol = "circle", color = "#3cc4ff", size = 11) {
+    const px = Math.max(8, Math.min(64, Math.round(Number(size) || 11)));
+    const canvas = document.createElement("canvas");
+    canvas.width = px;
+    canvas.height = px;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+        return "";
+    }
+
+    const c = String(color || "#3cc4ff");
+    const center = px / 2;
+    const r = (px / 2) - 1.5;
+
+    ctx.clearRect(0, 0, px, px);
+    ctx.fillStyle = c;
+    ctx.strokeStyle = "#00131f";
+    ctx.lineWidth = 1.8;
+
+    const drawPolygon = (points) => {
+        ctx.beginPath();
+        points.forEach((p, index) => {
+            if (index === 0) ctx.moveTo(p[0], p[1]);
+            else ctx.lineTo(p[0], p[1]);
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+    };
+
+    switch (String(symbol || "circle")) {
+    case "square":
+        drawPolygon([
+            [center - r, center - r],
+            [center + r, center - r],
+            [center + r, center + r],
+            [center - r, center + r]
+        ]);
+        break;
+    case "triangle":
+        drawPolygon([
+            [center, center - r],
+            [center + r, center + r],
+            [center - r, center + r]
+        ]);
+        break;
+    case "diamond":
+        drawPolygon([
+            [center, center - r],
+            [center + r, center],
+            [center, center + r],
+            [center - r, center]
+        ]);
+        break;
+    case "star": {
+        const points = [];
+        for (let i = 0; i < 10; i += 1) {
+            const angle = (-Math.PI / 2) + (i * Math.PI / 5);
+            const radius = i % 2 === 0 ? r : r * 0.45;
+            points.push([center + Math.cos(angle) * radius, center + Math.sin(angle) * radius]);
+        }
+        drawPolygon(points);
+        break;
+    }
+    default:
+        ctx.beginPath();
+        ctx.arc(center, center, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        break;
+    }
+
+    return canvas.toDataURL("image/png");
+}
+
+function applyGroundStationVisuals(station) {
+    if (!station || !station.entity) {
+        return;
+    }
+
+    const symbolImage = createStationSymbolImage(station.point_symbol, station.point_color, station.point_size_px);
+    station.entity.billboard = {
+        image: symbolImage,
+        width: Math.max(8, Number(station.point_size_px) || 11),
+        height: Math.max(8, Number(station.point_size_px) || 11),
+        verticalOrigin: Cesium.VerticalOrigin.CENTER
+    };
+    station.entity.point = undefined;
+
+    if (station.coverageEntity?.ellipse) {
+        station.coverageEntity.ellipse.semiMajorAxis = station.coverage_radius_km * 1000;
+        station.coverageEntity.ellipse.semiMinorAxis = station.coverage_radius_km * 1000;
+        station.coverageEntity.ellipse.height = Math.max(3000, Number(station.altitude_m) + 3000);
+        station.coverageEntity.ellipse.material = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.11);
+        station.coverageEntity.ellipse.outlineColor = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.74);
+    }
+}
+
+function createGroundStationLayer(params = {}) {
+    const lat = Number(params.latitude_deg);
+    const lon = Number(params.longitude_deg);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return null;
+    }
+
+    const stationId = `gst:${groundStationSequence++}`;
+    const altitudeM = Number.isFinite(Number(params.altitude_m)) ? Number(params.altitude_m) : 0;
+    const minElevationDeg = Number.isFinite(Number(params.min_elevation_deg)) ? Number(params.min_elevation_deg) : 10;
+    const frequencyMhz = Number.isFinite(Number(params.frequency_mhz)) ? Number(params.frequency_mhz) : 2200;
+    const txPowerDbm = Number.isFinite(Number(params.tx_power_dbm)) ? Number(params.tx_power_dbm) : 38;
+    const txGainDbi = Number.isFinite(Number(params.tx_gain_dbi)) ? Number(params.tx_gain_dbi) : 18;
+    const rxGainDbi = Number.isFinite(Number(params.rx_gain_dbi)) ? Number(params.rx_gain_dbi) : 21;
+    const coverageRadiusKm = Number.isFinite(Number(params.coverage_radius_km)) ? Number(params.coverage_radius_km) : 1200;
+    const pointSizePx = Number.isFinite(Number(params.point_size_px)) ? Number(params.point_size_px) : 11;
+    const pointColor = String(params.point_color || "#3cc4ff").trim() || "#3cc4ff";
+    const pointSymbol = String(params.point_symbol || "circle").trim() || "circle";
+    const heatmapEnabled = params.heatmap_enabled !== false;
+    const displayName = String(params.name || `Estacion ${groundStationSequence - 1}`).trim() || `Estacion ${groundStationSequence - 1}`;
+
+    const position = Cesium.Cartesian3.fromDegrees(lon, lat, altitudeM);
+    const stationEntity = viewer.entities.add({
+        id: `${stationId}-entity`,
+        position,
+        label: {
+            text: displayName,
+            font: "600 12px sans-serif",
+            fillColor: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 2,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            pixelOffset: new Cesium.Cartesian2(0, -14)
+        },
+        properties: {
+            orbitLayerId: stationId,
+            layerType: "GROUND_STATION"
+        }
+    });
+
+    const coverageEntity = viewer.entities.add({
+        id: `${stationId}-coverage`,
+        position,
+        ellipse: {
+            semiMajorAxis: coverageRadiusKm * 1000,
+            semiMinorAxis: coverageRadiusKm * 1000,
+            material: Cesium.Color.fromCssColorString("#3cc4ff").withAlpha(0.12),
+            outline: true,
+            outlineColor: Cesium.Color.fromCssColorString("#3cc4ff").withAlpha(0.7),
+            height: Math.max(3000, altitudeM + 3000)
+        },
+        properties: {
+            orbitLayerId: stationId,
+            layerType: "GROUND_STATION"
+        }
+    });
+
+    groundStationLayers.set(stationId, {
+        id: stationId,
+        name: displayName,
+        latitude_deg: lat,
+        longitude_deg: lon,
+        altitude_m: altitudeM,
+        min_elevation_deg: minElevationDeg,
+        frequency_mhz: frequencyMhz,
+        tx_power_dbm: txPowerDbm,
+        tx_gain_dbi: txGainDbi,
+        rx_gain_dbi: rxGainDbi,
+        coverage_radius_km: coverageRadiusKm,
+        point_size_px: pointSizePx,
+        point_color: pointColor,
+        point_symbol: pointSymbol,
+        heatmap_enabled: heatmapEnabled,
+        heatmap_samples: new Map(),
+        visible: true,
+        entity: stationEntity,
+        coverageEntity
+    });
+
+    applyGroundStationVisuals(groundStationLayers.get(stationId));
+
+    layerDisplayNameOverrides.set(stationId, displayName);
+    return stationId;
+}
+
+function getGroundStationParams(layerId) {
+    const station = groundStationLayers.get(layerId);
+    if (!station) {
+        return null;
+    }
+    return {
+        name: station.name,
+        latitude_deg: station.latitude_deg,
+        longitude_deg: station.longitude_deg,
+        altitude_m: station.altitude_m,
+        min_elevation_deg: station.min_elevation_deg,
+        frequency_mhz: station.frequency_mhz,
+        tx_power_dbm: station.tx_power_dbm,
+        tx_gain_dbi: station.tx_gain_dbi,
+        rx_gain_dbi: station.rx_gain_dbi,
+        coverage_radius_km: station.coverage_radius_km,
+        point_size_px: station.point_size_px,
+        point_symbol: station.point_symbol,
+        point_color: station.point_color,
+        heatmap_enabled: station.heatmap_enabled !== false
+    };
+}
+
+function updateGroundStationLayer(layerId, patch = {}) {
+    const station = groundStationLayers.get(layerId);
+    if (!station) {
+        return false;
+    }
+
+    const nextLat = Number.isFinite(Number(patch.latitude_deg)) ? Number(patch.latitude_deg) : station.latitude_deg;
+    const nextLon = Number.isFinite(Number(patch.longitude_deg)) ? Number(patch.longitude_deg) : station.longitude_deg;
+    const nextAlt = Number.isFinite(Number(patch.altitude_m)) ? Number(patch.altitude_m) : station.altitude_m;
+    const nextName = String(patch.name || station.name).trim() || station.name;
+
+    station.name = nextName;
+    station.latitude_deg = nextLat;
+    station.longitude_deg = nextLon;
+    station.altitude_m = nextAlt;
+    station.min_elevation_deg = Number.isFinite(Number(patch.min_elevation_deg)) ? Number(patch.min_elevation_deg) : station.min_elevation_deg;
+    station.frequency_mhz = Number.isFinite(Number(patch.frequency_mhz)) ? Number(patch.frequency_mhz) : station.frequency_mhz;
+    station.tx_power_dbm = Number.isFinite(Number(patch.tx_power_dbm)) ? Number(patch.tx_power_dbm) : station.tx_power_dbm;
+    station.tx_gain_dbi = Number.isFinite(Number(patch.tx_gain_dbi)) ? Number(patch.tx_gain_dbi) : station.tx_gain_dbi;
+    station.rx_gain_dbi = Number.isFinite(Number(patch.rx_gain_dbi)) ? Number(patch.rx_gain_dbi) : station.rx_gain_dbi;
+    station.coverage_radius_km = Number.isFinite(Number(patch.coverage_radius_km)) ? Number(patch.coverage_radius_km) : station.coverage_radius_km;
+    station.point_size_px = Number.isFinite(Number(patch.point_size_px)) ? Number(patch.point_size_px) : station.point_size_px;
+    station.point_symbol = String(patch.point_symbol || station.point_symbol || "circle").trim() || "circle";
+    station.point_color = String(patch.point_color || station.point_color || "#3cc4ff").trim() || "#3cc4ff";
+    station.heatmap_enabled = patch.heatmap_enabled !== false;
+
+    const nextPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
+    if (station.entity) {
+        station.entity.position = nextPosition;
+        if (station.entity.label) {
+            station.entity.label.text = station.name;
+        }
+    }
+    if (station.coverageEntity) {
+        station.coverageEntity.position = nextPosition;
+    }
+
+    layerDisplayNameOverrides.set(layerId, station.name);
+    applyGroundStationVisuals(station);
+    return true;
+}
+
+function clearGroundStationHeatMap(layerId) {
+    const entities = groundStationHeatMapEntities.get(layerId) || [];
+    for (const entity of entities) {
+        viewer.entities.remove(entity);
+    }
+    groundStationHeatMapEntities.delete(layerId);
+}
+
+function updateGroundStationHeatMap(layerId) {
+    const station = groundStationLayers.get(layerId);
+    if (!station || station.visible !== true) {
+        clearGroundStationHeatMap(layerId);
+        return;
+    }
+    if (station.heatmap_enabled === false) {
+        clearGroundStationHeatMap(layerId);
+        return;
+    }
+
+    const satIds = getActiveSatelliteLayerIds().slice(0, 80);
+    if (!satIds.length) {
+        clearGroundStationHeatMap(layerId);
+        return;
+    }
+
+    const existing = groundStationHeatMapEntities.get(layerId) || [];
+    for (const entity of existing) {
+        viewer.entities.remove(entity);
+    }
+
+    const entities = [];
+    const latCenter = station.latitude_deg;
+    const lonCenter = station.longitude_deg;
+    const gridRadius = 3;
+    const stepDeg = 2;
+
+    for (let yi = -gridRadius; yi <= gridRadius; yi += 1) {
+        for (let xi = -gridRadius; xi <= gridRadius; xi += 1) {
+            const lat = latCenter + (yi * stepDeg);
+            const lon = lonCenter + (xi * stepDeg);
+
+            if (lat < -89.9 || lat > 89.9) {
+                continue;
+            }
+
+            const wrappedLon = lon > 180 ? lon - 360 : (lon < -180 ? lon + 360 : lon);
+            const groundPos = Cesium.Cartesian3.fromDegrees(wrappedLon, lat, 0);
+            let covered = false;
+
+            for (const satId of satIds) {
+                const telemetry = getSatelliteTelemetry(satId);
+                const g = telemetry?.geo;
+                if (!g) {
+                    continue;
+                }
+
+                const satPos = Cesium.Cartesian3.fromDegrees(Number(g.longitude_deg) || 0, Number(g.latitude_deg) || 0, Number(g.altitude_m) || 0);
+                const el = computeStationElevationDeg(groundPos, satPos);
+                if (el >= station.min_elevation_deg) {
+                    covered = true;
+                    break;
+                }
+            }
+
+            const key = `${lat.toFixed(3)}:${lon.toFixed(3)}`;
+            const sample = station.heatmap_samples.get(key) || { hits: 0, total: 0 };
+            sample.total += 1;
+            if (covered) {
+                sample.hits += 1;
+            }
+            station.heatmap_samples.set(key, sample);
+
+            const ratio = sample.total > 0 ? sample.hits / sample.total : 0;
+            const color = ratio > 0.8
+                ? Cesium.Color.fromCssColorString("#3af27a")
+                : ratio > 0.55
+                    ? Cesium.Color.fromCssColorString("#f7d34d")
+                    : ratio > 0.3
+                        ? Cesium.Color.fromCssColorString("#f29a3a")
+                        : Cesium.Color.fromCssColorString("#cc3d55");
+
+            const pointEntity = viewer.entities.add({
+                id: `${layerId}-heat-${lat.toFixed(3)}-${lon.toFixed(3)}`,
+                position: Cesium.Cartesian3.fromDegrees(lon, lat, 2200),
+                point: {
+                    pixelSize: 6,
+                    color: color.withAlpha(0.58),
+                    outlineColor: Cesium.Color.BLACK.withAlpha(0.35),
+                    outlineWidth: 1
+                },
+                show: station.visible === true,
+                properties: {
+                    orbitLayerId: layerId,
+                    layerType: "GROUND_STATION_HEAT"
+                }
+            });
+            entities.push(pointEntity);
+        }
+    }
+
+    groundStationHeatMapEntities.set(layerId, entities);
+}
+
+function refreshAllGroundStationHeatMaps() {
+    for (const layerId of groundStationLayers.keys()) {
+        updateGroundStationHeatMap(layerId);
+    }
+}
+
+async function refreshGroundStationPasses(stationId) {
+    const station = groundStationLayers.get(stationId);
+    if (!station) {
+        return;
+    }
+
+    const cache = groundStationPassCache.get(stationId) || {};
+    if (cache.loading === true) {
+        return;
+    }
+    groundStationPassCache.set(stationId, { ...cache, loading: true });
+
+    try {
+        const now = getDisplayedSimulationDate();
+        const startDate = simulationState.mode === SIMULATION_MODE_RANGE ? simulationState.startDate : now;
+        const endDate = simulationState.mode === SIMULATION_MODE_RANGE
+            ? simulationState.endDate
+            : new Date(now.getTime() + (6 * 3600 * 1000));
+
+        const satIds = getActiveSatelliteLayerIds().slice(0, 10);
+        const requests = satIds.map(async (satId) => {
+            const query = new URLSearchParams({
+                sat_id: satId,
+                station_lat_deg: String(station.latitude_deg),
+                station_lon_deg: String(station.longitude_deg),
+                min_elevation_deg: String(station.min_elevation_deg),
+                start_time: startDate.toISOString(),
+                end_time: endDate.toISOString(),
+                step_seconds: "60"
+            });
+
+            const response = await fetch(`/api/aos-los?${query.toString()}`);
+            if (!response.ok) {
+                return null;
+            }
+
+            const payload = await response.json();
+            const firstPass = Array.isArray(payload?.passes) && payload.passes.length > 0 ? payload.passes[0] : null;
+            if (!firstPass) {
+                return null;
+            }
+
+            return {
+                satellite: satId,
+                aos: firstPass.aos || "-",
+                los: firstPass.los || "-",
+                max_elevation_deg: Number(firstPass.max_elevation_deg)
+            };
+        });
+
+        const rows = (await Promise.allSettled(requests))
+            .filter((item) => item.status === "fulfilled" && item.value)
+            .map((item) => item.value)
+            .slice(0, 10);
+
+        groundStationPassCache.set(stationId, {
+            loading: false,
+            updatedAt: Date.now(),
+            rows
+        });
+    } catch {
+        groundStationPassCache.set(stationId, {
+            loading: false,
+            updatedAt: Date.now(),
+            rows: []
+        });
+    }
+}
+
+function buildGroundStationTelemetry(layerId) {
+    const station = groundStationLayers.get(layerId);
+    if (!station) {
+        return null;
+    }
+
+    const stationCartesian = Cesium.Cartesian3.fromDegrees(
+        station.longitude_deg,
+        station.latitude_deg,
+        station.altitude_m
+    );
+
+    let visibleCount = 0;
+    let totalActiveSatellites = 0;
+    let bestElevationDeg = null;
+    let bestRangeKm = null;
+    let bestLinkDbm = null;
+
+    const activeSatelliteLayers = getCompositeLayerIds().filter((layerId) => !isGroundStationLayerId(layerId));
+    for (const layerId of activeSatelliteLayers) {
+        const satId = getSatelliteSourceIdFromLayerId(layerId);
+        const telemetry = getSatelliteTelemetry(satId);
+        const g = telemetry?.geo;
+        if (!g) {
+            continue;
+        }
+
+        totalActiveSatellites += 1;
+        const satCartesian = Cesium.Cartesian3.fromDegrees(
+            Number(g.longitude_deg) || 0,
+            Number(g.latitude_deg) || 0,
+            Number(g.altitude_m) || 0
+        );
+
+        const los = Cesium.Cartesian3.subtract(satCartesian, stationCartesian, new Cesium.Cartesian3());
+        const rangeKm = Cesium.Cartesian3.magnitude(los) / 1000;
+        const elevationDeg = computeStationElevationDeg(stationCartesian, satCartesian);
+
+        if (elevationDeg >= station.min_elevation_deg) {
+            visibleCount += 1;
+            const fsplDb = computeFreeSpacePathLossDb(station.frequency_mhz, rangeKm);
+            const rxDbm = Number.isFinite(fsplDb)
+                ? station.tx_power_dbm + station.tx_gain_dbi + station.rx_gain_dbi - fsplDb
+                : null;
+
+            if (bestElevationDeg === null || elevationDeg > bestElevationDeg) {
+                bestElevationDeg = elevationDeg;
+                bestRangeKm = rangeKm;
+                bestLinkDbm = rxDbm;
+            }
+        }
+    }
+
+    const passCache = groundStationPassCache.get(layerId);
+    if (!passCache || (Date.now() - Number(passCache.updatedAt || 0)) > 45_000) {
+        refreshGroundStationPasses(layerId);
+    }
+
+    return {
+        id: getLayerDisplayName(layerId),
+        source_format: "GROUND_STATION",
+        source_origin: "USER",
+        station: {
+            name: station.name,
+            latitude_deg: station.latitude_deg,
+            longitude_deg: station.longitude_deg,
+            altitude_m: station.altitude_m,
+            min_elevation_deg: station.min_elevation_deg,
+            frequency_mhz: station.frequency_mhz,
+            tx_power_dbm: station.tx_power_dbm,
+            tx_gain_dbi: station.tx_gain_dbi,
+            rx_gain_dbi: station.rx_gain_dbi
+        },
+        realtime: {
+            visible_satellites: visibleCount,
+            active_satellites: totalActiveSatellites,
+            best_elevation_deg: bestElevationDeg,
+            best_range_km: bestRangeKm,
+            best_link_dbm: bestLinkDbm
+        },
+        next_passes: Array.isArray(passCache?.rows) ? passCache.rows : []
+    };
+}
+
+function getCompositeLayerTelemetry(layerId) {
+    if (isGroundStationLayerId(layerId)) {
+        return buildGroundStationTelemetry(layerId);
+    }
+
+    const sourceId = getSatelliteSourceIdFromLayerId(layerId);
+    const telemetry = getSatelliteTelemetry(sourceId);
+    if (!telemetry) {
+        return null;
+    }
+
+    return {
+        ...telemetry,
+        id: getLayerDisplayName(layerId)
+    };
+}
+
+function getCompositeLayerEntity(layerId) {
+    if (isGroundStationLayerId(layerId)) {
+        return groundStationLayers.get(layerId)?.entity || null;
+    }
+    const sourceId = getSatelliteSourceIdFromLayerId(layerId);
+    return getSatelliteEntity(sourceId);
+}
+
+function getCompositeMaxLayers() {
+    return getMaxActiveSatellites();
+}
+
+function getCompositeAvailableLayerSlots() {
+    const max = Math.max(1, Number(getCompositeMaxLayers()) || 100);
+    const used = getCompositeLayerIds().length;
+    return Math.max(0, max - used);
 }
 
 function activateSatelliteSelection(satelliteId, focus = true) {
@@ -1275,9 +2048,10 @@ function applySimulationRange(startDate, endDate) {
     simulationState.rewind = false;
 
     const rangeHours = (endMs - startMs) / (1000 * 60 * 60);
-    const targetHours = clamp(rangeHours, 0, 240);
+    const targetHours = Math.max(0, rangeHours);
     if (Number.isFinite(targetHours) && targetHours > 0) {
         setOrbitConfig({ propagation_hours: targetHours });
+        persistSystemSectionPatch("orbit", { propagation_hours: targetHours });
     }
 
     if (simulationState.mode === SIMULATION_MODE_REALTIME) {
@@ -1368,7 +2142,7 @@ function ensureSimulationControlDock() {
         });
     });
 
-    const tryApplySimulationRangeFromInputs = () => {
+    const tryApplySimulationRangeFromInputs = async () => {
         const startInput = root.querySelector("#simStartInput");
         const endInput = root.querySelector("#simEndInput");
         const startDate = parseDateTimeLocalInput(startInput?.value);
@@ -1376,6 +2150,20 @@ function ensureSimulationControlDock() {
         if (!startDate || !endDate || endDate <= startDate) {
             return false;
         }
+
+        const confirmed = await confirmLargeSimulationRangeIfNeeded(startDate, endDate);
+        if (!confirmed) {
+            if (startInput) {
+                startInput.value = formatDateTimeLocalInput(simulationState.startDate);
+                startInput.dataset.userEdited = "false";
+            }
+            if (endInput) {
+                endInput.value = formatDateTimeLocalInput(simulationState.endDate);
+                endInput.dataset.userEdited = "false";
+            }
+            return false;
+        }
+
         applySimulationRange(startDate, endDate);
         if (startInput) {
             startInput.dataset.userEdited = "false";
@@ -1387,20 +2175,20 @@ function ensureSimulationControlDock() {
         return true;
     };
 
-    root.querySelector("#simStartInput")?.addEventListener("input", (event) => {
+    root.querySelector("#simStartInput")?.addEventListener("input", async (event) => {
         const input = event.currentTarget;
         if (input) {
             input.dataset.userEdited = "true";
         }
-        tryApplySimulationRangeFromInputs();
+        await tryApplySimulationRangeFromInputs();
     });
 
-    root.querySelector("#simEndInput")?.addEventListener("input", (event) => {
+    root.querySelector("#simEndInput")?.addEventListener("input", async (event) => {
         const input = event.currentTarget;
         if (input) {
             input.dataset.userEdited = "true";
         }
-        tryApplySimulationRangeFromInputs();
+        await tryApplySimulationRangeFromInputs();
     });
 
     root.querySelector("#simPlayPauseBtn")?.addEventListener("click", () => {
@@ -1860,11 +2648,11 @@ function ensureLeftSidebar() {
     satellitesPanel.className = "sidebar-panel";
     satellitesPanel.innerHTML = `
         <div class="sidebar-panel-header">
-            <div class="sidebar-panel-title">SATÉLITES</div>
+            <div class="sidebar-panel-title">LAYERS</div>
             <div class="sidebar-panel-actions">
                 <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">✕</button>
                 <button class="object-global-eye-btn" id="toggleAllVisibilityBtn" type="button" title="Ocultar todas las capas" aria-label="Ocultar todas las capas">👁</button>
-                <button class="object-add-btn" id="openCatalogBtn" type="button" title="Añadir desde catálogo" aria-label="Añadir desde catálogo">+</button>
+                <button class="object-add-btn" id="openCatalogBtn" type="button" title="Añadir capa" aria-label="Añadir capa">+</button>
                 <button class="sidebar-panel-close" type="button" title="Plegar panel" aria-label="Plegar panel">‹</button>
             </div>
         </div>
@@ -2824,6 +3612,13 @@ function applySystemRuntimeConfig(systemConfigRaw) {
             : "medium",
         output_format: systemConfig.recording_output_format === "mp4" ? "mp4" : "webm"
     };
+    runtimeDecayAlertPerigeeKm = Number.isFinite(Number(systemConfig.decay_alert_perigee_km))
+        ? Number(systemConfig.decay_alert_perigee_km)
+        : 200;
+    currentRuntimeDataConfig = {
+        ...(currentRuntimeDataConfig || {}),
+        decay_alert_perigee_km: runtimeDecayAlertPerigeeKm
+    };
 
     configureLogger(systemConfig);
     setOrbitConfig(systemConfig);
@@ -3049,46 +3844,103 @@ function firstPersonSatellite(entity) {
     objectSidebar = setupObjectSidebar({
         getCatalogIds: () => getSatelliteIds(),
         fetchCatalogPage: (params) => fetchCatalogPage(params),
-        getLayerIds: () => getActiveSatelliteLayerIds(),
-        getObjectTelemetry: (id) => getSatelliteTelemetry(id),
-        getObjectVisibility: (id) => isSatelliteVisible(id),
-        onToggleObjectVisibility: (id, visible) => setSatelliteVisible(id, visible),
-        getObjectLayerActive: (id) => isSatelliteLayerActive(id),
-        onToggleObjectLayer: (id, active) => setSatelliteLayerActive(id, active),
-        getMaxActiveLayers: () => getMaxActiveSatellites(),
-        getAvailableLayerSlots: () => getAvailableActiveSatelliteLayerSlots(),
+        getLayerIds: () => getCompositeLayerIds(),
+        getObjectTelemetry: (id) => getCompositeLayerTelemetry(id),
+        getObjectVisibility: (id) => getCompositeLayerVisibility(id),
+        onToggleObjectVisibility: (id, visible) => setCompositeLayerVisibility(id, visible),
+        getObjectLayerActive: (id) => isCompositeLayerActive(id),
+        onToggleObjectLayer: (id, active) => setCompositeLayerActive(id, active),
+        getMaxActiveLayers: () => getCompositeMaxLayers(),
+        getAvailableLayerSlots: () => getCompositeAvailableLayerSlots(),
         onAddAllLayers: () => setAllSatelliteLayersActive(true),
-        onRemoveAllLayers: () => setAllSatelliteLayersActive(false),
-        onShowAllObjects: () => setAllSatellitesVisible(true),
-        onHideAllObjects: () => setAllSatellitesVisible(false),
+        onRemoveAllLayers: () => {
+            setAllSatelliteLayersActive(false);
+            for (const stationId of [...groundStationLayers.keys()]) {
+                removeGroundStationLayer(stationId);
+            }
+            satelliteDuplicateLayers.clear();
+            layerDisplayNameOverrides.clear();
+        },
+        onShowAllObjects: () => {
+            setAllSatellitesVisible(true);
+            for (const stationId of groundStationLayers.keys()) {
+                setCompositeLayerVisibility(stationId, true);
+            }
+        },
+        onHideAllObjects: () => {
+            setAllSatellitesVisible(false);
+            for (const stationId of groundStationLayers.keys()) {
+                setCompositeLayerVisibility(stationId, false);
+            }
+        },
         onFocusObject: (id) => {
-            const entity = getSatelliteEntity(id);
+            const entity = getCompositeLayerEntity(id);
             if (!entity) {
                 return;
             }
             setCurrentSelectedSatellite(id);
-            setSelectedOrbitSatelliteId(id);
+            if (!isGroundStationLayerId(id)) {
+                setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(id));
+            } else {
+                setSelectedOrbitSatelliteId(null);
+            }
             focusSatellite(entity);
         },
         onSelectObject: (id) => {
-            const entity = getSatelliteEntity(id);
+            const entity = getCompositeLayerEntity(id);
             if (!entity) {
                 return;
             }
             setCurrentSelectedSatellite(id);
-            setSelectedOrbitSatelliteId(id);
+            if (!isGroundStationLayerId(id)) {
+                setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(id));
+            } else {
+                setSelectedOrbitSatelliteId(null);
+            }
             viewer.selectedEntity = entity;
         },
         onOpenVisualizationOptions: (id) => {
             if (!id) {
                 return;
             }
-            openSatelliteVisualizationModal(id);
+            if (isGroundStationLayerId(id)) {
+                objectSidebar?.openGroundStationEditor?.(id);
+                return;
+            }
+            const sourceId = getSatelliteSourceIdFromLayerId(id);
+            if (!sourceId) {
+                return;
+            }
+            openSatelliteVisualizationModal(sourceId);
         },
+        onRequestAddSatellite: () => openLeftSatellitesPanel(),
+        onRequestCreateGroundStation: (payload) => {
+            const id = createGroundStationLayer(payload);
+            if (!id) {
+                return null;
+            }
+            openLeftSatellitesPanel();
+            return id;
+        },
+        onRequestUpdateGroundStation: (id, payload) => updateGroundStationLayer(id, payload),
+        onRequestDuplicateLayer: (id) => {
+            if (isGroundStationLayerId(id)) {
+                return null;
+            }
+            const sourceId = getSatelliteSourceIdFromLayerId(id);
+            if (!sourceId) {
+                return null;
+            }
+            return duplicateSatelliteLayer(sourceId);
+        },
+        onRequestRenameLayer: (id, newName) => renameLayer(id, newName),
+        getLayerDisplayName: (id) => getLayerDisplayName(id),
+        getLayerType: (id) => getLayerType(id),
+        getGroundStationParams: (id) => getGroundStationParams(id),
         isCatalogReady: () => isCatalogLoaded(),
-        getObjectTle: (id) => getSatelliteTle(id),
-        getObjectTleAsync: (id) => getSatelliteTleAsync(id),
-        getCatalogEntryMeta: (id) => getCatalogEntryMeta(id),
+        getObjectTle: (id) => getSatelliteTle(getSatelliteSourceIdFromLayerId(id)),
+        getObjectTleAsync: (id) => getSatelliteTleAsync(getSatelliteSourceIdFromLayerId(id)),
+        getCatalogEntryMeta: (id) => getCompositeLayerMeta(id),
         onRefreshCatalog: () => refreshSatelliteCatalog(catalogUrl),
         getLoadedOemTimeBounds: () => getLoadedOemEphemerisTimeBounds(),
         onAlignToOemTimeDomain: () => {
@@ -3116,11 +3968,23 @@ function firstPersonSatellite(entity) {
         infoContainerElement: infoPanelContent
     });
 
-    const resolvePickedSatelliteId = (picked) => {
+    if (stationHeatMapTimer) {
+        clearInterval(stationHeatMapTimer);
+    }
+    stationHeatMapTimer = setInterval(() => {
+        refreshAllGroundStationHeatMaps();
+    }, 5000);
+
+    const resolvePickedLayerId = (picked) => {
         const pickedEntity = picked?.id;
+        const explicitLayerId = String(pickedEntity?.properties?.orbitLayerId?.getValue?.() || pickedEntity?.orbitLayerId || "").trim();
+        if (explicitLayerId && isCompositeLayerActive(explicitLayerId) && getCompositeLayerTelemetry(explicitLayerId)) {
+            return explicitLayerId;
+        }
+
         const directCandidate = pickedEntity?.satelliteId || pickedEntity?.name;
 
-        if (directCandidate && isSatelliteLayerActive(directCandidate) && getSatelliteTelemetry(directCandidate)) {
+        if (directCandidate && isCompositeLayerActive(directCandidate) && getCompositeLayerTelemetry(directCandidate)) {
             return directCandidate;
         }
 
@@ -3135,7 +3999,7 @@ function firstPersonSatellite(entity) {
                 continue;
             }
             const candidate = rawId.slice(0, -suffix.length);
-            if (candidate && isSatelliteLayerActive(candidate) && getSatelliteTelemetry(candidate)) {
+            if (candidate && isCompositeLayerActive(candidate) && getCompositeLayerTelemetry(candidate)) {
                 return candidate;
             }
         }
@@ -3145,14 +4009,18 @@ function firstPersonSatellite(entity) {
 
     viewer.screenSpaceEventHandler.setInputAction((movement) => {
         const picked = viewer.scene.pick(movement.position);
-        const pickedId = resolvePickedSatelliteId(picked);
+        const pickedId = resolvePickedLayerId(picked);
 
-        if (pickedId && isSatelliteLayerActive(pickedId) && getSatelliteTelemetry(pickedId)) {
+        if (pickedId && isCompositeLayerActive(pickedId) && getCompositeLayerTelemetry(pickedId)) {
             objectSidebar.selectObject(pickedId);
-            const entity = getSatelliteEntity(pickedId);
+            const entity = getCompositeLayerEntity(pickedId);
             if (entity) {
                 setCurrentSelectedSatellite(pickedId);
-                setSelectedOrbitSatelliteId(pickedId);
+                if (!isGroundStationLayerId(pickedId)) {
+                    setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(pickedId));
+                } else {
+                    setSelectedOrbitSatelliteId(null);
+                }
                 viewer.selectedEntity = entity;
             }
             return;
@@ -3165,36 +4033,54 @@ function firstPersonSatellite(entity) {
 
     viewer.screenSpaceEventHandler.setInputAction((movement) => {
         const picked = viewer.scene.pick(movement.position);
-        const pickedId = resolvePickedSatelliteId(picked);
+        const pickedId = resolvePickedLayerId(picked);
 
-        if (!pickedId || !isSatelliteLayerActive(pickedId) || !getSatelliteTelemetry(pickedId)) {
+        if (!pickedId || !isCompositeLayerActive(pickedId) || !getCompositeLayerTelemetry(pickedId)) {
             return;
         }
 
         objectSidebar.selectObject(pickedId);
-        const entity = getSatelliteEntity(pickedId);
+        const entity = getCompositeLayerEntity(pickedId);
         if (!entity) {
             return;
         }
 
         setCurrentSelectedSatellite(pickedId);
-        setSelectedOrbitSatelliteId(pickedId);
+        if (!isGroundStationLayerId(pickedId)) {
+            setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(pickedId));
+        } else {
+            setSelectedOrbitSatelliteId(null);
+        }
         viewer.selectedEntity = entity;
-        firstPersonSatellite(entity);
+        if (isGroundStationLayerId(pickedId)) {
+            focusSatellite(entity);
+        } else {
+            firstPersonSatellite(entity);
+        }
     }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
     viewer.screenSpaceEventHandler.setInputAction((movement) => {
         const picked = viewer.scene.pick(movement.position);
-        const pickedId = resolvePickedSatelliteId(picked);
+        const pickedId = resolvePickedLayerId(picked);
 
-        if (!pickedId || !isSatelliteLayerActive(pickedId) || !getSatelliteTelemetry(pickedId)) {
+        if (!pickedId || !isCompositeLayerActive(pickedId) || !getCompositeLayerTelemetry(pickedId)) {
             hideSatelliteContextMenu();
             return;
         }
 
         objectSidebar.selectObject(pickedId);
-    setCurrentSelectedSatellite(pickedId);
-        setSelectedOrbitSatelliteId(pickedId);
+        setCurrentSelectedSatellite(pickedId);
+        if (!isGroundStationLayerId(pickedId)) {
+            setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(pickedId));
+        } else {
+            setSelectedOrbitSatelliteId(null);
+        }
+
+        if (isGroundStationLayerId(pickedId)) {
+            hideSatelliteContextMenu();
+            objectSidebar?.openGroundStationEditor?.(pickedId);
+            return;
+        }
 
         const canvasRect = viewer.scene.canvas.getBoundingClientRect();
         const x = canvasRect.left + movement.position.x;
@@ -3213,7 +4099,7 @@ function firstPersonSatellite(entity) {
             );
 
             const picked = viewer.scene.pick(position);
-            const pickedId = resolvePickedSatelliteId(picked);
+            const pickedId = resolvePickedLayerId(picked);
 
             if (!pickedId) {
                 hideSatelliteContextMenu();
@@ -3222,7 +4108,16 @@ function firstPersonSatellite(entity) {
 
             objectSidebar.selectObject(pickedId);
             setCurrentSelectedSatellite(pickedId);
-            setSelectedOrbitSatelliteId(pickedId);
+            if (!isGroundStationLayerId(pickedId)) {
+                setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(pickedId));
+            } else {
+                setSelectedOrbitSatelliteId(null);
+            }
+            if (isGroundStationLayerId(pickedId)) {
+                hideSatelliteContextMenu();
+                objectSidebar?.openGroundStationEditor?.(pickedId);
+                return;
+            }
             showSatelliteContextMenuAt(pickedId, event.clientX, event.clientY);
         });
     }

@@ -49,7 +49,7 @@ const FOOTPRINT_SURFACE_HEIGHT = 30000;
 const GROUND_TRACK_SURFACE_HEIGHT = 20000;
 const DEFAULT_MAX_ACTIVE_SATELLITES = 100;
 const PROPAGATION_HOURS_MIN = 0;
-const PROPAGATION_HOURS_MAX = 240;
+const PROPAGATION_HOURS_MAX = Number.POSITIVE_INFINITY;
 const PAST_SECONDS_MIN = 0;
 const PAST_SECONDS_MAX = 86400;
 
@@ -1370,6 +1370,12 @@ function createOrbitEntity(viewer, id, positions, color, width) {
 
 function clipFutureOrbitByRequestedHorizon(id, orbit) {
     if (!Array.isArray(orbit) || orbit.length < 2) {
+        return orbit;
+    }
+
+    // En modo range la ventana temporal la define [start, end] de simulacion,
+    // no el horizon local de propagacion de la capa.
+    if (isRangeSimulationModeActive()) {
         return orbit;
     }
 

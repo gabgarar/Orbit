@@ -28,6 +28,7 @@ export function normalizeSystemConfig(rawSystem = {}) {
         satellite_use_3d_model: satellites.use_3d_model ?? rawSystem.satellite_use_3d_model,
         satellite_size_mode: satellites.size_mode ?? rawSystem.satellite_size_mode,
         max_satellites_visible: satellites.max_visible ?? rawSystem.max_satellites_visible,
+        decay_alert_perigee_km: satellites.decay_alert_perigee_km ?? rawSystem.decay_alert_perigee_km,
 
         websocket_state_interval_seconds: realtime.state_interval_seconds ?? rawSystem.websocket_state_interval_seconds,
         websocket_orbit_interval_seconds: realtime.orbit_interval_seconds ?? rawSystem.websocket_orbit_interval_seconds,
@@ -72,7 +73,8 @@ export function toSectionedSystemConfig(rawSystem = {}) {
             model_scale: flat.satellite_model_scale ?? 1.0,
             use_3d_model: flat.satellite_use_3d_model ?? true,
             size_mode: flat.satellite_size_mode ?? "visual",
-            max_visible: flat.max_satellites_visible ?? 100
+            max_visible: flat.max_satellites_visible ?? 100,
+            decay_alert_perigee_km: flat.decay_alert_perigee_km ?? 200
         },
         realtime: {
             state_interval_seconds: flat.websocket_state_interval_seconds ?? 1,
