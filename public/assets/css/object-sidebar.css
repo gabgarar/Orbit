@@ -1359,8 +1359,79 @@ body.with-toolbars #objectSidebar.collapsed {
     font: 600 12px/1.4 sans-serif;
 }
 
+#groundStationHeatLegend {
+    position: fixed;
+    left: 14px;
+    bottom: 14px;
+    z-index: 10150;
+    width: 240px;
+    border: 1px solid var(--orbit-border-secondary);
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(19, 31, 54, 0.94) 0%, rgba(13, 24, 44, 0.94) 100%);
+    color: var(--orbit-text-primary);
+    padding: 10px 10px 8px;
+    display: none;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
+}
+
+#groundStationHeatLegend.visible {
+    display: block;
+}
+
+#groundStationHeatLegend .heat-legend-title {
+    font: 700 12px/1.2 sans-serif;
+    margin-bottom: 8px;
+    letter-spacing: 0.02em;
+}
+
+#groundStationHeatLegend .heat-legend-bar {
+    height: 12px;
+    border-radius: 999px;
+    border: 1px solid var(--orbit-border-primary);
+    background: linear-gradient(90deg, #cc3d55 0%, #f29a3a 35%, #f7d34d 65%, #3af27a 100%);
+}
+
+#groundStationHeatLegend .heat-legend-ticks {
+    margin-top: 6px;
+    display: flex;
+    justify-content: space-between;
+    font: 600 10px/1 sans-serif;
+    color: var(--orbit-text-secondary);
+}
+
 .ground-station-panel .catalog-filter-header {
     cursor: move;
+}
+
+.ground-station-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    margin: 10px 0 12px;
+}
+
+.ground-station-tab-btn {
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 8px;
+    background: var(--orbit-bg-input);
+    color: var(--orbit-text-secondary);
+    font: 700 11px/1 sans-serif;
+    padding: 8px 6px;
+    cursor: pointer;
+}
+
+.ground-station-tab-btn.active {
+    border-color: var(--orbit-border-focus);
+    color: var(--orbit-text-primary);
+    background: var(--orbit-bg-tertiary);
+}
+
+.ground-station-tab-panel {
+    display: none;
+}
+
+.ground-station-tab-panel.active {
+    display: block;
 }
 
 .object-info-key {

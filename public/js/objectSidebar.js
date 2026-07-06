@@ -729,6 +729,7 @@ export function setupObjectSidebar({
     onRequestAddSatellite,
     onRequestCreateGroundStation,
     onRequestUpdateGroundStation,
+    onRequestToggleGroundStationHeatMap,
     onRequestDuplicateLayer,
     onRequestRenameLayer,
     getLayerDisplayName,
@@ -1103,6 +1104,7 @@ export function setupObjectSidebar({
     contextMenu.innerHTML = `
         <button class="catalog-context-action" id="contextRenameBtn" type="button">Renombrar capa</button>
         <button class="catalog-context-action" id="contextUpdateStationBtn" type="button">Update parameters</button>
+        <button class="catalog-context-action" id="contextToggleHeatMapBtn" type="button">Mostrar heat map</button>
         <button class="catalog-context-action" id="contextExplainBtn" type="button">${uiText("explainParams")}</button>
         <button class="catalog-context-action" id="contextVizBtn" type="button">${uiText("vizOptions")}</button>
         <button class="catalog-context-action" id="contextExportBtn" type="button">Exportar...</button>
@@ -1125,69 +1127,101 @@ export function setupObjectSidebar({
                 <h3 id="groundStationTitle">Nueva estacion terrestre</h3>
                 <button class="catalog-close-btn" id="groundStationCloseBtn" type="button" aria-label="Cerrar">✕</button>
             </div>
-            <div class="catalog-filter-grid ground-station-grid">
-                <label class="catalog-filter-field">
-                    <span>Nombre de capa</span>
-                    <input id="gsNameInput" type="text" placeholder="Estacion Madrid" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Latitud (deg)</span>
-                    <input id="gsLatInput" type="number" step="0.000001" min="-90" max="90" value="40.4168" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Longitud (deg)</span>
-                    <input id="gsLonInput" type="number" step="0.000001" min="-180" max="180" value="-3.7038" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Altitud (m)</span>
-                    <input id="gsAltInput" type="number" step="1" min="0" value="667" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Mascara elevacion (deg)</span>
-                    <input id="gsMaskInput" type="number" step="0.1" min="0" max="90" value="10" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Frecuencia (MHz)</span>
-                    <input id="gsFreqInput" type="number" step="0.1" min="1" value="2200" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Potencia TX (dBm)</span>
-                    <input id="gsTxPowerInput" type="number" step="0.1" value="38" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Ganancia TX (dBi)</span>
-                    <input id="gsTxGainInput" type="number" step="0.1" value="18" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Ganancia RX (dBi)</span>
-                    <input id="gsRxGainInput" type="number" step="0.1" value="21" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Radio cobertura (km)</span>
-                    <input id="gsCoverageRadiusInput" type="number" step="1" min="1" value="1200" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Tamano simbolo (px)</span>
-                    <input id="gsPointSizeInput" type="number" step="1" min="4" max="48" value="11" />
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Simbolo</span>
-                    <select id="gsPointSymbolInput">
-                        <option value="circle">Circulo</option>
-                        <option value="square">Cuadrado</option>
-                        <option value="triangle">Triangulo</option>
-                        <option value="diamond">Diamante</option>
-                        <option value="star">Estrella</option>
-                    </select>
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Color simbolo</span>
-                    <input id="gsPointColorInput" type="color" value="#3cc4ff" />
-                </label>
-                <label class="catalog-filter-field checkbox">
-                    <span>Heat map acumulado</span>
-                    <input id="gsHeatEnabledInput" type="checkbox" checked />
-                </label>
+            <div class="ground-station-tabs" id="groundStationTabs">
+                <button type="button" class="ground-station-tab-btn active" data-gs-tab="general">General</button>
+                <button type="button" class="ground-station-tab-btn" data-gs-tab="radio">Radio</button>
+                <button type="button" class="ground-station-tab-btn" data-gs-tab="visual">Visual</button>
+                <button type="button" class="ground-station-tab-btn" data-gs-tab="heatmap">Heat map</button>
+            </div>
+            <div class="ground-station-tab-panel active" data-gs-tab-panel="general">
+                <div class="catalog-filter-grid ground-station-grid">
+                    <label class="catalog-filter-field">
+                        <span>Nombre de capa</span>
+                        <input id="gsNameInput" type="text" placeholder="Estacion Madrid" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Latitud (deg)</span>
+                        <input id="gsLatInput" type="number" step="0.000001" min="-90" max="90" value="40.4168" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Longitud (deg)</span>
+                        <input id="gsLonInput" type="number" step="0.000001" min="-180" max="180" value="-3.7038" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Altitud (m)</span>
+                        <input id="gsAltInput" type="number" step="1" min="0" value="667" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Mascara elevacion (deg)</span>
+                        <input id="gsMaskInput" type="number" step="0.1" min="0" max="90" value="10" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Radio cobertura (km)</span>
+                        <input id="gsCoverageRadiusInput" type="number" step="1" min="1" value="1200" />
+                    </label>
+                </div>
+            </div>
+            <div class="ground-station-tab-panel" data-gs-tab-panel="radio">
+                <div class="catalog-filter-grid ground-station-grid">
+                    <label class="catalog-filter-field">
+                        <span>Frecuencia (MHz)</span>
+                        <input id="gsFreqInput" type="number" step="0.1" min="1" value="2200" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Potencia TX (dBm)</span>
+                        <input id="gsTxPowerInput" type="number" step="0.1" value="38" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Ganancia TX (dBi)</span>
+                        <input id="gsTxGainInput" type="number" step="0.1" value="18" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Ganancia RX (dBi)</span>
+                        <input id="gsRxGainInput" type="number" step="0.1" value="21" />
+                    </label>
+                </div>
+            </div>
+            <div class="ground-station-tab-panel" data-gs-tab-panel="visual">
+                <div class="catalog-filter-grid ground-station-grid">
+                    <label class="catalog-filter-field">
+                        <span>Tamano simbolo (px)</span>
+                        <input id="gsPointSizeInput" type="number" step="1" min="4" max="48" value="11" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Simbolo</span>
+                        <select id="gsPointSymbolInput">
+                            <option value="circle">Circulo</option>
+                            <option value="square">Cuadrado</option>
+                            <option value="triangle">Triangulo</option>
+                            <option value="diamond">Diamante</option>
+                            <option value="star">Estrella</option>
+                        </select>
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Color simbolo</span>
+                        <input id="gsPointColorInput" type="color" value="#3cc4ff" />
+                    </label>
+                    <label class="catalog-filter-field checkbox">
+                        <span>Mostrar circulo cobertura</span>
+                        <input id="gsCoverageVisibleInput" type="checkbox" checked />
+                    </label>
+                </div>
+            </div>
+            <div class="ground-station-tab-panel" data-gs-tab-panel="heatmap">
+                <div class="catalog-filter-grid ground-station-grid">
+                    <label class="catalog-filter-field checkbox">
+                        <span>Heat map acumulado</span>
+                        <input id="gsHeatEnabledInput" type="checkbox" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Densidad heat map</span>
+                        <select id="gsHeatDensityInput">
+                            <option value="low">Baja</option>
+                            <option value="medium" selected>Media</option>
+                            <option value="high">Alta</option>
+                        </select>
+                    </label>
+                </div>
             </div>
             <div class="catalog-filter-actions">
                 <button class="catalog-action-btn" id="groundStationCreateBtn" type="button">Crear estacion</button>
@@ -1333,6 +1367,7 @@ export function setupObjectSidebar({
     const contextExportBtn = contextMenu.querySelector("#contextExportBtn");
     const contextRenameBtn = contextMenu.querySelector("#contextRenameBtn");
     const contextUpdateStationBtn = contextMenu.querySelector("#contextUpdateStationBtn");
+    const contextToggleHeatMapBtn = contextMenu.querySelector("#contextToggleHeatMapBtn");
 
     const addSatelliteLayerBtn = addMenu.querySelector("#addSatelliteLayerBtn");
     const addGroundStationBtn = addMenu.querySelector("#addGroundStationBtn");
@@ -1354,7 +1389,25 @@ export function setupObjectSidebar({
     const gsPointSizeInput = groundStationModal.querySelector("#gsPointSizeInput");
     const gsPointSymbolInput = groundStationModal.querySelector("#gsPointSymbolInput");
     const gsPointColorInput = groundStationModal.querySelector("#gsPointColorInput");
+    const gsCoverageVisibleInput = groundStationModal.querySelector("#gsCoverageVisibleInput");
     const gsHeatEnabledInput = groundStationModal.querySelector("#gsHeatEnabledInput");
+    const gsHeatDensityInput = groundStationModal.querySelector("#gsHeatDensityInput");
+    const gsTabButtons = groundStationModal.querySelectorAll("[data-gs-tab]");
+    const gsTabPanels = groundStationModal.querySelectorAll("[data-gs-tab-panel]");
+
+    const setGroundStationTab = (tabId) => {
+        const safeTab = String(tabId || "general").toLowerCase();
+        gsTabButtons.forEach((btn) => {
+            btn.classList.toggle("active", btn.dataset.gsTab === safeTab);
+        });
+        gsTabPanels.forEach((panel) => {
+            panel.classList.toggle("active", panel.dataset.gsTabPanel === safeTab);
+        });
+    };
+
+    gsTabButtons.forEach((btn) => {
+        btn.addEventListener("click", () => setGroundStationTab(btn.dataset.gsTab));
+    });
 
     const catalogExportCloseBtn = exportModal.querySelector("#catalogExportCloseBtn");
     const catalogExportTarget = exportModal.querySelector("#catalogExportTarget");
@@ -1746,7 +1799,9 @@ export function setupObjectSidebar({
             gsPointSizeInput.value = String(Number(current.point_size_px ?? 11));
             gsPointSymbolInput.value = String(current.point_symbol || "circle");
             gsPointColorInput.value = String(current.point_color || "#3cc4ff");
+            gsCoverageVisibleInput.checked = current.coverage_visible !== false;
             gsHeatEnabledInput.checked = current.heatmap_enabled !== false;
+            gsHeatDensityInput.value = String(current.heatmap_density || "medium").toLowerCase();
         } else {
             gsNameInput.value = "";
             gsLatInput.value = "40.4168";
@@ -1761,8 +1816,12 @@ export function setupObjectSidebar({
             gsPointSizeInput.value = "11";
             gsPointSymbolInput.value = "circle";
             gsPointColorInput.value = "#3cc4ff";
-            gsHeatEnabledInput.checked = true;
+            gsCoverageVisibleInput.checked = true;
+            gsHeatEnabledInput.checked = false;
+            gsHeatDensityInput.value = "medium";
         }
+
+        setGroundStationTab("general");
 
         groundStationModal.classList.add("open");
         gsNameInput?.focus();
@@ -1788,7 +1847,9 @@ export function setupObjectSidebar({
             point_size_px: Number(gsPointSizeInput?.value),
             point_symbol: String(gsPointSymbolInput?.value || "circle").trim(),
             point_color: String(gsPointColorInput?.value || "#3cc4ff").trim(),
-            heatmap_enabled: gsHeatEnabledInput?.checked === true
+            coverage_visible: gsCoverageVisibleInput?.checked !== false,
+            heatmap_enabled: gsHeatEnabledInput?.checked === true,
+            heatmap_density: String(gsHeatDensityInput?.value || "medium").trim().toLowerCase()
         };
 
         if (!Number.isFinite(payload.latitude_deg) || payload.latitude_deg < -90 || payload.latitude_deg > 90) {
@@ -2075,18 +2136,27 @@ export function setupObjectSidebar({
     function openContextMenu(satelliteId, x, y) {
         contextTargetId = satelliteId;
         const menuWidth = 300;
-        const menuHeight = 216;
+        const menuHeight = 248;
         const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
         const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
 
         const layerType = typeof getLayerType === "function"
             ? String(getLayerType(satelliteId) || "SATELLITE").toUpperCase()
             : "SATELLITE";
+        const isGroundStation = layerType === "GROUND_STATION";
 
-        contextExplainBtn.hidden = layerType === "GROUND_STATION";
-        contextExportBtn.hidden = layerType === "GROUND_STATION";
-        contextUpdateStationBtn.hidden = layerType !== "GROUND_STATION";
-        contextVizBtn.hidden = layerType === "GROUND_STATION";
+        contextExplainBtn.hidden = isGroundStation;
+        contextExportBtn.hidden = isGroundStation;
+        contextUpdateStationBtn.hidden = !isGroundStation;
+        contextToggleHeatMapBtn.hidden = true;
+        contextVizBtn.hidden = isGroundStation;
+        contextRenameBtn.hidden = isGroundStation;
+
+        if (isGroundStation && typeof getGroundStationParams === "function") {
+            const params = getGroundStationParams(satelliteId) || {};
+            const heatEnabled = params.heatmap_enabled === true;
+            contextToggleHeatMapBtn.textContent = heatEnabled ? "Ocultar heat map" : "Mostrar heat map";
+        }
 
         contextMenu.style.left = `${left}px`;
         contextMenu.style.top = `${top}px`;
@@ -2499,6 +2569,33 @@ export function setupObjectSidebar({
         const id = contextTargetId;
         closeContextMenu();
         openGroundStationModal(id);
+    });
+
+    contextToggleHeatMapBtn.addEventListener("click", async () => {
+        if (!contextTargetId) {
+            return;
+        }
+        const id = contextTargetId;
+        closeContextMenu();
+
+        if (typeof onRequestToggleGroundStationHeatMap !== "function") {
+            showErrorPopup("El cambio de heat map no esta disponible en este contexto.");
+            return;
+        }
+
+        const current = typeof getGroundStationParams === "function"
+            ? getGroundStationParams(id)
+            : null;
+        const enabledNow = current?.heatmap_enabled === true;
+        const updated = await onRequestToggleGroundStationHeatMap(id, !enabledNow);
+        if (!updated) {
+            showErrorPopup("No se pudo cambiar el estado del heat map.");
+            return;
+        }
+
+        renderList();
+        renderInfo();
+        showInfoPopup(!enabledNow ? "Heat map activado." : "Heat map ocultado.");
     });
 
     contextExportBtn.addEventListener("click", () => {

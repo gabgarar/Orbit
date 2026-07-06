@@ -245,6 +245,7 @@ const groundStationHeatMapEntities = new Map();
 let groundStationSequence = 1;
 let satelliteDuplicateSequence = 1;
 let stationHeatMapTimer = null;
+let groundStationHeatLegendRoot = null;
 let runtimeDecayAlertPerigeeKm = 200;
 
 const SIMULATION_MODE_REALTIME = "realtime";
@@ -994,6 +995,61 @@ function computeFreeSpacePathLossDb(freqMhz, rangeKm) {
     return 32.45 + (20 * Math.log10(freqMhz)) + (20 * Math.log10(rangeKm));
 }
 
+function normalizeGroundStationHeatDensity(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "low" || normalized === "high") {
+        return normalized;
+    }
+    return "medium";
+}
+
+function approxGeoDistanceKm(latA, lonA, latB, lonB) {
+    const toRad = (deg) => deg * (Math.PI / 180);
+    const dLat = toRad(Number(latB) - Number(latA));
+    const dLon = toRad(Number(lonB) - Number(lonA));
+    const aLat = toRad(Number(latA));
+    const bLat = toRad(Number(latB));
+    const hav = (Math.sin(dLat / 2) ** 2)
+        + (Math.cos(aLat) * Math.cos(bLat) * (Math.sin(dLon / 2) ** 2));
+    const c = 2 * Math.atan2(Math.sqrt(hav), Math.sqrt(Math.max(0, 1 - hav)));
+    return 6371 * c;
+}
+
+function ensureGroundStationHeatLegend() {
+    if (groundStationHeatLegendRoot) {
+        return groundStationHeatLegendRoot;
+    }
+
+    const root = document.createElement("div");
+    root.id = "groundStationHeatLegend";
+    root.innerHTML = `
+        <div class="heat-legend-title">Heat map cobertura</div>
+        <div class="heat-legend-bar" aria-hidden="true"></div>
+        <div class="heat-legend-ticks">
+            <span>0%</span>
+            <span>30%</span>
+            <span>55%</span>
+            <span>80%</span>
+            <span>100%</span>
+        </div>
+    `;
+    document.body.appendChild(root);
+    groundStationHeatLegendRoot = root;
+    return root;
+}
+
+function updateGroundStationHeatLegendVisibility() {
+    const root = ensureGroundStationHeatLegend();
+    const hasAnyVisibleHeatMap = [...groundStationLayers.values()].some((station) => {
+        if (!station || station.heatmap_enabled !== true) {
+            return false;
+        }
+        return true;
+    });
+
+    root.classList.toggle("visible", hasAnyVisibleHeatMap);
+}
+
 function getCompositeLayerIds() {
     const satelliteIds = getActiveSatelliteLayerIds();
     const duplicateIds = [...satelliteDuplicateLayers.keys()];
@@ -1025,11 +1081,14 @@ function setCompositeLayerVisibility(layerId, visible) {
         }
         station.visible = visible === true;
         if (station.entity) station.entity.show = station.visible;
-        if (station.coverageEntity) station.coverageEntity.show = station.visible;
+        if (station.coverageEntity) {
+            station.coverageEntity.show = station.visible && station.coverage_visible !== false;
+        }
         const heatEntities = groundStationHeatMapEntities.get(layerId) || [];
         for (const entity of heatEntities) {
             entity.show = station.visible;
         }
+        updateGroundStationHeatLegendVisibility();
         return;
     }
     const sourceId = getSatelliteSourceIdFromLayerId(layerId);
@@ -1229,6 +1288,7 @@ function applyGroundStationVisuals(station) {
         station.coverageEntity.ellipse.height = Math.max(3000, Number(station.altitude_m) + 3000);
         station.coverageEntity.ellipse.material = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.11);
         station.coverageEntity.ellipse.outlineColor = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.74);
+        station.coverageEntity.show = station.visible === true && station.coverage_visible !== false;
     }
 }
 
@@ -1250,7 +1310,9 @@ function createGroundStationLayer(params = {}) {
     const pointSizePx = Number.isFinite(Number(params.point_size_px)) ? Number(params.point_size_px) : 11;
     const pointColor = String(params.point_color || "#3cc4ff").trim() || "#3cc4ff";
     const pointSymbol = String(params.point_symbol || "circle").trim() || "circle";
-    const heatmapEnabled = params.heatmap_enabled !== false;
+    const coverageVisible = params.coverage_visible !== false;
+    const heatmapEnabled = params.heatmap_enabled === true;
+    const heatmapDensity = normalizeGroundStationHeatDensity(params.heatmap_density);
     const displayName = String(params.name || `Estacion ${groundStationSequence - 1}`).trim() || `Estacion ${groundStationSequence - 1}`;
 
     const position = Cesium.Cartesian3.fromDegrees(lon, lat, altitudeM);
@@ -1304,7 +1366,9 @@ function createGroundStationLayer(params = {}) {
         point_size_px: pointSizePx,
         point_color: pointColor,
         point_symbol: pointSymbol,
+        coverage_visible: coverageVisible,
         heatmap_enabled: heatmapEnabled,
+        heatmap_density: heatmapDensity,
         heatmap_samples: new Map(),
         visible: true,
         entity: stationEntity,
@@ -1312,6 +1376,7 @@ function createGroundStationLayer(params = {}) {
     });
 
     applyGroundStationVisuals(groundStationLayers.get(stationId));
+    updateGroundStationHeatMap(stationId);
 
     layerDisplayNameOverrides.set(stationId, displayName);
     return stationId;
@@ -1336,7 +1401,9 @@ function getGroundStationParams(layerId) {
         point_size_px: station.point_size_px,
         point_symbol: station.point_symbol,
         point_color: station.point_color,
-        heatmap_enabled: station.heatmap_enabled !== false
+        coverage_visible: station.coverage_visible !== false,
+        heatmap_enabled: station.heatmap_enabled !== false,
+        heatmap_density: normalizeGroundStationHeatDensity(station.heatmap_density)
     };
 }
 
@@ -1364,7 +1431,13 @@ function updateGroundStationLayer(layerId, patch = {}) {
     station.point_size_px = Number.isFinite(Number(patch.point_size_px)) ? Number(patch.point_size_px) : station.point_size_px;
     station.point_symbol = String(patch.point_symbol || station.point_symbol || "circle").trim() || "circle";
     station.point_color = String(patch.point_color || station.point_color || "#3cc4ff").trim() || "#3cc4ff";
+    station.coverage_visible = patch.coverage_visible !== false;
     station.heatmap_enabled = patch.heatmap_enabled !== false;
+    station.heatmap_density = normalizeGroundStationHeatDensity(
+        Object.prototype.hasOwnProperty.call(patch, "heatmap_density")
+            ? patch.heatmap_density
+            : station.heatmap_density
+    );
 
     const nextPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
     if (station.entity) {
@@ -1379,6 +1452,23 @@ function updateGroundStationLayer(layerId, patch = {}) {
 
     layerDisplayNameOverrides.set(layerId, station.name);
     applyGroundStationVisuals(station);
+    updateGroundStationHeatMap(layerId);
+    return true;
+}
+
+function toggleGroundStationHeatMap(layerId, enabled) {
+    const station = groundStationLayers.get(layerId);
+    if (!station) {
+        return false;
+    }
+
+    station.heatmap_enabled = enabled === true;
+    if (!station.heatmap_enabled) {
+        clearGroundStationHeatMap(layerId);
+    } else {
+        updateGroundStationHeatMap(layerId);
+    }
+    updateGroundStationHeatLegendVisibility();
     return true;
 }
 
@@ -1388,6 +1478,7 @@ function clearGroundStationHeatMap(layerId) {
         viewer.entities.remove(entity);
     }
     groundStationHeatMapEntities.delete(layerId);
+    updateGroundStationHeatLegendVisibility();
 }
 
 function updateGroundStationHeatMap(layerId) {
@@ -1402,10 +1493,6 @@ function updateGroundStationHeatMap(layerId) {
     }
 
     const satIds = getActiveSatelliteLayerIds().slice(0, 80);
-    if (!satIds.length) {
-        clearGroundStationHeatMap(layerId);
-        return;
-    }
 
     const existing = groundStationHeatMapEntities.get(layerId) || [];
     for (const entity of existing) {
@@ -1415,8 +1502,16 @@ function updateGroundStationHeatMap(layerId) {
     const entities = [];
     const latCenter = station.latitude_deg;
     const lonCenter = station.longitude_deg;
-    const gridRadius = 3;
-    const stepDeg = 2;
+    const coverageRadiusKm = Math.max(100, Number(station.coverage_radius_km) || 1200);
+    const density = normalizeGroundStationHeatDensity(station.heatmap_density);
+    const densityFactor = density === "high" ? 0.4 : (density === "low" ? 2.2 : 1.0);
+    const stepDegBase = Math.max(0.22, Math.min(1.2, coverageRadiusKm / 1700));
+    const stepDeg = Math.max(0.08, Math.min(2.2, stepDegBase * densityFactor));
+    const radiusDeg = Math.max(stepDeg, coverageRadiusKm / 111);
+    const gridRadius = Math.max(4, Math.min(26, Math.ceil(radiusDeg / stepDeg)));
+
+    const heatPointHeight = Math.max(12000, Number(station.altitude_m) + 12000);
+    const heatPointSize = density === "high" ? 7 : (density === "low" ? 4 : 5);
 
     for (let yi = -gridRadius; yi <= gridRadius; yi += 1) {
         for (let xi = -gridRadius; xi <= gridRadius; xi += 1) {
@@ -1428,6 +1523,10 @@ function updateGroundStationHeatMap(layerId) {
             }
 
             const wrappedLon = lon > 180 ? lon - 360 : (lon < -180 ? lon + 360 : lon);
+            const pointDistanceKm = approxGeoDistanceKm(latCenter, lonCenter, lat, wrappedLon);
+            if (pointDistanceKm > coverageRadiusKm) {
+                continue;
+            }
             const groundPos = Cesium.Cartesian3.fromDegrees(wrappedLon, lat, 0);
             let covered = false;
 
@@ -1446,7 +1545,7 @@ function updateGroundStationHeatMap(layerId) {
                 }
             }
 
-            const key = `${lat.toFixed(3)}:${lon.toFixed(3)}`;
+            const key = `${lat.toFixed(3)}:${wrappedLon.toFixed(3)}`;
             const sample = station.heatmap_samples.get(key) || { hits: 0, total: 0 };
             sample.total += 1;
             if (covered) {
@@ -1465,12 +1564,13 @@ function updateGroundStationHeatMap(layerId) {
 
             const pointEntity = viewer.entities.add({
                 id: `${layerId}-heat-${lat.toFixed(3)}-${lon.toFixed(3)}`,
-                position: Cesium.Cartesian3.fromDegrees(lon, lat, 2200),
+                position: Cesium.Cartesian3.fromDegrees(wrappedLon, lat, heatPointHeight),
                 point: {
-                    pixelSize: 6,
-                    color: color.withAlpha(0.58),
+                    pixelSize: heatPointSize,
+                    color: color.withAlpha(0.86),
                     outlineColor: Cesium.Color.BLACK.withAlpha(0.35),
-                    outlineWidth: 1
+                    outlineWidth: 1,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY
                 },
                 show: station.visible === true,
                 properties: {
@@ -1483,12 +1583,14 @@ function updateGroundStationHeatMap(layerId) {
     }
 
     groundStationHeatMapEntities.set(layerId, entities);
+    updateGroundStationHeatLegendVisibility();
 }
 
 function refreshAllGroundStationHeatMaps() {
     for (const layerId of groundStationLayers.keys()) {
         updateGroundStationHeatMap(layerId);
     }
+    updateGroundStationHeatLegendVisibility();
 }
 
 async function refreshGroundStationPasses(stationId) {
@@ -3904,6 +4006,7 @@ function firstPersonSatellite(entity) {
                 return;
             }
             if (isGroundStationLayerId(id)) {
+                openLeftSatellitesPanel();
                 objectSidebar?.openGroundStationEditor?.(id);
                 return;
             }
@@ -3923,6 +4026,7 @@ function firstPersonSatellite(entity) {
             return id;
         },
         onRequestUpdateGroundStation: (id, payload) => updateGroundStationLayer(id, payload),
+        onRequestToggleGroundStationHeatMap: (id, enabled) => toggleGroundStationHeatMap(id, enabled),
         onRequestDuplicateLayer: (id) => {
             if (isGroundStationLayerId(id)) {
                 return null;
@@ -3973,7 +4077,7 @@ function firstPersonSatellite(entity) {
     }
     stationHeatMapTimer = setInterval(() => {
         refreshAllGroundStationHeatMaps();
-    }, 5000);
+    }, 1200);
 
     const resolvePickedLayerId = (picked) => {
         const pickedEntity = picked?.id;
