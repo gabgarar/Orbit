@@ -9,10 +9,10 @@
 
 # Logs and runtime files
 server/server.log
-server/server.pid
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+server/debug.log
 
 # OS files
 .DS_Store
@@ -25,3 +25,4 @@ Thumbs.db
 # Generated files
 dist/
 build/
+server/ui-artifacts/

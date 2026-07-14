@@ -340,13 +340,61 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .ground-station-panel {
-    width: min(calc(560px * var(--orbit-ui-scale)), 96vw);
-    max-height: 88vh;
-    overflow: auto;
+    width: min(640px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+    overflow: hidden;
+    padding: 16px;
+    gap: 14px;
+    container-type: inline-size;
 }
 
 .ground-station-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    min-width: 0;
+    width: 100%;
+}
+
+.ground-station-panel .ground-station-tab-panel.active {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 2px 5px 2px 2px;
+}
+
+.ground-station-panel .catalog-filter-field {
+    gap: 5px;
+    font-size: 11px;
+    min-width: 0;
+}
+
+.ground-station-panel .catalog-filter-field input,
+.ground-station-panel .catalog-filter-field select {
+    width: 100%;
+    min-width: 0;
+    min-height: 34px;
+    box-sizing: border-box;
+}
+
+/* A checkbox is a primary control in the Heat map tab, not a text field. */
+.ground-station-panel .catalog-filter-field.checkbox input[type="checkbox"] {
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    min-height: 24px;
+    padding: 0;
+    accent-color: var(--orbit-text-accent);
+    cursor: pointer;
+}
+
+.ground-station-panel .catalog-filter-actions {
+    padding-top: 2px;
+}
+
+@container (max-width: 520px) {
+    .ground-station-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 
 @media (max-width: 780px) {
@@ -579,6 +627,7 @@ body.with-toolbars #objectSidebar.collapsed {
     justify-content: center;
     padding: 16px;
     box-sizing: border-box;
+    overflow: hidden;
 }
 
 #catalogModal.open {
@@ -625,9 +674,11 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .catalog-modal-panel {
-    width: min(calc(620px * var(--orbit-ui-scale)), 96vw);
+    /* The dialog width must not shrink with UI density: action labels need a
+       stable horizontal workspace on desktop displays. */
+    width: min(680px, calc(100vw - 32px));
     max-height: 88vh;
-    overflow: auto;
+    overflow: hidden;
     background: var(--orbit-bg-secondary);
     color: var(--orbit-text-primary);
     border: 1px solid var(--orbit-border-primary);
@@ -648,6 +699,8 @@ body.with-toolbars #objectSidebar.collapsed {
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: nowrap;
+    flex: 0 0 auto;
 }
 
 .catalog-modal-header h3 {
@@ -656,8 +709,13 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .catalog-close-btn {
-    width: 34px;
-    height: 34px;
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    flex: 0 0 40px;
+    aspect-ratio: 1;
+    box-sizing: border-box;
     border-radius: 50%;
     border: 1px solid var(--orbit-border-accent);
     background: var(--orbit-bg-tertiary);
@@ -1493,8 +1551,8 @@ body.with-toolbars #objectSidebar.collapsed {
 .object-sidebar-body-compact {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 12px;
+    gap: 8px;
+    padding: 8px;
     flex: 1;
     min-height: 0;
     overflow: hidden;
@@ -1584,10 +1642,14 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .object-sidebar-body-compact .object-list-item {
-    padding: 9px 12px;
-    font-size: 12.5px;
-    font-weight: 600;
+    min-width: 0;
+    padding: 7px 8px;
+    font-size: clamp(11px, 0.9vw, 12px);
+    font-weight: 500;
     letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .object-sidebar-body-compact .object-list-row.active .object-list-item {
@@ -1610,6 +1672,7 @@ body.with-toolbars #objectSidebar.collapsed {
 /* Fila "+" para añadir satélite desde el catálogo (aspecto de satélite) */
 .object-sidebar-body-compact .object-list-row-add {
     grid-template-columns: 1fr;
+    min-height: 34px;
     border-style: dashed;
     border-color: var(--orbit-border-accent);
     background: transparent;
@@ -1625,6 +1688,9 @@ body.with-toolbars #objectSidebar.collapsed {
     align-items: center;
     justify-content: center;
     gap: 8px;
+    min-height: 34px;
+    padding: 6px 10px;
+    font-size: 12px;
     color: var(--orbit-text-accent);
     font-weight: 700;
 }
@@ -1649,4 +1715,162 @@ body.with-toolbars #objectSidebar.collapsed {
 
 #leftInfoPanelContent {
     padding: 0;
+    overflow-x: hidden;
+}
+
+.object-info-standalone {
+    margin: 8px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+/* Responsive catalog layout for laptops, tablets, and short viewports. */
+.catalog-modal-panel,
+.catalog-modal-header,
+.catalog-modal-header-actions,
+.catalog-list-row,
+.catalog-pagination {
+    min-width: 0;
+}
+
+.catalog-modal-header {
+    flex-wrap: wrap;
+}
+
+.catalog-modal-header-actions {
+    justify-content: flex-end;
+}
+
+.catalog-header-btn {
+    white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+    #catalogModal {
+        align-items: flex-start;
+        padding: 8px;
+        overflow: hidden;
+    }
+
+    .catalog-modal-panel {
+        width: min(620px, calc(100vw - 16px));
+        max-height: calc(100dvh - 16px);
+        box-sizing: border-box;
+        margin: auto;
+        padding: 10px;
+        gap: 6px;
+    }
+
+    .catalog-modal-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 8px;
+    }
+
+    .catalog-modal-header h3 {
+        padding-top: 7px;
+    }
+
+    .catalog-modal-header-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(74px, 1fr)) 34px;
+        gap: 5px;
+    }
+
+    .catalog-close-btn {
+        grid-column: 3;
+        grid-row: 1;
+        justify-self: center;
+    }
+
+    .catalog-header-btn {
+        min-height: 34px;
+        padding: 5px 7px;
+        font-size: 11px;
+        line-height: 1.15;
+    }
+
+    #catalogSearch {
+        min-height: 36px;
+        box-sizing: border-box;
+    }
+
+    #catalogList {
+        max-height: min(50vh, 340px);
+    }
+
+    .catalog-list-row {
+        gap: 5px;
+        min-height: 34px;
+        padding: 4px 6px;
+    }
+
+    .catalog-row-action-btn,
+    .catalog-row-state {
+        padding: 3px 6px;
+    }
+}
+
+/* A short desktop viewport needs a shorter catalog list, but it should keep
+   the desktop header actions on one horizontal row. */
+@media (max-height: 760px) and (min-width: 761px) {
+    .catalog-modal-header-actions {
+        flex-wrap: nowrap;
+    }
+
+    .catalog-modal-panel {
+        max-height: calc(100dvh - 16px);
+    }
+
+    #catalogList {
+        max-height: min(48vh, 340px);
+    }
+}
+
+@media (max-width: 480px) {
+    .catalog-modal-panel {
+        width: calc(100vw - 12px);
+        max-height: calc(100dvh - 12px);
+        padding: 8px;
+    }
+
+    #catalogModal {
+        padding: 6px;
+    }
+
+    .catalog-modal-header-actions {
+        grid-template-columns: repeat(2, minmax(66px, 1fr)) 32px;
+    }
+
+    .catalog-close-btn {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        min-height: 32px;
+        flex-basis: 32px;
+    }
+
+    .catalog-list-name {
+        font-size: 11px;
+    }
+
+    .catalog-row-state,
+    .catalog-row-action-btn {
+        font-size: 10px;
+    }
+
+    .orbit-type-tag {
+        margin-right: 3px;
+        padding-inline: 4px;
+    }
+
+    .catalog-pagination {
+        gap: 4px;
+    }
+
+    .catalog-page-btn {
+        padding: 6px 7px;
+        font-size: 11px;
+    }
 }

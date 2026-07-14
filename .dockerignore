@@ -1,0 +1,13 @@
+.git
+.devcontainer
+.vscode
+server/node_modules
+server/server.log
+server/server.pid
+server.pid
+server.log
+**/__pycache__
+*.py[cod]
+dist
+build
+server/ui-artifacts

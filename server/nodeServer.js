@@ -16,9 +16,12 @@ const DEFAULT_CATALOG_FILE = "catalog.json";
 const PYTHON_BACKEND_URL = "http://127.0.0.1:8765";
 const AUTO_UPDATE_DEFAULT_HOURS = 12;
 const DECAY_ALERT_DEFAULT_PERIGEE_KM = 200;
-const AUTO_UPDATE_MIN_HOURS = 0.25;
+// CelesTrak publica GP nuevo cada dos horas y aplica bloqueos temporales a
+// clientes que consultan con más frecuencia.
+const AUTO_UPDATE_MIN_HOURS = 2;
+const CELESTRAK_MIN_REFRESH_INTERVAL_MS = 2 * 60 * 60 * 1000;
 const REMOTE_FETCH_TIMEOUT_MS = 30000;
-const REMOTE_FETCH_CONCURRENCY = 4;
+const REMOTE_FETCH_CONCURRENCY = 1;
 const REMOTE_CONNECTIVITY_CHECK_TIMEOUT_MS = 8000;
 const CELESTRAK_CONNECTIVITY_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle";
 
@@ -105,6 +108,8 @@ let catalogCache = {
 let pythonProcess = null;
 let ownsPythonBackendProcess = false;
 let catalogAutoUpdateTimer = null;
+let catalogRefreshInFlight = false;
+let lastCatalogRefreshAttemptAt = 0;
 
 function getUniqueSorted(values) {
     return Array.from(new Set(values.filter(Boolean).map((v) => String(v).trim().toLowerCase()))).sort();
@@ -649,14 +654,23 @@ async function scheduleAutoCatalogRefreshFromConfig() {
         : DEFAULT_CELESTRAK_GROUPS;
 
     catalogAutoUpdateTimer = setInterval(async () => {
+        if (catalogRefreshInFlight || (lastCatalogRefreshAttemptAt && (Date.now() - lastCatalogRefreshAttemptAt) < CELESTRAK_MIN_REFRESH_INTERVAL_MS)) {
+            return;
+        }
         try {
             if (await isOfflineModeEnabled()) {
                 return;
             }
-            await performCatalogRefreshWithGroups(groups, data.catalog_sources);
-            await reloadPythonBackend();
+            catalogRefreshInFlight = true;
+            lastCatalogRefreshAttemptAt = Date.now();
+            const result = await performCatalogRefreshWithGroups(groups, data.catalog_sources);
+            if (result.ok) {
+                await reloadPythonBackend();
+            }
         } catch (error) {
             console.warn("Actualizacion automatica de TLE fallida:", error);
+        } finally {
+            catalogRefreshInFlight = false;
         }
     }, Math.max(60_000, intervalHours * 3600 * 1000));
 }
@@ -720,10 +734,20 @@ async function ensurePythonBackend() {
     }
 
     console.log("🚀 Arrancando servidor Python SGP4...");
-    pythonProcess = spawn("python3", ["server.py"], {
+    // En Windows el lanzador oficial es `py`; en Linux/macOS se usa python3.
+    const pythonCommand = process.env.PYTHON_BIN || (process.platform === "win32" ? "py" : "python3");
+    const pythonArgs = process.platform === "win32" ? ["-3", "server.py"] : ["server.py"];
+    pythonProcess = spawn(pythonCommand, pythonArgs, {
         cwd: path.join(__dirname, "./python")
     });
     ownsPythonBackendProcess = true;
+
+    // `spawn` emite `error` si el ejecutable no existe. Sin este listener el
+    // proceso Node terminaría de forma inesperada y Docker sólo mostraría un
+    // error poco claro.
+    pythonProcess.on("error", (error) => {
+        console.error(`No se pudo iniciar el backend Python (${pythonCommand}):`, error.message);
+    });
 
     pythonProcess.stdout.on("data", (data) => {
         console.log("[SERVER]", data.toString());
@@ -738,6 +762,23 @@ async function ensurePythonBackend() {
         pythonProcess = null;
         console.log(`⚠️ Python terminó con código ${code}`);
     });
+
+    // No aceptar tráfico hasta que FastAPI esté realmente disponible. Esto
+    // hace que un fallo de inicio provoque el reinicio del contenedor en vez
+    // de servir respuestas 502 indefinidamente.
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        if (await isPythonBackendHealthy()) {
+            console.log("✅ Backend Python listo.");
+            return;
+        }
+        if (!pythonProcess || pythonProcess.killed) {
+            break;
+        }
+    }
+
+    stopOwnedPythonBackend();
+    throw new Error("El backend Python no respondió en http://127.0.0.1:8765/health");
 }
 
 function computeTleChecksum(line) {
@@ -1146,6 +1187,30 @@ app.post("/api/catalog/refresh", async (req, res) => {
         return;
     }
 
+    if (catalogRefreshInFlight) {
+        res.status(409).json({
+            ok: false,
+            error: "Ya hay una actualizacion de catalogo en curso."
+        });
+        return;
+    }
+
+    const elapsedSinceLastAttempt = Date.now() - lastCatalogRefreshAttemptAt;
+    if (lastCatalogRefreshAttemptAt && elapsedSinceLastAttempt < CELESTRAK_MIN_REFRESH_INTERVAL_MS) {
+        const remainingMinutes = Math.ceil((CELESTRAK_MIN_REFRESH_INTERVAL_MS - elapsedSinceLastAttempt) / 60000);
+        res.status(429).json({
+            ok: false,
+            rateLimited: true,
+            error: `CelesTrak recomienda actualizar como maximo cada 2 horas. Reintenta dentro de ${remainingMinutes} minutos.`
+        });
+        return;
+    }
+
+    catalogRefreshInFlight = true;
+    lastCatalogRefreshAttemptAt = Date.now();
+
+    try {
+
     const discoverRequested = String(req.query?.discover || "").toLowerCase() === "true";
     let discoveredGroups = [];
     let discoveryError = null;
@@ -1174,10 +1239,14 @@ app.post("/api/catalog/refresh", async (req, res) => {
     } catch (connError) {
         const isTimeout = connError?.name === "AbortError" || String(connError?.message || "").includes("timeout") || String(connError?.message || "").includes("abort");
         const reason = isTimeout ? "timeout de conexion" : String(connError?.message || "error de red");
+        const rateLimited = /HTTP 403/.test(reason);
         res.status(502).json({
             ok: false,
-            networkBlocked: true,
-            error: `No se puede conectar con CelesTrak desde esta red (${reason}). Si usas un entorno cloud (Codespace, cloud IDE, etc.), es posible que celestrak.org bloquee esas IPs. Importa los TLE/OMM manualmente desde el catalogo.`,
+            networkBlocked: !rateLimited,
+            rateLimited,
+            error: rateLimited
+                ? "CelesTrak ha rechazado temporalmente la solicitud (HTTP 403), normalmente por exceso de consultas. Espera al menos 2 horas antes de reintentar."
+                : `No se puede conectar con CelesTrak desde esta red (${reason}). Si usas un entorno cloud (Codespace, cloud IDE, etc.), es posible que celestrak.org bloquee esas IPs. Importa los TLE/OMM manualmente desde el catalogo.`,
             failed: [],
             failedSources: []
         });
@@ -1198,6 +1267,9 @@ app.post("/api/catalog/refresh", async (req, res) => {
         discoveredGroups: discoveredGroups.length,
         discoveryError
     });
+    } finally {
+        catalogRefreshInFlight = false;
+    }
 });
 
 app.post("/api/catalog/import", async (req, res) => {
@@ -1563,8 +1635,12 @@ app.post("/api/ephemeris", async (req, res) => {
 app.use(express.static(path.join(__dirname, "../public")));
 app.use("/config", express.static(CONFIG_DIR));
 
-app.listen(PORT, () => {
-    console.log(`🌍 Servidor web en http://localhost:${PORT}`);
+app.get("/health", async (_req, res) => {
+    const pythonReady = await isPythonBackendHealthy();
+    res.status(pythonReady ? 200 : 503).json({
+        status: pythonReady ? "ok" : "starting",
+        python_backend: pythonReady ? "ok" : "unavailable"
+    });
 });
 
 process.on("SIGINT", () => {
@@ -1583,3 +1659,7 @@ process.on("exit", () => {
 
 await ensurePythonBackend();
 await scheduleAutoCatalogRefreshFromConfig();
+
+app.listen(PORT, () => {
+    console.log(`🌍 Servidor web en http://localhost:${PORT}`);
+});

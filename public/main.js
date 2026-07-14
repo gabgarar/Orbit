@@ -35,6 +35,16 @@ import { setupRuntimeConfigPanel } from "./js/configPanel.js";
 import { setupObjectSidebar } from "./js/objectSidebar.js";
 import { configureLogger, getLogger } from "./js/logger.js";
 import { normalizeSystemConfig, toSectionedSystemConfig } from "./js/configAdapter.js";
+import { getAdaptiveResolutionScale, getAdaptiveUiScale } from "./js/runtime/adaptiveDisplay.js";
+import { setupResizableSidePanel } from "./js/ui/resizableSidePanel.js";
+import { loadSystemConfig, saveSystemConfigWithRetry } from "./js/services/systemConfig.js";
+import {
+    calculateElevationDegrees,
+    calculateFreeSpacePathLossDb,
+    calculateGeoDistanceKm,
+    normalizeHeatMapDensity
+} from "./js/features/groundStations/geometry.js";
+import { createGroundStationSymbol } from "./js/features/groundStations/symbols.js";
 
 const logger = getLogger("main");
 logger.info("Iniciando Cesium...");
@@ -43,63 +53,11 @@ function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
 }
 
-async function loadConfig() {
-    try {
-        const response = await fetch("/config/system_config.json", { cache: "no-cache" });
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-        return await response.json();
-    } catch (error) {
-        logger.error("No se pudo cargar system_config.json:", error);
-        return null;
-    }
-}
-
-async function persistSystemConfig(sectionedSystemConfig, dataConfig) {
-    const response = await fetch("/api/system-config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            system: sectionedSystemConfig,
-            data: dataConfig
-        })
-    });
-
-    if (!response.ok) {
-        let detail = "";
-        try {
-            const payload = await response.json();
-            detail = payload?.error ? `: ${payload.error}` : "";
-        } catch {
-            detail = "";
-        }
-        throw new Error(`HTTP ${response.status}${detail}`);
-    }
-}
-
-async function persistSystemConfigWithRetry(sectionedSystemConfig, dataConfig, retries = 2) {
-    let lastError = null;
-
-    for (let attempt = 0; attempt <= retries; attempt += 1) {
-        try {
-            await persistSystemConfig(sectionedSystemConfig, dataConfig);
-            return;
-        } catch (error) {
-            lastError = error;
-            if (attempt >= retries) {
-                break;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 180 * (attempt + 1)));
-        }
-    }
-
-    throw lastError;
-}
-
 logger.info("Creando SingleTileImageryProvider para assets/earth3km.jpg...");
 
-const initialBootConfig = await loadConfig();
+const initialBootConfig = await loadSystemConfig({
+    onError: (error) => logger.error("Could not load system_config.json:", error)
+});
 const offlineModeEnabledAtBoot = initialBootConfig?.data?.offline_mode === true;
 
 async function resolveTerrainProviderForBoot() {
@@ -981,38 +939,19 @@ function getLayerType(layerId) {
 }
 
 function computeStationElevationDeg(stationCartesian, satCartesian) {
-    const los = Cesium.Cartesian3.subtract(satCartesian, stationCartesian, new Cesium.Cartesian3());
-    const losNorm = Cesium.Cartesian3.normalize(los, new Cesium.Cartesian3());
-    const zenith = Cesium.Cartesian3.normalize(stationCartesian, new Cesium.Cartesian3());
-    const dot = Cesium.Math.clamp(Cesium.Cartesian3.dot(losNorm, zenith), -1, 1);
-    return Cesium.Math.toDegrees(Math.asin(dot));
+    return calculateElevationDegrees(Cesium, stationCartesian, satCartesian);
 }
 
 function computeFreeSpacePathLossDb(freqMhz, rangeKm) {
-    if (!Number.isFinite(freqMhz) || freqMhz <= 0 || !Number.isFinite(rangeKm) || rangeKm <= 0) {
-        return null;
-    }
-    return 32.45 + (20 * Math.log10(freqMhz)) + (20 * Math.log10(rangeKm));
+    return calculateFreeSpacePathLossDb(freqMhz, rangeKm);
 }
 
 function normalizeGroundStationHeatDensity(value) {
-    const normalized = String(value || "").trim().toLowerCase();
-    if (normalized === "low" || normalized === "high") {
-        return normalized;
-    }
-    return "medium";
+    return normalizeHeatMapDensity(value);
 }
 
 function approxGeoDistanceKm(latA, lonA, latB, lonB) {
-    const toRad = (deg) => deg * (Math.PI / 180);
-    const dLat = toRad(Number(latB) - Number(latA));
-    const dLon = toRad(Number(lonB) - Number(lonA));
-    const aLat = toRad(Number(latA));
-    const bLat = toRad(Number(latB));
-    const hav = (Math.sin(dLat / 2) ** 2)
-        + (Math.cos(aLat) * Math.cos(bLat) * (Math.sin(dLon / 2) ** 2));
-    const c = 2 * Math.atan2(Math.sqrt(hav), Math.sqrt(Math.max(0, 1 - hav)));
-    return 6371 * c;
+    return calculateGeoDistanceKm(latA, lonA, latB, lonB);
 }
 
 function ensureGroundStationHeatLegend() {
@@ -1194,78 +1133,7 @@ function renameLayer(layerId, nextName) {
 }
 
 function createStationSymbolImage(symbol = "circle", color = "#3cc4ff", size = 11) {
-    const px = Math.max(8, Math.min(64, Math.round(Number(size) || 11)));
-    const canvas = document.createElement("canvas");
-    canvas.width = px;
-    canvas.height = px;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-        return "";
-    }
-
-    const c = String(color || "#3cc4ff");
-    const center = px / 2;
-    const r = (px / 2) - 1.5;
-
-    ctx.clearRect(0, 0, px, px);
-    ctx.fillStyle = c;
-    ctx.strokeStyle = "#00131f";
-    ctx.lineWidth = 1.8;
-
-    const drawPolygon = (points) => {
-        ctx.beginPath();
-        points.forEach((p, index) => {
-            if (index === 0) ctx.moveTo(p[0], p[1]);
-            else ctx.lineTo(p[0], p[1]);
-        });
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-    };
-
-    switch (String(symbol || "circle")) {
-    case "square":
-        drawPolygon([
-            [center - r, center - r],
-            [center + r, center - r],
-            [center + r, center + r],
-            [center - r, center + r]
-        ]);
-        break;
-    case "triangle":
-        drawPolygon([
-            [center, center - r],
-            [center + r, center + r],
-            [center - r, center + r]
-        ]);
-        break;
-    case "diamond":
-        drawPolygon([
-            [center, center - r],
-            [center + r, center],
-            [center, center + r],
-            [center - r, center]
-        ]);
-        break;
-    case "star": {
-        const points = [];
-        for (let i = 0; i < 10; i += 1) {
-            const angle = (-Math.PI / 2) + (i * Math.PI / 5);
-            const radius = i % 2 === 0 ? r : r * 0.45;
-            points.push([center + Math.cos(angle) * radius, center + Math.sin(angle) * radius]);
-        }
-        drawPolygon(points);
-        break;
-    }
-    default:
-        ctx.beginPath();
-        ctx.arc(center, center, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        break;
-    }
-
-    return canvas.toDataURL("image/png");
+    return createGroundStationSymbol(symbol, color, size);
 }
 
 function applyGroundStationVisuals(station) {
@@ -1978,10 +1846,13 @@ function updateSimulationDockLayout() {
         return;
     }
 
-    const satPanelOpen = document.getElementById("leftSatellitesPanel")?.classList.contains("open");
-    const infoPanelOpen = document.getElementById("leftInfoPanel")?.classList.contains("open");
+    const satellitesPanel = document.getElementById("leftSatellitesPanel");
+    const infoPanel = document.getElementById("leftInfoPanel");
+    const satPanelOpen = satellitesPanel?.classList.contains("open");
+    const infoPanelOpen = infoPanel?.classList.contains("open");
     const panelOpen = satPanelOpen || infoPanelOpen;
-    const leftOffset = panelOpen ? 390 : 62;
+    const activePanel = satPanelOpen ? satellitesPanel : (infoPanelOpen ? infoPanel : null);
+    const leftOffset = activePanel ? Math.round(activePanel.getBoundingClientRect().right + 12) : 62;
 
     simulationControlRoot.style.left = `${leftOffset}px`;
 }
@@ -2752,13 +2623,13 @@ function ensureLeftSidebar() {
         <div class="sidebar-panel-header">
             <div class="sidebar-panel-title">LAYERS</div>
             <div class="sidebar-panel-actions">
-                <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">✕</button>
+                <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">🗑</button>
                 <button class="object-global-eye-btn" id="toggleAllVisibilityBtn" type="button" title="Ocultar todas las capas" aria-label="Ocultar todas las capas">👁</button>
                 <button class="object-add-btn" id="openCatalogBtn" type="button" title="Añadir capa" aria-label="Añadir capa">+</button>
-                <button class="sidebar-panel-close" type="button" title="Plegar panel" aria-label="Plegar panel">‹</button>
             </div>
         </div>
         <div id="leftSatellitesPanelContent" class="sidebar-panel-content"></div>
+        <div class="sidebar-panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Redimensionar panel de capas"></div>
     `;
     document.body.appendChild(satellitesPanel);
 
@@ -2767,11 +2638,14 @@ function ensureLeftSidebar() {
     infoPanel.id = "leftInfoPanel";
     infoPanel.className = "sidebar-panel";
     infoPanel.innerHTML = `
-        <div class="sidebar-panel-header">
-            <div class="sidebar-panel-title">TELEMETRÍA</div>
-            <button class="sidebar-panel-close" type="button" aria-label="Cerrar">✕</button>
+        <div class="sidebar-panel-header telemetry-panel-header">
+            <div>
+                <div class="sidebar-panel-title">TELEMETRÍA</div>
+                <div class="telemetry-panel-subtitle"><span aria-hidden="true"></span>DATOS EN TIEMPO REAL</div>
+            </div>
         </div>
         <div id="leftInfoPanelContent" class="sidebar-panel-content"></div>
+        <div class="sidebar-panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Redimensionar panel de telemetría"></div>
     `;
     document.body.appendChild(infoPanel);
 
@@ -2797,14 +2671,22 @@ function ensureLeftSidebar() {
     satellitesBtn?.addEventListener("click", () => setActivePanel(panels[0]));
     infoBtn?.addEventListener("click", () => setActivePanel(panels[1]));
 
-    satellitesPanel.querySelector(".sidebar-panel-close")?.addEventListener("click", () => {
-        satellitesPanel.classList.remove("open");
-        satellitesBtn.classList.remove("active");
+    const getMaximumPanelWidth = () => Math.min(640, window.innerWidth * 0.72);
+    setupResizableSidePanel({
+        panel: satellitesPanel,
+        triggerButton: satellitesBtn,
+        storageKey: "orbit.layersPanel.width",
+        cssVariable: "--orbit-layers-panel-width",
+        maximumWidth: getMaximumPanelWidth,
+        onLayoutChange: updateSimulationDockLayout
     });
-
-    infoPanel.querySelector(".sidebar-panel-close")?.addEventListener("click", () => {
-        infoPanel.classList.remove("open");
-        infoBtn.classList.remove("active");
+    setupResizableSidePanel({
+        panel: infoPanel,
+        triggerButton: infoBtn,
+        storageKey: "orbit.telemetryPanel.width",
+        cssVariable: "--orbit-telemetry-panel-width",
+        maximumWidth: getMaximumPanelWidth,
+        onLayoutChange: updateSimulationDockLayout
     });
 
     sidebar.querySelector("#leftViewBtn")?.addEventListener("click", () => {
@@ -3476,7 +3358,7 @@ function schedulePersistSystemConfig(nextSectionedSystemConfig) {
     persistConfigTimeoutId = setTimeout(async () => {
         persistConfigTimeoutId = null;
         try {
-            await persistSystemConfigWithRetry(nextSectionedSystemConfig, currentRuntimeDataConfig, 2);
+            await saveSystemConfigWithRetry(nextSectionedSystemConfig, currentRuntimeDataConfig, { retries: 2 });
             lastPersistedSystemConfigSerialized = serialized;
             const savedAt = new Date();
             const hh = String(savedAt.getHours()).padStart(2, "0");
@@ -3605,28 +3487,11 @@ function applyAntialiasConfig(systemConfig) {
 }
 
 function computeAdaptiveResolutionScale() {
-    const width = Math.max(1, window.innerWidth || 1920);
-    const height = Math.max(1, window.innerHeight || 1080);
-    const referencePixels = 1920 * 1080;
-    const viewportRatio = (width * height) / referencePixels;
-
-    // Mantener buena nitidez y ajustar de forma suave solo por resolución visible.
-    if (viewportRatio <= 0.55) return 0.84;
-    if (viewportRatio <= 0.7) return 0.9;
-    if (viewportRatio <= 0.9) return 0.95;
-    if (viewportRatio <= 1.2) return 1;
-    return 1;
+    return getAdaptiveResolutionScale(window);
 }
 
 function computeAdaptiveUiScale() {
-    const width = Math.max(1, window.innerWidth || 1920);
-    const height = Math.max(1, window.innerHeight || 1080);
-    const scaleByWidth = width / 1920;
-    const scaleByHeight = height / 1080;
-    const viewportScale = Math.min(scaleByWidth, scaleByHeight);
-
-    // Escala de UI basada en resolución para que la interfaz quepa sin zoom manual.
-    return clamp(viewportScale, 0.82, 1.05);
+    return getAdaptiveUiScale(window);
 }
 
 function applyResolutionScaleConfig(systemConfig, options = {}) {
@@ -3635,7 +3500,7 @@ function applyResolutionScaleConfig(systemConfig, options = {}) {
     const antialiasMode = systemConfig.antialias_mode ?? (systemConfig.antialias_enabled !== false ? "fxaa" : "off");
     if (antialiasMode !== "off") {
         // Con AA activo priorizamos nitidez en líneas orbitales.
-        resolvedScale = Math.max(1, resolvedScale);
+        resolvedScale = Math.max(0.9, resolvedScale);
     }
 
     const shouldUpdate =
@@ -3850,7 +3715,9 @@ function firstPersonSatellite(entity) {
 }
 
 (async function init() {
-    const config = initialBootConfig || await loadConfig();
+    const config = initialBootConfig || await loadSystemConfig({
+        onError: (error) => logger.error("Could not load system_config.json:", error)
+    });
     const currentConfig = {
         ...(config || {}),
         system: toSectionedSystemConfig(config?.system || {})

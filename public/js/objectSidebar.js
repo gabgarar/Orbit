@@ -978,7 +978,7 @@ export function setupObjectSidebar({
             <div class="object-sidebar-header" id="objectSidebarHeader" role="button" tabindex="0" aria-expanded="false">
                 <h3 class="object-sidebar-title">Objetos en simulacion</h3>
                 <div class="object-sidebar-header-actions">
-                    <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">✕</button>
+                    <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">🗑</button>
                     <button class="object-global-eye-btn" id="toggleAllVisibilityBtn" type="button" title="Ocultar todas las capas" aria-label="Ocultar todas las capas">👁</button>
                     <button class="object-add-btn" id="openCatalogBtn" type="button" title="Añadir desde catalogo" aria-label="Añadir desde catalogo">+</button>
                     <button class="object-sidebar-toggle-btn" aria-hidden="true" title="Plegar panel">◂</button>
@@ -2057,6 +2057,10 @@ export function setupObjectSidebar({
 
             if (!response.ok || !payload?.ok) {
                 const rawError = payload?.error || `Error HTTP ${response.status}`;
+                if (payload?.rateLimited === true) {
+                    showErrorPopup(`Actualizacion aplazada\n\n${rawError}\n\nEl catalogo actual sigue disponible.`);
+                    return;
+                }
                 const isNetworkBlocked = payload?.networkBlocked === true
                     || /bloquea|block|timeout de conexion|cloud|Codespace/i.test(rawError);
                 if (isNetworkBlocked) {
@@ -3105,6 +3109,8 @@ export function setupObjectSidebar({
 
     function renderList() {
         const ids = getRenderableLayerIds();
+        // Destructive controls are only useful when there is something to remove.
+        removeAllLayersHeaderBtn.hidden = getLayerIds().length === 0;
         const activeFilterText = String(searchInput?.value || layerFilterText || "").toLowerCase().trim();
         const filtered = ids.filter((id) => {
             const displayName = typeof getLayerDisplayName === "function"

@@ -5,7 +5,8 @@
     --orbit-bg-elevated: #1a243a;
     --orbit-bg-modal: #0f1520;
     --orbit-bg-overlay: rgba(6, 10, 16, 0.65);
-    --orbit-bg-toolbar: rgba(12, 18, 28, 0.94);
+    /* Keep the app chrome opaque so the scene never bleeds through it. */
+    --orbit-bg-toolbar: #0c121c;
     --orbit-bg-card: #121a28;
     --orbit-bg-input: #0d1522;
     --orbit-bg-hover: #16243a;
@@ -51,7 +52,7 @@
     --orbit-bg-elevated: #f0f4f8;
     --orbit-bg-modal: #f7faff;
     --orbit-bg-overlay: rgba(230, 234, 240, 0.85);
-    --orbit-bg-toolbar: rgba(244, 248, 252, 0.94);
+    --orbit-bg-toolbar: #f4f8fc;
     --orbit-bg-card: #f8fbff;
     --orbit-bg-input: #ffffff;
     --orbit-bg-hover: #e6edf5;
@@ -209,8 +210,8 @@
     position: relative;
     display: flex;
     align-items: center;
-    width: calc(360px * var(--orbit-ui-scale));
-    max-width: 40vw;
+    width: calc(460px * var(--orbit-ui-scale));
+    max-width: 46vw;
 }
 
 #topToolbar .toolbar-time-wrap {
@@ -237,7 +238,7 @@
 
 #topToolbar .toolbar-search {
     width: 100%;
-    height: calc(26px * var(--orbit-ui-scale));
+    height: calc(30px * var(--orbit-ui-scale));
     box-sizing: border-box;
     padding: 0 calc(10px * var(--orbit-ui-scale)) 0 calc(28px * var(--orbit-ui-scale));
     background: var(--orbit-bg-primary);
@@ -260,7 +261,7 @@
 
 #topSearchSuggestions {
     position: absolute;
-    top: calc(30px * var(--orbit-ui-scale));
+    top: calc(34px * var(--orbit-ui-scale));
     left: 0;
     right: 0;
     display: none;
@@ -550,6 +551,27 @@
     flex: 1;
 }
 
+/* Keep Cesium's native navigation actions visually aligned with Orbit's
+   compact toolbar controls. */
+.cesium-viewer-toolbar {
+    top: 8px;
+    right: 8px;
+}
+
+.cesium-viewer-toolbar .cesium-button,
+.cesium-viewer-toolbar .cesium-sceneModePicker-button3D,
+.cesium-viewer-toolbar .cesium-sceneModePicker-button2D,
+.cesium-viewer-toolbar .cesium-sceneModePicker-buttonColumbusView {
+    width: 36px;
+    height: 36px;
+    border-radius: 7px;
+}
+
+.cesium-viewer-toolbar .cesium-sceneModePicker-wrapper {
+    width: 36px;
+    height: 36px;
+}
+
 #leftSidebar .sidebar-panel,
 #leftSatellitesPanel,
 #leftInfoPanel {
@@ -557,7 +579,7 @@
     top: calc(40px * var(--orbit-ui-scale));
     left: calc(48px * var(--orbit-ui-scale));
     bottom: 0;
-    width: 320px;
+    width: min(calc(300px * var(--orbit-ui-scale)), 88vw);
     box-sizing: border-box;
     background: var(--orbit-bg-primary);
     border-right: 1px solid var(--orbit-border-primary);
@@ -580,7 +602,7 @@
 }
 
 .sidebar-panel .sidebar-panel-header {
-    padding: 14px 16px;
+    padding: 10px 12px;
     border-bottom: 1px solid var(--orbit-border-primary);
     background: var(--orbit-bg-secondary);
     display: flex;
@@ -589,8 +611,48 @@
     flex-shrink: 0;
 }
 
+.sidebar-panel .telemetry-panel-header {
+    position: relative;
+    min-height: 58px;
+    padding: 12px 14px 10px;
+    overflow: hidden;
+    background:
+        linear-gradient(120deg, rgba(45, 98, 162, 0.32), transparent 58%),
+        var(--orbit-bg-secondary);
+}
+
+.sidebar-panel .telemetry-panel-header::after {
+    content: "";
+    position: absolute;
+    right: -26px;
+    bottom: -38px;
+    width: 116px;
+    height: 116px;
+    border: 1px solid var(--orbit-border-accent);
+    border-radius: 50%;
+    opacity: 0.42;
+}
+
+.telemetry-panel-subtitle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    color: var(--orbit-text-tertiary);
+    font: 700 9px/1 sans-serif;
+    letter-spacing: 0.1em;
+}
+
+.telemetry-panel-subtitle span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #38c991;
+    box-shadow: 0 0 0 3px rgba(56, 201, 145, 0.14);
+}
+
 .sidebar-panel .sidebar-panel-title {
-    font: 700 12px/1.2 sans-serif;
+    font: 700 11px/1.2 sans-serif;
     letter-spacing: 0.08em;
     color: var(--orbit-text-primary);
     text-transform: uppercase;
@@ -603,8 +665,8 @@
 }
 
 .sidebar-panel .sidebar-panel-actions button {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border: 1px solid transparent;
     background: transparent;
     color: var(--orbit-text-secondary);
@@ -617,6 +679,20 @@
     transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
+#leftSatellitesPanel {
+    width: var(--orbit-layers-panel-width, min(calc(300px * var(--orbit-ui-scale)), 88vw));
+    min-width: 0;
+}
+
+#leftInfoPanel {
+    width: var(--orbit-telemetry-panel-width, min(calc(300px * var(--orbit-ui-scale)), 88vw));
+    min-width: 0;
+}
+
+.sidebar-panel .sidebar-panel-actions button[hidden] {
+    display: none !important;
+}
+
 .sidebar-panel .sidebar-panel-actions button:hover {
     background: var(--orbit-bg-hover);
     color: var(--orbit-text-primary);
@@ -625,7 +701,7 @@
 
 .sidebar-panel .sidebar-panel-actions .object-add-btn {
     color: var(--orbit-text-accent);
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
 }
 
@@ -633,24 +709,83 @@
     font-size: 18px;
 }
 
-.sidebar-panel .sidebar-panel-close {
-    width: 26px;
-    height: 26px;
-    border: none;
-    background: transparent;
-    color: var(--orbit-text-secondary);
-    font: 600 14px/1 sans-serif;
-    cursor: pointer;
-    border-radius: 6px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.15s ease, color 0.15s ease;
+#leftSatellitesPanel .sidebar-panel-resize-handle,
+#leftInfoPanel .sidebar-panel-resize-handle {
+    position: absolute;
+    top: 0;
+    right: -4px;
+    bottom: 0;
+    z-index: 2;
+    width: 8px;
+    cursor: col-resize;
+    touch-action: none;
 }
 
-.sidebar-panel .sidebar-panel-close:hover {
-    background: var(--orbit-bg-hover);
-    color: var(--orbit-text-primary);
+#leftSatellitesPanel .sidebar-panel-resize-handle::after,
+#leftInfoPanel .sidebar-panel-resize-handle::after {
+    content: "";
+    position: absolute;
+    top: 40%;
+    bottom: 40%;
+    left: 3px;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--orbit-border-accent);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+#leftSatellitesPanel:hover .sidebar-panel-resize-handle::after,
+#leftSatellitesPanel.is-resizing .sidebar-panel-resize-handle::after,
+#leftInfoPanel:hover .sidebar-panel-resize-handle::after,
+#leftInfoPanel.is-resizing .sidebar-panel-resize-handle::after {
+    opacity: 0.65;
+}
+
+#leftSatellitesPanel.is-resizing,
+#leftInfoPanel.is-resizing {
+    user-select: none;
+    transition: none;
+}
+
+@media (min-width: 621px) {
+    #topToolbar {
+        height: max(38px, calc(44px * var(--orbit-ui-scale)));
+        padding-inline: max(10px, calc(13px * var(--orbit-ui-scale)));
+    }
+
+    #topToolbar .toolbar-brand {
+        font-size: max(13px, calc(15px * var(--orbit-ui-scale)));
+    }
+
+    #topToolbar .toolbar-btn {
+        height: max(30px, calc(35px * var(--orbit-ui-scale)));
+        font-size: max(12px, calc(13px * var(--orbit-ui-scale)));
+    }
+
+    #leftSidebar .sidebar-btn {
+        width: max(38px, calc(46px * var(--orbit-ui-scale)));
+        height: max(38px, calc(46px * var(--orbit-ui-scale)));
+        font-size: max(17px, calc(19px * var(--orbit-ui-scale)));
+    }
+
+    /* Match the wider icon rail with every element positioned beside it. */
+    #leftSidebar {
+        width: max(46px, calc(54px * var(--orbit-ui-scale)));
+    }
+
+    #leftSatellitesPanel,
+    #leftInfoPanel,
+    body.with-toolbars #cesiumContainer {
+        left: max(46px, calc(54px * var(--orbit-ui-scale))) !important;
+    }
+
+    #leftSidebar,
+    #leftSatellitesPanel,
+    #leftInfoPanel,
+    body.with-toolbars #cesiumContainer {
+        top: max(38px, calc(44px * var(--orbit-ui-scale))) !important;
+    }
 }
 
 .sidebar-panel .sidebar-panel-content {
@@ -677,4 +812,71 @@ body.with-toolbars #cesiumContainer {
 body.presentation-mode #topToolbar,
 body.presentation-mode #leftSidebar {
     display: none !important;
+}
+
+@media (max-width: 900px) {
+    #topToolbar {
+        padding-inline: 8px;
+        gap: 4px;
+    }
+
+    #topToolbar .toolbar-time-wrap,
+    #topToolbar .toolbar-separator,
+    #topToolbar .toolbar-subinfo {
+        display: none;
+    }
+
+    #topToolbar .toolbar-brand {
+        margin-right: 4px;
+    }
+
+    #topToolbar .toolbar-search-wrap {
+        flex: 1 1 150px;
+        width: auto;
+        max-width: none;
+    }
+
+    #topToolbar .toolbar-btn {
+        padding-inline: 8px;
+    }
+}
+
+@media (max-width: 620px) {
+    #topToolbar {
+        padding-inline: 6px;
+        gap: 2px;
+    }
+
+    #topToolbar .toolbar-brand {
+        margin-right: 2px;
+        font-size: 12px;
+    }
+
+    #topToolbar .toolbar-info {
+        display: none;
+    }
+
+    #topToolbar .toolbar-btn {
+        padding-inline: 7px;
+        gap: 3px;
+        font-size: 11px;
+    }
+
+    /* Keep primary actions reachable without allowing the fixed header to
+       overflow narrow phone viewports. Their titles remain available on hover. */
+    #topConfigBtn span:last-child,
+    #topCameraModeBtn span:last-child,
+    #topSimCtrlBtn span:last-child,
+    #topRecordBtn span:last-child {
+        display: none;
+    }
+
+    #topToolbar .toolbar-spacer {
+        display: none;
+    }
+
+    #topToolbar .toolbar-search-wrap {
+        flex: 1 1 72px;
+        min-width: 72px;
+    }
 }

@@ -5,8 +5,13 @@ const logger = getLogger("ws");
 export class SatelliteWebSocket {
 
     constructor(onMessageCallback) {
-        const host = window.location.hostname.replace("-8100", "-8765");
-        this.url = `wss://${host}/ws`;
+        const hostname = window.location.hostname;
+        const isCodespaces = hostname.includes("-8100.");
+        const host = isCodespaces
+            ? hostname.replace("-8100.", "-8765.")
+            : `${hostname}:8765`;
+        const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+        this.url = `${protocol}://${host}/ws`;
         this.onMessageCallback = onMessageCallback;
         this.ws = null;
         this.reconnectAttempts = 0;

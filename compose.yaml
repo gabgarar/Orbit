@@ -1,0 +1,13 @@
+services:
+  orbit:
+    build:
+      context: .
+    ports:
+      - "8100:8100"
+      # El cliente se conecta directamente al WebSocket de FastAPI.
+      - "8765:8765"
+    volumes:
+      # Conserva cambios de configuración y catálogos fuera de la imagen.
+      - ./config:/app/config
+    restart: unless-stopped
+    init: true
