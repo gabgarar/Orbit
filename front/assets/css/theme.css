@@ -552,24 +552,50 @@
     flex: 1;
 }
 
+#topToolbar .toolbar-brand img {
+    display: block;
+    width: calc(38px * var(--orbit-ui-scale));
+    height: calc(38px * var(--orbit-ui-scale));
+    transform: scale(2.4);
+    object-fit: contain;
+}
+
 .toolbar-file-menu { position: relative; }
-.toolbar-file-dropdown { display: none; position: absolute; top: calc(100% + 5px); left: 0; min-width: 150px; padding: 5px 0; border: 1px solid var(--orbit-border-primary); border-radius: 7px; background: var(--orbit-bg-modal); z-index: 10200; }
+.toolbar-file-dropdown { display: none; position: absolute; top: 100%; left: 0; min-width: 150px; padding: 5px 0; border: 1px solid var(--orbit-border-primary); border-radius: 7px; background: var(--orbit-bg-modal); z-index: 10200; }
 .toolbar-file-menu.open .toolbar-file-dropdown { display: grid; }
 .toolbar-file-dropdown button { padding: 8px 10px; border: 0; background: transparent; color: var(--orbit-text-primary); text-align: left; cursor: pointer; }
 .toolbar-file-dropdown button:hover { background: var(--orbit-bg-hover); }
 
-#projectWelcome { position: fixed; inset: 0; z-index: 10500; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, rgba(11, 83, 161, .22), transparent 35%), rgba(2, 8, 17, .48); backdrop-filter: blur(4px); }
-#projectWelcome .project-welcome-card { width: min(820px, calc(100vw - 40px)); padding: 62px 54px; border: 1px solid rgba(113, 169, 230, .58); border-radius: 34px; background: linear-gradient(135deg, rgba(9, 40, 77, .94), rgba(3, 13, 27, .91)); box-shadow: 0 32px 90px rgba(0,0,0,.58), inset 0 1px rgba(255,255,255,.06); text-align: center; }
-.project-welcome-orbit { height: 84px; color: #27b9ff; font: 800 92px/.64 sans-serif; text-shadow: 0 0 28px rgba(23,155,255,.55); transform: rotate(-25deg); }
+#projectWelcome { position: fixed; inset: 0; z-index: 10500; display: grid; place-items: center end; overflow: hidden; padding-right: clamp(60px, 9vw, 156px); background: linear-gradient(90deg, rgba(2, 8, 17, .06), rgba(2, 8, 17, .22)), url("../fonts/fondo.png") center/cover no-repeat; }
+#projectWelcome .project-welcome-card { position: relative; z-index: 2; width: min(510px, calc(100vw - 40px)); padding: 54px 42px 44px; border: 1px solid rgba(113, 169, 230, .58); border-radius: 30px; transform: translateX(clamp(-180px, -8vw, -90px)); background: linear-gradient(135deg, rgba(9, 40, 77, .91), rgba(3, 13, 27, .88)); box-shadow: 0 32px 90px rgba(0,0,0,.58), inset 0 1px rgba(255,255,255,.06); text-align: center; }
+.project-welcome-orbit { width: 136px; height: 112px; margin: 0 auto; background: url("../icon/favicon.png") center/160% no-repeat; font-size: 0; filter: saturate(1.15) drop-shadow(0 0 22px rgba(23,155,255,.5)); }
 .project-welcome-mark { margin-top: 30px; color: #2888ff; font: 800 19px/1 sans-serif; letter-spacing: 12px; }
-#projectWelcome h1 { margin: 34px 0 18px; color: #fff; font: 600 clamp(36px, 4vw, 58px)/1.1 sans-serif; }
+#projectWelcome h1 { margin: 30px 0 18px; color: #fff; font: 600 clamp(34px, 3vw, 48px)/1.1 sans-serif; }
 .project-welcome-rule { width: 64px; height: 3px; margin: 0 auto 27px; border-radius: 8px; background: #168fff; box-shadow: 0 0 14px rgba(22,143,255,.6); }
 #projectWelcome p { margin: 0; color: #b9c9df; font: 400 20px/1.55 sans-serif; }
-.project-welcome-actions { display: flex; justify-content: center; gap: 18px; margin-top: 44px; }
-#projectWelcome button { min-width: 220px; padding: 17px 22px; border: 1px solid #168fff; border-radius: 12px; background: rgba(5, 18, 36, .64); color: #fff; font: 600 20px/1 sans-serif; cursor: pointer; transition: transform .15s ease, background .15s ease; }
+.project-welcome-actions { display: flex; justify-content: center; gap: 16px; margin-top: 40px; }
+#projectWelcome button { min-width: 0; flex: 1; padding: 16px 14px; border: 1px solid #168fff; border-radius: 11px; background: rgba(5, 18, 36, .64); color: #fff; font: 600 18px/1 sans-serif; cursor: pointer; transition: transform .15s ease, background .15s ease; }
 #projectWelcome button:hover { transform: translateY(-2px); background: rgba(21, 92, 180, .36); }
 #projectWelcome button.primary { background: linear-gradient(135deg, #168fff, #1046bc); box-shadow: 0 12px 26px rgba(10, 93, 219, .32); }
 #projectWelcome button span { margin-right: 10px; color: #8bd8ff; }
+@media (max-width: 850px) { #projectWelcome { place-items: center; padding-right: 0; } #projectWelcome .project-welcome-card { transform: none; } }
+
+#projectActionModal { display: none; position: fixed; inset: 0; z-index: 10600; place-items: center; padding: 20px; background: rgba(2, 7, 16, .7); backdrop-filter: blur(6px); }
+#projectActionModal.open { display: grid; }
+.project-action-dialog { position: relative; width: min(440px, 100%); padding: 32px; border: 1px solid rgba(88, 153, 231, .6); border-radius: 18px; background: linear-gradient(135deg, rgba(18, 62, 112, .96), rgba(5, 18, 36, .98)); box-shadow: 0 26px 70px rgba(0, 0, 0, .56); color: var(--orbit-text-primary); }
+.project-action-eyebrow { margin: 0 0 10px; color: #52a8ff; font: 800 11px/1 sans-serif; letter-spacing: 3px; }
+.project-action-dialog h2 { margin: 0 0 10px; font: 700 26px/1.2 sans-serif; }
+.project-action-dialog > p:not(.project-action-eyebrow) { margin: 0 0 24px; color: var(--orbit-text-secondary); font: 14px/1.55 sans-serif; }
+.project-action-dialog label:not(.project-file-picker) { display: grid; gap: 8px; color: var(--orbit-text-secondary); font: 600 13px/1 sans-serif; }
+.project-action-dialog input[type="text"] { height: 42px; padding: 0 12px; border: 1px solid var(--orbit-border-primary); border-radius: 8px; outline: none; background: rgba(2, 10, 22, .72); color: var(--orbit-text-primary); font: 14px/1 sans-serif; }
+.project-action-dialog input[type="text"]:focus { border-color: #54a8ff; box-shadow: 0 0 0 3px rgba(57, 144, 255, .18); }
+.project-action-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; }
+.project-action-buttons button { padding: 10px 14px; border: 1px solid var(--orbit-border-primary); border-radius: 8px; background: rgba(18, 37, 67, .9); color: var(--orbit-text-primary); font: 600 13px/1 sans-serif; cursor: pointer; }
+.project-action-buttons button.primary { border-color: #278dff; background: linear-gradient(135deg, #287eff, #1747bb); }
+.project-action-close { position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; padding: 0; border: 1px solid var(--orbit-border-primary); border-radius: 50%; background: transparent; color: var(--orbit-text-primary); font: 22px/1 sans-serif; cursor: pointer; }
+.project-file-picker { display: grid; gap: 7px; padding: 22px; border: 1px dashed #4e96e6; border-radius: 10px; background: rgba(6, 24, 48, .52); color: var(--orbit-text-primary); text-align: center; cursor: pointer; }
+.project-file-picker:hover { border-color: #78b9ff; background: rgba(18, 70, 130, .42); }
+.project-file-picker small { color: var(--orbit-text-tertiary); }
 
 /* Settings are available from the left sidebar, avoiding duplicate controls. */
 #topConfigBtn { display: none; }

@@ -28,3 +28,18 @@ test("removing a folder returns direct children to root", () => {
     tree.removeFolder(folder);
     assert.equal(tree.snapshot(["ISS"]).layerParents.ISS, null);
 });
+
+test("layer tree restores exported hierarchy and can clear it", () => {
+    const tree = createLayerTree(memoryStorage());
+    tree.replace({
+        folders: [
+            { id: "missions", name: "Missions", parentId: null, expanded: true },
+            { id: "leo", name: "LEO", parentId: "missions", expanded: false }
+        ],
+        layerParents: { ISS: "leo" }
+    });
+    assert.equal(tree.snapshot(["ISS"]).layerParents.ISS, "leo");
+    assert.equal(tree.snapshot([]).folders.find((folder) => folder.id === "leo").parentId, "missions");
+    tree.clear();
+    assert.deepEqual(tree.snapshot(["ISS"]), { folders: [], layerParents: { ISS: null } });
+});

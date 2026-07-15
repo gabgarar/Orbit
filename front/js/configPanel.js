@@ -8,7 +8,7 @@ const CONFIG_SCHEMA = {
         { key: "future_color", label: "Future Color", type: "color" },
         { key: "selected_color", label: "Selected Orbit Color", type: "color" },
         { key: "past_show", label: "Past Show", type: "checkbox" },
-        { key: "past_seconds", label: "Past Duration (s)", type: "number", step: "0.1", min: "0", max: "86400" },
+        { key: "past_seconds", label: "Past Duration (hours)", type: "number", step: "0.1", min: "0" },
         { key: "past_line_width", label: "Past Line Width", type: "number", step: "0.1", min: "0.1" },
         { key: "past_color", label: "Past Color", type: "color" }
     ],
@@ -72,7 +72,7 @@ const FIELD_HELP = {
     "orbit.future_color": "Color de la orbita futura.",
     "orbit.selected_color": "Color de la orbita del satelite seleccionado.",
     "orbit.past_show": "Muestra u oculta la estela/orbita pasada.",
-    "orbit.past_seconds": "Duracion temporal de la estela pasada en segundos. Rango permitido: 0 a 86400.",
+    "orbit.past_seconds": "Duración temporal de la estela pasada en horas. Sin límite artificial.",
     "orbit.past_line_width": "Grosor de la linea de orbita pasada.",
     "orbit.past_color": "Color de la orbita pasada.",
 

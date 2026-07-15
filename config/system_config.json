@@ -10,7 +10,7 @@
       "selected_color": "#ff2d2d",
       "past_show": true,
       "past_color": "#ff9a5a",
-      "past_seconds": 120,
+      "past_seconds": 5,
       "past_line_width": 2
     },
     "satellites": {

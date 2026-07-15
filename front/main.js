@@ -178,6 +178,149 @@ let timeHudWidget = null;
 let timeHudTimer = null;
 let earth2kmTilesAvailable = false;
 let quickToolbarRoot = null;
+let welcomeSceneEntities = [];
+let welcomeCameraActive = false;
+let welcomeDepthTestBefore = null;
+let welcomeFrustumOffsetsBefore = null;
+
+/**
+ * Shows a non-persistent orbital scene using real Cesium geometry. Keeping the
+ * path in world coordinates lets the globe occlude its far side naturally.
+ */
+function setupWelcomeCesiumScene() {
+    if (welcomeCameraActive) return;
+    welcomeCameraActive = true;
+    viewer.trackedEntity = undefined;
+    viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(15, 28, 26_000_000),
+        orientation: {
+            heading: Cesium.Math.toRadians(0),
+            pitch: Cesium.Math.toRadians(-90),
+            roll: 0
+        }
+    });
+
+    const frustum = viewer.camera.frustum;
+    if (Number.isFinite(frustum?.xOffset) && Number.isFinite(frustum?.yOffset)) {
+        welcomeFrustumOffsetsBefore = { x: frustum.xOffset, y: frustum.yOffset };
+        const halfHeight = Math.tan(frustum.fovy * 0.5) * frustum.near;
+        const halfWidth = halfHeight * frustum.aspectRatio;
+        // Shift the projection so the globe occupies the lower-left quadrant.
+        frustum.xOffset = halfWidth * 0.55;
+        frustum.yOffset = halfHeight * 0.65;
+    }
+
+    welcomeDepthTestBefore = viewer.scene.globe.depthTestAgainstTerrain;
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+
+    const radius = Cesium.Ellipsoid.WGS84.maximumRadius + 1_450_000;
+    const horizontal = Cesium.Cartesian3.normalize(viewer.camera.rightWC, new Cesium.Cartesian3());
+    const screenUp = Cesium.Cartesian3.normalize(viewer.camera.upWC, new Cesium.Cartesian3());
+    const towardCamera = Cesium.Cartesian3.normalize(viewer.camera.positionWC, new Cesium.Cartesian3());
+    const inclinedUp = Cesium.Cartesian3.normalize(
+        Cesium.Cartesian3.add(
+            Cesium.Cartesian3.multiplyByScalar(screenUp, 0.82, new Cesium.Cartesian3()),
+            Cesium.Cartesian3.multiplyByScalar(towardCamera, 0.58, new Cesium.Cartesian3()),
+            new Cesium.Cartesian3()
+        ),
+        new Cesium.Cartesian3()
+    );
+    const orbitPoints = [];
+    const pointCount = 180;
+    for (let index = 0; index <= pointCount; index += 1) {
+        const angle = (index / pointCount) * Cesium.Math.TWO_PI;
+        const horizontalPart = Cesium.Cartesian3.multiplyByScalar(horizontal, Math.cos(angle) * radius, new Cesium.Cartesian3());
+        const verticalPart = Cesium.Cartesian3.multiplyByScalar(inclinedUp, Math.sin(angle) * radius, new Cesium.Cartesian3());
+        orbitPoints.push(Cesium.Cartesian3.add(horizontalPart, verticalPart, new Cesium.Cartesian3()));
+    }
+    const orbitHalo = viewer.entities.add({
+        id: "orbit-welcome-trajectory",
+        polyline: {
+            positions: orbitPoints,
+            width: 10,
+            arcType: Cesium.ArcType.NONE,
+            material: new Cesium.PolylineGlowMaterialProperty({
+                color: Cesium.Color.fromCssColorString("#ef3f37").withAlpha(0.52),
+                glowPower: 0.42,
+                taperPower: 1
+            })
+        }
+    });
+    const orbitCore = viewer.entities.add({
+        id: "orbit-welcome-trajectory-core",
+        polyline: {
+            positions: orbitPoints,
+            width: 2.4,
+            arcType: Cesium.ArcType.NONE,
+            material: new Cesium.ColorMaterialProperty(
+                Cesium.Color.fromCssColorString("#ff805e").withAlpha(0.96)
+            )
+        }
+    });
+    const startedAt = performance.now();
+    const getCometIndex = () => {
+        const elapsed = ((performance.now() - startedAt) % 10_000) / 10_000;
+        // The initial quarter turn places the comet on the visible side.
+        return Math.floor(((elapsed + 0.25) % 1) * pointCount);
+    };
+    const cometTail = viewer.entities.add({
+        id: "orbit-welcome-comet-tail",
+        polyline: {
+            positions: new Cesium.CallbackProperty(() => {
+                const headIndex = getCometIndex();
+                const tailLength = 20;
+                return Array.from({ length: tailLength }, (_, index) => {
+                    const pointIndex = (headIndex - tailLength + index + pointCount) % pointCount;
+                    return orbitPoints[pointIndex];
+                });
+            }, false),
+            width: 5.5,
+            arcType: Cesium.ArcType.NONE,
+            material: new Cesium.PolylineGlowMaterialProperty({
+                color: Cesium.Color.fromCssColorString("#ff654f").withAlpha(0.9),
+                glowPower: 0.45,
+                taperPower: 1
+            })
+        }
+    });
+    const comet = viewer.entities.add({
+        id: "orbit-welcome-comet",
+        position: new Cesium.CallbackProperty(() => {
+            return orbitPoints[getCometIndex()];
+        }, false),
+        point: {
+            pixelSize: new Cesium.CallbackProperty(() => {
+                return 15 + (Math.sin((performance.now() - startedAt) / 180) * 2);
+            }, false),
+            color: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.fromCssColorString("#ff5b4e"),
+            outlineWidth: 5,
+            disableDepthTestDistance: 0
+        }
+    });
+    welcomeSceneEntities = [orbitHalo, orbitCore, cometTail, comet];
+    updateAdaptiveGlobeLighting();
+}
+
+function teardownWelcomeCesiumScene() {
+    welcomeSceneEntities.forEach((entity) => viewer.entities.remove(entity));
+    welcomeSceneEntities = [];
+    if (!welcomeCameraActive) return;
+    welcomeCameraActive = false;
+    if (welcomeDepthTestBefore !== null) {
+        viewer.scene.globe.depthTestAgainstTerrain = welcomeDepthTestBefore;
+        welcomeDepthTestBefore = null;
+    }
+    if (welcomeFrustumOffsetsBefore) {
+        viewer.camera.frustum.xOffset = welcomeFrustumOffsetsBefore.x;
+        viewer.camera.frustum.yOffset = welcomeFrustumOffsetsBefore.y;
+        welcomeFrustumOffsetsBefore = null;
+    }
+    viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(0, 20, 20_000_000),
+        duration: 0.8
+    });
+}
 let quickToolbarPanel = null;
 let selectedSatelliteId = null;
 let currentUiLanguage = "es";
@@ -208,6 +351,8 @@ let satelliteDuplicateSequence = 1;
 let stationHeatMapTimer = null;
 let groundStationHeatLegendRoot = null;
 let currentProjectFileHandle = null;
+let currentProjectName = null;
+let objectSidebar = null;
 let globeLightingEnabledByConfig = true;
 const GLOBE_LIGHTING_MIN_HEIGHT_METERS = 1_200_000;
 let runtimeDecayAlertPerigeeKm = 200;
@@ -219,9 +364,11 @@ function buildProjectDocument() {
     return {
         format: "orbit-project",
         version: 1,
+        name: currentProjectName || "Untitled project",
         exportedAt: new Date().toISOString(),
         satellites: getActiveSatelliteLayerIds(),
         layerNames: Object.fromEntries(layerDisplayNameOverrides),
+        layerTree: objectSidebar?.getProjectTree?.() || { folders: [], layerParents: {} },
         groundStations: [...groundStationLayers.values()].map(({ entity, coverageEntity, ...station }) => station),
         simulation: { mode: simulationState.mode, startDate: simulationState.startDate, endDate: simulationState.endDate }
     };
@@ -241,18 +388,170 @@ async function exportProject() {
     anchor.click(); URL.revokeObjectURL(url);
 }
 
+function updateProjectTitle() {
+    const title = currentProjectName || "My project";
+    document.querySelectorAll("[data-project-title]").forEach((element) => {
+        element.textContent = title;
+        element.title = title;
+    });
+}
+
+function hasOpenProject() {
+    return Boolean(currentProjectName)
+        || getActiveSatelliteLayerIds().length > 0
+        || groundStationLayers.size > 0
+        || (objectSidebar?.getProjectTree?.().folders.length || 0) > 0;
+}
+
+function clearProjectContents() {
+    setAllSatelliteLayersActive(false);
+    for (const stationId of [...groundStationLayers.keys()]) {
+        removeGroundStationLayer(stationId);
+    }
+    satelliteDuplicateLayers.clear();
+    layerDisplayNameOverrides.clear();
+    clearAllSatelliteVisualizationConfigs();
+    objectSidebar?.clearProjectTree?.();
+    currentProjectFileHandle = null;
+    currentProjectName = null;
+}
+
+function startNewProject(projectName = "Untitled project") {
+    clearProjectContents();
+    currentProjectName = String(projectName || "Untitled project").trim() || "Untitled project";
+    document.getElementById("projectWelcome")?.remove();
+    updateProjectTitle();
+    objectSidebar?.renderList?.();
+}
+
+function selectProjectFileFallback() {
+    return new Promise((resolve) => {
+        const input = document.createElement("input");
+        let settled = false;
+        const finish = (file = null) => {
+            if (settled) return;
+            settled = true;
+            input.remove();
+            resolve(file);
+        };
+        input.type = "file";
+        input.accept = ".json,application/json";
+        input.addEventListener("change", () => finish(input.files?.[0] || null), { once: true });
+        window.addEventListener("focus", () => setTimeout(() => finish(), 200), { once: true });
+        input.hidden = true;
+        document.body.appendChild(input);
+        input.click();
+    });
+}
+
+async function loadProjectFile(file, handle = null) {
+    const project = JSON.parse(await file.text());
+    if (project?.format !== "orbit-project" || project.version !== 1) throw new Error("Unsupported project file");
+    if (hasOpenProject()) {
+        const confirmed = await showAppConfirm(
+            `Ya hay abierto el proyecto '${currentProjectName || "actual"}'. Se perderán los cambios no guardados. ¿Quieres sustituirlo?`,
+            "Abrir otro proyecto",
+            "Abrir proyecto"
+        );
+        if (!confirmed) return false;
+    }
+    clearProjectContents();
+    currentProjectFileHandle = handle;
+    currentProjectName = String(project.name || file.name.replace(/\.json$/i, "") || "Untitled project").trim();
+    Object.entries(project.layerNames || {}).forEach(([id, name]) => layerDisplayNameOverrides.set(id, name));
+    for (const satelliteId of project.satellites || []) setSatelliteLayerActive(satelliteId, true);
+    if (project.simulation?.startDate && project.simulation?.endDate) applySimulationRange(new Date(project.simulation.startDate), new Date(project.simulation.endDate));
+    objectSidebar?.setProjectTree?.(project.layerTree);
+    document.getElementById("projectWelcome")?.remove();
+    updateProjectTitle();
+    objectSidebar?.renderList?.();
+    return true;
+}
+
 async function openProject() {
     try {
-        const [handle] = await window.showOpenFilePicker({ types: [{ description: "Orbit project", accept: { "application/json": [".json"] } }] });
-        const project = JSON.parse(await (await handle.getFile()).text());
-        if (project?.format !== "orbit-project" || project.version !== 1) throw new Error("Unsupported project file");
-        currentProjectFileHandle = handle;
-        Object.entries(project.layerNames || {}).forEach(([id, name]) => layerDisplayNameOverrides.set(id, name));
-        for (const satelliteId of project.satellites || []) setSatelliteLayerActive(satelliteId, true);
-        if (project.simulation?.startDate && project.simulation?.endDate) applySimulationRange(new Date(project.simulation.startDate), new Date(project.simulation.endDate));
-        document.getElementById("projectWelcome")?.remove();
-        objectSidebar?.renderList?.();
+        let handle = null;
+        let file = null;
+        if (window.showOpenFilePicker) {
+            [handle] = await window.showOpenFilePicker({ types: [{ description: "Orbit project", accept: { "application/json": [".json"] } }] });
+            file = await handle.getFile();
+        } else {
+            file = await selectProjectFileFallback();
+            if (!file) return;
+        }
+        await loadProjectFile(file, handle);
     } catch (error) { if (error?.name !== "AbortError") showAppAlert("No se pudo abrir el proyecto.", uiText("alertTitle")); }
+}
+
+let projectActionModal = null;
+
+function ensureProjectActionModal() {
+    if (projectActionModal) return projectActionModal;
+    projectActionModal = document.createElement("div");
+    projectActionModal.id = "projectActionModal";
+    projectActionModal.innerHTML = `
+        <form class="project-action-dialog" data-project-dialog="new">
+            <button class="project-action-close" type="button" data-project-dialog-close aria-label="Cerrar">×</button>
+            <p class="project-action-eyebrow">ORBIT PROJECT</p>
+            <h2>Nuevo proyecto</h2>
+            <p>Define un nombre para comenzar un proyecto vacío.</p>
+            <label>Nombre del proyecto<input id="newProjectNameInput" type="text" maxlength="80" value="Untitled project" required autocomplete="off" /></label>
+            <div class="project-action-buttons"><button type="button" class="secondary" data-project-dialog-close>Cancelar</button><button type="submit" class="primary">Crear proyecto</button></div>
+        </form>
+        <section class="project-action-dialog" data-project-dialog="open" hidden>
+            <button class="project-action-close" type="button" data-project-dialog-close aria-label="Cerrar">×</button>
+            <p class="project-action-eyebrow">ORBIT PROJECT</p>
+            <h2>Abrir proyecto</h2>
+            <p>Selecciona un archivo de proyecto exportado por Orbit.</p>
+            <label class="project-file-picker" for="openProjectFileInput"><span>Seleccionar archivo .json</span><small>El proyecto se abrirá en esta sesión.</small></label>
+            <input id="openProjectFileInput" type="file" accept=".json,application/json" hidden />
+            <div class="project-action-buttons"><button type="button" class="secondary" data-project-dialog-close>Cancelar</button></div>
+        </section>`;
+    document.body.appendChild(projectActionModal);
+
+    const close = () => projectActionModal.classList.remove("open");
+    projectActionModal.querySelectorAll("[data-project-dialog-close]").forEach((button) => button.addEventListener("click", close));
+    projectActionModal.addEventListener("click", (event) => {
+        if (event.target === projectActionModal) close();
+    });
+    projectActionModal.querySelector('[data-project-dialog="new"]').addEventListener("submit", (event) => {
+        event.preventDefault();
+        const name = projectActionModal.querySelector("#newProjectNameInput").value.trim();
+        if (!name) return;
+        close();
+        startNewProject(name);
+    });
+    projectActionModal.querySelector("#openProjectFileInput").addEventListener("change", async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        try {
+            const opened = await loadProjectFile(file);
+            if (opened) close();
+        } catch (error) {
+            showAppAlert("No se pudo abrir el proyecto.", uiText("alertTitle"));
+        } finally {
+            event.target.value = "";
+        }
+    });
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") close();
+    });
+    return projectActionModal;
+}
+
+function openProjectActionDialog(mode) {
+    const modal = ensureProjectActionModal();
+    modal.querySelectorAll("[data-project-dialog]").forEach((dialog) => {
+        dialog.hidden = dialog.dataset.projectDialog !== mode;
+    });
+    modal.classList.add("open");
+    if (mode === "new") {
+        const input = modal.querySelector("#newProjectNameInput");
+        queueMicrotask(() => {
+            input.focus();
+            input.select();
+        });
+    }
 }
 const SIMULATION_SPEED_VALUES = [1, 10, 100, 1000];
 const SIMULATION_TIMELINE_STEPS = 10000;
@@ -2567,7 +2866,7 @@ function ensureTopToolbar() {
     const toolbar = document.createElement("div");
     toolbar.id = "topToolbar";
     toolbar.innerHTML = `
-        <div class="toolbar-brand">ORBIT</div>
+        <div class="toolbar-brand"><img src="assets/icon/favicon.png" alt="Orbit"></div>
         <div class="toolbar-file-menu"><button id="topFileBtn" class="toolbar-btn" type="button">File</button><div class="toolbar-file-dropdown"><button id="projectNewBtn" type="button">New project</button><button id="projectOpenBtn" type="button">Open project</button><button id="projectSaveBtn" type="button">Save project</button><button id="projectExportBtn" type="button">Export project</button></div></div>
         <button id="topConfigBtn" class="toolbar-btn" type="button" title="Configuración">
             <span>⚙</span>
@@ -2604,25 +2903,29 @@ function ensureTopToolbar() {
     toolbar.querySelector("#topCameraModeBtn")?.remove();
     toolbar.querySelector("#topGroundBtn")?.remove();
     toolbar.querySelector("#topSimCtrlBtn")?.remove();
-    toolbar.querySelector("#topFileBtn")?.addEventListener("click", () => toolbar.querySelector(".toolbar-file-menu")?.classList.toggle("open"));
+    [...toolbar.querySelectorAll(".toolbar-separator")].forEach((separator, index) => { if (index > 0) separator.remove(); });
+    const fileMenu = toolbar.querySelector(".toolbar-file-menu");
+    toolbar.querySelector("#topFileBtn")?.addEventListener("click", () => fileMenu?.classList.toggle("open"));
+    fileMenu?.addEventListener("mouseenter", () => fileMenu.classList.add("open"));
+    fileMenu?.addEventListener("mouseleave", () => fileMenu.classList.remove("open"));
     document.addEventListener("pointerdown", (event) => {
         if (!toolbar.querySelector(".toolbar-file-menu")?.contains(event.target)) toolbar.querySelector(".toolbar-file-menu")?.classList.remove("open");
     });
     toolbar.querySelector("#projectExportBtn")?.addEventListener("click", exportProject);
-    toolbar.querySelector("#projectOpenBtn")?.addEventListener("click", openProject);
+    toolbar.querySelector("#projectOpenBtn")?.addEventListener("click", () => openProjectActionDialog("open"));
     toolbar.querySelector("#projectSaveBtn")?.addEventListener("click", async () => {
         try {
             if (!currentProjectFileHandle && window.showSaveFilePicker) currentProjectFileHandle = await window.showSaveFilePicker({ suggestedName: "orbit-project.json", types: [{ description: "Orbit project", accept: { "application/json": [".json"] } }] });
             if (currentProjectFileHandle) await saveProjectToHandle(currentProjectFileHandle); else await exportProject();
         } catch (error) { if (error?.name !== "AbortError") console.error("Could not save project", error); }
     });
-    toolbar.querySelector("#projectNewBtn")?.addEventListener("click", () => document.getElementById("projectWelcome")?.remove());
+    toolbar.querySelector("#projectNewBtn")?.addEventListener("click", () => openProjectActionDialog("new"));
     if (!document.getElementById("projectWelcome")) {
         const welcome = document.createElement("div");
         welcome.id = "projectWelcome";
         welcome.innerHTML = `<section class="project-welcome-card"><div class="project-welcome-orbit">◯</div><div class="project-welcome-mark">O R B I T</div><h1>Welcome to Orbit</h1><div class="project-welcome-rule"></div><p>Create a project to start modelling your space operations,<br>or open an existing one.</p><div class="project-welcome-actions"><button class="primary" data-project-action="new"><span>⊕</span> New project</button><button data-project-action="open"><span>▱</span> Open project</button></div></section>`;
-        welcome.querySelector('[data-project-action="new"]').addEventListener("click", () => welcome.remove());
-        welcome.querySelector('[data-project-action="open"]').addEventListener("click", openProject);
+        welcome.querySelector('[data-project-action="new"]').addEventListener("click", () => openProjectActionDialog("new"));
+        welcome.querySelector('[data-project-action="open"]').addEventListener("click", () => openProjectActionDialog("open"));
         document.body.appendChild(welcome);
     }
     document.body.appendChild(toolbar);
@@ -2738,7 +3041,7 @@ function ensureLeftSidebar() {
     satellitesPanel.className = "sidebar-panel";
     satellitesPanel.innerHTML = `
         <div class="sidebar-panel-header">
-            <div class="sidebar-panel-title">My project</div>
+            <div class="sidebar-panel-title" data-project-title>My project</div>
             <div class="sidebar-panel-actions">
                 <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">🗑</button>
                 <button class="object-global-eye-btn" id="toggleAllVisibilityBtn" type="button" title="Ocultar todas las capas" aria-label="Ocultar todas las capas">👁</button>
@@ -2933,7 +3236,7 @@ function ensureAppDialog() {
     appDialogCancelBtn = modal.querySelector("#appDialogCancel");
 }
 
-function openAppDialog({ title, message, showCancel }) {
+function openAppDialog({ title, message, showCancel, confirmLabel }) {
     ensureAppDialog();
 
     return new Promise((resolve) => {
@@ -2971,7 +3274,7 @@ function openAppDialog({ title, message, showCancel }) {
         appDialogTitle.textContent = title || "Aviso";
         appDialogMessage.textContent = message || "";
         appDialogCancelBtn.style.display = showCancel ? "inline-flex" : "none";
-        appDialogConfirmBtn.textContent = showCancel ? "Guardar" : "Aceptar";
+        appDialogConfirmBtn.textContent = confirmLabel || (showCancel ? "Guardar" : "Aceptar");
 
         appDialogRoot.classList.add("open");
         appDialogRoot.setAttribute("aria-hidden", "false");
@@ -2989,8 +3292,8 @@ function showAppAlert(message, title = uiText("alertTitle")) {
     return openAppDialog({ title, message, showCancel: false });
 }
 
-function showAppConfirm(message, title = uiText("confirmTitle")) {
-    return openAppDialog({ title, message, showCancel: true });
+function showAppConfirm(message, title = uiText("confirmTitle"), confirmLabel) {
+    return openAppDialog({ title, message, showCancel: true, confirmLabel });
 }
 
 function hideSatelliteContextMenu() {
@@ -3682,9 +3985,16 @@ function applyEarthDayNightBlend(systemConfig) {
 }
 
 function applyEarthBaseLayers() {
-    // Keep the native Cesium basemap and add night lights only as an overlay.
-    if (!nightImageryLayer) nightImageryLayer = viewer.scene.imageryLayers.addImageryProvider(nightProvider);
-    updateAdaptiveGlobeLighting();
+    // Let Cesium create/select its base first, then attach night lights above it.
+    if (nightImageryLayer) return;
+    setTimeout(() => {
+        if (nightImageryLayer) return;
+        nightImageryLayer = viewer.scene.imageryLayers.addImageryProvider(nightProvider);
+        nightImageryLayer.dayAlpha = 0.0;
+        nightImageryLayer.nightAlpha = 1.0;
+        nightImageryLayer.brightness = 1.2;
+        updateAdaptiveGlobeLighting();
+    }, 0);
     return;
     try {
         viewer.scene.imageryLayers.removeAll();
@@ -3875,7 +4185,7 @@ function firstPersonSatellite(entity) {
         schedulePersistSystemConfig(currentConfig.system);
     };
 
-    let objectSidebar = null;
+    objectSidebar = null;
 
     runtimeConfigPanelApi = setupRuntimeConfigPanel({
         initialSystemConfig: currentConfig.system,
@@ -3962,6 +4272,7 @@ function firstPersonSatellite(entity) {
             }
             satelliteDuplicateLayers.clear();
             layerDisplayNameOverrides.clear();
+            objectSidebar?.clearProjectTree?.();
         },
         onShowAllObjects: () => {
             setAllSatellitesVisible(true);

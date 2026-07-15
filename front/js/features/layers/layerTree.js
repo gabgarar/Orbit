@@ -40,9 +40,35 @@ export function createLayerTree(storage = globalThis.localStorage, key = "orbit.
 
     function toggle(id) { const folder = folderById().get(id); if (!folder) return false; folder.expanded = !folder.expanded; save(); return folder.expanded; }
     function snapshot(layerIds) { return { folders: state.folders.map((item) => ({ ...item })), layerParents: Object.fromEntries(layerIds.map((id) => [id, state.layerParents[id] || null])) }; }
+    function replace(snapshot) {
+        const rawFolders = Array.isArray(snapshot?.folders) ? snapshot.folders : [];
+        const ids = new Set();
+        const folders = rawFolders.reduce((items, folder) => {
+            const id = String(folder?.id || "").trim();
+            const name = String(folder?.name || "").trim();
+            if (!id || !name || ids.has(id)) return items;
+            ids.add(id);
+            items.push({ id, name, parentId: folder.parentId || null, expanded: folder.expanded !== false });
+            return items;
+        }, []);
+        const byId = new Set(folders.map((folder) => folder.id));
+        folders.forEach((folder) => {
+            const parentId = folder.parentId;
+            folder.parentId = parentId && parentId !== folder.id && byId.has(parentId) ? parentId : null;
+        });
+        const rawParents = snapshot?.layerParents && typeof snapshot.layerParents === "object" ? snapshot.layerParents : {};
+        const layerParents = Object.fromEntries(Object.entries(rawParents).map(([layerId, parentId]) => [
+            String(layerId),
+            parentId && byId.has(parentId) ? parentId : null
+        ]));
+        state = { folders, layerParents };
+        save();
+        return snapshot;
+    }
+    function clear() { state = { folders: [], layerParents: {} }; save(); }
     function validParent(id) { return id && folderById().has(id) ? id : null; }
     function isDescendant(candidateId, ancestorId) { let current = folderById().get(candidateId); while (current?.parentId) { if (current.parentId === ancestorId) return true; current = folderById().get(current.parentId); } return false; }
-    return { createFolder, renameFolder, move, removeFolder, toggle, snapshot };
+    return { createFolder, renameFolder, move, removeFolder, toggle, snapshot, replace, clear };
 }
 
 function read(storage, key) {

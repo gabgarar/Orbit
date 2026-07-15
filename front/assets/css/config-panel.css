@@ -285,7 +285,7 @@ body.with-toolbars #quickToolbar {
 #appDialogModal {
     position: fixed;
     inset: 0;
-    z-index: 10030;
+    z-index: 10700;
     display: none;
     align-items: center;
     justify-content: center;

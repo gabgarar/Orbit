@@ -243,7 +243,7 @@ let orbitConfig = {
     orbit_future_color: "#00ff88",
     orbit_selected_color: DEFAULT_SELECTED_ORBIT_COLOR,
     orbit_past_color: "#ff0000",
-    orbit_past_seconds: 120,
+    orbit_past_seconds: 2,
     orbit_past_line_width: 5,
     propagation_hours: 12,
     websocket_state_interval_seconds: 1.0
@@ -293,9 +293,9 @@ function getPropagationHoursForSatellite(id) {
 function getPastSecondsForSatellite(id) {
     const requested = Number(getSatelliteConfigValue(id, "orbit_past_seconds", orbitConfig.orbit_past_seconds));
     if (!Number.isFinite(requested) || requested < 0) {
-        return 120;
+        return 2 * 3600;
     }
-    return clamp(requested, PAST_SECONDS_MIN, PAST_SECONDS_MAX);
+    return Math.max(PAST_SECONDS_MIN, requested * 3600);
 }
 
 function getSatelliteLabelSize(id) {
@@ -600,9 +600,9 @@ export function setOrbitConfig(config) {
         nextOrbitConfig.propagation_hours = clamp(requestedHours, PROPAGATION_HOURS_MIN, PROPAGATION_HOURS_MAX);
     }
 
-    const requestedPastSeconds = Number(nextOrbitConfig.orbit_past_seconds);
-    if (Number.isFinite(requestedPastSeconds) && requestedPastSeconds >= 0) {
-        nextOrbitConfig.orbit_past_seconds = clamp(requestedPastSeconds, PAST_SECONDS_MIN, PAST_SECONDS_MAX);
+    const requestedPastHours = Number(nextOrbitConfig.orbit_past_seconds);
+    if (Number.isFinite(requestedPastHours) && requestedPastHours >= 0) {
+        nextOrbitConfig.orbit_past_seconds = requestedPastHours;
     }
 
     orbitConfig = nextOrbitConfig;
@@ -1313,7 +1313,13 @@ function computeOrbitWidth(viewer, baseWidth, referencePosition) {
 }
 
 function createOrbitMaterial(color) {
-    return new Cesium.ColorMaterialProperty(color);
+    // A narrow illuminated core is closer to an orbital path than a thick,
+    // flat colour band. Cesium renders the soft falloff in the same WebGL pass.
+    return new Cesium.PolylineGlowMaterialProperty({
+        color: color.withAlpha(0.96),
+        glowPower: 0.25,
+        taperPower: 1
+    });
 }
 
 function getFutureOrbitColor(id) {

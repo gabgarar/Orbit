@@ -1132,6 +1132,59 @@ export function setupObjectSidebar({
         <div class="catalog-context-separator"></div>
         <button class="catalog-context-action" data-folder-action="delete" type="button">Eliminar carpeta</button>`;
     document.body.appendChild(folderContextMenu);
+
+    const folderNameModal = document.createElement("div");
+    folderNameModal.id = "folderNameModal";
+    folderNameModal.innerHTML = `
+        <form class="folder-name-dialog" aria-labelledby="folderNameDialogTitle">
+            <h3 id="folderNameDialogTitle">Nueva carpeta</h3>
+            <label>
+                <span id="folderNameDialogLabel">Nombre de la carpeta</span>
+                <input id="folderNameDialogInput" type="text" maxlength="80" autocomplete="off" required />
+            </label>
+            <div>
+                <button type="button" data-folder-dialog="cancel">Cancelar</button>
+                <button type="submit" data-folder-dialog="confirm">Crear carpeta</button>
+            </div>
+        </form>`;
+    document.body.appendChild(folderNameModal);
+    const folderNameDialogTitle = folderNameModal.querySelector("#folderNameDialogTitle");
+    const folderNameDialogLabel = folderNameModal.querySelector("#folderNameDialogLabel");
+    const folderNameDialogInput = folderNameModal.querySelector("#folderNameDialogInput");
+    let resolveFolderNameDialog = null;
+
+    function closeFolderNameDialog(value = null) {
+        folderNameModal.classList.remove("open");
+        const resolve = resolveFolderNameDialog;
+        resolveFolderNameDialog = null;
+        resolve?.(value);
+    }
+
+    function requestFolderName({ title, label, initialValue = "" }) {
+        folderNameDialogTitle.textContent = title;
+        folderNameDialogLabel.textContent = label;
+        folderNameDialogInput.value = initialValue;
+        folderNameModal.classList.add("open");
+        queueMicrotask(() => {
+            folderNameDialogInput.focus();
+            folderNameDialogInput.select();
+        });
+        return new Promise((resolve) => {
+            resolveFolderNameDialog = resolve;
+        });
+    }
+
+    folderNameModal.addEventListener("click", (event) => {
+        if (event.target === folderNameModal || event.target.closest('[data-folder-dialog="cancel"]')) {
+            closeFolderNameDialog();
+        }
+    });
+    folderNameModal.querySelector("form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const name = folderNameDialogInput.value.trim();
+        if (name) closeFolderNameDialog(name);
+        else folderNameDialogInput.focus();
+    });
     let folderContextTarget = null;
     let pendingFolderAssignment = null;
 
@@ -1142,7 +1195,7 @@ export function setupObjectSidebar({
         folderContextMenu.classList.add("open");
     }
 
-    folderContextMenu.addEventListener("click", (event) => {
+    folderContextMenu.addEventListener("click", async (event) => {
         const action = event.target.closest("[data-folder-action]")?.dataset.folderAction;
         const folder = folderContextTarget;
         folderContextMenu.classList.remove("open");
@@ -1159,7 +1212,7 @@ export function setupObjectSidebar({
             return;
         }
         if (action === "create") {
-            const name = window.prompt("Nombre de la subcarpeta");
+            const name = await requestFolderName({ title: "Nueva subcarpeta", label: "Nombre de la subcarpeta" });
             if (layerTree.createFolder(name, folder.id)) renderList();
             return;
         }
@@ -1167,6 +1220,20 @@ export function setupObjectSidebar({
         const hasContent = tree.folders.some((item) => item.parentId === folder.id)
             || Object.values(tree.layerParents).some((parentId) => parentId === folder.id);
         if (!hasContent || window.confirm(`La carpeta '${folder.name}' contiene elementos. ¿Eliminarla y devolver su contenido a la raíz?`)) {
+            const foldersToDelete = new Set([folder.id]);
+            let foundNestedFolder = true;
+            while (foundNestedFolder) {
+                foundNestedFolder = false;
+                tree.folders.forEach((item) => {
+                    if (foldersToDelete.has(item.parentId) && !foldersToDelete.has(item.id)) {
+                        foldersToDelete.add(item.id);
+                        foundNestedFolder = true;
+                    }
+                });
+            }
+            Object.entries(tree.layerParents).forEach(([layerId, parentId]) => {
+                if (foldersToDelete.has(parentId)) onToggleObjectLayer(layerId, false);
+            });
             layerTree.removeFolder(folder.id);
             renderList();
         }
@@ -1185,6 +1252,7 @@ export function setupObjectSidebar({
         if (event.key !== "Escape") return;
         closeContextMenu();
         folderContextMenu.classList.remove("open");
+        closeFolderNameDialog();
     });
 
     const addMenu = document.createElement("div");
@@ -2657,9 +2725,9 @@ export function setupObjectSidebar({
         onOpenVisualizationOptions?.(id);
     });
 
-    addFolderBtn?.addEventListener("click", () => {
+    addFolderBtn?.addEventListener("click", async () => {
         closeAddMenu();
-        const name = window.prompt("Nombre de la carpeta");
+        const name = await requestFolderName({ title: "Nueva carpeta", label: "Nombre de la carpeta" });
         if (layerTree.createFolder(name)) renderList();
     });
 
@@ -3744,6 +3812,17 @@ export function setupObjectSidebar({
 
     return {
         selectObject,
+        getProjectTree() {
+            return layerTree.snapshot(getRenderableLayerIds());
+        },
+        setProjectTree(snapshot) {
+            layerTree.replace(snapshot);
+            renderList();
+        },
+        clearProjectTree() {
+            layerTree.clear();
+            renderList();
+        },
         openGroundStationEditor(layerId) {
             if (!layerId) {
                 return;
