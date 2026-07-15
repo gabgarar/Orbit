@@ -2,12 +2,12 @@
 """
 Genera teselas XYZ WebMercator a partir de una textura equirectangular global (2:1).
 Entrada esperada: earth2km.jpg en EPSG:4326 estilo lat/lon global.
-Salida: public/assets/earth2km_tiles/{z}/{x}/{y}.jpg
+Salida: front/assets/earth2km_tiles/{z}/{x}/{y}.jpg
 
 Uso:
   python3 server/python/generate_earth2km_tiles.py \
-    --input public/assets/earth2km.jpg \
-    --output public/assets/earth2km_tiles \
+    --input front/assets/earth2km.jpg \
+    --output front/assets/earth2km_tiles \
     --min-zoom 0 --max-zoom 6 --tile-size 256
 """
 

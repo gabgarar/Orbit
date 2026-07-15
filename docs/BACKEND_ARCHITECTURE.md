@@ -1,13 +1,13 @@
 # Python backend architecture
 
-`server/python/server.py` is the FastAPI composition root. It owns route
-registration, application lifecycle, and dependency wiring only while the
-legacy handlers are migrated incrementally. HTTP paths are grouped under
-`orbit_api/api/routes`; the system and catalog routers are already mounted
-there. Orbit propagation, ground-station, export, and realtime endpoints are
-the next routers to migrate.
+`server/python/server.py` is only the ASGI entry point used by Uvicorn. It
+creates the application from `orbit_api.bootstrap` and contains no domain,
+state, cache, route, or lifecycle logic. `orbit_api.bootstrap` is the FastAPI
+composition root: it wires routes, the application lifespan, configuration
+watching, and concrete services together.
 
-- `orbit_api/core`: runtime paths and operational limits.
+- `orbit_api/core`: runtime paths, operational limits, and system
+  configuration normalisation/loading.
 - `orbit_api/domain`: validated input contracts independent from FastAPI route
   functions.
 - `orbit_api/catalog`: filesystem repository and catalog normalization.
@@ -18,15 +18,15 @@ the next routers to migrate.
 - `orbit_api/ground_stations`: horizon geometry and AOS/LOS access windows.
 - `orbit_api/communications`: WebSocket transport, protocol types, decoder,
   encoder, and per-client subscription state.
-- `orbit_api/application`: cross-domain use-case helpers and export
-  serialization strategies.
+- `orbit_api/application`: use-case services. `OrbitRuntime` owns the loaded
+  constellation, cache coordination, propagator selection, orbit generation,
+  and ephemeris generation; `exporters` owns output formats.
 - `orbit_api/infrastructure`: technical adapters such as the thread-safe TTL
-  cache.
+  cache and filesystem configuration watcher.
 
-The migration rule is: extract cohesive behaviour into one of these modules,
-then import it from `server.py`; endpoint URLs and payload formats remain
-unchanged. This allows changes to be tested and deployed in small, reversible
-steps.
+The layering rule is: routes adapt HTTP/WebSocket input to application
+services; application services orchestrate domains; infrastructure remains at
+the edge. Endpoint URLs and payload formats remain unchanged.
 
 For a new propagator, add `orbits/propagators/<engine>/`, implement the
 `OrbitPropagator` protocol, and register its factory in

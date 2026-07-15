@@ -10,18 +10,18 @@ Browser UI  ──HTTP / WebSocket──>  Node gateway  ──localhost──> 
 
 | Domain | Location | Responsibility |
 | --- | --- | --- |
-| Browser application | `public/` | Cesium rendering, UI state, configuration controls, and WebSocket consumption. |
+| Browser application | `front/` | Cesium rendering, UI state, configuration controls, and WebSocket consumption. |
 | Node gateway | `server/nodeServer.js` | Static files, configuration persistence, catalog import/update, and proxying to Python. |
 | Python propagation API | `server/python/` | SGP4 propagation, ephemerides, station visibility, and WebSocket state delivery. |
 | Shared runtime data | `config/` | User-editable system configuration and catalog data. |
-| Visual regression checks | `server/tests/ui/` | Responsive UI checks executed with Playwright. |
+| Visual regression checks | `tests/ui/` | Responsive UI checks executed with Playwright. |
 
 ## Frontend module boundaries
 
-New frontend code should be added to one of these domains instead of extending `public/main.js`:
+New frontend code should be added to one of these domains instead of extending `front/main.js`:
 
 ```text
-public/js/
+front/js/
   runtime/       viewport policies, startup helpers, and application lifecycle
   rendering/     Cesium-specific scene and entity rendering
   features/      self-contained user-facing workflows
@@ -33,7 +33,7 @@ The existing files are kept stable while functionality moves gradually. The firs
 
 ## Plugin boundary
 
-Feature plugins will be local ES modules managed by `public/js/plugins/pluginHost.js`. This keeps a future ground-stations or satellites plugin independent without allowing arbitrary remote browser code. See [plugins.md](plugins.md) for the lifecycle contract and migration rules.
+Feature plugins will be local ES modules managed by `front/js/plugins/pluginHost.js`. This keeps a future ground-stations or satellites plugin independent without allowing arbitrary remote browser code. See [plugins.md](plugins.md) for the lifecycle contract and migration rules.
 
 ## Server boundaries
 

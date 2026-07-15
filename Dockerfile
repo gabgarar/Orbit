@@ -11,7 +11,7 @@ RUN apt-get update \
 COPY server/package*.json ./server/
 RUN npm ci --prefix server
 
-COPY requirements.txt ./
+COPY server/requirements.txt ./requirements.txt
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 

@@ -1632,7 +1632,7 @@ app.post("/api/ephemeris", async (req, res) => {
 // ===============================
 // 1) Servir carpeta pública y configuración JSON
 // ===============================
-app.use(express.static(path.join(__dirname, "../public")));
+app.use(express.static(path.join(__dirname, "../front")));
 app.use("/config", express.static(CONFIG_DIR));
 
 app.get("/health", async (_req, res) => {

@@ -1652,6 +1652,72 @@ body.with-toolbars #objectSidebar.collapsed {
     text-overflow: ellipsis;
 }
 
+.catalog-context-action + .catalog-context-action {
+    border-top: 1px solid color-mix(in srgb, var(--orbit-border-primary) 75%, transparent);
+}
+
+.catalog-context-action.danger { color: #ff9aa8; }
+.catalog-context-action.danger:hover { background: rgba(191, 55, 77, 0.18); color: #ffd5dc; }
+
+.object-info-standalone .object-info-title {
+    padding: 10px 12px;
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 8px;
+    background: linear-gradient(115deg, rgba(48, 103, 170, 0.2), transparent 70%), var(--orbit-bg-tertiary);
+    color: var(--orbit-text-primary);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.object-info-standalone .object-info-section {
+    margin-top: 8px;
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 8px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--orbit-bg-secondary) 88%, transparent);
+}
+
+.catalog-context-separator {
+    height: 1px;
+    margin: 4px 10px;
+    background: var(--orbit-border-primary);
+}
+
+#folderContextMenu {
+    display: none;
+    position: fixed;
+    z-index: 10200;
+    min-width: 190px;
+    padding: 5px 0;
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 8px;
+    background: var(--orbit-bg-modal);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+}
+#folderContextMenu.open { display: block; }
+
+.layer-tree-folder { margin: 1px 0; }
+.layer-tree-folder-header { width: 100%; min-height: 27px; padding: 0 7px; border: 0; background: transparent; color: var(--orbit-text-primary); text-align: left; font: 600 12px/1 sans-serif; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+.layer-tree-folder-header:hover { background: var(--orbit-bg-hover); }
+.layer-tree-chevron { width: 10px; color: var(--orbit-text-tertiary); font-size: 10px; }
+.layer-tree-icon { font-size: 14px; filter: saturate(0.8); }
+.layer-tree-folder-body { min-height: 4px; margin-left: 14px; padding-left: 7px; border-left: 1px solid color-mix(in srgb, var(--orbit-border-primary) 55%, transparent); }
+.layer-tree-folder-body .object-list-row { margin-left: 0; }
+.layer-tree-folder-body .object-list-row .object-list-item { border: 0 !important; border-radius: 0 !important; background: transparent !important; }
+.layer-tree-folder-body .object-list-row.active .object-list-item, .layer-tree-folder-body .object-list-row .object-list-item.active { background: var(--orbit-bg-active) !important; }
+
+/* Root layers use the same compact explorer-row language as folder children. */
+#objectList > .object-list-row:not(.object-list-row-add) { margin: 0; min-height: 27px; border: 0; border-radius: 0; background: transparent; }
+#objectList > .object-list-row:not(.object-list-row-add) .object-list-item { min-height: 27px; border: 0; border-radius: 0; background: transparent; }
+#objectList > .object-list-row:not(.object-list-row-add):hover .object-list-item { background: var(--orbit-bg-hover); }
+
+.folder-add-menu { position: relative; }
+.folder-add-menu > .catalog-context-action { display: flex; justify-content: space-between; width: 100%; }
+.folder-add-submenu { display: none; position: absolute; left: calc(100% - 2px); top: 0; min-width: 170px; padding: 5px 0; border: 1px solid var(--orbit-border-primary); border-radius: 8px; background: var(--orbit-bg-modal); box-shadow: 0 12px 28px rgba(0,0,0,.35); }
+.folder-add-menu:hover .folder-add-submenu { display: block; }
+.folder-add-submenu .catalog-context-action { width: 100%; }
+#layerAddMenu > #addSatelliteLayerBtn, #layerAddMenu > #addGroundStationBtn { display: none; }
+
 .object-sidebar-body-compact .object-list-row.active .object-list-item {
     color: var(--orbit-text-accent);
 }

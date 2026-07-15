@@ -137,4 +137,5 @@ Listado de ideas y mejoras ordenadas por área. Marca con `[x]` cuando se implem
 
 ---
 
+
 *Última actualización: 2026-07-02*

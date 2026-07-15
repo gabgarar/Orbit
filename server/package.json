@@ -2,8 +2,8 @@
   "type": "module",
   "scripts": {
     "start": "node nodeServer.js",
-    "tiles:earth2km": "python3 python/generate_earth2km_tiles.py --input ../public/assets/earth2km.jpg --output ../public/assets/earth2km_tiles --min-zoom 0 --max-zoom 6 --tile-size 256",
-    "test:frontend": "node --test ../public/tests/unit/adaptive-display.test.js ../public/tests/unit/ground-station-geometry.test.js",
+    "tiles:earth2km": "python3 python/generate_earth2km_tiles.py --input ../front/assets/earth2km.jpg --output ../front/assets/earth2km_tiles --min-zoom 0 --max-zoom 6 --tile-size 256",
+    "test:frontend": "node --test ../front/tests/unit/*.test.js",
     "test:backend": "python3 -m pytest python/tests",
     "test:integration": "playwright test --config=playwright.config.js",
     "test:ui": "npm run test:integration",

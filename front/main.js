@@ -76,13 +76,8 @@ async function resolveTerrainProviderForBoot() {
 
 const startupTerrainProvider = await resolveTerrainProviderForBoot();
 
-const localProvider = new Cesium.SingleTileImageryProvider({
-    url: "assets/earth3km.jpg",
-    rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90)
-});
-
 const nightProvider = new Cesium.SingleTileImageryProvider({
-    url: "assets/earthnight3km.jpg",
+    url: "assets/basemap/earthnight3km.jpg",
     rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90)
 });
 
@@ -95,11 +90,11 @@ const earth2kmTilesProvider = new Cesium.UrlTemplateImageryProvider({
     credit: "earth2km local tiles"
 });
 
+
 logger.info("Creando Cesium Viewer...");
 
 const viewer = new Cesium.Viewer("cesiumContainer", {
-    imageryProvider: localProvider,
-    baseLayerPicker: false,
+    baseLayerPicker: true,
     geocoder: false,
     infoBox: false,
     selectionIndicator: true,
@@ -132,6 +127,14 @@ if (viewer?.cesiumWidget?.creditContainer) {
     viewer.cesiumWidget.creditContainer.style.display = "none";
     viewer.cesiumWidget.creditContainer.setAttribute("aria-hidden", "true");
 }
+
+function updateAdaptiveGlobeLighting() {
+    const height = viewer.camera.positionCartographic?.height || 0;
+    viewer.scene.globe.enableLighting = globeLightingEnabledByConfig && height >= GLOBE_LIGHTING_MIN_HEIGHT_METERS;
+    if (nightImageryLayer) nightImageryLayer.show = globeLightingEnabledByConfig && height >= GLOBE_LIGHTING_MIN_HEIGHT_METERS;
+}
+
+viewer.camera.changed.addEventListener(updateAdaptiveGlobeLighting);
 
 const tychoSkyDomeTextureUrl = "assets/stars/TychoSkyMapHighRes.jpg";
 const tychoSkyDomeRadius = 1000000000;
@@ -204,10 +207,53 @@ let groundStationSequence = 1;
 let satelliteDuplicateSequence = 1;
 let stationHeatMapTimer = null;
 let groundStationHeatLegendRoot = null;
+let currentProjectFileHandle = null;
+let globeLightingEnabledByConfig = true;
+const GLOBE_LIGHTING_MIN_HEIGHT_METERS = 1_200_000;
 let runtimeDecayAlertPerigeeKm = 200;
 
 const SIMULATION_MODE_REALTIME = "realtime";
 const SIMULATION_MODE_RANGE = "range";
+
+function buildProjectDocument() {
+    return {
+        format: "orbit-project",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        satellites: getActiveSatelliteLayerIds(),
+        layerNames: Object.fromEntries(layerDisplayNameOverrides),
+        groundStations: [...groundStationLayers.values()].map(({ entity, coverageEntity, ...station }) => station),
+        simulation: { mode: simulationState.mode, startDate: simulationState.startDate, endDate: simulationState.endDate }
+    };
+}
+
+
+async function saveProjectToHandle(handle) {
+    const writable = await handle.createWritable();
+    await writable.write(JSON.stringify(buildProjectDocument(), null, 2));
+    await writable.close();
+}
+
+async function exportProject() {
+    const blob = new Blob([JSON.stringify(buildProjectDocument(), null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = Object.assign(document.createElement("a"), { href: url, download: "orbit-project.json" });
+    anchor.click(); URL.revokeObjectURL(url);
+}
+
+async function openProject() {
+    try {
+        const [handle] = await window.showOpenFilePicker({ types: [{ description: "Orbit project", accept: { "application/json": [".json"] } }] });
+        const project = JSON.parse(await (await handle.getFile()).text());
+        if (project?.format !== "orbit-project" || project.version !== 1) throw new Error("Unsupported project file");
+        currentProjectFileHandle = handle;
+        Object.entries(project.layerNames || {}).forEach(([id, name]) => layerDisplayNameOverrides.set(id, name));
+        for (const satelliteId of project.satellites || []) setSatelliteLayerActive(satelliteId, true);
+        if (project.simulation?.startDate && project.simulation?.endDate) applySimulationRange(new Date(project.simulation.startDate), new Date(project.simulation.endDate));
+        document.getElementById("projectWelcome")?.remove();
+        objectSidebar?.renderList?.();
+    } catch (error) { if (error?.name !== "AbortError") showAppAlert("No se pudo abrir el proyecto.", uiText("alertTitle")); }
+}
 const SIMULATION_SPEED_VALUES = [1, 10, 100, 1000];
 const SIMULATION_TIMELINE_STEPS = 10000;
 const SIMULATION_LONG_RANGE_WARNING_HOURS = 24 * 7;
@@ -942,6 +988,40 @@ function computeStationElevationDeg(stationCartesian, satCartesian) {
     return calculateElevationDegrees(Cesium, stationCartesian, satCartesian);
 }
 
+function resetCameraView() {
+    viewer.trackedEntity = undefined;
+    viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(0, 20, 20_000_000), duration: 0.8 });
+}
+
+function createCameraTools() {
+    const tools = document.createElement("div");
+    tools.id = "cameraTools";
+    tools.innerHTML = `
+        <button class="camera-tools-main" type="button" title="Alternar cámara centrada o libre" aria-label="Alternar cámara centrada o libre">📷</button>
+        <div class="camera-tools-menu" hidden>
+            <button data-camera-action="reset" type="button" title="Restablecer vista">⌂</button>
+            <button data-camera-action="3d" type="button" title="Vista 3D">◎</button>
+            <button data-camera-action="2d" type="button" title="Vista 2D">▤</button>
+            <button data-camera-action="columbus" type="button" title="Vista Columbus">▱</button>
+            <button data-camera-action="navigation" type="button" title="Alternar cámara fija/libre">⇄</button>
+        </div>`;
+    const main = tools.querySelector(".camera-tools-main");
+    const menu = tools.querySelector(".camera-tools-menu");
+    main.addEventListener("click", () => applyCameraNavigationMode(cameraNavigationMode === "free" ? "centered" : "free"));
+    tools.addEventListener("click", (event) => {
+        const action = event.target.closest("button[data-camera-action]")?.dataset.cameraAction;
+        if (!action) return;
+        if (action === "reset") resetCameraView();
+        if (action === "3d") viewer.scene.morphTo3D(0.5);
+        if (action === "2d") viewer.scene.morphTo2D(0.5);
+        if (action === "columbus") viewer.scene.morphToColumbusView(0.5);
+        if (action === "navigation") applyCameraNavigationMode(cameraNavigationMode === "free" ? "centered" : "free");
+    });
+    viewer.container.querySelector(".cesium-viewer-toolbar")?.appendChild(tools);
+}
+
+createCameraTools();
+
 function computeFreeSpacePathLossDb(freqMhz, rangeKm) {
     return calculateFreeSpacePathLossDb(freqMhz, rangeKm);
 }
@@ -1120,6 +1200,10 @@ function renameLayer(layerId, nextName) {
     }
 
     layerDisplayNameOverrides.set(id, name);
+    const satelliteEntity = getSatelliteEntity(getSatelliteSourceIdFromLayerId(id));
+    if (satelliteEntity?.label) {
+        satelliteEntity.label.text = name;
+    }
     if (isGroundStationLayerId(id)) {
         const station = groundStationLayers.get(id);
         if (station) {
@@ -1899,6 +1983,7 @@ function refreshSimulationControlsUi() {
     const oemDomainActive = hasLoadedOemEphemerisTracks();
 
     root.dataset.mode = simulationState.mode;
+    updateTelemetryTimeContext();
 
     if (rangeGroup) {
         rangeGroup.hidden = !isRangeMode;
@@ -1945,6 +2030,17 @@ function refreshSimulationControlsUi() {
     updateSimulationTimelineUi();
     updateSimulationDockLayout();
     simulationUiBusy = false;
+}
+
+function updateTelemetryTimeContext() {
+    // Keep the telemetry panel status aligned with the active time domain.
+    const subtitle = document.querySelector("#leftInfoPanel .telemetry-panel-subtitle");
+    if (!subtitle) return;
+    const isRangeMode = simulationState.mode === SIMULATION_MODE_RANGE;
+    subtitle.classList.toggle("is-simulated", isRangeMode);
+    subtitle.lastChild.textContent = isRangeMode
+        ? " SIMULACIÓN EN RANGO"
+        : " DATOS EN TIEMPO REAL";
 }
 
 function setSimulationMode(mode) {
@@ -2472,6 +2568,7 @@ function ensureTopToolbar() {
     toolbar.id = "topToolbar";
     toolbar.innerHTML = `
         <div class="toolbar-brand">ORBIT</div>
+        <div class="toolbar-file-menu"><button id="topFileBtn" class="toolbar-btn" type="button">File</button><div class="toolbar-file-dropdown"><button id="projectNewBtn" type="button">New project</button><button id="projectOpenBtn" type="button">Open project</button><button id="projectSaveBtn" type="button">Save project</button><button id="projectExportBtn" type="button">Export project</button></div></div>
         <button id="topConfigBtn" class="toolbar-btn" type="button" title="Configuración">
             <span>⚙</span>
             <span>Config</span>
@@ -2503,14 +2600,34 @@ function ensureTopToolbar() {
         </div>
     `;
 
-    document.body.appendChild(toolbar);
-    document.body.classList.add("with-toolbars");
-
-    toolbar.querySelector("#topConfigBtn")?.addEventListener("click", () => {
-        if (runtimeConfigPanelApi?.toggle) {
-            runtimeConfigPanelApi.toggle();
-        }
+    toolbar.querySelector("#topConfigBtn")?.remove();
+    toolbar.querySelector("#topCameraModeBtn")?.remove();
+    toolbar.querySelector("#topGroundBtn")?.remove();
+    toolbar.querySelector("#topSimCtrlBtn")?.remove();
+    toolbar.querySelector("#topFileBtn")?.addEventListener("click", () => toolbar.querySelector(".toolbar-file-menu")?.classList.toggle("open"));
+    document.addEventListener("pointerdown", (event) => {
+        if (!toolbar.querySelector(".toolbar-file-menu")?.contains(event.target)) toolbar.querySelector(".toolbar-file-menu")?.classList.remove("open");
     });
+    toolbar.querySelector("#projectExportBtn")?.addEventListener("click", exportProject);
+    toolbar.querySelector("#projectOpenBtn")?.addEventListener("click", openProject);
+    toolbar.querySelector("#projectSaveBtn")?.addEventListener("click", async () => {
+        try {
+            if (!currentProjectFileHandle && window.showSaveFilePicker) currentProjectFileHandle = await window.showSaveFilePicker({ suggestedName: "orbit-project.json", types: [{ description: "Orbit project", accept: { "application/json": [".json"] } }] });
+            if (currentProjectFileHandle) await saveProjectToHandle(currentProjectFileHandle); else await exportProject();
+        } catch (error) { if (error?.name !== "AbortError") console.error("Could not save project", error); }
+    });
+    toolbar.querySelector("#projectNewBtn")?.addEventListener("click", () => document.getElementById("projectWelcome")?.remove());
+    if (!document.getElementById("projectWelcome")) {
+        const welcome = document.createElement("div");
+        welcome.id = "projectWelcome";
+        welcome.innerHTML = `<section class="project-welcome-card"><div class="project-welcome-orbit">◯</div><div class="project-welcome-mark">O R B I T</div><h1>Welcome to Orbit</h1><div class="project-welcome-rule"></div><p>Create a project to start modelling your space operations,<br>or open an existing one.</p><div class="project-welcome-actions"><button class="primary" data-project-action="new"><span>⊕</span> New project</button><button data-project-action="open"><span>▱</span> Open project</button></div></section>`;
+        welcome.querySelector('[data-project-action="new"]').addEventListener("click", () => welcome.remove());
+        welcome.querySelector('[data-project-action="open"]').addEventListener("click", openProject);
+        document.body.appendChild(welcome);
+    }
+    document.body.appendChild(toolbar);
+    toolbar.querySelector(".toolbar-time-wrap")?.addEventListener("click", () => toggleSimulationDock());
+    document.body.classList.add("with-toolbars");
 
     toolbar.querySelector("#topCameraModeBtn")?.addEventListener("click", () => {
         const nextMode = cameraNavigationMode === "centered" ? "free" : "centered";
@@ -2621,7 +2738,7 @@ function ensureLeftSidebar() {
     satellitesPanel.className = "sidebar-panel";
     satellitesPanel.innerHTML = `
         <div class="sidebar-panel-header">
-            <div class="sidebar-panel-title">LAYERS</div>
+            <div class="sidebar-panel-title">My project</div>
             <div class="sidebar-panel-actions">
                 <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">🗑</button>
                 <button class="object-global-eye-btn" id="toggleAllVisibilityBtn" type="button" title="Ocultar todas las capas" aria-label="Ocultar todas las capas">👁</button>
@@ -2648,6 +2765,7 @@ function ensureLeftSidebar() {
         <div class="sidebar-panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Redimensionar panel de telemetría"></div>
     `;
     document.body.appendChild(infoPanel);
+    updateTelemetryTimeContext();
 
     const satellitesBtn = sidebar.querySelector("#leftSatellitesBtn");
     const infoBtn = sidebar.querySelector("#leftInfoBtn");
@@ -2969,6 +3087,7 @@ function ensureSatelliteVisualizationModal() {
                 <div class="config-field checkbox"><input id="satVizUse3D" type="checkbox"><label for="satVizUse3D">Use 3D Model</label></div>
                 <div class="config-field"><label for="satVizSizeMode">Size Mode</label><select id="satVizSizeMode"><option value="visual">visual</option><option value="physical">physical</option></select></div>
                 <div class="config-field checkbox"><input id="satVizFutureShow" type="checkbox"><label for="satVizFutureShow">Future Show</label></div>
+                <div class="config-field checkbox"><input id="satVizGroundShow" type="checkbox"><label for="satVizGroundShow">Ground Track Show</label></div>
                 <div class="config-field checkbox" id="satVizFieldPastShow"><input id="satVizPastShow" type="checkbox"><label for="satVizPastShow">Past Show</label></div>
             </div>
             <div id="satelliteVizActions">
@@ -3016,6 +3135,7 @@ function ensureSatelliteVisualizationModal() {
             satellite_use_3d_model: modal.querySelector("#satVizUse3D").checked,
             satellite_size_mode: modal.querySelector("#satVizSizeMode").value,
             orbit_future_show: modal.querySelector("#satVizFutureShow").checked,
+            orbit_ground_track_show: modal.querySelector("#satVizGroundShow").checked,
             orbit_past_show: hidePastAndPropagation ? null : modal.querySelector("#satVizPastShow").checked
         };
 
@@ -3082,6 +3202,7 @@ function openSatelliteVisualizationModal(satelliteId) {
     modal.querySelector("#satVizUse3D").checked = effective.satellite_use_3d_model === true;
     modal.querySelector("#satVizSizeMode").value = effective.satellite_size_mode;
     modal.querySelector("#satVizFutureShow").checked = effective.orbit_future_show === true;
+    modal.querySelector("#satVizGroundShow").checked = effective.orbit_ground_track_show === true;
     modal.querySelector("#satVizPastShow").checked = effective.orbit_past_show === true;
 
     const oemOnlyHiddenFields = [
@@ -3331,6 +3452,13 @@ function applyCameraNavigationMode(mode, options = {}) {
     }
 
     cameraNavigationMode = nextMode;
+    const cameraToggle = document.querySelector("#cameraTools .camera-tools-main");
+    if (cameraToggle) {
+        const isFree = nextMode === "free";
+        cameraToggle.title = isFree ? "Cámara libre" : "Cámara centrada";
+        cameraToggle.setAttribute("aria-label", cameraToggle.title);
+        cameraToggle.classList.toggle("is-free", isFree);
+    }
     updateCameraModeButtonLabel();
     updateTopToolbarState();
     logger.info(`Modo de navegacion de camara: ${nextMode}`);
@@ -3554,6 +3682,10 @@ function applyEarthDayNightBlend(systemConfig) {
 }
 
 function applyEarthBaseLayers() {
+    // Keep the native Cesium basemap and add night lights only as an overlay.
+    if (!nightImageryLayer) nightImageryLayer = viewer.scene.imageryLayers.addImageryProvider(nightProvider);
+    updateAdaptiveGlobeLighting();
+    return;
     try {
         viewer.scene.imageryLayers.removeAll();
         viewer.scene.imageryLayers.addImageryProvider(localProvider);
@@ -3603,7 +3735,8 @@ function applySystemRuntimeConfig(systemConfigRaw) {
     applyStarsConfig(systemConfig);
     applyAntialiasConfig(systemConfig);
     viewer.scene.skyAtmosphere.show = systemConfig.sky_atmosphere !== false;
-    viewer.scene.globe.enableLighting = systemConfig.globe_lighting !== false;
+    globeLightingEnabledByConfig = systemConfig.globe_lighting !== false;
+    updateAdaptiveGlobeLighting();
     applyEarthDayNightBlend(systemConfig);
 }
 
@@ -3882,6 +4015,12 @@ function firstPersonSatellite(entity) {
                 return;
             }
             openSatelliteVisualizationModal(sourceId);
+        },
+        getGroundTrackVisible: (id) => getSatelliteVisualizationConfig(getSatelliteSourceIdFromLayerId(id))?.effective?.orbit_ground_track_show === true,
+        onToggleGroundTrack: (id) => {
+            const sourceId = getSatelliteSourceIdFromLayerId(id);
+            const current = getSatelliteVisualizationConfig(sourceId)?.effective?.orbit_ground_track_show === true;
+            setSatelliteVisualizationConfig(sourceId, { orbit_ground_track_show: !current });
         },
         onRequestAddSatellite: () => openLeftSatellitesPanel(),
         onRequestCreateGroundStation: (payload) => {

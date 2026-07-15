@@ -1,3 +1,5 @@
+import { createLayerTree } from "./features/layers/layerTree.js";
+
 function formatNumber(value, decimals = 2) {
     const n = Number(value);
     if (!Number.isFinite(n)) {
@@ -726,6 +728,8 @@ export function setupObjectSidebar({
     onFocusObject,
     onSelectObject,
     onOpenVisualizationOptions,
+    onToggleGroundTrack,
+    getGroundTrackVisible,
     onRequestAddSatellite,
     onRequestCreateGroundStation,
     onRequestUpdateGroundStation,
@@ -787,6 +791,8 @@ export function setupObjectSidebar({
     let catalogTotalPages = 1;
     let catalogHasMore = false;
     let catalogLoadingPage = false;
+    // Project ownership will provide persistence later; UI grouping is session-only.
+    const layerTree = createLayerTree(null);
     let globalFileDragDepth = 0;
     const catalogIndexById = new Map();
     const catalogMetaCache = new Map();
@@ -1107,17 +1113,94 @@ export function setupObjectSidebar({
         <button class="catalog-context-action" id="contextToggleHeatMapBtn" type="button">Mostrar heat map</button>
         <button class="catalog-context-action" id="contextExplainBtn" type="button">${uiText("explainParams")}</button>
         <button class="catalog-context-action" id="contextVizBtn" type="button">${uiText("vizOptions")}</button>
+        <div class="catalog-context-separator"></div>
+        <button class="catalog-context-action" id="contextGroundTrackBtn" type="button">Ground Track Show</button>
         <button class="catalog-context-action" id="contextExportBtn" type="button">Exportar...</button>
+        <div class="catalog-context-separator"></div>
+        <button class="catalog-context-action danger" id="contextRemoveLayerBtn" type="button">Eliminar capa</button>
     `;
     document.body.appendChild(contextMenu);
+
+    const folderContextMenu = document.createElement("div");
+    folderContextMenu.id = "folderContextMenu";
+    folderContextMenu.innerHTML = `
+        <div class="folder-add-menu"><button class="catalog-context-action" type="button">Add <span>›</span></button><div class="folder-add-submenu">
+            <button class="catalog-context-action" data-folder-action="satellite" type="button">Satélite</button>
+            <button class="catalog-context-action" data-folder-action="station" type="button">Estación de tierra</button>
+        </div></div>
+        <button class="catalog-context-action" data-folder-action="create" type="button">Nueva subcarpeta</button>
+        <div class="catalog-context-separator"></div>
+        <button class="catalog-context-action" data-folder-action="delete" type="button">Eliminar carpeta</button>`;
+    document.body.appendChild(folderContextMenu);
+    let folderContextTarget = null;
+    let pendingFolderAssignment = null;
+
+    function openFolderContextMenu(folder, x, y) {
+        folderContextTarget = folder;
+        folderContextMenu.style.left = `${Math.max(8, x)}px`;
+        folderContextMenu.style.top = `${Math.max(8, y)}px`;
+        folderContextMenu.classList.add("open");
+    }
+
+    folderContextMenu.addEventListener("click", (event) => {
+        const action = event.target.closest("[data-folder-action]")?.dataset.folderAction;
+        const folder = folderContextTarget;
+        folderContextMenu.classList.remove("open");
+        if (!action || !folder) return;
+        if (action === "satellite") {
+            pendingFolderAssignment = { folderId: folder.id, knownIds: new Set(getRenderableLayerIds()) };
+            onRequestAddSatellite?.();
+            waitAndOpenCatalog();
+            return;
+        }
+        if (action === "station") {
+            pendingFolderAssignment = { folderId: folder.id, knownIds: new Set(getRenderableLayerIds()) };
+            openGroundStationModal();
+            return;
+        }
+        if (action === "create") {
+            const name = window.prompt("Nombre de la subcarpeta");
+            if (layerTree.createFolder(name, folder.id)) renderList();
+            return;
+        }
+        const tree = layerTree.snapshot(getRenderableLayerIds());
+        const hasContent = tree.folders.some((item) => item.parentId === folder.id)
+            || Object.values(tree.layerParents).some((parentId) => parentId === folder.id);
+        if (!hasContent || window.confirm(`La carpeta '${folder.name}' contiene elementos. ¿Eliminarla y devolver su contenido a la raíz?`)) {
+            layerTree.removeFolder(folder.id);
+            renderList();
+        }
+    });
+
+    document.addEventListener("pointerdown", (event) => {
+        if (!contextMenu.contains(event.target)) closeContextMenu();
+        if (!folderContextMenu.contains(event.target)) folderContextMenu.classList.remove("open");
+        if (!listRoot.contains(event.target) && !contextMenu.contains(event.target) && !folderContextMenu.contains(event.target) && selectedId) {
+            selectedId = null;
+            renderList();
+            renderInfo();
+        }
+    });
+    document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        closeContextMenu();
+        folderContextMenu.classList.remove("open");
+    });
 
     const addMenu = document.createElement("div");
     addMenu.id = "layerAddMenu";
     addMenu.innerHTML = `
         <button class="catalog-context-action" id="addSatelliteLayerBtn" type="button">Añadir satelite</button>
+        <button class="catalog-context-action" id="addFolderBtn" type="button">Nueva carpeta</button>
         <button class="catalog-context-action" id="addGroundStationBtn" type="button">Añadir estacion de tierra</button>
     `;
     document.body.appendChild(addMenu);
+    const addLayerEntry = document.createElement("div");
+    addLayerEntry.className = "folder-add-menu";
+    addLayerEntry.innerHTML = `<button class="catalog-context-action" type="button">Add layer <span>›</span></button><div class="folder-add-submenu"><button class="catalog-context-action" data-add-kind="satellite" type="button">Satélite</button><button class="catalog-context-action" data-add-kind="station" type="button">Estación de tierra</button></div>`;
+    addLayerEntry.querySelector('[data-add-kind="satellite"]').addEventListener("click", () => addSatelliteLayerBtn.click());
+    addLayerEntry.querySelector('[data-add-kind="station"]').addEventListener("click", () => addGroundStationBtn.click());
+    addMenu.prepend(addLayerEntry);
 
     const groundStationModal = document.createElement("div");
     groundStationModal.id = "groundStationModal";
@@ -1364,12 +1447,15 @@ export function setupObjectSidebar({
 
     const contextExplainBtn = contextMenu.querySelector("#contextExplainBtn");
     const contextVizBtn = contextMenu.querySelector("#contextVizBtn");
+    const contextGroundTrackBtn = contextMenu.querySelector("#contextGroundTrackBtn");
     const contextExportBtn = contextMenu.querySelector("#contextExportBtn");
     const contextRenameBtn = contextMenu.querySelector("#contextRenameBtn");
     const contextUpdateStationBtn = contextMenu.querySelector("#contextUpdateStationBtn");
     const contextToggleHeatMapBtn = contextMenu.querySelector("#contextToggleHeatMapBtn");
+    const contextRemoveLayerBtn = contextMenu.querySelector("#contextRemoveLayerBtn");
 
     const addSatelliteLayerBtn = addMenu.querySelector("#addSatelliteLayerBtn");
+    const addFolderBtn = addMenu.querySelector("#addFolderBtn");
     const addGroundStationBtn = addMenu.querySelector("#addGroundStationBtn");
 
     const groundStationCloseBtn = groundStationModal.querySelector("#groundStationCloseBtn");
@@ -2154,7 +2240,12 @@ export function setupObjectSidebar({
         contextUpdateStationBtn.hidden = !isGroundStation;
         contextToggleHeatMapBtn.hidden = true;
         contextVizBtn.hidden = isGroundStation;
+        contextGroundTrackBtn.hidden = isGroundStation;
+        if (!isGroundStation) {
+            contextGroundTrackBtn.textContent = getGroundTrackVisible?.(satelliteId) ? "Ground Track Hide" : "Ground Track Show";
+        }
         contextRenameBtn.hidden = isGroundStation;
+        contextRemoveLayerBtn.hidden = false;
 
         if (isGroundStation && typeof getGroundStationParams === "function") {
             const params = getGroundStationParams(satelliteId) || {};
@@ -2564,6 +2655,28 @@ export function setupObjectSidebar({
         const id = contextTargetId;
         closeContextMenu();
         onOpenVisualizationOptions?.(id);
+    });
+
+    addFolderBtn?.addEventListener("click", () => {
+        closeAddMenu();
+        const name = window.prompt("Nombre de la carpeta");
+        if (layerTree.createFolder(name)) renderList();
+    });
+
+    contextGroundTrackBtn.addEventListener("click", () => {
+        if (!contextTargetId) return;
+        const id = contextTargetId;
+        closeContextMenu();
+        onToggleGroundTrack?.(id);
+    });
+
+    contextRemoveLayerBtn.addEventListener("click", () => {
+        if (!contextTargetId) return;
+        const id = contextTargetId;
+        closeContextMenu();
+        onToggleObjectLayer(id, false);
+        if (selectedId === id) selectedId = null;
+        renderList(); renderInfo(); renderCatalogList();
     });
 
     contextUpdateStationBtn.addEventListener("click", () => {
@@ -3109,6 +3222,13 @@ export function setupObjectSidebar({
 
     function renderList() {
         const ids = getRenderableLayerIds();
+        if (pendingFolderAssignment) {
+            const addedIds = ids.filter((id) => !pendingFolderAssignment.knownIds.has(id));
+            if (addedIds.length) {
+                addedIds.forEach((id) => layerTree.move(id, pendingFolderAssignment.folderId));
+                pendingFolderAssignment = null;
+            }
+        }
         // Destructive controls are only useful when there is something to remove.
         removeAllLayersHeaderBtn.hidden = getLayerIds().length === 0;
         const activeFilterText = String(searchInput?.value || layerFilterText || "").toLowerCase().trim();
@@ -3120,12 +3240,58 @@ export function setupObjectSidebar({
         });
 
         listRoot.innerHTML = "";
+        const tree = layerTree.snapshot(ids);
+        const containers = new Map([[null, listRoot]]);
+        listRoot.addEventListener("dragover", (event) => event.preventDefault());
+        listRoot.addEventListener("drop", (event) => {
+            event.preventDefault();
+            const id = event.dataTransfer.getData("text/plain");
+            if (layerTree.move(id, null)) renderList();
+        });
+        const renderFolder = (folder, parentContainer) => {
+            const group = document.createElement("section");
+            group.className = "layer-tree-folder";
+            const header = document.createElement("button");
+            header.type = "button";
+            header.className = "layer-tree-folder-header";
+            header.innerHTML = `<span class="layer-tree-chevron">${folder.expanded ? "▾" : "▸"}</span><span class="layer-tree-icon">📁</span><span>${folder.name}</span>`;
+            header.draggable = true;
+            header.addEventListener("dragstart", (event) => { event.dataTransfer.setData("text/plain", folder.id); event.dataTransfer.effectAllowed = "move"; });
+            header.addEventListener("dragover", (event) => { event.preventDefault(); event.stopPropagation(); });
+            header.addEventListener("drop", (event) => {
+                event.preventDefault(); event.stopPropagation();
+                const id = event.dataTransfer.getData("text/plain");
+                if (layerTree.move(id, folder.id)) renderList();
+            });
+            header.addEventListener("click", () => { layerTree.toggle(folder.id); renderList(); });
+            header.addEventListener("contextmenu", (event) => {
+                event.preventDefault();
+                openFolderContextMenu(folder, event.clientX, event.clientY);
+            });
+            group.appendChild(header);
+            const body = document.createElement("div");
+            body.hidden = !folder.expanded;
+            body.className = "layer-tree-folder-body";
+            body.addEventListener("dragover", (event) => { event.preventDefault(); event.stopPropagation(); });
+            body.addEventListener("drop", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const id = event.dataTransfer.getData("text/plain");
+                if (layerTree.move(id, folder.id)) renderList();
+            });
+            group.appendChild(body); parentContainer.appendChild(group); containers.set(folder.id, body);
+            tree.folders.filter((item) => item.parentId === folder.id).forEach((child) => renderFolder(child, body));
+        };
+        tree.folders.filter((item) => !item.parentId).forEach((folder) => renderFolder(folder, listRoot));
         for (const id of filtered) {
             const rowEl = document.createElement("div");
             rowEl.className = `object-list-row${id === selectedId ? " active" : ""}`;
+            rowEl.draggable = true;
+            rowEl.addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", id));
 
             const item = document.createElement("button");
             item.type = "button";
+            item.draggable = true;
             item.className = `object-list-item${id === selectedId ? " active" : ""}`;
             item.textContent = "";
             const displayName = typeof getLayerDisplayName === "function"
@@ -3160,6 +3326,11 @@ export function setupObjectSidebar({
                 onSelectObject?.(selectedId);
                 renderList();
                 renderInfo();
+            });
+            item.addEventListener("dragstart", (event) => {
+                event.stopPropagation();
+                event.dataTransfer.setData("text/plain", id);
+                event.dataTransfer.effectAllowed = "move";
             });
             item.addEventListener("dblclick", () => {
                 selectedId = id;
@@ -3210,7 +3381,7 @@ export function setupObjectSidebar({
                 openContextMenu(id, event.clientX, event.clientY);
             });
 
-            listRoot.appendChild(rowEl);
+            (containers.get(tree.layerParents[id]) || listRoot).appendChild(rowEl);
         }
 
         // Última fila: acción "+" con aspecto de satélite que abre el catálogo.

@@ -10,4 +10,4 @@ server.log
 *.py[cod]
 dist
 build
-server/ui-artifacts
+tests/artifacts

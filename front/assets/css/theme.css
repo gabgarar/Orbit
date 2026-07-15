@@ -201,7 +201,7 @@
 }
 
 #topToolbar .toolbar-info {
-    font: 600 calc(11px * var(--orbit-ui-scale))/1 sans-serif;
+    font: 600 calc(13px * var(--orbit-ui-scale))/1 sans-serif;
     color: var(--orbit-text-tertiary);
     padding: 0 calc(8px * var(--orbit-ui-scale));
 }
@@ -220,6 +220,7 @@
     align-items: flex-end;
     gap: 2px;
     min-width: calc(260px * var(--orbit-ui-scale));
+    cursor: pointer;
 }
 
 #topToolbar .toolbar-subinfo {
@@ -245,7 +246,7 @@
     color: var(--orbit-text-primary);
     border: 1px solid var(--orbit-border-primary);
     border-radius: calc(5px * var(--orbit-ui-scale));
-    font: 500 calc(12px * var(--orbit-ui-scale))/1 sans-serif;
+    font: 500 calc(14px * var(--orbit-ui-scale))/1 sans-serif;
     transition: border-color 0.15s ease, background 0.15s ease;
 }
 
@@ -551,6 +552,38 @@
     flex: 1;
 }
 
+.toolbar-file-menu { position: relative; }
+.toolbar-file-dropdown { display: none; position: absolute; top: calc(100% + 5px); left: 0; min-width: 150px; padding: 5px 0; border: 1px solid var(--orbit-border-primary); border-radius: 7px; background: var(--orbit-bg-modal); z-index: 10200; }
+.toolbar-file-menu.open .toolbar-file-dropdown { display: grid; }
+.toolbar-file-dropdown button { padding: 8px 10px; border: 0; background: transparent; color: var(--orbit-text-primary); text-align: left; cursor: pointer; }
+.toolbar-file-dropdown button:hover { background: var(--orbit-bg-hover); }
+
+#projectWelcome { position: fixed; inset: 0; z-index: 10500; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, rgba(11, 83, 161, .22), transparent 35%), rgba(2, 8, 17, .48); backdrop-filter: blur(4px); }
+#projectWelcome .project-welcome-card { width: min(820px, calc(100vw - 40px)); padding: 62px 54px; border: 1px solid rgba(113, 169, 230, .58); border-radius: 34px; background: linear-gradient(135deg, rgba(9, 40, 77, .94), rgba(3, 13, 27, .91)); box-shadow: 0 32px 90px rgba(0,0,0,.58), inset 0 1px rgba(255,255,255,.06); text-align: center; }
+.project-welcome-orbit { height: 84px; color: #27b9ff; font: 800 92px/.64 sans-serif; text-shadow: 0 0 28px rgba(23,155,255,.55); transform: rotate(-25deg); }
+.project-welcome-mark { margin-top: 30px; color: #2888ff; font: 800 19px/1 sans-serif; letter-spacing: 12px; }
+#projectWelcome h1 { margin: 34px 0 18px; color: #fff; font: 600 clamp(36px, 4vw, 58px)/1.1 sans-serif; }
+.project-welcome-rule { width: 64px; height: 3px; margin: 0 auto 27px; border-radius: 8px; background: #168fff; box-shadow: 0 0 14px rgba(22,143,255,.6); }
+#projectWelcome p { margin: 0; color: #b9c9df; font: 400 20px/1.55 sans-serif; }
+.project-welcome-actions { display: flex; justify-content: center; gap: 18px; margin-top: 44px; }
+#projectWelcome button { min-width: 220px; padding: 17px 22px; border: 1px solid #168fff; border-radius: 12px; background: rgba(5, 18, 36, .64); color: #fff; font: 600 20px/1 sans-serif; cursor: pointer; transition: transform .15s ease, background .15s ease; }
+#projectWelcome button:hover { transform: translateY(-2px); background: rgba(21, 92, 180, .36); }
+#projectWelcome button.primary { background: linear-gradient(135deg, #168fff, #1046bc); box-shadow: 0 12px 26px rgba(10, 93, 219, .32); }
+#projectWelcome button span { margin-right: 10px; color: #8bd8ff; }
+
+/* Settings are available from the left sidebar, avoiding duplicate controls. */
+#topConfigBtn { display: none; }
+
+/* Keep playback controls centred in the wide range-time control dock. */
+@media (min-width: 1201px) {
+    #simulationControlDock .sim-controls-row { position: relative; }
+    #simulationControlDock .sim-actions-group {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+    }
+}
+
 /* Keep Cesium's native navigation actions visually aligned with Orbit's
    compact toolbar controls. */
 .cesium-viewer-toolbar {
@@ -562,15 +595,47 @@
 .cesium-viewer-toolbar .cesium-sceneModePicker-button3D,
 .cesium-viewer-toolbar .cesium-sceneModePicker-button2D,
 .cesium-viewer-toolbar .cesium-sceneModePicker-buttonColumbusView {
-    width: 36px;
-    height: 36px;
-    border-radius: 7px;
+    width: 30px;
+    height: 30px;
+    box-sizing: border-box;
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 6px;
+    background: var(--orbit-bg-tertiary);
+    color: var(--orbit-text-primary);
+    box-shadow: none;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.cesium-viewer-toolbar .cesium-button:hover {
+    border-color: var(--orbit-border-focus);
+    background: var(--orbit-bg-hover);
 }
 
 .cesium-viewer-toolbar .cesium-sceneModePicker-wrapper {
-    width: 36px;
-    height: 36px;
+    width: 30px;
+    height: 30px;
 }
+
+#cameraTools { display: inline-block; margin-left: 5px; }
+
+#cameraTools .camera-tools-menu,
+#cameraTools .camera-tools-menu[hidden] { display: none !important; }
+
+#cameraTools button {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid var(--orbit-border-primary);
+    border-radius: 6px;
+    background: var(--orbit-bg-tertiary);
+    color: var(--orbit-text-primary);
+    cursor: pointer;
+    font: 700 15px/1 sans-serif;
+}
+
+
+#cameraTools button:hover { background: var(--orbit-bg-hover); border-color: var(--orbit-border-focus); }
+#cameraTools .camera-tools-menu { display: grid; gap: 5px; margin-top: 5px; }
 
 #leftSidebar .sidebar-panel,
 #leftSatellitesPanel,
@@ -604,11 +669,26 @@
 .sidebar-panel .sidebar-panel-header {
     padding: 10px 12px;
     border-bottom: 1px solid var(--orbit-border-primary);
-    background: var(--orbit-bg-secondary);
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(120deg, rgba(45, 98, 162, 0.22), transparent 58%), var(--orbit-bg-secondary);
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-shrink: 0;
+}
+
+.sidebar-panel .sidebar-panel-header::after {
+    content: "";
+    position: absolute;
+    right: -26px;
+    bottom: -38px;
+    width: 116px;
+    height: 116px;
+    border: 1px solid var(--orbit-border-accent);
+    border-radius: 50%;
+    opacity: 0.28;
+    pointer-events: none;
 }
 
 .sidebar-panel .telemetry-panel-header {
@@ -649,6 +729,11 @@
     border-radius: 50%;
     background: #38c991;
     box-shadow: 0 0 0 3px rgba(56, 201, 145, 0.14);
+}
+
+.telemetry-panel-subtitle.is-simulated span {
+    background: #f0ae45;
+    box-shadow: 0 0 8px rgba(240, 174, 69, 0.6);
 }
 
 .sidebar-panel .sidebar-panel-title {

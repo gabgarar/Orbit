@@ -29,7 +29,7 @@ Todos los accesos operativos están centralizados en `.scripts/`. Ejecútalos de
 .\.scripts\orbit-status.cmd   # Muestra el estado y healthcheck
 .\.scripts\orbit-logs.cmd     # Sigue los logs; se detiene con Ctrl+C
 .\.scripts\test-ui.cmd        # Reinicia Orbit y ejecuta las pruebas de interfaz
-.\.scripts\test-frontend.cmd  # Pruebas unitarias de public/ (sin Docker)
+.\.scripts\test-frontend.cmd  # Pruebas unitarias de front/ (sin Docker)
 .\.scripts\test-backend.cmd   # Pruebas de server/python/ dentro de Docker
 .\.scripts\test-all.cmd       # Frontend + backend + integración completa
 ```
@@ -45,7 +45,7 @@ Con Orbit arrancado en Docker, genera capturas y valida el catÃ¡logo en cinco 
 .\.scripts\test-ui.cmd
 ```
 
-Las capturas y el informe HTML se guardan en `server/ui-artifacts/`. Puedes usar otra instancia o puerto con `ORBIT_UI_BASE_URL`, por ejemplo `ORBIT_UI_BASE_URL=http://localhost:8100 npm run test:ui`.
+Las capturas y el informe HTML se guardan en `tests/artifacts/`. Puedes usar otra instancia o puerto con `ORBIT_UI_BASE_URL`, por ejemplo `ORBIT_UI_BASE_URL=http://localhost:8100 npm run test:ui`.
 
 Las pruebas se ejecutan con dos workers en paralelo. En un equipo potente puedes aumentar el número temporalmente, por ejemplo: `.\.scripts\test-ui.cmd -Workers 3`.
 
@@ -54,7 +54,7 @@ Las pruebas se ejecutan con dos workers en paralelo. En un equipo potente puedes
 Requiere Node.js 20+ y Python 3.10+. En Windows, instala Python marcando la opción de añadirlo al `PATH`. Después:
 
 ```bash
-py -3 -m pip install -r requirements.txt
+py -3 -m pip install -r server/requirements.txt
 cd server
 npm.cmd ci
 npm.cmd start
@@ -101,7 +101,7 @@ npm run tiles:earth2km
 
 Esto crea:
 
-`public/assets/earth2km_tiles/{z}/{x}/{y}.jpg`
+`front/assets/earth2km_tiles/{z}/{x}/{y}.jpg`
 
 ### 2) Arrancar servidor
 
