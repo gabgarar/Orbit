@@ -1,7 +1,7 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 2,
+      "propagation_hours": 24,
       "future_show": true,
       "ground_track_show": false,
       "future_line_width": 2,
@@ -10,11 +10,11 @@
       "selected_color": "#ff2d2d",
       "past_show": true,
       "past_color": "#ff9a5a",
-      "past_seconds": 5,
+      "past_seconds": 0.5,
       "past_line_width": 2
     },
     "satellites": {
-      "label_size_px": 15,
+      "label_size_px": 12,
       "model_scale": 1,
       "use_3d_model": true,
       "size_mode": "visual",

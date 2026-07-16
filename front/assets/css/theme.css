@@ -991,3 +991,195 @@ body.presentation-mode #leftSidebar {
         min-width: 72px;
     }
 }
+
+/* Application header: compact product navigation with a dedicated account slot. */
+#topToolbar {
+    height: max(64px, calc(76px * var(--orbit-ui-scale)));
+    padding: 0 calc(28px * var(--orbit-ui-scale));
+    gap: calc(22px * var(--orbit-ui-scale));
+    background: linear-gradient(90deg, #02060e 0%, #070d19 56%, #02060d 100%);
+    border-bottom-color: rgba(80, 116, 180, 0.22);
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+}
+
+#topToolbar .toolbar-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(13px * var(--orbit-ui-scale));
+    margin: 0 calc(28px * var(--orbit-ui-scale)) 0 0;
+    color: #3e6bff;
+    font: 700 max(23px, calc(28px * var(--orbit-ui-scale)))/1.05 system-ui, sans-serif;
+    letter-spacing: calc(7px * var(--orbit-ui-scale));
+    text-decoration: none;
+}
+
+#topToolbar .toolbar-brand img {
+    width: max(50px, calc(60px * var(--orbit-ui-scale)));
+    height: max(50px, calc(60px * var(--orbit-ui-scale)));
+    object-fit: contain;
+}
+
+#topToolbar .toolbar-nav {
+    display: flex;
+    align-self: stretch;
+    align-items: center;
+    gap: calc(23px * var(--orbit-ui-scale));
+}
+
+#topToolbar .toolbar-nav-link {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 100%;
+    color: #a5afc5;
+    font: 600 max(16px, calc(18px * var(--orbit-ui-scale)))/1 system-ui, sans-serif;
+    white-space: nowrap;
+}
+
+#topToolbar .toolbar-nav-link.active {
+    color: #e2eaff;
+}
+
+#topToolbar .toolbar-nav-link.active::after {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: #2f63ff;
+    box-shadow: 0 0 10px #2f63ff;
+    content: "";
+}
+
+#topToolbar .toolbar-nav-icon {
+    color: #7198ff;
+    font-size: max(22px, calc(25px * var(--orbit-ui-scale)));
+    font-weight: 400;
+}
+
+#topToolbar .toolbar-search-wrap {
+    width: min(calc(370px * var(--orbit-ui-scale)), 30vw);
+    max-width: none;
+}
+
+#topToolbar .toolbar-search {
+    height: calc(38px * var(--orbit-ui-scale));
+    padding-left: calc(33px * var(--orbit-ui-scale));
+    border-color: #1a2a47;
+    border-radius: calc(8px * var(--orbit-ui-scale));
+    background: #0a1221;
+    color: #d9e4ff;
+    font-size: max(14px, calc(15px * var(--orbit-ui-scale)));
+}
+
+#topToolbar .toolbar-search-icon {
+    z-index: 1;
+    left: calc(11px * var(--orbit-ui-scale));
+    color: #a5b2c9;
+    font-size: max(21px, calc(23px * var(--orbit-ui-scale)));
+}
+
+#topToolbar .toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: calc(16px * var(--orbit-ui-scale));
+}
+
+#topToolbar .toolbar-action-divider {
+    width: 1px;
+    height: 28px;
+    background: rgba(117, 143, 190, 0.32);
+}
+
+#topToolbar .toolbar-icon-btn,
+#topToolbar .toolbar-avatar {
+    position: relative;
+    display: grid;
+    width: calc(27px * var(--orbit-ui-scale));
+    height: calc(30px * var(--orbit-ui-scale));
+    padding: 0;
+    place-items: center;
+    border: 0;
+    background: transparent;
+    color: #aebbd1;
+    cursor: pointer;
+    font: 600 max(20px, calc(22px * var(--orbit-ui-scale)))/1 system-ui, sans-serif;
+}
+
+#topToolbar .toolbar-icon-btn:hover { color: #e4ebff; }
+
+#topToolbar .toolbar-vector-icon svg,
+#leftSidebar .sidebar-btn svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8;
+}
+
+#topToolbar .toolbar-vector-icon svg {
+    width: 21px;
+    height: 21px;
+}
+
+#topToolbar .has-notification {
+    font-size: 0;
+}
+
+#topToolbar .has-notification::before {
+    content: "🔔";
+    font-size: max(19px, calc(21px * var(--orbit-ui-scale)));
+}
+
+#topToolbar .toolbar-icon-btn.has-notification::after {
+    position: absolute;
+    top: 1px;
+    right: 0;
+    width: 7px;
+    height: 7px;
+    border: 2px solid #07101d;
+    border-radius: 50%;
+    background: #ff4b38;
+    content: "";
+}
+
+#topToolbar .toolbar-avatar {
+    width: calc(40px * var(--orbit-ui-scale));
+    height: calc(40px * var(--orbit-ui-scale));
+    border-radius: 50%;
+    background: linear-gradient(145deg, #293a9c, #17235e);
+    color: #e6ebff;
+    font-size: max(13px, calc(14px * var(--orbit-ui-scale)));
+}
+
+body.with-toolbars #cesiumContainer,
+#leftSidebar,
+#leftSatellitesPanel,
+#leftInfoPanel {
+    top: max(64px, calc(76px * var(--orbit-ui-scale))) !important;
+}
+
+@media (max-width: 1100px) {
+    #topToolbar { padding-inline: 14px; gap: 14px; }
+    #topToolbar .toolbar-brand { margin-right: 8px; }
+    #topToolbar .toolbar-nav { gap: 12px; }
+    #topToolbar .toolbar-nav-link { font-size: max(14px, calc(16px * var(--orbit-ui-scale))); }
+    #topToolbar .toolbar-search-wrap { width: min(290px, 28vw); }
+}
+
+@media (max-width: 820px) {
+    #topToolbar { height: 56px; padding-inline: 10px; gap: 10px; }
+    #topToolbar .toolbar-brand { gap: 6px; font-size: 18px; letter-spacing: 4px; }
+    #topToolbar .toolbar-brand img { width: 43px; height: 43px; }
+    #topToolbar .toolbar-nav-link:not(.active) { display: none; }
+    #topToolbar .toolbar-search-wrap { flex: 1; width: auto; }
+    #topToolbar .toolbar-actions { gap: 8px; }
+    body.with-toolbars #cesiumContainer,
+    #leftSidebar,
+    #leftSatellitesPanel,
+    #leftInfoPanel { top: 56px !important; }
+}

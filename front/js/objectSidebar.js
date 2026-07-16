@@ -1269,6 +1269,24 @@ export function setupObjectSidebar({
     addLayerEntry.querySelector('[data-add-kind="satellite"]').addEventListener("click", () => addSatelliteLayerBtn.click());
     addLayerEntry.querySelector('[data-add-kind="station"]').addEventListener("click", () => addGroundStationBtn.click());
     addMenu.prepend(addLayerEntry);
+    const projectActionsEntry = document.createElement("div");
+    projectActionsEntry.className = "folder-add-menu project-actions-entry";
+    projectActionsEntry.innerHTML = `
+        <button class="catalog-context-action" type="button">Manage project <span>›</span></button>
+        <div class="folder-add-submenu">
+            <button class="catalog-context-action" data-project-action="new" type="button">Nuevo proyecto</button>
+            <button class="catalog-context-action" data-project-action="open" type="button">Abrir proyecto</button>
+            <button class="catalog-context-action" data-project-action="save" type="button">Guardar proyecto</button>
+            <button class="catalog-context-action" data-project-action="export" type="button">Exportar proyecto</button>
+        </div>
+    `;
+    projectActionsEntry.querySelectorAll("[data-project-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+            closeAddMenu();
+            window.dispatchEvent(new CustomEvent("orbit:project-action", { detail: button.dataset.projectAction }));
+        });
+    });
+    addMenu.prepend(projectActionsEntry);
 
     const groundStationModal = document.createElement("div");
     groundStationModal.id = "groundStationModal";
@@ -1612,6 +1630,9 @@ export function setupObjectSidebar({
         notificationPanel.hidden = !notificationState.open;
         notificationCenter.classList.toggle("has-alerts", total > 0);
         notificationCenter.classList.toggle("open", notificationState.open);
+        window.dispatchEvent(new CustomEvent("orbit:notifications", {
+            detail: notificationState.entries.map((entry) => ({ ...entry }))
+        }));
 
         notificationList.innerHTML = "";
         for (const entry of notificationState.entries) {
@@ -1664,6 +1685,15 @@ export function setupObjectSidebar({
     notificationClearAll.addEventListener("click", () => {
         notificationState.entries = [];
         renderNotifications();
+    });
+
+    window.addEventListener("orbit:clear-notifications", () => {
+        notificationState.entries = [];
+        renderNotifications();
+    });
+
+    window.addEventListener("orbit:dismiss-notification", (event) => {
+        dismissNotification(Number(event.detail));
     });
 
     renderNotifications();
@@ -1920,9 +1950,12 @@ export function setupObjectSidebar({
         if (!anchorElement) {
             return;
         }
+        // Project-level actions belong only to the root project's Add button,
+        // never to the Add controls rendered inside individual folders.
+        projectActionsEntry.hidden = anchorElement !== openCatalogBtn;
         const rect = anchorElement.getBoundingClientRect();
         const menuWidth = 280;
-        const menuHeight = 92;
+        const menuHeight = 180;
         const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - menuWidth - 8));
         const top = Math.min(Math.max(8, rect.bottom + 6), Math.max(8, window.innerHeight - menuHeight - 8));
         addMenu.style.left = `${left}px`;
@@ -3322,7 +3355,7 @@ export function setupObjectSidebar({
             const header = document.createElement("button");
             header.type = "button";
             header.className = "layer-tree-folder-header";
-            header.innerHTML = `<span class="layer-tree-chevron">${folder.expanded ? "▾" : "▸"}</span><span class="layer-tree-icon">📁</span><span>${folder.name}</span>`;
+            header.innerHTML = `<span class="layer-tree-chevron">${folder.expanded ? "▾" : "▸"}</span><span class="layer-tree-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.2a2 2 0 0 1 2-2h3.3l1.7 2h6.5a2 2 0 0 1 2 2v8.2a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2z"/></svg></span><span>${folder.name}</span>`;
             header.draggable = true;
             header.addEventListener("dragstart", (event) => { event.dataTransfer.setData("text/plain", folder.id); event.dataTransfer.effectAllowed = "move"; });
             header.addEventListener("dragover", (event) => { event.preventDefault(); event.stopPropagation(); });

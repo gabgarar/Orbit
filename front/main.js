@@ -142,6 +142,10 @@ const tychoSkyDomeRadius = 1000000000;
 let tychoSkyDome = null;
 let tychoSkyDomeUpdateListener = null;
 let nightImageryLayer = null;
+// Keep some of the base map visible on the night side.  A fully opaque night
+// texture makes oceans and land disappear almost completely away from cities.
+const NIGHT_IMAGERY_ALPHA = 0.72;
+const NIGHT_IMAGERY_BRIGHTNESS = 1.45;
 let runtimeSystemConfig = null;
 let lastAppliedResolutionScale = null;
 let lastAppliedUiScale = null;
@@ -2861,7 +2865,20 @@ function ensureTopToolbar() {
     document.body.classList.add("with-toolbars");
     
     const existing = document.getElementById("topToolbar");
-    if (existing) return existing;
+    if (existing) {
+        const settingsButton = existing.querySelector("#topSettingsBtn");
+        if (settingsButton && settingsButton.dataset.orbitBound !== "true") {
+            settingsButton.dataset.orbitBound = "true";
+            settingsButton.addEventListener("click", () => runtimeConfigPanelApi?.toggle?.());
+        }
+        const helpButton = existing.querySelector("#topHelpBtn");
+        if (helpButton && helpButton.dataset.orbitBound !== "true") {
+            helpButton.dataset.orbitBound = "true";
+            helpButton.addEventListener("click", () => showAppAlert("La ayuda contextual estará disponible próximamente.", "Ayuda"));
+        }
+        setupTopSearchAutocomplete();
+        return existing;
+    }
 
     const toolbar = document.createElement("div");
     toolbar.id = "topToolbar";
@@ -2898,6 +2915,35 @@ function ensureTopToolbar() {
             <div id="topTimeInfo" class="toolbar-info">--/--/---- --:--:--</div>
         </div>
     `;
+
+    toolbar.innerHTML = `
+        <a class="toolbar-brand" href="#" aria-label="Orbit">
+            <img src="assets/icon/favicon.png" alt="">
+            <span>ORBIT</span>
+        </a>
+        <nav class="toolbar-nav" aria-label="Navegación principal">
+            <span class="toolbar-nav-link"><span class="toolbar-nav-icon">⌘</span>Dashboard</span>
+            <span class="toolbar-nav-link active" aria-current="page"><span class="toolbar-nav-icon">⌁</span>Satellites</span>
+            <span class="toolbar-nav-link"><span class="toolbar-nav-icon">◷</span>Missions</span>
+            <span class="toolbar-nav-link"><span class="toolbar-nav-icon">⌖</span>Ground Stations</span>
+            <span class="toolbar-nav-link"><span class="toolbar-nav-icon">⌁</span>Analytics</span>
+        </nav>
+        <div class="toolbar-spacer"></div>
+        <div class="toolbar-search-wrap">
+            <span class="toolbar-search-icon" aria-hidden="true">⌕</span>
+            <input id="objectSearch" class="toolbar-search" type="text" placeholder="Buscar satélite por nombre o NORAD..." autocomplete="off" spellcheck="false" />
+            <div id="topSearchSuggestions"></div>
+        </div>
+        <div class="toolbar-actions">
+            <button id="topNotificationsBtn" class="toolbar-icon-btn has-notification" type="button" aria-label="Notificaciones" title="Notificaciones">♧</button>
+            <button id="topHelpBtn" class="toolbar-icon-btn" type="button" aria-label="Ayuda" title="Ayuda">?</button>
+            <button id="topSettingsBtn" class="toolbar-icon-btn" type="button" aria-label="Configuración" title="Configuración">⚙</button>
+            <button id="topUserBtn" class="toolbar-avatar" type="button" aria-label="Perfil de GG" title="Perfil de GG">GG</button>
+        </div>
+    `;
+
+    toolbar.querySelector("#topSettingsBtn")?.addEventListener("click", () => runtimeConfigPanelApi?.toggle?.());
+    toolbar.querySelector("#topHelpBtn")?.addEventListener("click", () => showAppAlert("La ayuda contextual estará disponible próximamente.", "Ayuda"));
 
     toolbar.querySelector("#topConfigBtn")?.remove();
     toolbar.querySelector("#topCameraModeBtn")?.remove();
@@ -3005,6 +3051,12 @@ function updateTopToolbarTime() {
     }
 
     updateSimulationTimelineUi();
+    window.dispatchEvent(new CustomEvent("orbit:time-context", {
+        detail: {
+            date: getDisplayedSimulationDate().toISOString(),
+            mode: simulationState.mode
+        }
+    }));
 }
 
 function ensureLeftSidebar() {
@@ -3012,7 +3064,59 @@ function ensureLeftSidebar() {
     document.body.classList.add("with-toolbars");
     
     const existing = document.getElementById("leftSidebar");
-    if (existing) return existing;
+    if (existing) {
+        if (existing.dataset.orbitReactBound !== "true") {
+            existing.dataset.orbitReactBound = "true";
+            const satellitesPanel = document.getElementById("leftSatellitesPanel");
+            const infoPanel = document.getElementById("leftInfoPanel");
+            const getMaximumPanelWidth = () => Math.min(640, window.innerWidth * 0.72);
+            setupResizableSidePanel({
+                panel: satellitesPanel,
+                triggerButton: document.getElementById("leftSatellitesBtn"),
+                storageKey: "orbit.layersPanel.width",
+                cssVariable: "--orbit-layers-panel-width",
+                maximumWidth: getMaximumPanelWidth,
+                onLayoutChange: updateSimulationDockLayout
+            });
+            setupResizableSidePanel({
+                panel: infoPanel,
+                triggerButton: document.getElementById("leftInfoBtn"),
+                storageKey: "orbit.telemetryPanel.width",
+                cssVariable: "--orbit-telemetry-panel-width",
+                maximumWidth: getMaximumPanelWidth,
+                onLayoutChange: updateSimulationDockLayout
+            });
+            window.addEventListener("orbit:project-action", async (event) => {
+                const action = String(event.detail || "");
+                if (action === "new" || action === "open") {
+                    openProjectActionDialog(action);
+                    return;
+                }
+                if (action === "export") {
+                    exportProject();
+                    return;
+                }
+                if (action === "save") {
+                    try {
+                        if (!currentProjectFileHandle && window.showSaveFilePicker) {
+                            currentProjectFileHandle = await window.showSaveFilePicker({ suggestedName: "orbit-project.json", types: [{ description: "Orbit project", accept: { "application/json": [".json"] } }] });
+                        }
+                        if (currentProjectFileHandle) {
+                            await saveProjectToHandle(currentProjectFileHandle);
+                        } else {
+                            await exportProject();
+                        }
+                    } catch (error) {
+                        if (error?.name !== "AbortError") {
+                            console.error("Could not save project", error);
+                        }
+                    }
+                }
+            });
+        }
+        updateTelemetryTimeContext();
+        return existing;
+    }
 
     const sidebar = document.createElement("div");
     sidebar.id = "leftSidebar";
@@ -3980,8 +4084,8 @@ function applyEarthDayNightBlend(systemConfig) {
     const blendEnabled = systemConfig.globe_lighting !== false;
     nightImageryLayer.show = blendEnabled;
     nightImageryLayer.dayAlpha = 0.0;
-    nightImageryLayer.nightAlpha = blendEnabled ? 1.0 : 0.0;
-    nightImageryLayer.brightness = 1.2;
+    nightImageryLayer.nightAlpha = blendEnabled ? NIGHT_IMAGERY_ALPHA : 0.0;
+    nightImageryLayer.brightness = NIGHT_IMAGERY_BRIGHTNESS;
 }
 
 function applyEarthBaseLayers() {
@@ -3991,8 +4095,8 @@ function applyEarthBaseLayers() {
         if (nightImageryLayer) return;
         nightImageryLayer = viewer.scene.imageryLayers.addImageryProvider(nightProvider);
         nightImageryLayer.dayAlpha = 0.0;
-        nightImageryLayer.nightAlpha = 1.0;
-        nightImageryLayer.brightness = 1.2;
+        nightImageryLayer.nightAlpha = NIGHT_IMAGERY_ALPHA;
+        nightImageryLayer.brightness = NIGHT_IMAGERY_BRIGHTNESS;
         updateAdaptiveGlobeLighting();
     }, 0);
     return;
@@ -4002,8 +4106,8 @@ function applyEarthBaseLayers() {
 
         nightImageryLayer = viewer.scene.imageryLayers.addImageryProvider(nightProvider);
         nightImageryLayer.dayAlpha = 0.0;
-        nightImageryLayer.nightAlpha = 1.0;
-        nightImageryLayer.brightness = 1.2;
+        nightImageryLayer.nightAlpha = NIGHT_IMAGERY_ALPHA;
+        nightImageryLayer.brightness = NIGHT_IMAGERY_BRIGHTNESS;
         logger.info("Capas de tierra cargadas (earth3km + noche)");
     } catch (e) {
         logger.error("No se pudo añadir capa base/local tiles:", e);

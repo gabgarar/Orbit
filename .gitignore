@@ -1,5 +1,7 @@
 # Node modules
 /server/node_modules/
+/react-ui/node_modules/
+/react-ui/.npm-cache/
 
 # Python cache files
 /server/python/__pycache__/

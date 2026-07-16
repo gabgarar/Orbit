@@ -9,13 +9,16 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY server/package*.json ./server/
-RUN npm ci --prefix server
+COPY react-ui/package*.json ./react-ui/
+RUN npm ci --prefix server && npm ci --prefix react-ui
 
 COPY server/requirements.txt ./requirements.txt
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+RUN npm run build --prefix react-ui
 
 ENV PATH="/opt/venv/bin:${PATH}"
 

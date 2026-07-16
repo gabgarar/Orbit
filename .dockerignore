@@ -2,6 +2,8 @@
 .devcontainer
 .vscode
 server/node_modules
+react-ui/node_modules
+react-ui/.npm-cache
 server/server.log
 server/server.pid
 server.pid

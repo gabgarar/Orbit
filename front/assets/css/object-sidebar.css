@@ -1729,6 +1729,12 @@ body.with-toolbars #objectSidebar.collapsed {
 .folder-add-submenu .catalog-context-action { width: 100%; }
 #layerAddMenu > #addSatelliteLayerBtn, #layerAddMenu > #addGroundStationBtn { display: none; }
 
+#layerAddMenu .project-actions-entry > .catalog-context-action {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+}
+
 /* Nested layers deliberately use the same unboxed explorer row as root layers. */
 #objectList .layer-tree-folder-body > .object-list-row,
 #objectList .layer-tree-folder-body > .object-list-row .object-list-item {
@@ -1737,6 +1743,12 @@ body.with-toolbars #objectSidebar.collapsed {
     border-radius: 0 !important;
     box-shadow: none !important;
     background: transparent !important;
+}
+
+.catalog-context-divider {
+    height: 1px;
+    margin: 5px 8px;
+    background: var(--orbit-border-primary);
 }
 #objectList .layer-tree-folder-body > .object-list-row { min-height: 27px !important; }
 #objectList .layer-tree-folder-body > .object-list-row .object-list-item { min-height: 27px !important; }

@@ -11,6 +11,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 8100;
 const CONFIG_DIR = path.join(__dirname, "../config");
+const REACT_DIST_DIR = path.join(__dirname, "../front/dist");
 const SYSTEM_CONFIG_PATH = path.join(CONFIG_DIR, "system_config.json");
 const DEFAULT_CATALOG_FILE = "catalog.json";
 const PYTHON_BACKEND_URL = "http://127.0.0.1:8765";
@@ -1632,6 +1633,7 @@ app.post("/api/ephemeris", async (req, res) => {
 // ===============================
 // 1) Servir carpeta pública y configuración JSON
 // ===============================
+app.use(express.static(REACT_DIST_DIR));
 app.use(express.static(path.join(__dirname, "../front")));
 app.use("/config", express.static(CONFIG_DIR));
 
