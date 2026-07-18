@@ -2,16 +2,17 @@ import { getLogger } from "./logger.js";
 
 const logger = getLogger("ws");
 
+export function resolveSatelliteWebSocketUrl(location) {
+    const protocol = location?.protocol === "https:" ? "wss:" : "ws:";
+    const host = String(location?.host || "").trim();
+    if (!host) throw new Error("Orbit WebSocket requires a browser location host.");
+    return `${protocol}//${host}/ws`;
+}
+
 export class SatelliteWebSocket {
 
     constructor(onMessageCallback) {
-        const hostname = window.location.hostname;
-        const isCodespaces = hostname.includes("-8100.");
-        const host = isCodespaces
-            ? hostname.replace("-8100.", "-8765.")
-            : `${hostname}:8765`;
-        const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-        this.url = `${protocol}://${host}/ws`;
+        this.url = resolveSatelliteWebSocketUrl(window.location);
         this.onMessageCallback = onMessageCallback;
         this.ws = null;
         this.reconnectAttempts = 0;
@@ -170,12 +171,11 @@ export class SatelliteWebSocket {
             logger.debug("DecompressionStream no disponible, usando pako:", e);
         }
 
-        // Fallback: usar pako
+        // Fallback: usar el paquete pako local cargado antes del runtime.
         try {
             // Cargar pako dinámicamente si no está disponible
-            if (!window.pako) {
-                const pakoModule = await import('https://cdn.jsdelivr.net/npm/pako@2/dist/pako.es5.min.js');
-                window.pako = pakoModule.default || pakoModule;
+            if (typeof window.pako?.inflate !== "function") {
+                throw new Error("El descompresor local pako no se ha cargado.");
             }
             
             const inflated = window.pako.inflate(buffer);

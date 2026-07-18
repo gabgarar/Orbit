@@ -6,10 +6,17 @@ react-ui/node_modules
 react-ui/.npm-cache
 server/server.log
 server/server.pid
+server/debug.log
 server.pid
 server.log
 **/__pycache__
 *.py[cod]
 dist
 build
+# The React bundle is produced inside the image. Excluding the host output
+# also prevents Docker from traversing OneDrive reparse points in front/dist.
+front/dist/
+react-ui/dist/
+react-ui/.runtime-vendor/
 tests/artifacts
+server/ui-artifacts/

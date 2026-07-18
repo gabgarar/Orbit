@@ -1,13 +1,13 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 24,
+      "propagation_hours": 170.01159,
       "future_show": true,
       "ground_track_show": false,
-      "future_line_width": 2,
+      "future_line_width": 1,
       "width_mode": "visual",
       "future_color": "#7fd7ff",
-      "selected_color": "#ff2d2d",
+      "selected_color": "#e00000",
       "past_show": true,
       "past_color": "#ff9a5a",
       "past_seconds": 0.5,
@@ -36,7 +36,7 @@
       "background_color": "#347dea",
       "sky_atmosphere": true,
       "globe_lighting": true,
-      "stars_enabled": true
+      "stars_enabled": false
     },
     "recording": {
       "quality": "medium",

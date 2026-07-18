@@ -760,6 +760,7 @@ export function setupObjectSidebar({
     };
     let selectedId = null;
     let layerFilterText = "";
+    let layerSearchOptions = { matchCase: false, wholeWord: false, regex: false };
     let globalLayersVisible = true;
     const selectedCatalogIds = new Set();
     const catalogFilterState = {
@@ -1032,7 +1033,8 @@ export function setupObjectSidebar({
             </div>
         </div>
     `;
-    document.body.appendChild(catalogModal);
+    // React renders the visible catalog modal; this node remains detached as
+    // a compatibility adapter for the still-migrating catalog workflow.
 
     const catalogFilterModal = document.createElement("div");
     catalogFilterModal.id = "catalogFilterModal";
@@ -1083,7 +1085,8 @@ export function setupObjectSidebar({
             </div>
         </div>
     `;
-    document.body.appendChild(confirmModal);
+    // React owns the visible confirmation dialog; this detached node is kept
+    // only while the rest of the catalog modal is still migrated.
 
     const catalogLoadingModal = document.createElement("div");
     catalogLoadingModal.id = "catalogLoadingModal";
@@ -1103,7 +1106,7 @@ export function setupObjectSidebar({
             <p>Se importara al catalogo y se intentara anadir a la vista.</p>
         </div>
     `;
-    document.body.appendChild(globalDropOverlay);
+    // React owns the visible global drop overlay.
 
     const contextMenu = document.createElement("div");
     contextMenu.id = "catalogContextMenu";
@@ -1119,7 +1122,7 @@ export function setupObjectSidebar({
         <div class="catalog-context-separator"></div>
         <button class="catalog-context-action danger" id="contextRemoveLayerBtn" type="button">Eliminar capa</button>
     `;
-    document.body.appendChild(contextMenu);
+    // React presents the visible layer context menu.
 
     const folderContextMenu = document.createElement("div");
     folderContextMenu.id = "folderContextMenu";
@@ -1147,7 +1150,7 @@ export function setupObjectSidebar({
                 <button type="submit" data-folder-dialog="confirm">Crear carpeta</button>
             </div>
         </form>`;
-    document.body.appendChild(folderNameModal);
+    // React owns the visible folder-name dialog.
     const folderNameDialogTitle = folderNameModal.querySelector("#folderNameDialogTitle");
     const folderNameDialogLabel = folderNameModal.querySelector("#folderNameDialogLabel");
     const folderNameDialogInput = folderNameModal.querySelector("#folderNameDialogInput");
@@ -1161,16 +1164,15 @@ export function setupObjectSidebar({
     }
 
     function requestFolderName({ title, label, initialValue = "" }) {
-        folderNameDialogTitle.textContent = title;
-        folderNameDialogLabel.textContent = label;
-        folderNameDialogInput.value = initialValue;
-        folderNameModal.classList.add("open");
-        queueMicrotask(() => {
-            folderNameDialogInput.focus();
-            folderNameDialogInput.select();
-        });
         return new Promise((resolve) => {
-            resolveFolderNameDialog = resolve;
+            const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            const onResponse = (event) => {
+                if (event.detail?.id !== id) return;
+                window.removeEventListener("orbit:folder-name-response", onResponse);
+                resolve(event.detail.name || null);
+            };
+            window.addEventListener("orbit:folder-name-response", onResponse);
+            window.dispatchEvent(new CustomEvent("orbit:folder-name-request", { detail: { id, title, label, initialValue } }));
         });
     }
 
@@ -1240,9 +1242,10 @@ export function setupObjectSidebar({
     });
 
     document.addEventListener("pointerdown", (event) => {
-        if (!contextMenu.contains(event.target)) closeContextMenu();
+        if (!contextMenu.contains(event.target) && !event.target.closest?.("#catalogContextMenu")) closeContextMenu();
         if (!folderContextMenu.contains(event.target)) folderContextMenu.classList.remove("open");
-        if (!listRoot.contains(event.target) && !contextMenu.contains(event.target) && !folderContextMenu.contains(event.target) && selectedId) {
+        const detailsPanel = document.querySelector(".object-details-panel");
+        if (!listRoot.contains(event.target) && !contextMenu.contains(event.target) && !folderContextMenu.contains(event.target) && !detailsPanel?.contains(event.target) && selectedId) {
             selectedId = null;
             renderList();
             renderInfo();
@@ -1397,7 +1400,7 @@ export function setupObjectSidebar({
             </div>
         </div>
     `;
-    document.body.appendChild(groundStationModal);
+    // React owns the visible ground-station form.
 
     const exportModal = document.createElement("div");
     exportModal.id = "catalogExportModal";
@@ -1456,26 +1459,17 @@ export function setupObjectSidebar({
             </section>
         </div>
     `;
-    document.body.appendChild(exportModal);
-
-    const tleInfoModal = document.createElement("div");
-    tleInfoModal.id = "tleInfoModal";
-    tleInfoModal.innerHTML = `
-        <div class="tle-info-panel" role="dialog" aria-modal="true" aria-label="${uiText("satInfoTitle")}">
-            <div class="tle-info-header">
-                <h3>${uiText("satInfoTitle")}</h3>
-                <button class="catalog-close-btn" id="tleInfoCloseBtn" type="button" aria-label="${uiText("configClose")}"></button>
-            </div>
-            <div class="tle-info-content" id="tleInfoContent"></div>
-        </div>
-    `;
-    document.body.appendChild(tleInfoModal);
+    // React renders the visible export dialog.
 
     const header = sidebar.querySelector("#objectSidebarHeader");
     const removeAllLayersHeaderBtn = sidebar.querySelector("#removeAllLayersHeaderBtn") || document.getElementById("removeAllLayersHeaderBtn");
     const toggleAllVisibilityBtn = sidebar.querySelector("#toggleAllVisibilityBtn") || document.getElementById("toggleAllVisibilityBtn");
     const openCatalogBtn = sidebar.querySelector("#openCatalogBtn") || document.getElementById("openCatalogBtn");
-    const searchInput = sidebar.querySelector("#objectSearch") || document.getElementById("objectSearch");
+    // In the React layout the Layers search is a sibling of this legacy list
+    // container, so prefer it before falling back to the top-bar search.
+    const searchInput = sidebar.querySelector("#objectSearch")
+        || document.querySelector("#leftSatellitesPanel #objectSearch")
+        || document.getElementById("objectSearch");
     const listRoot = sidebar.querySelector("#objectList");
     const infoRoot = useSeparateInfo
         ? infoContainerElement.querySelector("#objectInfo")
@@ -1595,9 +1589,6 @@ export function setupObjectSidebar({
     const exportEphemPropagatorSelect = exportModal.querySelector("#exportEphemPropagator");
     const exportEphemerisBtn = exportModal.querySelector("#exportEphemerisBtn");
 
-    const tleInfoCloseBtn = tleInfoModal.querySelector("#tleInfoCloseBtn");
-    const tleInfoContent = tleInfoModal.querySelector("#tleInfoContent");
-
     const notificationCenter = document.createElement("div");
     notificationCenter.id = "sidebarNotificationCenter";
     notificationCenter.innerHTML = `
@@ -1609,7 +1600,8 @@ export function setupObjectSidebar({
             <div id="sidebarNotificationList"></div>
         </div>
     `;
-    document.body.appendChild(notificationCenter);
+    // React renders the notification center. Keep this detached during the
+    // transition so the runtime can continue publishing the same event data.
 
     const notificationToggle = notificationCenter.querySelector("#sidebarNotificationToggle");
     const notificationPanel = notificationCenter.querySelector("#sidebarNotificationPanel");
@@ -1617,19 +1609,10 @@ export function setupObjectSidebar({
     const notificationClearAll = notificationCenter.querySelector("#sidebarNotificationClearAll");
     const notificationState = {
         sequence: 1,
-        open: false,
         entries: []
     };
 
     function renderNotifications() {
-        const total = notificationState.entries.length;
-        notificationToggle.textContent = `Alertas (${total})`;
-        if (total === 0) {
-            notificationState.open = false;
-        }
-        notificationPanel.hidden = !notificationState.open;
-        notificationCenter.classList.toggle("has-alerts", total > 0);
-        notificationCenter.classList.toggle("open", notificationState.open);
         window.dispatchEvent(new CustomEvent("orbit:notifications", {
             detail: notificationState.entries.map((entry) => ({ ...entry }))
         }));
@@ -1668,24 +1651,6 @@ export function setupObjectSidebar({
             setTimeout(() => dismissNotification(entry.id), Number(autoHideMs));
         }
     }
-
-    notificationToggle.addEventListener("click", () => {
-        notificationState.open = !notificationState.open;
-        renderNotifications();
-    });
-
-    notificationList.addEventListener("click", (event) => {
-        const btn = event.target.closest("[data-dismiss-id]");
-        if (!btn) {
-            return;
-        }
-        dismissNotification(Number(btn.dataset.dismissId));
-    });
-
-    notificationClearAll.addEventListener("click", () => {
-        notificationState.entries = [];
-        renderNotifications();
-    });
 
     window.addEventListener("orbit:clear-notifications", () => {
         notificationState.entries = [];
@@ -1759,32 +1724,16 @@ export function setupObjectSidebar({
 
     function askConfirmation({ title, message, confirmText, cancelText }) {
         return new Promise((resolve) => {
-            const close = (result) => {
-                confirmModal.classList.remove("open");
-                confirmCancelBtn.removeEventListener("click", onCancel);
-                confirmAcceptBtn.removeEventListener("click", onAccept);
-                confirmModal.removeEventListener("click", onOverlay);
-                resolve(result);
+            const id = `confirm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            const onResponse = (event) => {
+                if (event.detail?.id !== id) return;
+                window.removeEventListener("orbit:confirm-response", onResponse);
+                resolve(event.detail.accepted === true);
             };
-
-            const onCancel = () => close(false);
-            const onAccept = () => close(true);
-            const onOverlay = (event) => {
-                if (event.target === confirmModal) {
-                    close(false);
-                }
-            };
-
-            confirmTitle.textContent = title;
-            confirmMessage.textContent = message;
-            confirmAcceptBtn.textContent = confirmText || uiText("confirmBtn");
-            confirmCancelBtn.textContent = cancelText || uiText("cancelBtn");
-
-            confirmCancelBtn.addEventListener("click", onCancel);
-            confirmAcceptBtn.addEventListener("click", onAccept);
-            confirmModal.addEventListener("click", onOverlay);
-
-            confirmModal.classList.add("open");
+            window.addEventListener("orbit:confirm-response", onResponse);
+            window.dispatchEvent(new CustomEvent("orbit:confirm-request", {
+                detail: { id, title, message, confirmText: confirmText || uiText("confirmBtn"), cancelText: cancelText || uiText("cancelBtn") }
+            }));
         });
     }
 
@@ -1817,6 +1766,7 @@ export function setupObjectSidebar({
 
     const openCatalogModal = () => {
         catalogModal.classList.add("open");
+        window.dispatchEvent(new Event("orbit:catalog-open"));
         // asegurar que la barra de progreso está oculta al abrir
         stopCatalogRefreshProgressTimer();
         setCatalogRefreshState({
@@ -1836,6 +1786,7 @@ export function setupObjectSidebar({
         setCatalogRefreshState({ visible: false, text: "", value: 0 });
         catalogProgress.textContent = "";
         catalogModal.classList.remove("open");
+        window.dispatchEvent(new Event("orbit:catalog-close"));
         catalogFilterModal.classList.remove("open");
         closeContextMenu();
     };
@@ -1938,7 +1889,7 @@ export function setupObjectSidebar({
     }
 
     function closeContextMenu() {
-        contextMenu.classList.remove("open");
+        window.dispatchEvent(new Event("orbit:layer-context-menu-close"));
         contextTargetId = null;
     }
 
@@ -2011,12 +1962,22 @@ export function setupObjectSidebar({
         setGroundStationTab("general");
 
         groundStationModal.classList.add("open");
+        window.dispatchEvent(new CustomEvent("orbit:ground-station-open", {
+            detail: { editing: isEditing, values: {
+                name: gsNameInput.value, latitude_deg: gsLatInput.value, longitude_deg: gsLonInput.value, altitude_m: gsAltInput.value,
+                min_elevation_deg: gsMaskInput.value, frequency_mhz: gsFreqInput.value, tx_power_dbm: gsTxPowerInput.value, tx_gain_dbi: gsTxGainInput.value,
+                rx_gain_dbi: gsRxGainInput.value, coverage_radius_km: gsCoverageRadiusInput.value, point_size_px: gsPointSizeInput.value,
+                point_symbol: gsPointSymbolInput.value, point_color: gsPointColorInput.value, coverage_visible: gsCoverageVisibleInput.checked,
+                heatmap_enabled: gsHeatEnabledInput.checked, heatmap_density: gsHeatDensityInput.value
+            } }
+        }));
         gsNameInput?.focus();
     }
 
     function closeGroundStationModal() {
         editingGroundStationId = null;
         groundStationModal.classList.remove("open");
+        window.dispatchEvent(new Event("orbit:ground-station-close"));
     }
 
     async function submitGroundStation() {
@@ -2093,7 +2054,7 @@ export function setupObjectSidebar({
     }
 
     function setGlobalDropOverlayVisible(visible) {
-        globalDropOverlay.classList.toggle("open", visible === true);
+        window.dispatchEvent(new CustomEvent("orbit:catalog-drop-overlay", { detail: visible === true }));
     }
 
     function toDatetimeLocalValue(date) {
@@ -2125,10 +2086,12 @@ export function setupObjectSidebar({
         exportEphemFormatSelect.value = "oem";
         exportEphemPropagatorSelect.value = "sgp4";
         exportModal.classList.add("open");
+        window.dispatchEvent(new CustomEvent("orbit:export-open", { detail: { id, sourceFormat: exportSourceFormat } }));
     }
 
     function closeExportModal() {
         exportModal.classList.remove("open");
+        window.dispatchEvent(new Event("orbit:export-close"));
     }
 
     async function downloadFromUrl(url, fallbackFileName) {
@@ -2354,9 +2317,9 @@ export function setupObjectSidebar({
             contextToggleHeatMapBtn.textContent = heatEnabled ? "Ocultar heat map" : "Mostrar heat map";
         }
 
-        contextMenu.style.left = `${left}px`;
-        contextMenu.style.top = `${top}px`;
-        contextMenu.classList.add("open");
+        window.dispatchEvent(new CustomEvent("orbit:layer-context-menu", {
+            detail: { left, top, groundStation: isGroundStation, groundTrackVisible: getGroundTrackVisible?.(satelliteId) === true }
+        }));
     }
 
     async function resolveTle(satelliteId) {
@@ -2368,8 +2331,7 @@ export function setupObjectSidebar({
     }
 
     function openInfoModalWithHtml(html) {
-        tleInfoContent.innerHTML = html;
-        tleInfoModal.classList.add("open");
+        window.dispatchEvent(new CustomEvent("orbit:tle-info", { detail: { html, title: uiText("satInfoTitle") } }));
     }
 
     async function openTleInfo(satelliteId, mode) {
@@ -2860,12 +2822,37 @@ export function setupObjectSidebar({
         renderCatalogList();
     });
 
+    window.addEventListener("orbit:layer-context-action", (event) => {
+        const actionButtons = {
+            explain: contextExplainBtn,
+            viz: contextVizBtn,
+            ground: contextGroundTrackBtn,
+            remove: contextRemoveLayerBtn,
+            station: contextUpdateStationBtn,
+            export: contextExportBtn,
+            rename: contextRenameBtn
+        };
+        actionButtons[event.detail]?.click();
+    });
+
     catalogExportCloseBtn.addEventListener("click", closeExportModal);
 
     exportModal.addEventListener("click", (event) => {
         if (event.target === exportModal) {
             closeExportModal();
         }
+    });
+
+    window.addEventListener("orbit:export-action", (event) => {
+        const buttons = { tle: exportTleBtn, "omm-json": exportOmmJsonBtn, "omm-xml": exportOmmXmlBtn, oem: exportOemBtn, ephemeris: exportEphemerisBtn };
+        if (event.detail?.type === "close") { closeExportModal(); return; }
+        if (event.detail?.type === "ephemeris") {
+            exportEphemStartInput.value = event.detail.start || exportEphemStartInput.value;
+            exportEphemEndInput.value = event.detail.end || exportEphemEndInput.value;
+            exportEphemStepInput.value = event.detail.step || exportEphemStepInput.value;
+            exportEphemFormatSelect.value = event.detail.format || exportEphemFormatSelect.value;
+        }
+        buttons[event.detail?.type]?.click();
     });
 
     exportTleBtn.addEventListener("click", async () => {
@@ -2946,24 +2933,10 @@ export function setupObjectSidebar({
         }
     });
 
-    tleInfoCloseBtn.addEventListener("click", () => {
-        tleInfoModal.classList.remove("open");
-    });
-
-    tleInfoModal.addEventListener("click", (event) => {
-        if (event.target === tleInfoModal) {
-            tleInfoModal.classList.remove("open");
-        }
-    });
-
     document.addEventListener("click", (event) => {
         if (!contextMenu.classList.contains("open")) {
             if (addMenu.classList.contains("open") && !addMenu.contains(event.target) && event.target !== openCatalogBtn) {
                 closeAddMenu();
-            }
-            if (notificationState.open && !notificationCenter.contains(event.target)) {
-                notificationState.open = false;
-                renderNotifications();
             }
             return;
         }
@@ -2981,7 +2954,12 @@ export function setupObjectSidebar({
             layerFilterText = "";
             return;
         }
-        layerFilterText = (searchInput.value || "").toLowerCase();
+        layerFilterText = searchInput.value || "";
+        renderList();
+    });
+
+    window.addEventListener("orbit:layer-search-options", (event) => {
+        layerSearchOptions = { ...layerSearchOptions, ...(event.detail || {}) };
         renderList();
     });
 
@@ -3150,6 +3128,37 @@ export function setupObjectSidebar({
                 showInfoPopup(uiText("layersAdded").replace("{count}", idsToAdd.length).replace("{skipped}", skippedCount).replace("{maxLayers}", maxLayers));
             }
         });
+    });
+
+    window.addEventListener("orbit:catalog-action", (event) => {
+        const action = event.detail || {};
+        if (action.type === "close") { closeCatalogModal(); return; }
+        if (action.type === "search") { applyCatalogFilters({ name: String(action.value || "") }); return; }
+        if (action.type === "filter") { applyCatalogFilters({ orbitKind: String(action.orbitKind || "") }); return; }
+        if (action.type === "filters") { window.dispatchEvent(new CustomEvent("orbit:catalog-filters-open", { detail: { ...catalogFilterState } })); return; }
+        if (action.type === "filters-apply") { applyCatalogFilters(action.filters || {}); return; }
+        if (action.type === "page") { requestCatalogPage(action.page); return; }
+        if (action.type === "refresh") { catalogRefreshBtn.click(); return; }
+        if (action.type === "import" && action.file instanceof File) { importCatalogFile(action.file, { autoAddToView: false, announce: true }); return; }
+        if (action.type === "select-all") { catalogSelectAllBtn.click(); return; }
+        if (action.type === "include") { catalogAddSelectedBtn.click(); return; }
+        if (action.type === "info" && action.id) { openTleInfo(action.id, "explain"); return; }
+        if (action.type === "toggle" && action.id && !catalogBusy && !getObjectLayerActive(action.id)) {
+            const index = lastRenderedCatalogIds.indexOf(action.id);
+            if (action.range && catalogAnchorIndex !== null && index >= 0) {
+                const from = Math.min(catalogAnchorIndex, index);
+                const to = Math.max(catalogAnchorIndex, index);
+                if (!action.multi) selectedCatalogIds.clear();
+                for (let i = from; i <= to; i += 1) selectedCatalogIds.add(lastRenderedCatalogIds[i]);
+            } else if (action.multi) {
+                if (selectedCatalogIds.has(action.id)) selectedCatalogIds.delete(action.id); else selectedCatalogIds.add(action.id);
+                catalogAnchorIndex = index;
+            } else {
+                if (selectedCatalogIds.has(action.id)) selectedCatalogIds.delete(action.id); else selectedCatalogIds.add(action.id);
+                catalogAnchorIndex = index;
+            }
+            renderCatalogRows(lastRenderedCatalogIds, catalogRenderToken);
+        }
     });
 
     catalogRefreshBtn.addEventListener("click", () => {
@@ -3332,16 +3341,58 @@ export function setupObjectSidebar({
         }
         // Destructive controls are only useful when there is something to remove.
         removeAllLayersHeaderBtn.hidden = getLayerIds().length === 0;
-        const activeFilterText = String(searchInput?.value || layerFilterText || "").toLowerCase().trim();
+        const activeFilterText = String(searchInput?.value || layerFilterText || "").trim();
+        const tree = layerTree.snapshot(ids);
+        const filteringLayers = activeFilterText.length > 0;
+        const matchLayerSearch = (text) => {
+            if (!filteringLayers) return true;
+            const source = String(text || "");
+            const flags = layerSearchOptions.matchCase ? "" : "i";
+            try {
+                if (layerSearchOptions.regex) return new RegExp(activeFilterText, flags).test(source);
+                const escaped = activeFilterText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                if (layerSearchOptions.wholeWord) return new RegExp(`\\b${escaped}\\b`, flags).test(source);
+                return layerSearchOptions.matchCase
+                    ? source.includes(activeFilterText)
+                    : source.toLowerCase().includes(activeFilterText.toLowerCase());
+            } catch {
+                return false;
+            }
+        };
+        const matchingFolderIds = new Set(tree.folders
+            .filter((folder) => matchLayerSearch(folder.name))
+            .map((folder) => folder.id));
+        const folderMatchesOrContainsMatch = (folderId) => {
+            let currentId = folderId;
+            while (currentId) {
+                if (matchingFolderIds.has(currentId)) return true;
+                currentId = tree.folders.find((folder) => folder.id === currentId)?.parentId || null;
+            }
+            return false;
+        };
         const filtered = ids.filter((id) => {
             const displayName = typeof getLayerDisplayName === "function"
                 ? String(getLayerDisplayName(id) || id)
                 : String(id || "");
-            return displayName.toLowerCase().includes(activeFilterText) || String(id || "").toLowerCase().includes(activeFilterText);
+            return !filteringLayers
+                || matchLayerSearch(displayName)
+                || matchLayerSearch(id)
+                || folderMatchesOrContainsMatch(tree.layerParents[id]);
         });
+        const visibleFolderIds = new Set();
+        const addFolderWithParents = (folderId) => {
+            let currentId = folderId;
+            while (currentId) {
+                visibleFolderIds.add(currentId);
+                currentId = tree.folders.find((folder) => folder.id === currentId)?.parentId || null;
+            }
+        };
+        if (filteringLayers) {
+            matchingFolderIds.forEach(addFolderWithParents);
+            filtered.forEach((id) => addFolderWithParents(tree.layerParents[id]));
+        }
 
         listRoot.innerHTML = "";
-        const tree = layerTree.snapshot(ids);
         const containers = new Map([[null, listRoot]]);
         listRoot.addEventListener("dragover", (event) => event.preventDefault());
         listRoot.addEventListener("drop", (event) => {
@@ -3350,12 +3401,13 @@ export function setupObjectSidebar({
             if (layerTree.move(id, null)) renderList();
         });
         const renderFolder = (folder, parentContainer) => {
+            if (filteringLayers && !visibleFolderIds.has(folder.id)) return;
             const group = document.createElement("section");
             group.className = "layer-tree-folder";
             const header = document.createElement("button");
             header.type = "button";
             header.className = "layer-tree-folder-header";
-            header.innerHTML = `<span class="layer-tree-chevron">${folder.expanded ? "▾" : "▸"}</span><span class="layer-tree-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.2a2 2 0 0 1 2-2h3.3l1.7 2h6.5a2 2 0 0 1 2 2v8.2a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2z"/></svg></span><span>${folder.name}</span>`;
+            header.innerHTML = `<span class="layer-tree-chevron">${folder.expanded ? "▾" : "▸"}</span><span class="layer-tree-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8.2a2.2 2.2 0 0 1 2.2-2.2h3.2l1.9 2.3h6.2a2.2 2.2 0 0 1 2.2 2.2v6.9a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2z"/><path d="M3.8 11.1h16.4"/></svg></span><span>${folder.name}</span>`;
             header.draggable = true;
             header.addEventListener("dragstart", (event) => { event.dataTransfer.setData("text/plain", folder.id); event.dataTransfer.effectAllowed = "move"; });
             header.addEventListener("dragover", (event) => { event.preventDefault(); event.stopPropagation(); });
@@ -3371,7 +3423,7 @@ export function setupObjectSidebar({
             });
             group.appendChild(header);
             const body = document.createElement("div");
-            body.hidden = !folder.expanded;
+            body.hidden = filteringLayers ? false : !folder.expanded;
             body.className = "layer-tree-folder-body";
             body.addEventListener("dragover", (event) => { event.preventDefault(); event.stopPropagation(); });
             body.addEventListener("drop", (event) => {
@@ -3501,13 +3553,107 @@ export function setupObjectSidebar({
         addRow.appendChild(addItem);
         listRoot.appendChild(addRow);
 
+        // Empty folders do not need a vertical guide; the guide is reserved
+        // for folders that actually contain a layer or a subfolder.
+        listRoot.querySelectorAll(".layer-tree-folder-body").forEach((body) => {
+            body.classList.toggle("is-empty", body.children.length === 0);
+        });
+
         if (selectedId && !ids.includes(selectedId)) {
             selectedId = null;
             renderInfo();
         }
 
+        // React owns the visible tree. The legacy list remains a hidden
+        // compatibility surface while the catalog is migrated incrementally.
+        listRoot.hidden = true;
+        window.dispatchEvent(new CustomEvent("orbit:layer-tree-state", {
+            detail: {
+                tree: filteringLayers ? { ...tree, folders: tree.folders.filter((folder) => visibleFolderIds.has(folder.id)) } : tree,
+                layers: filtered.map((id) => {
+                    const meta = getCatalogEntryMeta?.(id) || null;
+                    const layerType = String(getLayerType?.(id) || "").toUpperCase();
+                    return {
+                        id,
+                        name: String(getLayerDisplayName?.(id) || id),
+                        type: layerType === "GROUND_STATION" ? "GST" : (layerType === "POINT" ? "POINT" : "SAT"),
+                        format: meta?.sourceFormat ? String(meta.sourceFormat).toUpperCase() : "",
+                        visible: getObjectVisibility(id),
+                        selected: id === selectedId
+                    };
+                })
+            }
+        }));
         syncGlobalVisibilityFromLayers(ids);
     }
+
+    window.addEventListener("orbit:ground-station-submit", (event) => {
+        const values = event.detail || {};
+        const inputs = { name: gsNameInput, latitude_deg: gsLatInput, longitude_deg: gsLonInput, altitude_m: gsAltInput, min_elevation_deg: gsMaskInput, frequency_mhz: gsFreqInput, tx_power_dbm: gsTxPowerInput, tx_gain_dbi: gsTxGainInput, rx_gain_dbi: gsRxGainInput, coverage_radius_km: gsCoverageRadiusInput, point_size_px: gsPointSizeInput, point_symbol: gsPointSymbolInput, point_color: gsPointColorInput, heatmap_density: gsHeatDensityInput };
+        Object.entries(inputs).forEach(([key, input]) => { if (input && values[key] !== undefined) input.value = values[key]; });
+        gsCoverageVisibleInput.checked = values.coverage_visible !== false;
+        gsHeatEnabledInput.checked = values.heatmap_enabled === true;
+        submitGroundStation();
+    });
+
+    window.addEventListener("orbit:layer-tree-action", (event) => {
+        const action = event.detail || {};
+        if (action.type === "select" && action.id) {
+            selectedId = action.id;
+            onSelectObject?.(selectedId);
+            renderList(); renderInfo();
+        }
+        if (action.type === "focus" && action.id) {
+            selectedId = action.id;
+            onSelectObject?.(selectedId);
+            onFocusObject(selectedId);
+            renderList(); renderInfo();
+        }
+        if (action.type === "visibility" && action.id) {
+            onToggleObjectVisibility(action.id, action.visible === true);
+            renderList(); renderInfo();
+        }
+        if (action.type === "remove" && action.id) {
+            onToggleObjectLayer(action.id, false);
+            if (selectedId === action.id) selectedId = null;
+            renderList(); renderInfo(); renderCatalogList();
+        }
+        if (action.type === "toggle-folder" && action.id) {
+            layerTree.toggle(action.id);
+            renderList();
+        }
+        if (action.type === "create-folder") {
+            requestFolderName({ title: action.title || "Nueva carpeta", label: action.label || "Nombre de la carpeta" }).then((name) => {
+                if (name && layerTree.createFolder(name, action.parentId || null)) renderList();
+            });
+        }
+        if (action.type === "rename-folder" && action.id) {
+            requestFolderName({ title: "Renombrar carpeta", label: "Nombre de la carpeta", initialValue: action.name || "" }).then((name) => {
+                if (name && layerTree.renameFolder(action.id, name)) renderList();
+            });
+        }
+        if (action.type === "delete-folder" && action.id) {
+            const tree = layerTree.snapshot(getRenderableLayerIds());
+            const foldersToDelete = new Set([action.id]);
+            let foundNestedFolder = true;
+            while (foundNestedFolder) {
+                foundNestedFolder = false;
+                tree.folders.forEach((folder) => {
+                    if (foldersToDelete.has(folder.parentId) && !foldersToDelete.has(folder.id)) { foldersToDelete.add(folder.id); foundNestedFolder = true; }
+                });
+            }
+            const layerIds = Object.entries(tree.layerParents).filter(([, parentId]) => foldersToDelete.has(parentId)).map(([id]) => id);
+            askConfirmation({ title: "Eliminar carpeta", message: `Se eliminará '${action.name}' y ${layerIds.length} capas asociadas.`, confirmText: "Eliminar", cancelText: "Cancelar" }).then((ok) => {
+                if (!ok) return;
+                layerIds.forEach((id) => onToggleObjectLayer(id, false));
+                layerTree.removeFolder(action.id);
+                renderList(); renderInfo(); renderCatalogList();
+            });
+        }
+        if (action.type === "move" && action.id && layerTree.move(action.id, action.folderId || null)) renderList();
+        if (action.type === "context" && action.id) openContextMenu(action.id, action.x, action.y);
+        if (action.type === "add") document.getElementById("openCatalogBtn")?.click();
+    });
 
     function setGlobalVisibility(allVisible) {
         globalLayersVisible = Boolean(allVisible);
@@ -3769,6 +3915,30 @@ export function setupObjectSidebar({
         catalogListRoot.scrollTop = 0;
         updateCatalogLoadedProgress();
         updateCatalogPaginationState();
+        window.dispatchEvent(new CustomEvent("orbit:catalog-state", {
+            detail: {
+                rows: lastRenderedCatalogIds.map((id) => {
+                    const meta = getCatalogMeta(id);
+                    const entry = getCatalogEntryMeta?.(id) || null;
+                    return {
+                        id,
+                        active: getObjectLayerActive(id),
+                        selected: selectedCatalogIds.has(id),
+                        orbit: meta?.orbitInfo?.kind && meta.orbitInfo.kind !== ORBIT_KIND.UNKNOWN ? meta.orbitInfo.label : "",
+                        orbitKind: meta?.orbitInfo?.kind || ORBIT_KIND.UNKNOWN,
+                        format: entry?.sourceFormat ? String(entry.sourceFormat).toUpperCase() : ""
+                    };
+                }),
+                selected: [...selectedCatalogIds],
+                page: catalogCurrentPage,
+                totalPages: catalogTotalPages,
+                total: catalogServerTotal,
+                search: catalogFilterState.name,
+                filters: { ...catalogFilterState },
+                busy: catalogBusy || catalogLoadingPage,
+                busyText: catalogProgress.textContent || ""
+            }
+        }));
     }
 
     function refreshRenderedCatalogSelectionStyles() {
@@ -3807,6 +3977,17 @@ export function setupObjectSidebar({
                 ? getOrbitInfoFromTelemetry(telemetry, selectedId || "")
                 : orbitInfoFromTle;
             infoRoot.innerHTML = buildInfoText(telemetry, orbitInfo, summary, infoSectionOpenState, oemDomainActive);
+            window.dispatchEvent(new CustomEvent("orbit:selected-object", {
+                detail: selectedId ? {
+                    id: selectedId,
+                    telemetry,
+                    orbitInfo,
+                    sourceFormat,
+                    noradId: telemetry?.norad_id || telemetry?.norad || telemetry?.catalog_number || tle?.line1?.slice(2, 7).trim() || null,
+                    active: getObjectLayerActive(selectedId),
+                    visible: getObjectVisibility(selectedId)
+                } : null
+            }));
         } catch (error) {
             console.warn("No se pudo renderizar telemetria:", error);
             infoRoot.innerHTML = "<div class=\"object-info-empty\">No se pudo actualizar la telemetria. Reintenta seleccionando el satelite.</div>";
@@ -3881,15 +4062,11 @@ export function setupObjectSidebar({
             document.removeEventListener("drop", onGlobalFileDrop, true);
             sidebar.remove();
             catalogModal.remove();
-            confirmModal.remove();
             catalogLoadingModal.remove();
-            globalDropOverlay.remove();
             contextMenu.remove();
             addMenu.remove();
             groundStationModal.remove();
-            notificationCenter.remove();
             exportModal.remove();
-            tleInfoModal.remove();
         }
     };
 }

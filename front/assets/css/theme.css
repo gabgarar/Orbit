@@ -578,6 +578,12 @@
 #projectWelcome button:hover { transform: translateY(-2px); background: rgba(21, 92, 180, .36); }
 #projectWelcome button.primary { background: linear-gradient(135deg, #168fff, #1046bc); box-shadow: 0 12px 26px rgba(10, 93, 219, .32); }
 #projectWelcome button span { margin-right: 10px; color: #8bd8ff; }
+#projectWelcome .project-runtime-failure { display: grid; gap: 8px; margin: 20px 0 0; padding: 14px; border: 1px solid rgba(255, 113, 113, .68); border-radius: 12px; background: rgba(113, 20, 30, .46); color: #ffd8d8; font: 13px/1.45 sans-serif; text-align: left; }
+#projectWelcome .project-runtime-failure strong { color: #fff; }
+#projectWelcome .project-runtime-failure button { width: fit-content; margin-top: 2px; padding: 8px 11px; border-color: rgba(255, 181, 181, .7); background: rgba(72, 15, 23, .8); font-size: 12px; }
+#projectWelcome button:disabled { cursor: not-allowed; opacity: .52; transform: none; }
+#projectWelcome button:disabled:hover { transform: none; background: inherit; }
+.project-action-error { margin: -8px 0 18px !important; color: #ffb8b8 !important; }
 @media (max-width: 850px) { #projectWelcome { place-items: center; padding-right: 0; } #projectWelcome .project-welcome-card { transform: none; } }
 
 #projectActionModal { display: none; position: fixed; inset: 0; z-index: 10600; place-items: center; padding: 20px; background: rgba(2, 7, 16, .7); backdrop-filter: blur(6px); }
@@ -824,7 +830,7 @@
 #leftInfoPanel .sidebar-panel-resize-handle {
     position: absolute;
     top: 0;
-    right: -4px;
+    right: 0;
     bottom: 0;
     z-index: 2;
     width: 8px;
@@ -1182,4 +1188,20 @@ body.with-toolbars #cesiumContainer,
     #leftSidebar,
     #leftSatellitesPanel,
     #leftInfoPanel { top: 56px !important; }
+}
+
+@media (max-width: 620px) {
+    #topToolbar { padding-inline: 6px; gap: 6px; }
+    #topToolbar .toolbar-brand { gap: 0; margin-right: 0; font-size: 16px; letter-spacing: 3px; }
+    #topToolbar .toolbar-brand img { display: none; }
+    #topToolbar .toolbar-nav { flex: 0 0 auto; gap: 0; min-width: 0; }
+    #topToolbar .toolbar-nav-link { gap: 4px; font-size: 14px; }
+    #topToolbar .toolbar-search-wrap { flex: 1 1 64px; width: auto; min-width: 0; }
+    #topToolbar .toolbar-search { min-width: 0; padding-left: 26px; font-size: 12px; }
+    #topToolbar .toolbar-search-icon { left: 8px; font-size: 16px; }
+    #topToolbar .toolbar-actions { flex: 0 0 auto; gap: 5px; }
+    #topToolbar .toolbar-action-divider,
+    #topToolbar #topUserBtn { display: none; }
+    #topToolbar .toolbar-icon-btn { width: 26px; height: 32px; }
+    #topToolbar .toolbar-vector-icon svg { width: 18px; height: 18px; }
 }

@@ -1,4 +1,4 @@
-# Rebuild Orbit, wait for its health endpoint, then run the responsive UI suite.
+# Rebuild a healthy Orbit container, verify host reachability, then run the UI suite.
 
 param(
     [ValidateRange(1, 8)]
@@ -10,10 +10,18 @@ $scriptsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptsRoot
 $serverRoot = Join-Path $projectRoot "server"
 $restartScript = Join-Path $scriptsRoot "restart-orbit.ps1"
+. (Join-Path $scriptsRoot "orbit-http-port.ps1")
+. (Join-Path $scriptsRoot "orbit-http-bind.ps1")
+$orbitHttpPort = Get-OrbitHttpPort
+$orbitHttpBind = Get-OrbitHttpBind
+$env:ORBIT_HTTP_PORT = "$orbitHttpPort"
+$env:ORBIT_HTTP_BIND = $orbitHttpBind
+$orbitBaseUrl = "http://127.0.0.1:$orbitHttpPort"
 $env:ORBIT_UI_WORKERS = $Workers
+$env:ORBIT_UI_BASE_URL = $orbitBaseUrl
 
 if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
-    throw "npm.cmd was not found. Install Node.js 20 or newer before running UI tests."
+    throw "npm.cmd was not found. Install Node.js 20.19+ or 22.12+ before running UI tests."
 }
 
 & $restartScript
@@ -21,21 +29,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "Orbit could not be restarted before running UI tests."
 }
 
-$deadline = (Get-Date).AddSeconds(60)
-do {
-    try {
-        $healthResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8100/health" -TimeoutSec 3
-        if ($healthResponse.StatusCode -eq 200) {
-            break
-        }
-    } catch {
-        # The container is still starting; retry until the deadline.
-    }
-    Start-Sleep -Seconds 2
-} while ((Get-Date) -lt $deadline)
+try {
+    $healthResponse = Invoke-WebRequest -UseBasicParsing -Uri "$orbitBaseUrl/health" -TimeoutSec 5
+} catch {
+    throw "Orbit reported healthy in Docker but is not reachable at $orbitBaseUrl/health. Run .\.scripts\orbit-logs.cmd to inspect the startup logs."
+}
 
-if (-not $healthResponse -or $healthResponse.StatusCode -ne 200) {
-    throw "Orbit did not become healthy within 60 seconds. Run .\.scripts\orbit-logs.cmd to inspect the startup logs."
+if ($healthResponse.StatusCode -ne 200) {
+    throw "Orbit host healthcheck returned status $($healthResponse.StatusCode). Run .\.scripts\orbit-logs.cmd to inspect the startup logs."
 }
 
 Push-Location $serverRoot

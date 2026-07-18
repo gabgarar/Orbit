@@ -3,9 +3,13 @@ services:
     build:
       context: .
     ports:
-      - "8100:8100"
-      # El cliente se conecta directamente al WebSocket de FastAPI.
-      - "8765:8765"
+      # Keep the gateway private to this machine unless exposure is deliberate.
+      # Set ORBIT_HTTP_BIND=0.0.0.0 to publish it on every network interface.
+      - "${ORBIT_HTTP_BIND:-127.0.0.1}:${ORBIT_HTTP_PORT:-8100}:8100"
+    environment:
+      # The HTTP port inside the container is part of the runtime contract.
+      PORT: "8100"
+      PYTHON_BACKEND_URL: "http://127.0.0.1:8765"
     volumes:
       # Conserva cambios de configuración y catálogos fuera de la imagen.
       - ./config:/app/config

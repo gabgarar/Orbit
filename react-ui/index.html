@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Orbit</title>
     <link rel="icon" type="image/png" href="/assets/icon/favicon.png" />
-    <script src="https://unpkg.com/cesium/Build/Cesium/Cesium.js"></script>
-    <link href="https://unpkg.com/cesium/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+    <script>window.CESIUM_BASE_URL = "/Cesium/";</script>
+    <script src="/Cesium/Cesium.js"></script>
+    <link href="/Cesium/Widgets/widgets.css" rel="stylesheet" />
     <link href="/assets/css/theme.css" rel="stylesheet" />
     <link href="/assets/css/config-panel.css" rel="stylesheet" />
     <link href="/assets/css/object-sidebar.css" rel="stylesheet" />
-    <script src="https://cdn.jsdelivr.net/npm/pako@2/dist/pako.min.js"></script>
+    <script src="/vendor/pako.min.js"></script>
   </head>
   <body>
     <div id="root"></div>

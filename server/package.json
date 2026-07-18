@@ -3,11 +3,13 @@
   "scripts": {
     "start": "node nodeServer.js",
     "tiles:earth2km": "python3 python/generate_earth2km_tiles.py --input ../front/assets/earth2km.jpg --output ../front/assets/earth2km_tiles --min-zoom 0 --max-zoom 6 --tile-size 256",
+    "test:node": "node --test tests/node/*.test.js",
     "test:frontend": "node --test ../front/tests/unit/*.test.js",
+    "test:react-build": "npm --prefix ../react-ui run build",
     "test:backend": "python3 -m pytest python/tests",
-    "test:integration": "playwright test --config=playwright.config.js",
+    "test:integration": "node scripts/run-playwright.js",
     "test:ui": "npm run test:integration",
-    "test:all": "npm run test:frontend && npm run test:backend && npm run test:integration"
+    "test:all": "npm run test:node && npm run test:frontend && npm run test:react-build && npm run test:backend && npm run test:integration"
   },
   "dependencies": {
     "express": "^4.19.2"

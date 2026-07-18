@@ -16,6 +16,10 @@ Abre `http://localhost:8100`. Para detenerlo, usa `Ctrl+C`; para dejarlo en segu
 docker compose up -d --build
 ```
 
+Por defecto Docker publica Orbit solo en `127.0.0.1`, por lo que no queda accesible desde otros equipos de la red. Para exponerlo deliberadamente, establece `ORBIT_HTTP_BIND=0.0.0.0` junto al comando de Compose (en PowerShell: `$env:ORBIT_HTTP_BIND = "0.0.0.0"`). Ese valor publica el puerto en todas las interfaces de red; mantenlo en `127.0.0.1` para el uso local habitual. Si se publica fuera de una red de confianza, protégelo mediante firewall o un proxy con autenticación: las rutas de administración de Orbit están pensadas para un entorno controlado.
+
+Si el puerto `8100` del equipo ya estÃ¡ ocupado, cambia sÃ³lo el puerto publicado: `ORBIT_HTTP_PORT=18100 docker compose up --build` (en PowerShell: `$env:ORBIT_HTTP_PORT = "18100"`). El servicio conserva el puerto interno `8100` y se abre en `http://localhost:18100`.
+
 La carpeta `config/` queda montada como volumen, por lo que tus cambios de configuración y catálogo se conservan al recrear el contenedor. Para exportarlo a otra plataforma sólo necesitas copiar/clonar el repositorio y ejecutar el mismo comando, o publicar la imagen Docker resultante.
 
 Comprueba que el servicio ha terminado de arrancar con `docker compose ps`: debe mostrar el estado `healthy`. Para ver registros usa `docker compose logs -f orbit`; para detenerlo, `docker compose down`.
@@ -25,11 +29,15 @@ Comprueba que el servicio ha terminado de arrancar con `docker compose ps`: debe
 Todos los accesos operativos están centralizados en `.scripts/`. Ejecútalos desde la raíz de Orbit con doble clic o desde PowerShell:
 
 ```powershell
-.\.scripts\restart-orbit.cmd  # Reconstruye y reinicia Docker
+.\.scripts\restart-orbit.cmd  # Build incremental, reinicio y healthcheck de Docker
+.\.scripts\restart-orbit.cmd -SkipBuild # Solo reinicia la imagen ya creada
+.\.scripts\restart-orbit.cmd -NoCache # Reconstruccion limpia, solo si hace falta
 .\.scripts\orbit-status.cmd   # Muestra el estado y healthcheck
 .\.scripts\orbit-logs.cmd     # Sigue los logs; se detiene con Ctrl+C
 .\.scripts\test-ui.cmd        # Reinicia Orbit y ejecuta las pruebas de interfaz
+.\.scripts\test-node.cmd      # Pruebas unitarias del gateway Node.js
 .\.scripts\test-frontend.cmd  # Pruebas unitarias de front/ (sin Docker)
+.\.scripts\test-react-build.cmd # Compilacion de React y runtime Cesium
 .\.scripts\test-backend.cmd   # Pruebas de server/python/ dentro de Docker
 .\.scripts\test-all.cmd       # Frontend + backend + integración completa
 ```
@@ -51,11 +59,14 @@ Las pruebas se ejecutan con dos workers en paralelo. En un equipo potente puedes
 
 ## Ejecutar sin Docker
 
-Requiere Node.js 20+ y Python 3.10+. En Windows, instala Python marcando la opción de añadirlo al `PATH`. Después:
+Requiere Node.js 20.19+ (o 22.12+) y Python 3.10+. En Windows, instala Python marcando la opción de añadirlo al `PATH`. Después:
 
 ```bash
 py -3 -m pip install -r server/requirements.txt
-cd server
+cd react-ui
+npm.cmd ci
+npm.cmd run build
+cd ../server
 npm.cmd ci
 npm.cmd start
 ```
@@ -63,6 +74,12 @@ npm.cmd start
 En macOS o Linux, sustituye `py -3` por `python3` y `npm.cmd` por `npm`.
 
 Abre `http://localhost:8100`.
+
+`npm.cmd start` solo sirve el frontend ya compilado. La compilacion de
+`react-ui` descarga las versiones fijadas de Cesium y pako, las incorpora en
+`front/dist` y no requiere CDN en ejecucion. Docker ejecuta esa compilacion
+automaticamente; si se arranca Node directamente hay que ejecutar
+`npm.cmd run build` en `react-ui` antes de `npm.cmd start`.
 
 Orbit es un proyecto que ejecuta un servidor Node.js para servir una aplicación de visualización de satélites y comunicación con un backend Python.
 
@@ -80,7 +97,14 @@ El propósito de este repositorio es proporcionar una forma sencilla de iniciar 
    ```bash
    npm install
    ```
-3. Iniciar el servidor en primer plano:
+3. Compilar el frontend local antes del primer arranque o tras actualizar Cesium/pako:
+   ```bash
+   cd ../react-ui
+   npm.cmd ci
+   npm.cmd run build
+   cd ../server
+   ```
+4. Iniciar el servidor en primer plano:
    ```bash
    npm.cmd start
    ```

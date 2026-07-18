@@ -2,6 +2,7 @@
 /server/node_modules/
 /react-ui/node_modules/
 /react-ui/.npm-cache/
+/react-ui/.runtime-vendor/
 
 # Python cache files
 /server/python/__pycache__/
@@ -28,3 +29,4 @@ Thumbs.db
 dist/
 build/
 server/ui-artifacts/
+tests/artifacts/

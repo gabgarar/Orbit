@@ -9,24 +9,47 @@ export function setupResizableSidePanel({
     cssVariable,
     minimumWidth = 180,
     maximumWidth = () => Math.min(640, window.innerWidth * 0.72),
-    onLayoutChange = () => {}
+    onLayoutChange = () => {},
+    onCollapse = () => {}
 }) {
     const handle = panel?.querySelector(".sidebar-panel-resize-handle");
     if (!panel || !triggerButton || !handle) {
         return () => {};
     }
 
+    const getStoredWidth = () => {
+        try {
+            return Number(globalThis.localStorage?.getItem(storageKey));
+        } catch {
+            return Number.NaN;
+        }
+    };
+    const storeWidth = (width) => {
+        try {
+            globalThis.localStorage?.setItem(storageKey, String(width));
+        } catch {
+            // Storage can be unavailable in private or tracking-protected contexts.
+        }
+    };
+    const clearStoredWidth = () => {
+        try {
+            globalThis.localStorage?.removeItem(storageKey);
+        } catch {
+            // The visual state must remain usable even without persistent storage.
+        }
+    };
+
     const setWidth = (width, persist = true) => {
         const maxWidth = Math.max(minimumWidth + 40, maximumWidth());
         const safeWidth = Math.round(Math.min(Math.max(width, minimumWidth), maxWidth));
         panel.style.setProperty(cssVariable, `${safeWidth}px`);
         if (persist) {
-            localStorage.setItem(storageKey, String(safeWidth));
+            storeWidth(safeWidth);
         }
         onLayoutChange();
     };
 
-    const savedWidth = Number(localStorage.getItem(storageKey));
+    const savedWidth = getStoredWidth();
     if (Number.isFinite(savedWidth) && savedWidth >= minimumWidth) {
         setWidth(savedWidth, false);
     }
@@ -51,9 +74,10 @@ export function setupResizableSidePanel({
             const nextWidth = startWidth + moveEvent.clientX - startX;
             if (nextWidth <= minimumWidth) {
                 panel.style.removeProperty(cssVariable);
-                localStorage.removeItem(storageKey);
+                clearStoredWidth();
                 panel.classList.remove("open");
                 triggerButton.classList.remove("active");
+                onCollapse();
                 onLayoutChange();
                 stopResizing();
                 return;
