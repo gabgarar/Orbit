@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CalendarIcon, EyeIcon, EyeOffIcon, PlusIcon, SatelliteIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons.jsx";
+import { CalendarIcon, EyeIcon, EyeOffIcon, ManualOrbitIcon, PlusIcon, SatelliteIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons.jsx";
 import CameraControls from "../features/camera/CameraControls.jsx";
 import { getLayerActionsState, LAYER_ACTIONS_STATE_EVENT } from "../../../front/js/runtime/layerActionsState.js";
 
@@ -9,6 +9,7 @@ function publishLayersPanelState(open) {
 
 function ProjectTimeFooter() {
     const [context, setContext] = useState({ date: new Date(), mode: "realtime" });
+    const [designMode, setDesignMode] = useState(false);
     useEffect(() => {
         const onTimeContext = (event) => {
             const nextDate = new Date(event.detail?.date || Date.now());
@@ -17,7 +18,16 @@ function ProjectTimeFooter() {
         window.addEventListener("orbit:time-context", onTimeContext);
         return () => window.removeEventListener("orbit:time-context", onTimeContext);
     }, []);
+    useEffect(() => {
+        const onDesignMode = (event) => setDesignMode(event.detail?.active === true);
+        window.addEventListener("orbit:manual-orbit-design-state", onDesignMode);
+        return () => window.removeEventListener("orbit:manual-orbit-design-state", onDesignMode);
+    }, []);
     const isRealtime = context.mode === "realtime";
+    // The design panel owns its two explicit epochs. Keeping the project
+    // clock visible here would make the isolated scene look like realtime is
+    // still active, and it consumes useful space in the Layers panel.
+    if (designMode) return null;
     return <footer id="projectTimeFooter" className="grid min-h-[74px] grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-2.5 border-t border-[#17283d] px-1 pt-[11px] pb-[13px] mx-[14px] font-[system-ui,sans-serif] text-[#dbe6f8]">
         <span className="grid size-[30px] place-items-center border-r border-[#203148] text-[#b9c9df] [&>svg]:size-[19px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.7]" aria-hidden="true"><CalendarIcon /></span>
         <div className="grid gap-1">
@@ -35,6 +45,8 @@ export default function WorkspaceSidebar() {
     const [searchOptions, setSearchOptions] = useState({ matchCase: false, wholeWord: false, regex: false });
     const [allLayersVisible, setAllLayersVisible] = useState(true);
     const [hasActiveLayers, setHasActiveLayers] = useState(() => getLayerActionsState().hasActiveLayers);
+    const [manualOrbitOpen, setManualOrbitOpen] = useState(false);
+    const [designMode, setDesignMode] = useState(false);
     useEffect(() => {
         const onProjectTitle = (event) => setProjectName(String(event.detail || "MY PROJECT").toUpperCase());
         window.addEventListener("orbit:project-title", onProjectTitle);
@@ -70,6 +82,21 @@ export default function WorkspaceSidebar() {
         onLayerActionsState({ detail: getLayerActionsState() });
         return () => window.removeEventListener(LAYER_ACTIONS_STATE_EVENT, onLayerActionsState);
     }, []);
+    useEffect(() => {
+        const onManualOrbitPanelState = (event) => {
+            if (typeof event.detail?.open === "boolean") setManualOrbitOpen(event.detail.open);
+        };
+        window.addEventListener("orbit:manual-orbit-panel-state", onManualOrbitPanelState);
+        return () => window.removeEventListener("orbit:manual-orbit-panel-state", onManualOrbitPanelState);
+    }, []);
+    useEffect(() => {
+        const onDesignMode = (event) => setDesignMode(event.detail?.active === true);
+        window.addEventListener("orbit:manual-orbit-design-state", onDesignMode);
+        return () => window.removeEventListener("orbit:manual-orbit-design-state", onDesignMode);
+    }, []);
+    useEffect(() => {
+        if (designMode) setSearchMenuOpen(false);
+    }, [designMode]);
     const togglePanel = () => {
         const next = !openPanel;
         setOpenPanel(next);
@@ -86,6 +113,7 @@ export default function WorkspaceSidebar() {
     return <>
         <aside id="leftSidebar" aria-label="Paneles del visor">
             <button id="leftSatellitesBtn" className={`sidebar-btn${openPanel ? " active" : ""}`} type="button" title="Capas y satelites" aria-label="Capas y satelites" onClick={togglePanel}><SatelliteIcon /></button>
+            <button id="leftManualOrbitBtn" className={`sidebar-btn${manualOrbitOpen ? " active" : ""}`} type="button" title={"Crear \u00f3rbita manual"} aria-label={"Crear \u00f3rbita manual"} aria-expanded={manualOrbitOpen} onClick={() => window.dispatchEvent(new CustomEvent("orbit:manual-orbit-toggle", { detail: { open: !manualOrbitOpen } }))}><ManualOrbitIcon /></button>
             <div className="sidebar-spacer" />
             <CameraControls />
         </aside>
@@ -93,18 +121,18 @@ export default function WorkspaceSidebar() {
             <div className="sidebar-panel-header orbit-layers-panel-header after:!hidden max-[620px]:!min-h-[62px] max-[620px]:!p-[14px]">
                 <div className="orbit-layers-heading">LAYERS</div>
                 <div className="sidebar-panel-actions !gap-[6px]">
-                    <button className="object-global-eye-btn inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#17263c] !bg-[#0c1522] !text-[#c9d6ec] hover:!border-[#4168a3] hover:!bg-[#14243d] hover:!text-[#edf4ff] [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="toggleAllVisibilityBtn" data-react-visibility-toggle="true" type="button" title={visibilityTitle} aria-label={visibilityTitle} aria-pressed={allLayersVisible} hidden={!hasActiveLayers}>
+                    <button className="object-global-eye-btn inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#17263c] !bg-[#0c1522] !text-[#c9d6ec] hover:!border-[#4168a3] hover:!bg-[#14243d] hover:!text-[#edf4ff] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="toggleAllVisibilityBtn" data-react-visibility-toggle="true" type="button" title={designMode ? "Las capas se restaurarán al salir del diseño orbital" : visibilityTitle} aria-label={visibilityTitle} aria-pressed={allLayersVisible} disabled={designMode} hidden={!hasActiveLayers}>
                         {allLayersVisible ? <EyeIcon /> : <EyeOffIcon />}
                     </button>
-                    <button className="object-global-remove-btn inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#542637] !bg-[#1c111a] !p-0 !text-[#f1a8b6] hover:!border-[#d15c74] hover:!bg-[#371421] hover:!text-[#ffe3e8] [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas" hidden={!hasActiveLayers}><TrashIcon /></button>
-                    <button className="object-add-btn !inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#4167ff] !bg-[#3d5cf4] !text-[25px] !text-white !shadow-[0_6px_14px_rgba(54,84,238,.3)] [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="openCatalogBtn" type="button" title="Anadir capa"><PlusIcon /></button>
+                    <button className="object-global-remove-btn inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#542637] !bg-[#1c111a] !p-0 !text-[#f1a8b6] hover:!border-[#d15c74] hover:!bg-[#371421] hover:!text-[#ffe3e8] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="removeAllLayersHeaderBtn" type="button" title={designMode ? "Las capas no se pueden eliminar durante el diseño orbital" : "Quitar todas las capas"} aria-label="Quitar todas las capas" disabled={designMode} hidden={!hasActiveLayers}><TrashIcon /></button>
+                    <button className="object-add-btn !inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#4167ff] !bg-[#3d5cf4] !text-[25px] !text-white !shadow-[0_6px_14px_rgba(54,84,238,.3)] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="openCatalogBtn" type="button" title={designMode ? "El catálogo se bloquea durante el diseño orbital" : "Anadir capa"} disabled={designMode}><PlusIcon /></button>
                 </div>
             </div>
             <div className="mt-[8px] grid h-[38px] grid-cols-[36px_minmax(0,1fr)_42px] items-center rounded-lg border border-[#1a2a47] bg-[#0a1221] mx-[14px] mb-[12px] font-[system-ui,sans-serif] text-sm leading-none font-medium text-[#a5b2c9] [&>svg]:m-auto [&>svg]:size-[18px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-width:1.8]" role="search">
                 <SearchIcon />
-                <input id="objectSearch" className="!box-border !h-full !w-full !min-w-0 !appearance-none !rounded-none !border-0 !bg-transparent !p-0 !font-[system-ui,sans-serif] !text-sm !leading-none !font-medium !text-[#dce8fa] !shadow-none !outline-none placeholder:!text-[#8a98ad]" type="search" placeholder="Search layers..." aria-label="Buscar capas" />
+                <input id="objectSearch" className="!box-border !h-full !w-full !min-w-0 !appearance-none !rounded-none !border-0 !bg-transparent !p-0 !font-[system-ui,sans-serif] !text-sm !leading-none !font-medium !text-[#dce8fa] !shadow-none !outline-none placeholder:!text-[#8a98ad] disabled:!cursor-not-allowed disabled:!opacity-45" type="search" placeholder="Search layers..." aria-label="Buscar capas" disabled={designMode} />
                 <div className="relative h-full">
-                    <button className={`!size-full !cursor-pointer !border-0 !border-l !border-[#1a2a47] !bg-transparent !p-0 !text-[#b9c8df] hover:!bg-[#13213a] hover:!text-[#e2ebfa] [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]${searchMenuOpen ? " !bg-[#13213a] !text-[#e2ebfa]" : ""}`} type="button" aria-label="Opciones de busqueda" aria-expanded={searchMenuOpen} onClick={() => setSearchMenuOpen((open) => !open)}><SlidersIcon /></button>
+                    <button className={`!size-full !cursor-pointer !border-0 !border-l !border-[#1a2a47] !bg-transparent !p-0 !text-[#b9c8df] hover:!bg-[#13213a] hover:!text-[#e2ebfa] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]${searchMenuOpen ? " !bg-[#13213a] !text-[#e2ebfa]" : ""}`} type="button" aria-label="Opciones de busqueda" aria-expanded={searchMenuOpen} disabled={designMode} onClick={() => setSearchMenuOpen((open) => !open)}><SlidersIcon /></button>
                     {searchMenuOpen && <div className="absolute top-[calc(100%+6px)] right-0 z-[10220] grid w-[190px] gap-[3px] rounded-lg border border-[#315178] bg-[#0c1728] p-[5px] shadow-[0_12px_28px_rgba(0,0,0,.45)]" role="menu">
                         <button className={`flex w-full cursor-pointer items-center gap-[9px] rounded-[5px] border-0 bg-transparent p-2 text-left font-[system-ui,sans-serif] text-[11px] leading-none font-semibold text-[#bdcbe0] hover:bg-[#193057] hover:text-[#eaf1ff]${searchOptions.matchCase ? " bg-[#193057] text-[#eaf1ff]" : ""}`} type="button" role="menuitemcheckbox" aria-checked={searchOptions.matchCase} onClick={() => toggleSearchOption("matchCase")}><b className="grid min-w-[22px] place-items-center text-[11px] text-[#8cadff]">Aa</b> Match case</button>
                         <button className={`flex w-full cursor-pointer items-center gap-[9px] rounded-[5px] border-0 bg-transparent p-2 text-left font-[system-ui,sans-serif] text-[11px] leading-none font-semibold text-[#bdcbe0] hover:bg-[#193057] hover:text-[#eaf1ff]${searchOptions.wholeWord ? " bg-[#193057] text-[#eaf1ff]" : ""}`} type="button" role="menuitemcheckbox" aria-checked={searchOptions.wholeWord} onClick={() => toggleSearchOption("wholeWord")}><b className="grid min-w-[22px] place-items-center text-[11px] text-[#8cadff]">ab</b> Whole word</button>
@@ -113,7 +141,7 @@ export default function WorkspaceSidebar() {
                 </div>
             </div>
             <div className="border-t border-[#172334] pt-[11px] mx-[14px] mb-2 font-[system-ui,sans-serif] text-[10px] leading-none font-bold tracking-[.1em] text-[#b8c5da]" data-project-title>{projectName}</div>
-            <div id="leftSatellitesPanelContent" className="sidebar-panel-content" />
+            <div id="leftSatellitesPanelContent" className={`sidebar-panel-content${designMode ? " pointer-events-none select-none opacity-50" : ""}`} aria-disabled={designMode} />
             <ProjectTimeFooter />
             <div className="sidebar-panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Redimensionar panel de capas" />
         </aside>

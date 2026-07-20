@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const initialDialog = { open: false, html: "", title: "Satellite information" };
 const scrollClass = "!min-h-0 !overflow-x-hidden !overflow-y-auto !pr-1 [scrollbar-color:var(--orbit-scrollbar-thumb)_transparent] [scrollbar-gutter:stable] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2.5 [&::-webkit-scrollbar-track]:rounded-md [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-md [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-[var(--orbit-bg-secondary)] [&::-webkit-scrollbar-thumb]:bg-[linear-gradient(180deg,var(--orbit-scrollbar-thumb)_0%,var(--orbit-scrollbar-thumb-end)_100%)] [&::-webkit-scrollbar-thumb]:bg-clip-padding hover:[&::-webkit-scrollbar-thumb]:bg-[linear-gradient(180deg,var(--orbit-scrollbar-thumb-end)_0%,var(--orbit-scrollbar-thumb)_100%)]";
@@ -12,15 +12,33 @@ const scrollClass = "!min-h-0 !overflow-x-hidden !overflow-y-auto !pr-1 [scrollb
  */
 export default function SatelliteInfoDialog() {
     const [dialog, setDialog] = useState(initialDialog);
+    const designModeRef = useRef(false);
 
     useEffect(() => {
-        const openDialog = (event) => setDialog({
-            open: true,
-            html: String(event.detail?.html || ""),
-            title: String(event.detail?.title || initialDialog.title)
-        });
+        const openDialog = (event) => {
+            // TLE/details lookup can finish asynchronously after the user
+            // has entered manual design. Do not let that late response cover
+            // the isolated preview scene again.
+            if (designModeRef.current) return;
+            setDialog({
+                open: true,
+                html: String(event.detail?.html || ""),
+                title: String(event.detail?.title || initialDialog.title)
+            });
+        };
+        const closeDialog = () => setDialog(initialDialog);
+        const onDesignMode = (event) => {
+            designModeRef.current = event.detail?.active === true;
+            if (designModeRef.current) closeDialog();
+        };
         window.addEventListener("orbit:tle-info", openDialog);
-        return () => window.removeEventListener("orbit:tle-info", openDialog);
+        window.addEventListener("orbit:tle-info-close", closeDialog);
+        window.addEventListener("orbit:manual-orbit-design-state", onDesignMode);
+        return () => {
+            window.removeEventListener("orbit:tle-info", openDialog);
+            window.removeEventListener("orbit:tle-info-close", closeDialog);
+            window.removeEventListener("orbit:manual-orbit-design-state", onDesignMode);
+        };
     }, []);
 
     useEffect(() => {

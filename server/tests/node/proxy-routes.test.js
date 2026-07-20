@@ -82,6 +82,34 @@ test("proxy forwards POST method, JSON body, and accepted content headers", asyn
     }]);
 });
 
+test("proxy exposes the transient manual-orbits endpoint", async () => {
+    const calls = [];
+    const app = createProxyApp(async (path, options) => {
+        calls.push({ path, options });
+        return new Response("{\"name\":\"Manual orbit\"}", { headers: { "content-type": "application/json" } });
+    });
+    const payload = {
+        name: "Manual orbit",
+        epochUtc: "2026-07-20T12:00:00Z",
+        propagator: "sgp4",
+        keplerian: { semiMajorAxisKm: 6878, eccentricity: 0.001 }
+    };
+
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/manual-orbits`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        assert.equal(response.status, 200);
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].path, "/manual-orbits");
+    assert.equal(calls[0].options.method, "POST");
+    assert.equal(calls[0].options.body, JSON.stringify(payload));
+});
+
 test("proxy preserves upstream status and content type", async () => {
     const app = createProxyApp(async () => new Response("<html>docs</html>", {
         status: 207,

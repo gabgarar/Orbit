@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { buildObjectDetails } from "../features/objectDetails/detailRows.js";
 import useSelectedObject from "../hooks/useSelectedObject.js";
 
-const tabs = [["overview", "OVERVIEW"], ["orbit", "ORBIT"], ["telemetry", "TELEMETRY"]];
+const standardTabs = [["overview", "OVERVIEW"], ["orbit", "ORBIT"], ["telemetry", "TELEMETRY"]];
 const toneClass = { "is-operational": "text-[#73e3a0]", "is-hidden": "text-[#d2a8ff]" };
 
 function DetailRows({ rows }) {
@@ -32,6 +32,7 @@ export default function ObjectDetailsPanel() {
     const [detail, setDetail] = useState(null);
     const [tab, setTab] = useState("overview");
     const [dismissedId, setDismissedId] = useState(null);
+    const [designMode, setDesignMode] = useState(false);
     const lastSelection = useRef({ id: null, revision: null });
 
     // The runtime clears its transient selection when the user clicks the globe
@@ -57,10 +58,18 @@ export default function ObjectDetailsPanel() {
         }
     }, [selectedDetail]);
 
-    if (!detail || dismissedId === detail.id) return null;
+    useEffect(() => {
+        const onDesignMode = (event) => setDesignMode(event.detail?.active === true);
+        window.addEventListener("orbit:manual-orbit-design-state", onDesignMode);
+        return () => window.removeEventListener("orbit:manual-orbit-design-state", onDesignMode);
+    }, []);
+
+    if (designMode || !detail || dismissedId === detail.id) return null;
 
     const details = buildObjectDetails(detail);
     const isGroundStation = String(detail.layerType || "").toUpperCase() === "GROUND_STATION";
+    const isManualOrbit = String(detail.sourceFormat || "").toUpperCase() === "MANUAL";
+    const tabs = isManualOrbit ? [...standardTabs, ["manual", "MANUAL PARAMS"]] : standardTabs;
 
     return <aside className="object-details-panel pointer-events-auto fixed top-[86px] right-[14px] bottom-[132px] z-[10124] flex min-h-[300px] w-[min(300px,calc(100vw-28px))] flex-col overflow-auto rounded-[10px] border border-[rgba(65,99,147,.58)] bg-[linear-gradient(145deg,rgba(12,25,42,.97),rgba(5,14,25,.97))] p-4 font-[system-ui] text-[#dbe7fa] shadow-[0_22px_60px_rgba(0,0,0,.46),inset_0_1px_rgba(255,255,255,.045)] max-[760px]:top-20 max-[760px]:right-2.5 max-[760px]:bottom-[74px] max-[760px]:w-[min(330px,calc(100vw-20px))]" aria-label="Detalles del objeto seleccionado">
         <button className="absolute top-[14px] right-[15px] cursor-pointer border-0 bg-transparent text-2xl leading-none text-[#b7c6dc] hover:text-white" type="button" aria-label="Cerrar detalles" onClick={() => setDismissedId(detail.id)}>&#215;</button>
@@ -69,13 +78,13 @@ export default function ObjectDetailsPanel() {
             <span className={`inline-flex rounded-[5px] px-2 py-1.5 text-[10px] leading-none font-bold ${details.visible ? "bg-[rgba(39,169,95,.19)] text-[#73e3a0]" : "bg-[rgba(133,75,193,.24)] text-[#d2a8ff]"}`}>{details.visible ? "ACTIVE" : "HIDDEN"}</span>
             <span>NORAD {details.noradId}</span>
         </div>
-        <nav className="relative z-[1] my-[11px] mb-[13px] grid grid-cols-3 border-b border-[#1c2c43]" aria-label="Secciones de detalle" role="tablist">
+        <nav className={`relative z-[1] my-[11px] mb-[13px] grid ${isManualOrbit ? "grid-cols-4" : "grid-cols-3"} border-b border-[#1c2c43]`} aria-label="Secciones de detalle" role="tablist">
             {tabs.map(([key, label]) => <button className={`relative cursor-pointer border-0 bg-transparent px-0.5 pt-[9px] pb-[11px] text-[10px] leading-none font-bold ${tab === key ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1]"}`} type="button" key={key} role="tab" aria-selected={tab === key} aria-controls={`object-details-${key}`} onClick={() => setTab(key)}>{label}</button>)}
         </nav>
         <section id={`object-details-${tab}`} role="tabpanel"><DetailRows rows={details.rows[tab]} /></section>
-        {!isGroundStation && <footer className="mt-auto grid grid-cols-2 gap-2 border-t border-[#1c2c43] pt-3">
+        {!isGroundStation && <footer className={`mt-auto grid ${isManualOrbit ? "grid-cols-1" : "grid-cols-2"} gap-2 border-t border-[#1c2c43] pt-3`}>
             <button className="inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Configuración individual" onClick={() => dispatchObjectAction("visualization", detail.id)}><TuneGlyph />Configuración</button>
-            <button className="inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Ver parámetros TLE" onClick={() => dispatchObjectAction("tle", detail.id)}><TleGlyph />Parámetros TLE</button>
+            {!isManualOrbit && <button className="inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Ver parámetros TLE" onClick={() => dispatchObjectAction("tle", detail.id)}><TleGlyph />Parámetros TLE</button>}
         </footer>}
     </aside>;
 }

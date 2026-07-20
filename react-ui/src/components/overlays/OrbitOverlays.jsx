@@ -15,8 +15,9 @@ import AppDialog from "../AppDialog.jsx";
 import SatelliteContextMenu from "../SatelliteContextMenu.jsx";
 import SatelliteVisualizationDialog from "../SatelliteVisualizationDialog.jsx";
 import SatelliteInfoDialog from "../SatelliteInfoDialog.jsx";
+import ManualOrbitPanel from "../ManualOrbitPanel.jsx";
 
 /** Mounts dialogs and panels that communicate with the Cesium runtime through orbit:* events. */
 export default function OrbitOverlays() {
-    return <><WorkspaceSidebar /><ObjectDetailsPanel /><ProjectActionDialog /><ConfigPanel /><ConfirmDialog /><CatalogDropOverlay /><LayerContextMenu /><CatalogModal /><FolderNameDialog /><ExportDialog /><GroundStationDialog /><CatalogFilters /><HeatMapLegend /><AppDialog /><SatelliteContextMenu /><SatelliteVisualizationDialog /><SatelliteInfoDialog /></>;
+    return <><WorkspaceSidebar /><ObjectDetailsPanel /><ManualOrbitPanel /><ProjectActionDialog /><ConfigPanel /><ConfirmDialog /><CatalogDropOverlay /><LayerContextMenu /><CatalogModal /><FolderNameDialog /><ExportDialog /><GroundStationDialog /><CatalogFilters /><HeatMapLegend /><AppDialog /><SatelliteContextMenu /><SatelliteVisualizationDialog /><SatelliteInfoDialog /></>;
 }

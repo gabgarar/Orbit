@@ -20,9 +20,11 @@ function buildTimelineMarks(startValue, endValue, count = 6) {
 export default function TimeControlBar() {
     const [collapsed, setCollapsed] = useState(false); const [simulation, setSimulation] = useState(initialSimulation); const [dockLeft, setDockLeft] = useState(null); const [dockHeight, setDockHeight] = useState(null); const [dockBottom, setDockBottom] = useState(null);
     const [speedMenuOpen, setSpeedMenuOpen] = useState(false); const [dateMenuOpen, setDateMenuOpen] = useState(false); const [modeMenuOpen, setModeMenuOpen] = useState(false); const [recording, setRecording] = useState(false);
+    const [designMode, setDesignMode] = useState(false);
     const sendAction = (type, value) => window.dispatchEvent(new CustomEvent("orbit:simulation-action", { detail: { type, value } }));
     useEffect(() => { const sync = (event) => setSimulation((current) => ({ ...current, ...(event.detail || {}) })); window.addEventListener("orbit:simulation-state", sync); return () => window.removeEventListener("orbit:simulation-state", sync); }, []);
     useEffect(() => { const sync = (event) => setRecording(event.detail === true || event.detail?.active === true); window.addEventListener("orbit:recording-state", sync); return () => window.removeEventListener("orbit:recording-state", sync); }, []);
+    useEffect(() => { const sync = (event) => setDesignMode(event.detail?.active === true); window.addEventListener("orbit:manual-orbit-design-state", sync); return () => window.removeEventListener("orbit:manual-orbit-design-state", sync); }, []);
     useEffect(() => {
         const panel = document.getElementById("leftSatellitesPanel"); const infoPanel = document.getElementById("leftInfoPanel"); const rail = document.getElementById("leftSidebar"); const projectTimeFooter = document.getElementById("projectTimeFooter");
         const update = () => {
@@ -46,6 +48,11 @@ export default function TimeControlBar() {
             ? "is-end -translate-x-full after:left-auto after:right-[6px]"
             : "-translate-x-1/2 after:left-1/2 after:-translate-x-1/2";
     const updateRange = (field, value) => { if (!value) return; const next = { ...simulation, [field]: new Date(value).toISOString() }; setSimulation(next); sendAction("range", { startDate: next.startDate, endDate: next.endDate }); };
+
+    // Orbit design has its own start/end epochs in the right-hand editor.  A
+    // second time controller here would suggest it can alter the preview, so
+    // leave the globe unobstructed until the design session is completed.
+    if (designMode) return null;
 
     return <>
         <section

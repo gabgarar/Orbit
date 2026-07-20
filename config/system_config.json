@@ -1,7 +1,7 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 10,
+      "propagation_hours": 24,
       "future_show": true,
       "ground_track_show": false,
       "future_line_width": 2.5,
@@ -28,9 +28,9 @@
       "antialias_mode": "off",
       "antialias_enabled": true,
       "background_color": "#03070d",
-      "sky_atmosphere": false,
+      "sky_atmosphere": true,
       "globe_lighting": true,
-      "stars_enabled": false
+      "stars_enabled": true
     },
     "recording": {
       "quality": "medium",

@@ -1,6 +1,6 @@
 import { createPythonForwarder } from "./forwarder.js";
 
-const API_ROUTES = ["/propagate", "/orbits", "/aos-los", "/ephemeris"];
+const API_ROUTES = ["/propagate", "/orbits", "/aos-los", "/ephemeris", "/manual-orbits"];
 const SATELLITE_API_ROUTES = ["/propagate", "/orbits"];
 
 function registerForwardingRoute(app, method, route, getPythonPath, forward) {

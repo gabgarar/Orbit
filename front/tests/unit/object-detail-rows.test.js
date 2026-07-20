@@ -118,3 +118,49 @@ test("overview rejects an impossible non-leap TLE day instead of rolling it into
     assert.equal(overview["Edad TLE"], "-");
     assert.equal(overview["Estado TLE"], "-");
 });
+
+test("a confirmed manual orbit exposes only its authored definition in Manual Params", () => {
+    const details = buildObjectDetails({
+        id: "manual:demo",
+        sourceFormat: "MANUAL",
+        telemetry: { id: "Manual demo", geo: {} },
+        catalogMeta: {
+            name: "Manual demo",
+            sourceFormat: "MANUAL",
+            manualOrbit: {
+                definitionSource: "keplerian",
+                propagator: "sgp4",
+                epochUtc: "2026-07-20T10:00:00.000Z",
+                startTime: "2026-07-20T10:00:00.000Z",
+                endTime: "2026-07-20T16:00:00.000Z",
+                groundTrackEnabled: true,
+                keplerian: {
+                    semi_major_axis_km: 6878,
+                    eccentricity: 0.01,
+                    inclination_deg: 51.6,
+                    raan_deg: 25,
+                    argument_of_perigee_deg: 70,
+                    true_anomaly_deg: 12
+                },
+                stateVector: {
+                    position_eci_km: { x: 6800, y: 20, z: 15 },
+                    velocity_eci_km_s: { x: 0.1, y: 7.6, z: 0.2 }
+                },
+                summary: {
+                    perigee_altitude_km: 431.1,
+                    apogee_altitude_km: 568.7,
+                    orbital_period_seconds: 5676
+                }
+            }
+        }
+    });
+    const manual = Object.fromEntries(details.rows.manual);
+
+    assert.equal(manual.Definition, "keplerian");
+    assert.equal(manual.Propagator, "sgp4");
+    assert.equal(manual["Ground track"], "On");
+    assert.equal(manual.Perigee, "431.100 km");
+    assert.equal(manual.Apogee, "568.700 km");
+    assert.equal(manual.Period, "94.600 min");
+    assert.equal(manual["Arg. periapsis"], "70.0000 deg");
+});

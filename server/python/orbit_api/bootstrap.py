@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from orbit_api.api.routes.catalog import create_catalog_router
 from orbit_api.api.routes.exports import create_exports_router
 from orbit_api.api.routes.ground_stations import create_ground_stations_router
+from orbit_api.api.routes.manual_orbits import create_manual_orbits_router
 from orbit_api.api.routes.orbits import create_orbits_router
 from orbit_api.api.routes.realtime import create_realtime_router
 from orbit_api.api.routes.system import create_system_router
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(create_system_router(runtime.satellite_count, runtime.reload_constellation))
     app.include_router(create_catalog_router(runtime.catalog_satellite_ids))
     app.include_router(create_orbits_router(runtime.resolve_propagator, runtime.serialize_state, runtime.compute_auto_orbit_samples, runtime.build_ephemeris))
+    app.include_router(create_manual_orbits_router(runtime.resolve_propagator, runtime.build_ephemeris, runtime.ensure_utc))
     app.include_router(create_ground_stations_router(runtime.resolve_propagator, runtime.build_ephemeris, runtime.ensure_utc))
     app.include_router(create_exports_router(runtime.find_catalog_entry, runtime.resolve_propagator, runtime.build_ephemeris, runtime.ensure_utc))
     app.include_router(create_realtime_router(runtime.get_state_snapshot, runtime.get_orbits_cached, COMPRESSION_THRESHOLD))

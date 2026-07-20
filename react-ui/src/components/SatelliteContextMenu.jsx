@@ -16,22 +16,31 @@ export default function SatelliteContextMenu() {
 
     if (!menu) return null;
 
+    const selectAction = (type) => {
+        window.dispatchEvent(new CustomEvent("orbit:satellite-context-action", {
+            detail: { type, id: menu.id, sourceId: menu.sourceId || menu.id }
+        }));
+        setMenu(null);
+    };
+
     return <div
         id="satelliteContextMenu"
-        className="open !fixed !z-[10050] !rounded-[10px] !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-secondary)] !p-1.5 !shadow-[0_10px_26px_rgba(0,0,0,.45)]"
+        className="open !fixed !z-[10050] !grid !min-w-[214px] !gap-1 !rounded-[10px] !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-secondary)] !p-1.5 !shadow-[0_10px_26px_rgba(0,0,0,.45)]"
         style={{ left: menu.left, top: menu.top }}
     >
         <button
-            className="!h-8 !rounded-lg !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-tertiary)] !px-3 !font-sans !text-xs !leading-none !font-bold !text-[var(--orbit-text-primary)] !cursor-pointer hover:!bg-[var(--orbit-bg-hover)] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[var(--orbit-border-focus)]"
+            className="!h-8 !rounded-lg !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-tertiary)] !px-3 !text-left !font-sans !text-xs !leading-none !font-bold !text-[var(--orbit-text-primary)] !cursor-pointer hover:!bg-[var(--orbit-bg-hover)] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[var(--orbit-border-focus)]"
             type="button"
-            onClick={() => {
-                window.dispatchEvent(new CustomEvent("orbit:satellite-context-action", {
-                    detail: { type: "visualization", id: menu.id }
-                }));
-                setMenu(null);
-            }}
+            onClick={() => selectAction("visualization")}
         >
             Opciones de visualización
         </button>
+        {menu.canEditManualOrbit === true && <button
+            className="!h-8 !rounded-lg !border !border-[#3e68b0] !bg-[#162b4d] !px-3 !text-left !font-sans !text-xs !leading-none !font-bold !text-[#d7e7ff] !cursor-pointer hover:!border-[#6091e8] hover:!bg-[#203d68] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[#80a7ff]"
+            type="button"
+            onClick={() => selectAction("edit-manual")}
+        >
+            Editar órbita manual
+        </button>}
     </div>;
 }

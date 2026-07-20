@@ -26,6 +26,13 @@ import {
     clearAllSatelliteVisualizationConfigs,
     setSimulationTimelineProvider,
     importOemEphemerisTrack,
+    importManualOrbitTrack,
+    replaceManualOrbitTrack,
+    getManualOrbitProjectEntries,
+    getManualOrbitProjectEntry,
+    renderManualOrbitPreview,
+    setManualOrbitPreviewGroundTrack,
+    clearManualOrbitPreview,
     hasLoadedOemEphemerisTracks,
     getLoadedOemEphemerisTimeBounds
 } from "./js/satellites.js";
@@ -64,6 +71,12 @@ import { createAdaptiveDisplayController } from "./js/runtime/adaptiveDisplayCon
 import { bindProjectLifecycleEvents } from "./js/runtime/projectEventBridge.js";
 import { markOrbitRuntimeFailed } from "./js/runtime/runtimeStatus.js";
 import { emitObjectStateChanged } from "./js/runtime/objectDetailsEvents.js";
+import {
+    createDefaultManualOrbitState,
+    normalizeManualOrbitState,
+    synchronizeManualOrbitState,
+    toManualOrbitApiPayload
+} from "./js/features/manualOrbit/editorState.js";
 
 const logger = getLogger("main");
 logger.info("Iniciando Cesium...");
@@ -219,6 +232,20 @@ let stationHeatMapTimer = null;
 let currentProjectFileHandle = null;
 let currentProjectName = null;
 let objectSidebar = null;
+let manualOrbitEditorState = createDefaultManualOrbitState();
+let manualOrbitDefinitionSource = "keplerian";
+let manualOrbitCreateInFlight = false;
+let manualOrbitCreateRequestId = 0;
+let manualOrbitCreateAbortController = null;
+let manualOrbitBridgeBound = false;
+let manualOrbitDesignSession = null;
+let manualOrbitPreviewTimer = null;
+let manualOrbitPreviewAbortController = null;
+let manualOrbitPreviewRequestId = 0;
+let manualOrbitDesignSettings = null;
+// Set only while the design editor is modifying an already-confirmed local
+// manual orbit. Catalogue/OEM objects never populate this target.
+let manualOrbitEditingTarget = null;
 let globeLightingEnabledByConfig = true;
 const GLOBE_LIGHTING_MIN_HEIGHT_METERS = 1_200_000;
 let runtimeDecayAlertPerigeeKm = 200;
@@ -259,6 +286,8 @@ const projectLifecycle = createProjectLifecycle({
     getLayerNameOverrides: () => layerDisplayNameOverrides,
     clearSatelliteVisualizationConfigs: clearAllSatelliteVisualizationConfigs,
     getObjectSidebar: () => objectSidebar,
+    getManualOrbitEntries: getManualOrbitProjectEntries,
+    restoreManualOrbits: restoreManualOrbitsFromProject,
     getSimulationState: () => simulationState,
     applySimulationRange,
     showConfirm: showAppConfirm,
@@ -571,6 +600,31 @@ function formatObjectTimeRangeHours(hours) {
 // domain with the selected-object payload so the details card never presents
 // stale bootstrap dates as its start/end range.
 function getObjectTimeRange(layerId, telemetry) {
+    // A confirmed manual orbit owns an explicit design interval.  Keep that
+    // interval on its Overview card even after the workspace returns to real
+    // time, instead of replacing it with the global future-line horizon.
+    const manualOrbit = telemetry?.manual_orbit || telemetry?.manualOrbit;
+    const manualStart = manualOrbit?.startTime || manualOrbit?.start_time;
+    const manualEnd = manualOrbit?.endTime || manualOrbit?.end_time;
+    const manualStartDate = manualStart ? new Date(manualStart) : null;
+    const manualEndDate = manualEnd ? new Date(manualEnd) : null;
+    if (
+        manualStartDate instanceof Date
+        && manualEndDate instanceof Date
+        && !Number.isNaN(manualStartDate.getTime())
+        && !Number.isNaN(manualEndDate.getTime())
+        && manualEndDate.getTime() > manualStartDate.getTime()
+    ) {
+        const manualRangeHours = getRangeHours(manualStartDate.getTime(), manualEndDate.getTime());
+        return {
+            mode: SIMULATION_MODE_RANGE,
+            startDate: manualStartDate.toISOString(),
+            endDate: manualEndDate.toISOString(),
+            oemRangeHours: manualRangeHours,
+            label: `${formatObjectTimeRangeHours(manualRangeHours)} (manual design)`
+        };
+    }
+
     const isRangeMode = simulationState.mode === SIMULATION_MODE_RANGE;
     const startDate = isRangeMode
         ? new Date(simulationState.startDate)
@@ -1339,6 +1393,15 @@ function activateSatelliteSelection(satelliteId, focus = true) {
 }
 
 async function selectSatelliteFromGlobalSearch(item) {
+    // The manual editor deliberately owns a clean scene. The global search
+    // remains visible in the top toolbar, so guard its command path as well
+    // as the disabled Layers controls; otherwise a search result could add a
+    // live satellite in the middle of an isolated design session.
+    if (manualOrbitDesignSession?.active) {
+        publishManualOrbitStatus("error", "Cierra el modo de diseño orbital antes de añadir o seleccionar capas.");
+        return;
+    }
+
     const satId = String(item?.name || "").trim();
     if (!satId) {
         return;
@@ -2191,19 +2254,44 @@ function hideSatelliteContextMenu() {
 function showSatelliteContextMenuAt(satelliteId, x, y) {
     satelliteContextMenuTargetId = satelliteId;
 
+    const sourceId = getSatelliteSourceIdFromLayerId(String(satelliteId || "").trim());
+    // The manual registry, not the generic catalog metadata, is the
+    // authorization boundary for editing. A catalogue TLE can have a very
+    // similar set of Keplerian values but must never gain this action.
+    const canEditManualOrbit = Boolean(getManualOrbitProjectEntry(sourceId));
+
     const viewportPadding = 10;
     const estimatedWidth = 230;
-    const estimatedHeight = 44;
+    const estimatedHeight = canEditManualOrbit ? 82 : 44;
     const maxLeft = Math.max(viewportPadding, window.innerWidth - estimatedWidth - viewportPadding);
     const maxTop = Math.max(viewportPadding, window.innerHeight - estimatedHeight - viewportPadding);
     const safeLeft = Math.min(Math.max(viewportPadding, x), maxLeft);
     const safeTop = Math.min(Math.max(viewportPadding, y), maxTop);
 
-    window.dispatchEvent(new CustomEvent("orbit:satellite-context-open", { detail: { id: satelliteId, left: safeLeft, top: safeTop } }));
+    window.dispatchEvent(new CustomEvent("orbit:satellite-context-open", {
+        detail: {
+            id: satelliteId,
+            sourceId,
+            canEditManualOrbit,
+            left: safeLeft,
+            top: safeTop
+        }
+    }));
 }
 
 window.addEventListener("orbit:satellite-context-action", (event) => {
-    if (event.detail?.type === "visualization" && event.detail.id) openSatelliteVisualizationModal(event.detail.id);
+    const action = event.detail || {};
+    const sourceId = getSatelliteSourceIdFromLayerId(String(action.sourceId || action.id || "").trim());
+    if (!sourceId) {
+        return;
+    }
+    if (action.type === "visualization") {
+        openSatelliteVisualizationModal(sourceId);
+    } else if (action.type === "edit-manual") {
+        // `editManualOrbitFromWorkspace` repeats the registry check, so a
+        // synthetic DOM event cannot grant catalogue objects edit access.
+        editManualOrbitFromWorkspace(sourceId);
+    }
 });
 
 function closeSatelliteVisualizationModal() {
@@ -2657,6 +2745,900 @@ function firstPersonSatellite(entity) {
     });
 }
 
+function publishManualOrbitState(extra = {}) {
+    window.dispatchEvent(new CustomEvent("orbit:manual-orbit-state", {
+        detail: {
+            ...manualOrbitEditorState,
+            ...getManualOrbitDesignSettings(),
+            designMode: Boolean(manualOrbitDesignSession?.active),
+            editingManualOrbitId: manualOrbitEditingTarget?.id || null,
+            ...extra
+        }
+    }));
+}
+
+function publishManualOrbitStatus(kind, message) {
+    window.dispatchEvent(new CustomEvent("orbit:manual-orbit-status", {
+        detail: { kind, message }
+    }));
+}
+
+const MANUAL_ORBIT_DEFAULT_WINDOW_HOURS = 24;
+const MANUAL_ORBIT_PREVIEW_DEBOUNCE_MS = 320;
+
+function asValidManualOrbitDate(value) {
+    const candidate = value instanceof Date ? new Date(value.getTime()) : new Date(value || "");
+    return Number.isNaN(candidate.getTime()) ? null : candidate;
+}
+
+function normalizeManualOrbitPreviewReferenceFrame(value, fallback = "eci") {
+    const fallbackFrame = String(fallback || "").trim().toLowerCase() === "ecef" ? "ecef" : "eci";
+    const normalized = String(value || "").trim().toLowerCase();
+    if (!normalized) {
+        return fallbackFrame;
+    }
+    return normalized === "ecef" ? "ecef" : normalized === "eci" ? "eci" : fallbackFrame;
+}
+
+function getManualOrbitDesignSettings() {
+    if (manualOrbitDesignSettings) {
+        return { ...manualOrbitDesignSettings };
+    }
+
+    const start = asValidManualOrbitDate(manualOrbitEditorState?.epochUtc) || new Date();
+    // A new design starts with the workspace propagation horizon, exactly as
+    // the normal future-orbit view does. The two editor epochs immediately
+    // become authoritative after this default is shown to the user.
+    const configuredHours = Number(runtimeSystemConfig?.propagation_hours);
+    const defaultWindowHours = Number.isFinite(configuredHours) && configuredHours > 0
+        ? configuredHours
+        : MANUAL_ORBIT_DEFAULT_WINDOW_HOURS;
+    const end = new Date(start.getTime() + (defaultWindowHours * 60 * 60 * 1000));
+    manualOrbitDesignSettings = {
+        epochStartUtc: start.toISOString(),
+        epochEndUtc: end.toISOString(),
+        // The design preview can display this physical Earth-fixed projection
+        // immediately. The same preference is carried into the confirmed
+        // manual object when it is created.
+        groundTrackPreview: false,
+        // A design can either show the single ECI osculating ellipse or the
+        // literal Earth-fixed propagation samples. ECI preserves the legacy
+        // clean-design default.
+        previewReferenceFrame: "eci"
+    };
+    return { ...manualOrbitDesignSettings };
+}
+
+function updateManualOrbitDesignSettings(payload = {}) {
+    const current = getManualOrbitDesignSettings();
+    const startInput = payload.epochStartUtc ?? payload.startTime ?? payload.start_time ?? payload.epochUtc;
+    const endInput = payload.epochEndUtc ?? payload.endTime ?? payload.end_time;
+    const start = startInput === undefined ? null : asValidManualOrbitDate(startInput);
+    const end = endInput === undefined ? null : asValidManualOrbitDate(endInput);
+
+    manualOrbitDesignSettings = {
+        epochStartUtc: start ? start.toISOString() : current.epochStartUtc,
+        epochEndUtc: end ? end.toISOString() : current.epochEndUtc,
+        groundTrackPreview: typeof payload.groundTrackPreview === "boolean"
+            ? payload.groundTrackPreview
+            : current.groundTrackPreview === true,
+        previewReferenceFrame: normalizeManualOrbitPreviewReferenceFrame(
+            payload.previewReferenceFrame,
+            current.previewReferenceFrame
+        )
+    };
+    return { ...manualOrbitDesignSettings };
+}
+
+/**
+ * Reopen the design workspace with a confirmed, user-authored manual orbit.
+ * The data comes from the local manual-track registry rather than catalogue
+ * metadata, so importing/copying a TLE can never make a catalogue satellite
+ * editable through this path.
+ */
+function editManualOrbitFromWorkspace(satelliteId) {
+    if (manualOrbitDesignSession?.active) {
+        return false;
+    }
+
+    const sourceId = getSatelliteSourceIdFromLayerId(String(satelliteId || "").trim());
+    const record = getManualOrbitProjectEntry(sourceId);
+    if (!record) {
+        return false;
+    }
+
+    const definitionSource = normalizeManualOrbitDefinitionSource(record.definitionSource, "keplerian");
+    try {
+        manualOrbitEditorState = normalizeManualOrbitState({
+            name: record.name,
+            epochUtc: record.epochUtc,
+            propagator: record.propagator,
+            definitionSource,
+            keplerian: record.keplerian,
+            stateVector: record.stateVector
+        }, { source: definitionSource });
+    } catch (error) {
+        logger.warn(`No se pudo abrir la orbita manual '${record.id}' para editar:`, error);
+        return false;
+    }
+
+    manualOrbitDefinitionSource = definitionSource;
+    const start = asValidManualOrbitDate(record.startTime)
+        || asValidManualOrbitDate(manualOrbitEditorState.epochUtc)
+        || new Date();
+    const recordedEnd = asValidManualOrbitDate(record.endTime);
+    const configuredHours = Number(runtimeSystemConfig?.propagation_hours);
+    const fallbackHours = Number.isFinite(configuredHours) && configuredHours > 0
+        ? configuredHours
+        : MANUAL_ORBIT_DEFAULT_WINDOW_HOURS;
+    const end = recordedEnd && recordedEnd.getTime() > start.getTime()
+        ? recordedEnd
+        : new Date(start.getTime() + (fallbackHours * 60 * 60 * 1000));
+    const effectiveGroundTrack = getSatelliteVisualizationConfig(record.id)?.effective?.orbit_ground_track_show;
+
+    manualOrbitDesignSettings = {
+        epochStartUtc: start.toISOString(),
+        epochEndUtc: end.toISOString(),
+        groundTrackPreview: typeof effectiveGroundTrack === "boolean"
+            ? effectiveGroundTrack
+            : record.groundTrackEnabled === true,
+        // This is a view preference only. Start editing in the clean inertial
+        // view while leaving the confirmed ECEF ephemeris untouched.
+        previewReferenceFrame: normalizeManualOrbitPreviewReferenceFrame(
+            manualOrbitDesignSettings?.previewReferenceFrame,
+            "eci"
+        )
+    };
+    manualOrbitEditingTarget = {
+        id: record.id,
+        visualizationOverrides: { ...(record.visual?.overrides || {}) }
+    };
+
+    enterManualOrbitDesignMode();
+    publishManualOrbitStatus(null, "");
+    publishManualOrbitState({ open: true, tab: definitionSource });
+    return true;
+}
+
+function getManualOrbitDesignWindow() {
+    const settings = getManualOrbitDesignSettings();
+    const startTime = asValidManualOrbitDate(settings.epochStartUtc);
+    const endTime = asValidManualOrbitDate(settings.epochEndUtc);
+    if (!startTime || !endTime || endTime.getTime() <= startTime.getTime()) {
+        throw new Error("La fecha final de la órbita debe ser posterior a la fecha inicial.");
+    }
+    return {
+        startTime,
+        endTime,
+        horizonHours: getRangeHours(startTime.getTime(), endTime.getTime())
+    };
+}
+
+function publishManualOrbitDesignState(active) {
+    window.dispatchEvent(new CustomEvent("orbit:manual-orbit-design-state", {
+        detail: { active: Boolean(active) }
+    }));
+}
+
+function stopManualOrbitPreviewRequest() {
+    if (manualOrbitPreviewTimer) {
+        clearTimeout(manualOrbitPreviewTimer);
+        manualOrbitPreviewTimer = null;
+    }
+    if (manualOrbitPreviewAbortController) {
+        manualOrbitPreviewAbortController.abort();
+        manualOrbitPreviewAbortController = null;
+    }
+    manualOrbitPreviewRequestId += 1;
+}
+
+function stopManualOrbitCreateRequest() {
+    // A confirmation request mutates the workspace when it resolves. Give it
+    // its own cancellation generation so closing design mode or replacing the
+    // project can never import a late result into the new workspace.
+    manualOrbitCreateRequestId += 1;
+    if (manualOrbitCreateAbortController) {
+        manualOrbitCreateAbortController.abort();
+        manualOrbitCreateAbortController = null;
+    }
+    manualOrbitCreateInFlight = false;
+}
+
+function applyManualOrbitDesignTimeWindow() {
+    if (!manualOrbitDesignSession?.active) {
+        return;
+    }
+    const windowRange = getManualOrbitDesignWindow();
+    setSimulationRange(simulationState, windowRange.startTime, windowRange.endTime);
+    simulationState.mode = SIMULATION_MODE_RANGE;
+    simulationState.currentDate = new Date(windowRange.startTime);
+    simulationState.isPlaying = false;
+    simulationState.playing = false;
+    simulationState.rewind = false;
+    simulationState.lastTickTimestamp = Date.now();
+    applySimulationDateToViewer(simulationState.currentDate);
+    refreshSimulationControlsUi();
+    updateTopToolbarTime();
+}
+
+function enterManualOrbitDesignMode() {
+    if (manualOrbitDesignSession?.active) {
+        return;
+    }
+
+    // Object-specific overlays can otherwise remain over the isolated Earth
+    // even though their source layers are hidden. Close only transient UI;
+    // the underlying layer state is captured and restored below.
+    hideSatelliteContextMenu();
+    window.dispatchEvent(new Event("orbit:layer-context-menu-close"));
+    window.dispatchEvent(new Event("orbit:satellite-viz-close"));
+    window.dispatchEvent(new Event("orbit:tle-info-close"));
+
+    const layerVisibility = new Map();
+    const activeLayerIds = getCompositeLayerIds().filter((layerId) => isCompositeLayerActive(layerId));
+    // Take the whole snapshot before changing a single entity. Duplicated
+    // layer rows share a satellite's visible state; snapshotting and hiding
+    // in one pass made a duplicate record a false visibility after its source
+    // had already been hidden, then restore it incorrectly on exit.
+    for (const layerId of activeLayerIds) {
+        layerVisibility.set(layerId, getCompositeLayerVisibility(layerId) === true);
+    }
+    for (const layerId of activeLayerIds) {
+        setCompositeLayerVisibility(layerId, false);
+    }
+
+    const legacyInfoPanel = document.getElementById("leftInfoPanel");
+    const legacyInfoButton = document.getElementById("leftInfoBtn");
+    manualOrbitDesignSession = {
+        active: true,
+        layerVisibility,
+        selectedSatelliteId,
+        selectedEntity: viewer.selectedEntity,
+        trackedEntity: viewer.trackedEntity,
+        legacyInfoPanelWasOpen: legacyInfoPanel?.classList.contains("open") === true,
+        legacyInfoButtonWasActive: legacyInfoButton?.classList.contains("active") === true,
+        simulation: {
+            mode: simulationState.mode,
+            isPlaying: simulationState.isPlaying,
+            playing: simulationState.playing,
+            rewind: simulationState.rewind,
+            speed: simulationState.speed,
+            currentDate: new Date(simulationState.currentDate),
+            startDate: new Date(simulationState.startDate),
+            endDate: new Date(simulationState.endDate)
+        }
+    };
+
+    viewer.selectedEntity = undefined;
+    viewer.trackedEntity = undefined;
+    legacyInfoPanel?.classList.remove("open");
+    legacyInfoButton?.classList.remove("active");
+    setCurrentSelectedSatellite(null);
+    setSelectedOrbitSatelliteId(null);
+    publishManualOrbitDesignState(true);
+    try {
+        applyManualOrbitDesignTimeWindow();
+        scheduleManualOrbitPreview({ immediate: true });
+    } catch (error) {
+        // A user can close the editor with an invalid draft range and reopen
+        // it later. Keep the isolated design session available so the range
+        // can be corrected, but never leave an exception or a stale preview
+        // over the otherwise clean scene.
+        clearManualOrbitPreview();
+        publishManualOrbitStatus(
+            "error",
+            extractManualOrbitError(error, "Define un intervalo temporal válido para la órbita.")
+        );
+    }
+}
+
+function restoreManualOrbitDesignMode({
+    useRealtime = false,
+    preserveManualOrbitCreate = false,
+    preserveManualOrbitEditing = false
+} = {}) {
+    const session = manualOrbitDesignSession;
+    if (!session) {
+        return;
+    }
+
+    stopManualOrbitPreviewRequest();
+    if (!preserveManualOrbitCreate) {
+        stopManualOrbitCreateRequest();
+    }
+    clearManualOrbitPreview();
+    manualOrbitDesignSession = null;
+    if (!preserveManualOrbitEditing) {
+        // Closing or cancelling an edit never mutates the confirmed object.
+        // Drop the target only after restoring the isolated design session.
+        manualOrbitEditingTarget = null;
+    }
+
+    for (const [layerId, visible] of session.layerVisibility.entries()) {
+        if (isCompositeLayerActive(layerId)) {
+            setCompositeLayerVisibility(layerId, visible);
+        }
+    }
+
+    if (useRealtime) {
+        setSimulationMode(SIMULATION_MODE_REALTIME);
+    } else {
+        simulationState.mode = session.simulation.mode;
+        simulationState.isPlaying = session.simulation.isPlaying;
+        simulationState.playing = session.simulation.playing;
+        simulationState.rewind = session.simulation.rewind;
+        simulationState.speed = session.simulation.speed;
+        simulationState.currentDate = new Date(session.simulation.currentDate);
+        simulationState.startDate = new Date(session.simulation.startDate);
+        simulationState.endDate = new Date(session.simulation.endDate);
+        simulationState.lastTickTimestamp = Date.now();
+        applySimulationDateToViewer(getDisplayedSimulationDate());
+        refreshSimulationControlsUi();
+        updateTopToolbarTime();
+        viewer.selectedEntity = session.selectedEntity;
+        viewer.trackedEntity = session.trackedEntity;
+        setCurrentSelectedSatellite(session.selectedSatelliteId);
+        setSelectedOrbitSatelliteId(session.selectedSatelliteId);
+        const legacyInfoPanel = document.getElementById("leftInfoPanel");
+        const legacyInfoButton = document.getElementById("leftInfoBtn");
+        legacyInfoPanel?.classList.toggle("open", session.legacyInfoPanelWasOpen === true);
+        legacyInfoButton?.classList.toggle("active", session.legacyInfoButtonWasActive === true);
+    }
+
+    publishManualOrbitDesignState(false);
+    objectSidebar?.renderList?.();
+}
+
+function discardManualOrbitDesignForProjectChange() {
+    // Project lifecycle has already cleared/loaded its own state when this
+    // event fires. Do not replay visibility or simulation snapshots from the
+    // old workspace; only invalidate the transient editor requests/entities.
+    const hadDesignSession = Boolean(manualOrbitDesignSession?.active);
+    stopManualOrbitPreviewRequest();
+    stopManualOrbitCreateRequest();
+    clearManualOrbitPreview();
+    manualOrbitDesignSession = null;
+    manualOrbitEditingTarget = null;
+
+    if (hadDesignSession) {
+        publishManualOrbitDesignState(false);
+        publishManualOrbitState({ open: false });
+        publishManualOrbitStatus(null, "");
+    }
+}
+
+function normalizeManualOrbitDefinitionSource(value, fallback = "keplerian") {
+    const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "-");
+    if (["statevector", "state-vector", "state_vector", "state"].includes(normalized)) {
+        return "state-vector";
+    }
+    if (["keplerian", "elements"].includes(normalized)) {
+        return "keplerian";
+    }
+    return fallback;
+}
+
+function getManualOrbitTargetAngularStepDegrees(perigeeAltitudeKm) {
+    if (perigeeAltitudeKm <= 2_000) return 0.42;
+    if (perigeeAltitudeKm <= 20_000) return 0.65;
+    if (perigeeAltitudeKm <= 40_000) return 0.9;
+    return 1.15;
+}
+
+function getManualOrbitPropagationWindow() {
+    const designRange = manualOrbitDesignSession?.active
+        ? getManualOrbitDesignWindow()
+        : null;
+    const rangeStart = designRange?.startTime || simulationState.startDate;
+    const rangeEnd = designRange?.endTime || simulationState.endDate;
+    const hasExplicitRange = Boolean(designRange) || (simulationState.mode === SIMULATION_MODE_RANGE
+        && rangeStart instanceof Date
+        && rangeEnd instanceof Date
+        && !Number.isNaN(rangeStart.getTime())
+        && !Number.isNaN(rangeEnd.getTime())
+        && rangeEnd.getTime() > rangeStart.getTime());
+    const requestedHours = hasExplicitRange
+        ? getRangeHours(rangeStart.getTime(), rangeEnd.getTime())
+        : Number(runtimeSystemConfig?.propagation_hours);
+    // The manual design range is intentional: never substitute a shortened
+    // global future-line horizon for the two epochs selected in the editor.
+    // Sampling remains altitude-aware so that a LEO stays smooth without
+    // wasting GEO's vertex budget on every revolution.
+    const horizonHours = Number.isFinite(requestedHours) && requestedHours > 0
+        ? Math.max(1 / 3600, requestedHours)
+        : MANUAL_ORBIT_DEFAULT_WINDOW_HOURS;
+    const displayedDate = getDisplayedSimulationDate();
+    const startTime = hasExplicitRange
+        ? new Date(rangeStart.getTime())
+        : displayedDate instanceof Date && !Number.isNaN(displayedDate.getTime())
+            ? displayedDate
+            : new Date();
+    const endTime = hasExplicitRange ? new Date(rangeEnd.getTime()) : null;
+    const horizonSeconds = horizonHours * 3600;
+    const semiMajorAxisKm = Number(manualOrbitEditorState?.keplerian?.semiMajorAxisKm);
+    const eccentricity = Number(manualOrbitEditorState?.keplerian?.eccentricity);
+    let stepSeconds = Math.max(15, Math.min(3600, Math.ceil(horizonSeconds / 6000)));
+    if (Number.isFinite(semiMajorAxisKm) && semiMajorAxisKm > 0 && Number.isFinite(eccentricity) && eccentricity >= 0 && eccentricity < 1) {
+        const earthMuKm3S2 = 398600.4418;
+        const earthRadiusKm = 6378.137;
+        const periodSeconds = 2 * Math.PI * Math.sqrt((semiMajorAxisKm ** 3) / earthMuKm3S2);
+        const perigeeAltitudeKm = (semiMajorAxisKm * (1 - eccentricity)) - earthRadiusKm;
+        const angularStep = getManualOrbitTargetAngularStepDegrees(perigeeAltitudeKm);
+        const requestedSamples = Math.ceil((horizonSeconds / periodSeconds) * (360 / angularStep)) + 1;
+        // Match the normal runtime's per-object cap. Each sample remains a
+        // true SGP4 propagation; only the number of samples is bounded.
+        const samples = Math.max(2, Math.min(7_200, requestedSamples));
+        stepSeconds = Math.max(1, horizonSeconds / Math.max(1, samples - 1));
+    }
+    return { startTime, endTime, horizonHours, stepSeconds: clamp(stepSeconds, 1, 3600) };
+}
+
+function buildManualOrbitRequestPayload(windowRange) {
+    const options = {
+        source: manualOrbitDefinitionSource,
+        startTime: windowRange.startTime,
+        stepSeconds: windowRange.stepSeconds,
+        includeVelocity: true
+    };
+    // Send the final epoch directly in design/range mode.  It makes the
+    // server-side interval exact rather than relying on a rounded duration.
+    if (windowRange.endTime) {
+        options.endTime = windowRange.endTime;
+    } else {
+        options.horizonHours = windowRange.horizonHours;
+    }
+    return toManualOrbitApiPayload(manualOrbitEditorState, options);
+}
+
+function isManualOrbitProjectId(value) {
+    return /^manual:[a-z0-9][a-z0-9_-]{0,95}$/i.test(String(value || "").trim());
+}
+
+function manualOrbitRecordValue(record, camelName, snakeName = camelName) {
+    if (!record || typeof record !== "object") {
+        return undefined;
+    }
+    return record[camelName] ?? record[snakeName];
+}
+
+function normalizePersistedManualOrbitRecord(record) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+        throw new Error("La definicion de orbita manual guardada no es valida.");
+    }
+
+    const id = String(record.id || "").trim();
+    if (!isManualOrbitProjectId(id)) {
+        throw new Error("La orbita manual guardada no tiene un identificador valido.");
+    }
+
+    const source = normalizeManualOrbitDefinitionSource(
+        manualOrbitRecordValue(record, "definitionSource", "definition_source"),
+        "keplerian"
+    );
+    const state = normalizeManualOrbitState({
+        name: record.name,
+        epochUtc: manualOrbitRecordValue(record, "epochUtc", "epoch_utc") ?? record.epoch,
+        propagator: record.propagator,
+        definitionSource: source,
+        keplerian: record.keplerian,
+        stateVector: manualOrbitRecordValue(record, "stateVector", "state_vector")
+    }, { source });
+    const startTime = asValidManualOrbitDate(manualOrbitRecordValue(record, "startTime", "start_time"));
+    const endTime = asValidManualOrbitDate(manualOrbitRecordValue(record, "endTime", "end_time"));
+    if (!startTime || !endTime || endTime.getTime() <= startTime.getTime()) {
+        throw new Error("La orbita manual guardada no tiene un intervalo temporal valido.");
+    }
+
+    const visual = record.visual && typeof record.visual === "object" && !Array.isArray(record.visual)
+        ? record.visual
+        : {};
+    const overrides = visual.overrides && typeof visual.overrides === "object" && !Array.isArray(visual.overrides)
+        ? visual.overrides
+        : {};
+    const requestedStepSeconds = Number(manualOrbitRecordValue(record, "stepSeconds", "step_seconds"));
+    const savedGroundTrackEnabled = manualOrbitRecordValue(record, "groundTrackEnabled", "ground_track_enabled");
+    const groundTrackEnabled = typeof overrides.orbit_ground_track_show === "boolean"
+        ? overrides.orbit_ground_track_show
+        : savedGroundTrackEnabled !== false;
+
+    return {
+        id,
+        state,
+        source,
+        startTime,
+        endTime,
+        stepSeconds: Number.isFinite(requestedStepSeconds) && requestedStepSeconds > 0
+            ? clamp(requestedStepSeconds, 1, 3600)
+            : null,
+        groundTrackEnabled,
+        visible: visual.visible !== false,
+        visualizationOverrides: { ...overrides }
+    };
+}
+
+/**
+ * Regenerate authored manual tracks after opening a project. The project file
+ * stores the compact source definition and selected date range, while the
+ * propagation service produces fresh sampled ITRF ephemeris for this session.
+ * This deliberately bypasses normal catalogue activation and its WebSocket.
+ */
+async function restoreManualOrbitsFromProject(records = []) {
+    const restored = [];
+    const failed = [];
+    if (!Array.isArray(records)) {
+        return { restored, failed };
+    }
+
+    for (const record of records) {
+        let persisted;
+        try {
+            persisted = normalizePersistedManualOrbitRecord(record);
+            const options = {
+                source: persisted.source,
+                startTime: persisted.startTime,
+                endTime: persisted.endTime,
+                includeVelocity: true
+            };
+            if (persisted.stepSeconds) {
+                options.stepSeconds = persisted.stepSeconds;
+            }
+            const response = await fetch("/api/manual-orbits", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Accept: "application/json" },
+                body: JSON.stringify(toManualOrbitApiPayload(persisted.state, options))
+            });
+            const responsePayload = await response.json().catch(() => null);
+            if (!response.ok) {
+                throw responsePayload || new Error(`HTTP ${response.status}`);
+            }
+
+            const imported = importManualOrbitTrack({
+                ...responsePayload,
+                projectId: persisted.id,
+                groundTrackEnabled: persisted.groundTrackEnabled
+            });
+            const propagationHours = Math.max(
+                1 / 3600,
+                (Number(imported.endTimeMs) - Number(imported.startTimeMs)) / 3_600_000
+            );
+            setSatelliteVisualizationConfig(imported.id, {
+                orbit_ground_track_show: persisted.groundTrackEnabled,
+                propagation_hours: propagationHours,
+                ...persisted.visualizationOverrides
+            });
+            setSatelliteVisible(imported.id, persisted.visible);
+            restored.push(imported.id);
+        } catch (error) {
+            const recordName = String(record?.name || record?.id || "orbita manual").trim();
+            failed.push({ id: record?.id || null, error: extractManualOrbitError(error) });
+            logger.warn(`No se pudo restaurar la orbita manual '${recordName}':`, error);
+        }
+    }
+    return { restored, failed };
+}
+
+async function requestManualOrbitPreview() {
+    if (!manualOrbitDesignSession?.active || manualOrbitCreateInFlight) {
+        return;
+    }
+
+    let windowRange;
+    try {
+        windowRange = getManualOrbitPropagationWindow();
+    } catch (error) {
+        publishManualOrbitStatus("error", extractManualOrbitError(error, "Define un intervalo temporal válido para la órbita."));
+        return;
+    }
+
+    const requestId = ++manualOrbitPreviewRequestId;
+    if (manualOrbitPreviewAbortController) {
+        manualOrbitPreviewAbortController.abort();
+    }
+    const controller = new AbortController();
+    manualOrbitPreviewAbortController = controller;
+    try {
+        const response = await fetch("/api/manual-orbits", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify(buildManualOrbitRequestPayload(windowRange)),
+            signal: controller.signal
+        });
+        const responsePayload = await response.json().catch(() => null);
+        if (!response.ok) {
+            throw responsePayload || new Error(`HTTP ${response.status}`);
+        }
+        if (requestId !== manualOrbitPreviewRequestId || !manualOrbitDesignSession?.active) {
+            return;
+        }
+        renderManualOrbitPreview(responsePayload, {
+            viewer,
+            // This is a live design aid and is preserved for the confirmed
+            // object as well. It uses the raw ITRF samples even in ECI view.
+            showGroundTrack: getManualOrbitDesignSettings().groundTrackPreview === true,
+            color: "#65b7ff",
+            previewReferenceFrame: getManualOrbitDesignSettings().previewReferenceFrame
+        });
+        publishManualOrbitStatus(null, "");
+    } catch (error) {
+        if (error?.name === "AbortError" || requestId !== manualOrbitPreviewRequestId) {
+            return;
+        }
+        // Do not leave the last valid path on screen when the current edited
+        // definition is rejected by the propagation service.
+        clearManualOrbitPreview();
+        logger.warn("No se pudo previsualizar la órbita manual:", error);
+        publishManualOrbitStatus("error", extractManualOrbitError(error, "No se pudo actualizar la previsualización orbital."));
+    } finally {
+        if (manualOrbitPreviewAbortController === controller) {
+            manualOrbitPreviewAbortController = null;
+        }
+    }
+}
+
+function scheduleManualOrbitPreview({ immediate = false } = {}) {
+    if (!manualOrbitDesignSession?.active) {
+        return;
+    }
+    stopManualOrbitPreviewRequest();
+    if (immediate) {
+        void requestManualOrbitPreview();
+        return;
+    }
+    manualOrbitPreviewTimer = setTimeout(() => {
+        manualOrbitPreviewTimer = null;
+        void requestManualOrbitPreview();
+    }, MANUAL_ORBIT_PREVIEW_DEBOUNCE_MS);
+}
+
+function extractManualOrbitError(error, fallback = "No se pudo crear la orbita manual.") {
+    if (error instanceof Error && error.message) {
+        return error.message;
+    }
+    if (typeof error === "string" && error.trim()) {
+        return error.trim();
+    }
+    if (error && typeof error === "object") {
+        const detail = error.detail || error.error || error.message;
+        if (Array.isArray(detail)) {
+            const messages = detail
+                .map((item) => String(item?.msg || item?.message || "").trim())
+                .filter(Boolean);
+            if (messages.length) return messages.join(". ");
+        }
+        if (typeof detail === "string" && detail.trim()) return detail.trim();
+    }
+    return fallback;
+}
+
+function synchronizeManualOrbitEditor(payload, source, { publish = true } = {}) {
+    try {
+        const resolvedSource = normalizeManualOrbitDefinitionSource(source, "");
+        manualOrbitEditorState = synchronizeManualOrbitState(manualOrbitEditorState, payload || {}, source);
+        updateManualOrbitDesignSettings(payload);
+        if (resolvedSource) {
+            manualOrbitDefinitionSource = resolvedSource;
+        }
+        // Renaming is metadata-only: do not re-propagate thousands of samples
+        // for every keystroke while the rest of the preview is unchanged.
+        // Naming is metadata-only. A ground-track toggle changes only the
+        // existing preview entities, so update it immediately without a new
+        // SGP4 request. The exact same preference remains available on
+        // confirmation below.
+        if (manualOrbitDesignSession?.active && source === "ground-track") {
+            setManualOrbitPreviewGroundTrack(
+                getManualOrbitDesignSettings().groundTrackPreview === true,
+                { viewer }
+            );
+        }
+        const shouldRefreshPreview = source !== "name" && source !== "preview" && source !== "ground-track";
+        if (manualOrbitDesignSession?.active && shouldRefreshPreview) {
+            try {
+                applyManualOrbitDesignTimeWindow();
+                scheduleManualOrbitPreview();
+            } catch (rangeError) {
+                // A previous debounce/fetch can otherwise complete after an
+                // invalid range was entered and redraw a stale trajectory.
+                stopManualOrbitPreviewRequest();
+                clearManualOrbitPreview();
+                publishManualOrbitStatus("error", extractManualOrbitError(rangeError, "Define un intervalo temporal válido para la órbita."));
+            }
+        }
+        if (publish) {
+            publishManualOrbitState();
+        }
+        return true;
+    } catch (error) {
+        if (manualOrbitDesignSession?.active) {
+            // Invalid geometry must not retain (or allow an older request to
+            // redraw) the preview for the previous valid editor state.
+            stopManualOrbitPreviewRequest();
+            clearManualOrbitPreview();
+        }
+        const message = extractManualOrbitError(error, "Los parametros de la orbita no forman una orbita eliptica valida.");
+        logger.warn("No se pudieron sincronizar los parametros de la orbita manual:", error);
+        publishManualOrbitStatus("error", message);
+        return false;
+    }
+}
+
+async function createManualOrbitFromEditor(payload = {}) {
+    if (manualOrbitCreateInFlight) {
+        return;
+    }
+
+    if (!String(payload?.name || "").trim()) {
+        publishManualOrbitStatus("error", "Escribe un nombre para la orbita manual.");
+        return;
+    }
+
+    // The Create event contains both tabs. Preserve the last representation
+    // actually edited so a state-vector definition never gets silently
+    // replaced by stale Keplerian fields from the inactive tab.
+    if (!synchronizeManualOrbitEditor(payload, manualOrbitDefinitionSource, { publish: false })) {
+        return;
+    }
+
+    const designSessionAtRequest = manualOrbitDesignSession;
+    // Snapshot the replacement contract before the asynchronous propagation
+    // starts. The editor can be closed/cancelled while the request is in
+    // flight, and a later response must never update a different object.
+    const editingTargetAtRequest = manualOrbitEditingTarget
+        ? {
+            id: manualOrbitEditingTarget.id,
+            visualizationOverrides: { ...(manualOrbitEditingTarget.visualizationOverrides || {}) }
+        }
+        : null;
+    const createRequestId = ++manualOrbitCreateRequestId;
+    const controller = new AbortController();
+    manualOrbitCreateAbortController = controller;
+    manualOrbitCreateInFlight = true;
+    stopManualOrbitPreviewRequest();
+    publishManualOrbitStatus("busy", "Generando efemerides SGP4...");
+    try {
+        const windowRange = getManualOrbitPropagationWindow();
+        const requestPayload = buildManualOrbitRequestPayload(windowRange);
+        const response = await fetch("/api/manual-orbits", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify(requestPayload),
+            signal: controller.signal
+        });
+        const responsePayload = await response.json().catch(() => null);
+        if (!response.ok) {
+            throw responsePayload || new Error(`HTTP ${response.status}`);
+        }
+        if (
+            createRequestId !== manualOrbitCreateRequestId
+            || (designSessionAtRequest && manualOrbitDesignSession !== designSessionAtRequest)
+        ) {
+            return;
+        }
+
+        const responseSource = normalizeManualOrbitDefinitionSource(
+            responsePayload?.definition_source || responsePayload?.definitionSource,
+            manualOrbitDefinitionSource
+        );
+        manualOrbitEditorState = normalizeManualOrbitState({
+            ...responsePayload,
+            epochUtc: responsePayload?.epochUtc || responsePayload?.epoch || manualOrbitEditorState.epochUtc
+        }, {
+            source: responseSource,
+            fallback: manualOrbitEditorState
+        });
+        manualOrbitDefinitionSource = responseSource;
+
+        const groundTrackEnabled = getManualOrbitDesignSettings().groundTrackPreview === true;
+        const committedPayload = { ...responsePayload, groundTrackEnabled };
+        // The preview owns separate Cesium entities; remove those before the
+        // confirmed local layer is created to avoid a doubled trajectory.
+        clearManualOrbitPreview();
+        const imported = editingTargetAtRequest
+            ? replaceManualOrbitTrack(editingTargetAtRequest.id, committedPayload)
+            : importManualOrbitTrack(committedPayload);
+        const manualPropagationHours = Math.max(
+            1 / 3600,
+            (Number(imported.endTimeMs) - Number(imported.startTimeMs)) / 3_600_000
+        );
+        setSatelliteVisualizationConfig(imported.id, {
+            // Replacement discards the old runtime entities by design; retain
+            // its visual styling while making the editor's newly selected
+            // ground-track preference and interval authoritative.
+            ...(editingTargetAtRequest?.visualizationOverrides || {}),
+            orbit_ground_track_show: groundTrackEnabled,
+            // Keep the confirmed manual path on the exact design interval
+            // after returning to realtime instead of clipping it to the
+            // workspace's shorter default future-line horizon.
+            propagation_hours: manualPropagationHours
+        });
+        layerDisplayNameOverrides.set(imported.id, imported.name);
+        restoreManualOrbitDesignMode({
+            useRealtime: true,
+            preserveManualOrbitCreate: true,
+            preserveManualOrbitEditing: true
+        });
+        objectSidebar?.renderList?.();
+        // Select the new object so its detail card is immediately available,
+        // but do not start following it. Returning to the standard Earth
+        // camera is much less disorienting after leaving design mode.
+        activateSatelliteSelection(imported.id, false);
+        resetCameraView();
+        manualOrbitEditingTarget = null;
+        publishManualOrbitState({ open: false });
+        publishManualOrbitStatus(
+            "success",
+            editingTargetAtRequest
+                ? `Orbita manual '${imported.name}' actualizada con SGP4.`
+                : `Orbita manual '${imported.name}' creada con SGP4.`
+        );
+    } catch (error) {
+        if (error?.name === "AbortError" || createRequestId !== manualOrbitCreateRequestId) {
+            return;
+        }
+        const message = extractManualOrbitError(error);
+        logger.warn("No se pudo crear la orbita manual:", error);
+        publishManualOrbitStatus("error", message);
+    } finally {
+        if (manualOrbitCreateAbortController === controller) {
+            manualOrbitCreateAbortController = null;
+        }
+        if (createRequestId === manualOrbitCreateRequestId) {
+            manualOrbitCreateInFlight = false;
+        }
+    }
+}
+
+function setupManualOrbitEditorBridge() {
+    if (manualOrbitBridgeBound) {
+        return;
+    }
+    manualOrbitBridgeBound = true;
+
+    const openManualOrbitDesign = (detail = {}) => {
+        // The toolbar creates a new draft. Only the explicit context action
+        // below is allowed to carry a stable manual-orbit replacement target.
+        manualOrbitEditingTarget = null;
+        updateManualOrbitDesignSettings(detail);
+        enterManualOrbitDesignMode();
+        publishManualOrbitState({ open: true });
+    };
+    const closeManualOrbitDesign = (detail = {}) => {
+        updateManualOrbitDesignSettings(detail);
+        restoreManualOrbitDesignMode();
+        publishManualOrbitStatus(null, "");
+    };
+
+    window.addEventListener("orbit:manual-orbit-toggle", (event) => {
+        if (event.detail?.open === true) {
+            openManualOrbitDesign(event.detail);
+        } else if (event.detail?.open === false) {
+            closeManualOrbitDesign(event.detail);
+        }
+    });
+    window.addEventListener("orbit:manual-orbit-open", (event) => openManualOrbitDesign(event.detail || {}));
+    window.addEventListener("orbit:manual-orbit-close", (event) => closeManualOrbitDesign(event.detail || {}));
+    window.addEventListener("orbit:manual-orbit-cancel", (event) => closeManualOrbitDesign(event.detail || {}));
+    window.addEventListener("orbit:project-opened", discardManualOrbitDesignForProjectChange);
+    window.addEventListener("orbit:manual-orbit-change", (event) => {
+        const detail = event.detail || {};
+        synchronizeManualOrbitEditor(detail, detail.source);
+    });
+    window.addEventListener("orbit:manual-orbit-sync-request", (event) => {
+        const detail = event.detail || {};
+        synchronizeManualOrbitEditor(detail, detail.source);
+    });
+    window.addEventListener("orbit:manual-orbit-reset", (event) => {
+        manualOrbitDefinitionSource = "keplerian";
+        synchronizeManualOrbitEditor(event.detail || {}, "keplerian");
+        publishManualOrbitStatus(null, "");
+    });
+    window.addEventListener("orbit:manual-orbit-create", (event) => {
+        void createManualOrbitFromEditor(event.detail || {});
+    });
+    window.addEventListener("orbit:manual-orbit-edit", (event) => {
+        editManualOrbitFromWorkspace(event.detail?.id);
+    });
+}
+
 (async function init() {
     const config = initialBootConfig || await loadSystemConfig({
         onError: (error) => logger.error("Could not load system_config.json:", error)
@@ -2826,6 +3808,14 @@ function firstPersonSatellite(entity) {
             }
             openSatelliteVisualizationModal(sourceId);
         },
+        // The layer-tree context action is deliberately backed by the same
+        // local registry as the globe context menu.  It is not enough for an
+        // object to expose TLE-like fields: only a workspace-authored manual
+        // track can be reopened in the orbital editor.
+        onRequestEditManualOrbit: (id) => editManualOrbitFromWorkspace(id),
+        canEditManualOrbit: (id) => Boolean(
+            getManualOrbitProjectEntry(getSatelliteSourceIdFromLayerId(id))
+        ),
         getGroundTrackVisible: (id) => getSatelliteVisualizationConfig(getSatelliteSourceIdFromLayerId(id))?.effective?.orbit_ground_track_show === true,
         onToggleGroundTrack: (id) => {
             const sourceId = getSatelliteSourceIdFromLayerId(id);
@@ -2889,6 +3879,8 @@ function firstPersonSatellite(entity) {
         infoContainerElement: infoPanelContent
     });
 
+    setupManualOrbitEditorBridge();
+
     // A welcome action submitted while the catalogue is loading is queued by
     // React. Bind and publish `ready` only after the sidebar can restore the
     // project's layer tree, then replay that queue without losing folders.
@@ -2943,6 +3935,12 @@ function firstPersonSatellite(entity) {
     };
 
     viewer.screenSpaceEventHandler.setInputAction((movement) => {
+        // The preview is the only selectable visual in a design session.  Do
+        // not let an incidental globe click reopen telemetry for a hidden
+        // operational layer while the user is editing orbital parameters.
+        if (manualOrbitDesignSession?.active) {
+            return;
+        }
         const picked = viewer.scene.pick(movement.position);
         const pickedId = resolvePickedLayerId(picked);
 
@@ -2967,6 +3965,9 @@ function firstPersonSatellite(entity) {
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     viewer.screenSpaceEventHandler.setInputAction((movement) => {
+        if (manualOrbitDesignSession?.active) {
+            return;
+        }
         const picked = viewer.scene.pick(movement.position);
         const pickedId = resolvePickedLayerId(picked);
 
@@ -2995,6 +3996,10 @@ function firstPersonSatellite(entity) {
     }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
     viewer.screenSpaceEventHandler.setInputAction((movement) => {
+        if (manualOrbitDesignSession?.active) {
+            hideSatelliteContextMenu();
+            return;
+        }
         const picked = viewer.scene.pick(movement.position);
         const pickedId = resolvePickedLayerId(picked);
 
@@ -3026,6 +4031,11 @@ function firstPersonSatellite(entity) {
     if (viewer?.scene?.canvas) {
         viewer.scene.canvas.addEventListener("contextmenu", (event) => {
             event.preventDefault();
+
+            if (manualOrbitDesignSession?.active) {
+                hideSatelliteContextMenu();
+                return;
+            }
 
             const canvasRect = viewer.scene.canvas.getBoundingClientRect();
             const position = new Cesium.Cartesian2(

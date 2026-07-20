@@ -7,14 +7,26 @@ export function createProjectLifecycle(deps) {
         getActiveSatelliteIds, setAllSatelliteLayersActive, setSatelliteLayerActive,
         getGroundStationLayers, removeGroundStationLayer, clearDuplicateLayers,
         getLayerNameOverrides, clearSatelliteVisualizationConfigs, getObjectSidebar,
-        getSimulationState, applySimulationRange, showConfirm, showAlert, getAlertTitle
+        getSimulationState, applySimulationRange, showConfirm, showAlert, getAlertTitle,
+        getManualOrbitEntries = () => [], restoreManualOrbits = async () => ({ restored: [], failed: [] })
     } = deps;
 
     const buildDocument = () => {
         const simulation = getSimulationState();
+        const authoredManualOrbits = getManualOrbitEntries();
+        const manualOrbits = Array.isArray(authoredManualOrbits) ? authoredManualOrbits : [];
+        const manualIds = new Set(manualOrbits
+            .map((entry) => String(entry?.id || "").trim())
+            .filter(Boolean));
         return buildProjectDocument({
             name: getProjectName(),
-            satellites: getActiveSatelliteIds(),
+            // A manual orbit must be regenerated from its authored definition,
+            // never re-subscribed as if it were a remote catalogue satellite.
+            satellites: getActiveSatelliteIds().filter((id) => {
+                const normalizedId = String(id || "").trim();
+                return !manualIds.has(normalizedId) && !normalizedId.startsWith("manual:");
+            }),
+            manualOrbits,
             layerNames: Object.fromEntries(getLayerNameOverrides()),
             layerTree: getObjectSidebar()?.getProjectTree?.(),
             groundStations: [...getGroundStationLayers().values()].map(({ entity, coverageEntity, ...station }) => station),
@@ -75,8 +87,32 @@ export function createProjectLifecycle(deps) {
         clearContents(); setProjectFileHandle(handle);
         setProjectName(normalizeProjectName(project.name || file.name.replace(/\.json$/i, "")));
         Object.entries(project.layerNames || {}).forEach(([id, name]) => getLayerNameOverrides().set(id, name));
-        for (const id of project.satellites || []) setSatelliteLayerActive(id, true);
+        const manualOrbits = Array.isArray(project.manualOrbits) ? project.manualOrbits : [];
+        const manualIds = new Set(manualOrbits
+            .map((entry) => String(entry?.id || "").trim())
+            .filter(Boolean));
+        for (const id of project.satellites || []) {
+            const normalizedId = String(id || "").trim();
+            // Legacy project files could contain a manual: id in `satellites`.
+            // It has no catalogue backing, so activating it would create a
+            // dangling WebSocket/catalogue request. New files store it only in
+            // `manualOrbits` and restore it below through /api/manual-orbits.
+            if (!normalizedId || manualIds.has(normalizedId) || normalizedId.startsWith("manual:")) {
+                continue;
+            }
+            setSatelliteLayerActive(normalizedId, true);
+        }
         if (project.simulation?.startDate && project.simulation?.endDate) applySimulationRange(new Date(project.simulation.startDate), new Date(project.simulation.endDate));
+        try {
+            const restoration = await restoreManualOrbits(manualOrbits);
+            if (Array.isArray(restoration?.failed) && restoration.failed.length) {
+                showAlert("El proyecto se abrio, pero alguna orbita manual no pudo restaurarse.", getAlertTitle());
+            }
+        } catch {
+            // The rest of a project remains useful if an individual saved
+            // definition becomes invalid or a propagator is unavailable.
+            showAlert("El proyecto se abrio, pero alguna orbita manual no pudo restaurarse.", getAlertTitle());
+        }
         getObjectSidebar()?.setProjectTree?.(project.layerTree); updateTitle(); getObjectSidebar()?.renderList?.();
         window.dispatchEvent(new Event("orbit:project-opened")); return true;
     };

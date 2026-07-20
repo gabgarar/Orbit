@@ -805,6 +805,8 @@ export function setupObjectSidebar({
     onFocusObject,
     onSelectObject,
     onOpenVisualizationOptions,
+    onRequestEditManualOrbit,
+    canEditManualOrbit = () => false,
     onToggleGroundTrack,
     getGroundTrackVisible,
     onRequestAddSatellite,
@@ -2391,14 +2393,16 @@ export function setupObjectSidebar({
     function openContextMenu(satelliteId, x, y) {
         contextTargetId = satelliteId;
         const menuWidth = 300;
-        const menuHeight = 248;
-        const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
-        const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
-
         const layerType = typeof getLayerType === "function"
             ? String(getLayerType(satelliteId) || "SATELLITE").toUpperCase()
             : "SATELLITE";
         const isGroundStation = layerType === "GROUND_STATION";
+        const isManualOrbit = !isGroundStation && canEditManualOrbit(satelliteId) === true;
+        // Keep the extra manual-orbit action inside the viewport instead of
+        // letting the last menu entry slip under the simulation dock.
+        const menuHeight = isManualOrbit ? 286 : 248;
+        const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
+        const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
 
         contextExplainBtn.hidden = isGroundStation;
         contextExportBtn.hidden = isGroundStation;
@@ -2419,7 +2423,16 @@ export function setupObjectSidebar({
         }
 
         window.dispatchEvent(new CustomEvent("orbit:layer-context-menu", {
-            detail: { left, top, groundStation: isGroundStation, groundTrackVisible: getGroundTrackVisible?.(satelliteId) === true }
+            detail: {
+                left,
+                top,
+                groundStation: isGroundStation,
+                groundTrackVisible: getGroundTrackVisible?.(satelliteId) === true,
+                // Only local authored manual orbits get an edit action. The
+                // callback is supplied by the runtime and resolves duplicate
+                // layer ids back to their canonical source before checking.
+                manualOrbit: isManualOrbit
+            }
         }));
     }
 
@@ -2941,6 +2954,15 @@ export function setupObjectSidebar({
     });
 
     window.addEventListener("orbit:layer-context-action", (event) => {
+        if (event.detail === "edit-manual") {
+            if (!contextTargetId || canEditManualOrbit(contextTargetId) !== true) {
+                return;
+            }
+            const id = contextTargetId;
+            closeContextMenu();
+            onRequestEditManualOrbit?.(id);
+            return;
+        }
         const actionButtons = {
             explain: contextExplainBtn,
             viz: contextVizBtn,

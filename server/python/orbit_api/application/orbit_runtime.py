@@ -64,7 +64,13 @@ class OrbitRuntime:
         with self._lock:
             return list(self._propagators), dict(self._system_config), dict(self._propagators_by_name)
 
-    def resolve_propagator(self, sat_id: str | None, line1: str | None, line2: str | None):
+    def resolve_propagator(
+        self,
+        sat_id: str | None,
+        line1: str | None,
+        line2: str | None,
+        propagator_name: str = "sgp4",
+    ):
         sat_name = (sat_id or "").strip()
         if sat_name:
             prop = self.get_state_snapshot()[2].get(sat_name)
@@ -75,11 +81,13 @@ class OrbitRuntime:
         if not l1 or not l2:
             raise HTTPException(status_code=400, detail="Send sat_id or line1+line2")
         try:
-            prop = self._propagator_registry.create("sgp4", l1, l2)
+            prop = self._propagator_registry.create(propagator_name, l1, l2)
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid TLE: {exc}") from exc
+            raise HTTPException(status_code=400, detail=f"Invalid TLE or propagator: {exc}") from exc
         tle_hash = hashlib.sha1(f"{l1}\n{l2}".encode("utf-8")).hexdigest()[:12]
-        return f"tle:{tle_hash}", prop
+        engine_key = str(propagator_name or "sgp4").strip().lower()
+        identity_prefix = "tle" if engine_key == "sgp4" else f"{engine_key}:tle"
+        return f"{identity_prefix}:{tle_hash}", prop
 
     def load_catalog_entries(self):
         _, data_config = load_system_config()

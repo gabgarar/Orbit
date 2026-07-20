@@ -60,3 +60,7 @@ export function SlidersIcon() {
 export function CameraIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.75" y="7" width="12.75" height="10" rx="2.1" /><path d="m15.5 10 4.1-2.05A1.25 1.25 0 0 1 21.5 9v6a1.25 1.25 0 0 1-1.9 1.05L15.5 14Z" /><circle cx="9.15" cy="12" r="2.45" /><path d="M5.5 5.25h5.25" /></svg>;
 }
+
+export function ManualOrbitIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="9" ry="4.7" transform="rotate(-32 12 12)" /><circle cx="16.9" cy="6.2" r="1.75" /><path d="M4 18.5h5M6.5 16v5" /></svg>;
+}
