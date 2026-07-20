@@ -7,6 +7,9 @@ import json
 from orbit_api.core.settings import PROPAGATION_HOURS_MAX, PROPAGATION_HOURS_MIN, SYSTEM_CONFIG_PATH
 
 DEFAULT_CATALOG_FILE = "catalog.json"
+ORBIT_LINE_WIDTH_DEFAULT = 2.5
+ORBIT_LINE_WIDTH_MIN = 2.0
+ORBIT_LINE_WIDTH_MAX = 5.0
 RESERVED_CATALOG_FILE_NAMES = {"system_config.json"}
 RESERVED_WINDOWS_FILE_STEMS = {
     "con", "prn", "aux", "nul",
@@ -47,6 +50,17 @@ def clamp_propagation_hours(value: object, default: float = 12) -> float:
     return max(PROPAGATION_HOURS_MIN, min(PROPAGATION_HOURS_MAX, hours))
 
 
+def clamp_orbit_line_width(value: object, default: float = ORBIT_LINE_WIDTH_DEFAULT) -> float:
+    """Keep the fixed visual orbit stroke legible without obscuring the globe."""
+    try:
+        width = float(value)
+    except (TypeError, ValueError):
+        width = float(default)
+    if width <= 0:
+        width = float(default)
+    return max(ORBIT_LINE_WIDTH_MIN, min(ORBIT_LINE_WIDTH_MAX, width))
+
+
 def normalize_system_config(system_cfg: object) -> dict:
     """Accept legacy flat settings while exposing one stable runtime shape."""
     source = system_cfg if isinstance(system_cfg, dict) else {}
@@ -55,17 +69,14 @@ def normalize_system_config(system_cfg: object) -> dict:
     realtime_cfg = source.get("realtime", {}) if isinstance(source.get("realtime"), dict) else {}
     return {
         "orbit_future_show": orbit_cfg.get("future_show", source.get("orbit_future_show", True)),
-        "orbit_past_show": orbit_cfg.get("past_show", source.get("orbit_past_show", True)),
         "propagation_hours": clamp_propagation_hours(orbit_cfg.get("propagation_hours", source.get("propagation_hours", 12))),
-        "orbit_future_line_width": orbit_cfg.get("future_line_width", source.get("orbit_future_line_width", 3)),
+        "orbit_future_line_width": clamp_orbit_line_width(
+            orbit_cfg.get("future_line_width", source.get("orbit_future_line_width", ORBIT_LINE_WIDTH_DEFAULT))
+        ),
         "orbit_future_color": orbit_cfg.get("future_color", source.get("orbit_future_color", "#00ff88")),
         "orbit_selected_color": orbit_cfg.get("selected_color", source.get("orbit_selected_color", "#ff2d2d")),
-        "orbit_past_color": orbit_cfg.get("past_color", source.get("orbit_past_color", "#ff0000")),
-        "orbit_past_seconds": orbit_cfg.get("past_seconds", source.get("orbit_past_seconds", source.get("orbit_past_samples", 120))),
-        "orbit_past_line_width": orbit_cfg.get("past_line_width", source.get("orbit_past_line_width", 5)),
         "satellite_label_size_px": satellites_cfg.get("label_size_px", source.get("satellite_label_size_px", 14)),
         "satellite_model_scale": satellites_cfg.get("model_scale", source.get("satellite_model_scale", 1.0)),
-        "max_satellites_visible": satellites_cfg.get("max_visible", source.get("max_satellites_visible", 100)),
         "websocket_state_interval_seconds": realtime_cfg.get("state_interval_seconds", source.get("websocket_state_interval_seconds", 1.0)),
         "websocket_orbit_interval_seconds": realtime_cfg.get("orbit_interval_seconds", source.get("websocket_orbit_interval_seconds", 10.0)),
     }
@@ -75,8 +86,7 @@ def load_system_config() -> tuple[dict, dict]:
     """Load user configuration, returning safe defaults if it is unavailable."""
     defaults_system = {
         "orbit_future_show": True, "propagation_hours": 12,
-        "orbit_future_line_width": 3, "orbit_future_color": "#00ff88",
-        "orbit_past_color": "#ff0000", "orbit_past_seconds": 120,
+        "orbit_future_line_width": ORBIT_LINE_WIDTH_DEFAULT, "orbit_future_color": "#00ff88",
         "websocket_state_interval_seconds": 1.0, "websocket_orbit_interval_seconds": 10.0,
     }
     try:

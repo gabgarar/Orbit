@@ -45,7 +45,17 @@ class OrbitRuntime:
         return value.replace(tzinfo=datetime.UTC) if value.tzinfo is None else value.astimezone(datetime.UTC)
 
     def serialize_state(self, name: str, moment: datetime.datetime, x, y, z, vx, vy, vz, include_velocity=True) -> dict:
-        payload = {"satellite": name, "time": self.ensure_utc(moment).isoformat(), "position": {"x": x, "y": y, "z": z}}
+        # Propagators expose Orbit's Earth-fixed runtime contract in metres.
+        # Keep it explicit in HTTP ephemerides so an OEM/consumer cannot infer
+        # the original SGP4 TEME frame from the source model.
+        payload = {
+            "satellite": name,
+            "time": self.ensure_utc(moment).isoformat(),
+            "reference_frame": "ITRF",
+            "position_units": "m",
+            "velocity_units": "m/s",
+            "position": {"x": x, "y": y, "z": z}
+        }
         if include_velocity:
             payload["velocity"] = {"x": vx, "y": vy, "z": vz}
         return payload
@@ -163,9 +173,15 @@ class OrbitRuntime:
                 orbit = cached["orbit"]
             else:
                 orbit = []
+                # All vertices share the same epoch.  Calling propagate_offset
+                # independently makes its implicit ``now`` drift across a
+                # dense path and can introduce tiny non-uniform chords.
+                reference_time = now.replace(tzinfo=None)
                 for index in range(samples):
                     offset = (index / max(samples - 1, 1)) * horizon_hours * 3600
-                    x, y, z, _, _, _ = prop.propagate_offset(offset)
+                    x, y, z, _, _, _ = prop.propagate_datetime(
+                        reference_time + datetime.timedelta(seconds=offset)
+                    )
                     orbit.append({"x": x, "y": y, "z": z})
                 with self._lock:
                     self._orbit_point_cache[cache_key] = {"orbit": orbit, "valid_until": now + datetime.timedelta(seconds=ORBIT_CACHE_TTL_SECONDS)}

@@ -32,6 +32,21 @@ test("catalog page service ignores unsupported source filters", async () => {
     assert.equal(page.hasMore, true);
 });
 
+test("catalog page gives same-named TLEs unique stable catalog IDs", async () => {
+    const service = createCatalogPageService({
+        catalog: {
+            get: async () => ({ entries: [
+                { name: "SL-16 R/B", line1: "1 20001U", line2: "2 20001" },
+                { name: "SL-16 R/B", line1: "1 20002U", line2: "2 20002" }
+            ] })
+        },
+        config: { get: async () => ({ data: {} }) }
+    });
+
+    const page = await service.getPage({ limit: 10 });
+    assert.deepEqual(page.items.map((item) => item.catalogId), ["SL-16 R/B · NORAD 20001", "SL-16 R/B · NORAD 20002"]);
+});
+
 test("catalog page avoids false decay alerts when perigee metadata is absent", async () => {
     const service = createCatalogPageService({
         catalog: {

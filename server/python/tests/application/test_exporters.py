@@ -10,4 +10,8 @@ def test_all_export_formats_preserve_satellite_identity():
     assert normalize_source_format("invalid") == "TLE"
     assert omm_json_from_entry(entry)["OBJECT_NAME"] == entry["name"]
     assert "TLE_LINE1" in omm_xml_from_entry(entry) and ocm_json_from_entry(entry)["format"] == "OCM"
-    assert "source_format" in ephemeris_csv_text([point]) and "CCSDS_OEM_VERS" in ephemeris_oem_text("ISS", point["time"], point["time"], [point])
+    oem = ephemeris_oem_text("ISS", point["time"], point["time"], [point])
+    assert "source_format" in ephemeris_csv_text([point]) and "CCSDS_OEM_VERS" in oem
+    assert "REF_FRAME = ITRF" in oem
+    assert "ORBIT_POSITION_UNIT = km" in oem and "ORBIT_VELOCITY_UNIT = km/s" in oem
+    assert "2026-01-01T00:00:00Z 0.001 0.002 0.003 0.004 0.005 0.006" in oem

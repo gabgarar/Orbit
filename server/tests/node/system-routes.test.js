@@ -32,6 +32,20 @@ function createApp({ getConfig, saveConfig, updateConfig, schedule, reload }) {
     return app;
 }
 
+test("system-config ignores retired orbit width modes", () => {
+    const payload = sanitizeSystemConfigPayload({
+        system: {
+            orbit: { future_color: "#7fd7ff", width_mode: "physical" },
+            orbit_width_mode: "physical"
+        }
+    });
+
+    assert.deepEqual(payload, {
+        system: { orbit: { future_color: "#7fd7ff" } },
+        data: undefined
+    });
+});
+
 test("system-config saves the system settings, preserves current data, and refreshes runtime services", async () => {
     const existing = {
         system: { language: "es" },

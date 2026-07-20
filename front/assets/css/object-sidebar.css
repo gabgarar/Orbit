@@ -112,6 +112,27 @@ body.with-toolbars #objectSidebar.collapsed {
     transition: background 0.1s ease;
 }
 
+.object-global-remove-btn[hidden] {
+    display: none !important;
+}
+
+.object-global-eye-btn > svg,
+.object-global-remove-btn > svg,
+.object-visibility-btn > .orbit-visibility-icon {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.object-visibility-btn > .orbit-visibility-icon {
+    width: 14px;
+    height: 14px;
+}
+
 .object-global-remove-btn:hover {
     background: var(--orbit-bg-danger-soft);
 }
@@ -594,11 +615,48 @@ body.with-toolbars #objectSidebar.collapsed {
     font: 700 12px sans-serif;
 }
 
-.tle-info-section ul {
-    margin: 0;
-    padding-left: 16px;
-    color: var(--orbit-text-secondary);
-    font: 12px/1.45 sans-serif;
+.tle-info-grid .tle-info-field {
+    position: relative;
+    cursor: help;
+    outline: none;
+    transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.tle-info-grid .tle-info-field:hover,
+.tle-info-grid .tle-info-field:focus-visible {
+    border-color: var(--orbit-border-accent);
+    background: var(--orbit-bg-elevated);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--orbit-bg-accent) 32%, transparent);
+}
+
+.tle-info-grid .tle-info-field::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    z-index: 12;
+    left: 0;
+    bottom: calc(100% + 8px);
+    width: min(280px, calc(100vw - 56px));
+    box-sizing: border-box;
+    padding: 8px 9px;
+    border: 1px solid var(--orbit-border-accent);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--orbit-bg-modal) 96%, #000);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.38);
+    color: var(--orbit-text-primary);
+    font: 500 11px/1.4 system-ui, sans-serif;
+    letter-spacing: 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(4px);
+    transition: opacity 130ms ease, transform 130ms ease, visibility 130ms ease;
+    visibility: hidden;
+}
+
+.tle-info-grid .tle-info-field:hover::after,
+.tle-info-grid .tle-info-field:focus-visible::after {
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
 }
 
 .tle-info-paragraph {
@@ -1417,46 +1475,6 @@ body.with-toolbars #objectSidebar.collapsed {
     font: 600 12px/1.4 sans-serif;
 }
 
-#groundStationHeatLegend {
-    position: fixed;
-    left: 14px;
-    bottom: 14px;
-    z-index: 10150;
-    width: 240px;
-    border: 1px solid var(--orbit-border-secondary);
-    border-radius: 10px;
-    background: linear-gradient(180deg, rgba(19, 31, 54, 0.94) 0%, rgba(13, 24, 44, 0.94) 100%);
-    color: var(--orbit-text-primary);
-    padding: 10px 10px 8px;
-    display: none;
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
-}
-
-#groundStationHeatLegend.visible {
-    display: block;
-}
-
-#groundStationHeatLegend .heat-legend-title {
-    font: 700 12px/1.2 sans-serif;
-    margin-bottom: 8px;
-    letter-spacing: 0.02em;
-}
-
-#groundStationHeatLegend .heat-legend-bar {
-    height: 12px;
-    border-radius: 999px;
-    border: 1px solid var(--orbit-border-primary);
-    background: linear-gradient(90deg, #cc3d55 0%, #f29a3a 35%, #f7d34d 65%, #3af27a 100%);
-}
-
-#groundStationHeatLegend .heat-legend-ticks {
-    margin-top: 6px;
-    display: flex;
-    justify-content: space-between;
-    font: 600 10px/1 sans-serif;
-    color: var(--orbit-text-secondary);
-}
-
 .ground-station-panel .catalog-filter-header {
     cursor: move;
 }
@@ -1725,10 +1743,9 @@ body.with-toolbars #objectSidebar.collapsed {
 .folder-add-menu { position: relative; }
 .folder-add-menu > .catalog-context-action { display: flex; justify-content: space-between; width: 100%; }
 .folder-add-submenu { display: none; position: absolute; left: calc(100% - 2px); top: 0; min-width: 170px; padding: 5px 0; border: 1px solid var(--orbit-border-primary); border-radius: 8px; background: var(--orbit-bg-modal); box-shadow: 0 12px 28px rgba(0,0,0,.35); }
-.folder-add-menu:hover .folder-add-submenu { display: block; }
+.folder-add-menu:hover > .folder-add-submenu,
+.folder-add-menu:focus-within > .folder-add-submenu { display: block; }
 .folder-add-submenu .catalog-context-action { width: 100%; }
-#layerAddMenu > #addSatelliteLayerBtn, #layerAddMenu > #addGroundStationBtn { display: none; }
-
 #layerAddMenu .project-actions-entry > .catalog-context-action {
     display: flex;
     justify-content: space-between;

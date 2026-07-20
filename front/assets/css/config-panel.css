@@ -582,31 +582,6 @@ body.with-toolbars #quickToolbar {
     margin: 6px 0 6px;
 }
 
-.config-field.align-right {
-    justify-self: end;
-    align-self: center;
-}
-
-.config-field.align-left {
-    justify-self: start;
-    align-self: center;
-}
-
-.orbit-wrapper {
-    display: grid;
-    gap: 8px;
-}
-
-.orbit-subtitle {
-    font: 700 12px sans-serif;
-    color: var(--orbit-text-tertiary);
-    margin: 6px 0 2px;
-}
-
-.orbit-grid {
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-}
-
 .config-section-title {
     margin: 0 0 10px;
     font: 700 calc(13px * var(--orbit-ui-scale)) sans-serif;

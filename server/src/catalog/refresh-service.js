@@ -22,6 +22,35 @@ function groupSource(group) {
     };
 }
 
+function sourceProvider(source) {
+    try {
+        const hostname = new URL(String(source?.url || "")).hostname.toLowerCase();
+        if (hostname.endsWith("celestrak.org")) return "CelesTrak";
+        if (hostname.endsWith("space-track.org")) return "Space-Track";
+        return hostname;
+    } catch {
+        return "";
+    }
+}
+
+function refreshTimestamp(value) {
+    const timestamp = Number(value);
+    const date = Number.isFinite(timestamp) ? new Date(timestamp) : null;
+    return date && !Number.isNaN(date.getTime()) ? date.toISOString() : "";
+}
+
+function stampRemoteEntries(entries, source, updatedAt) {
+    const provider = sourceProvider(source);
+    const sourceName = String(source?.name || "").trim();
+    return (Array.isArray(entries) ? entries : []).map((entry) => ({
+        ...entry,
+        sourceOrigin: "CATALOG",
+        ...(provider ? { tleSource: provider, sourceProvider: provider } : {}),
+        ...(sourceName ? { sourceName } : {}),
+        ...(updatedAt ? { updatedAt } : {})
+    }));
+}
+
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -156,7 +185,14 @@ export function createCatalogRefreshService({
             const elapsedMs = previousAttemptAt ? Math.max(0, now() - previousAttemptAt) : 0;
             const remainingMs = MIN_REFRESH_INTERVAL_MS - elapsedMs;
             if (previousAttemptAt && remainingMs > 0) {
-                return { ok: false, status: 429, rateLimited: true, error: `CelesTrak recomienda actualizar como maximo cada 2 horas. Reintenta dentro de ${Math.ceil(remainingMs / 60_000)} minutos.` };
+                return {
+                    ok: false,
+                    status: 429,
+                    rateLimited: true,
+                    retryAfterMs: remainingMs,
+                    retryAt: refreshTimestamp(previousAttemptAt + MIN_REFRESH_INTERVAL_MS),
+                    error: `CelesTrak recomienda actualizar como maximo cada 2 horas. Reintenta dentro de ${Math.ceil(remainingMs / 60_000)} minutos.`
+                };
             }
 
             lastAttemptAt = now();
@@ -186,9 +222,10 @@ export function createCatalogRefreshService({
             await runWithConcurrency(groups, DOWNLOAD_CONCURRENCY, async (group) => {
                 if (wasStopped()) return;
                 try {
-                    const result = await download(groupSource(group), downloadOptions);
+                    const source = groupSource(group);
+                    const result = await download(source, downloadOptions);
                     if (wasStopped()) return;
-                    successfulGroups.push({ group, count: result.entries.length, entries: result.entries });
+                    successfulGroups.push({ group, source, count: result.entries.length, entries: result.entries });
                 } catch (error) {
                     if (!wasStopped()) failedGroups.push({ group, message: errorMessage(error) });
                 }
@@ -198,15 +235,16 @@ export function createCatalogRefreshService({
                 try {
                     const result = await download(source, downloadOptions);
                     if (wasStopped()) return;
-                    successfulSources.push(result);
+                    successfulSources.push({ ...result, source });
                 } catch (error) {
                     if (!wasStopped()) failedSources.push({ source: source.name, url: source.url, message: errorMessage(error) });
                 }
             });
             if (wasStopped()) return cancelledRefreshResult();
 
-            const remoteEntries = successfulGroups.flatMap((result) => result.entries)
-                .concat(successfulSources.flatMap((result) => result.entries));
+            const updatedAt = refreshTimestamp(lastAttemptAt);
+            const remoteEntries = successfulGroups.flatMap((result) => stampRemoteEntries(result.entries, result.source, updatedAt))
+                .concat(successfulSources.flatMap((result) => stampRemoteEntries(result.entries, result.source, updatedAt)));
             const { valid: validRemoteEntries, invalid: invalidRemoteEntries } = filterValidTleEntries(remoteEntries.map(withCatalogMetadata));
             if (!validRemoteEntries.length) {
                 return {

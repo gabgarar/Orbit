@@ -43,6 +43,41 @@ test("config repository normalizes malformed configuration and protects catalog 
     });
 });
 
+test("config repository removes retired rendering settings from persisted settings", async () => {
+    await temporaryDirectory(async (directory) => {
+        const repository = createConfigRepository({ configDir: directory });
+        const saved = await repository.save({
+            system: {
+                max_satellites_visible: 100,
+                satellites: { label_size_px: 12, max_visible: 100 },
+                orbit: {
+                    future_color: "#7fd7ff",
+                    width_mode: "physical",
+                    trail_show: false,
+                    trail_color: "#123456",
+                    trail_speed_seconds: 9,
+                    trail_length_percent: 12,
+                    trail_line_width: 4,
+                    past_show: false
+                },
+                orbit_trail_show: false,
+                orbit_width_mode: "physical"
+            },
+            data: { satellites_catalog_file: "catalog.json" }
+        });
+
+        assert.deepEqual(saved.system, {
+            satellites: { label_size_px: 12 },
+            orbit: { future_color: "#7fd7ff" }
+        });
+        const persisted = JSON.parse(await fs.readFile(path.join(directory, "system_config.json"), "utf8"));
+        assert.deepEqual(persisted.system, {
+            satellites: { label_size_px: 12 },
+            orbit: { future_color: "#7fd7ff" }
+        });
+    });
+});
+
 test("config repository repairs reserved catalog names persisted by older versions", async () => {
     await temporaryDirectory(async (directory) => {
         await fs.writeFile(path.join(directory, "system_config.json"), JSON.stringify({
@@ -68,6 +103,24 @@ test("catalog repository invalidates its in-memory cache after replacement", asy
         await repository.replace([{ name: "NEXT", line1: "1 54321U", line2: "2 54321" }], { text: () => "", json: (entries) => JSON.stringify({ entries }) });
         assert.equal((await repository.get()).entries[0].name, "NEXT");
         assert.deepEqual(await fs.readdir(directory), ["catalog.json"]);
+    });
+});
+
+test("catalog repository uses JSON generatedAt only as a missing per-entry update fallback", async () => {
+    await temporaryDirectory(async (directory) => {
+        const catalogPath = path.join(directory, "catalog.json");
+        await fs.writeFile(catalogPath, JSON.stringify({
+            generatedAt: "2026-07-19T10:15:00.000Z",
+            entries: [
+                { name: "FALLBACK", line1: "1 00001U", line2: "2 00001" },
+                { name: "EXPLICIT", line1: "1 00002U", line2: "2 00002", updatedAt: "2026-07-18T09:00:00.000Z" }
+            ]
+        }));
+        const repository = createCatalogRepository({ getCatalogPath: async () => catalogPath });
+        const entries = (await repository.get()).entries;
+
+        assert.equal(entries.find((entry) => entry.name === "FALLBACK")?.updatedAt, "2026-07-19T10:15:00.000Z");
+        assert.equal(entries.find((entry) => entry.name === "EXPLICIT")?.updatedAt, "2026-07-18T09:00:00.000Z");
     });
 });
 

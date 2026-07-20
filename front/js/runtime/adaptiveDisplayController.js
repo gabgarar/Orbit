@@ -1,4 +1,5 @@
 /** Applies adaptive rendering and interface scale while avoiding redundant resizes. */
+const MIN_ANTIALIASED_RESOLUTION_SCALE = 1;
 export function createAdaptiveDisplayController({ viewer, windowRef, documentRef, getResolutionScale, getUiScale, logger }) {
     let resolutionScale = null;
     let uiScale = null;
@@ -6,7 +7,10 @@ export function createAdaptiveDisplayController({ viewer, windowRef, documentRef
     const applyResolution = (systemConfig, { silent = false } = {}) => {
         let nextScale = getResolutionScale(windowRef);
         const antialiasMode = systemConfig.antialias_mode ?? (systemConfig.antialias_enabled !== false ? "fxaa" : "off");
-        if (antialiasMode !== "off") nextScale = Math.max(0.9, nextScale);
+        // Downsampling thin WebGL polylines makes their edges visibly jagged.
+        // Keep the adaptive reduction only for the explicit no-AA mode; full
+        // resolution is the quality baseline whenever an AA mode is selected.
+        if (antialiasMode !== "off") nextScale = Math.max(MIN_ANTIALIASED_RESOLUTION_SCALE, nextScale);
         if (Number.isFinite(resolutionScale) && Math.abs(resolutionScale - nextScale) <= 0.005) return;
         viewer.useBrowserRecommendedResolution = false;
         viewer.resolutionScale = nextScale;

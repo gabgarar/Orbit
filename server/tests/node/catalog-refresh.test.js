@@ -64,6 +64,30 @@ test("catalog refresh keeps a custom entry when a remote source has the same NOR
     assert.equal(reloads, 1);
 });
 
+test("catalog refresh stamps each remote entry with its provider, source, and refresh timestamp", async () => {
+    const refreshedAt = Date.UTC(2026, 6, 19, 10, 15, 0);
+    let savedEntries;
+    const service = createService({
+        catalog: {
+            get: async () => ({ entries: [] }),
+            replace: async (entries) => { savedEntries = entries; }
+        },
+        defaultGroups: ["active"],
+        now: () => refreshedAt,
+        download: async () => ({ entries: [validEntry] })
+    });
+
+    const result = await service.refresh();
+
+    assert.equal(result.ok, true);
+    assert.equal(savedEntries.length, 1);
+    assert.equal(savedEntries[0].sourceOrigin, "CATALOG");
+    assert.equal(savedEntries[0].tleSource, "CelesTrak");
+    assert.equal(savedEntries[0].sourceProvider, "CelesTrak");
+    assert.equal(savedEntries[0].sourceName, "active");
+    assert.equal(savedEntries[0].updatedAt, "2026-07-19T10:15:00.000Z");
+});
+
 test("catalog refresh respects offline mode before downloading", async () => {
     let downloads = 0;
     const service = createService({
@@ -178,6 +202,8 @@ test("catalog refresh honors a persisted attempt timestamp before downloading", 
 
     assert.equal(result.status, 429);
     assert.equal(result.rateLimited, true);
+    assert.equal(result.retryAfterMs, 60 * 60 * 1000);
+    assert.equal(result.retryAt, "1970-01-01T11:00:00.000Z");
     assert.equal(downloads, 0);
 });
 

@@ -1,24 +1,25 @@
 import { SatelliteWebSocket } from "./SatelliteWebSocket.js";
 import { getLogger } from "./logger.js";
+import { emitObjectStateChanged } from "./runtime/objectDetailsEvents.js";
+import { buildUniformSampleTimes, sampleTrackKinematics } from "./runtime/trackKinematics.js";
 
 const logger = getLogger("satellites");
 
 // =============================
-// Configuración y límites
+// Configuración de renderizado
 // =============================
-const MAX_WS_CATALOG_IDS_IN_MEMORY = 1000;
 const ENTITY_POOL_SIZE = 50;         // Tamaño del object pool
 const MIN_INTERPOLATION_MS = 250;
 const MAX_INTERPOLATION_MS = 2000;
 const INTERPOLATION_HEADROOM = 1.16;
 const INTERVAL_SMOOTHING_FACTOR = 0.14;
 const POSITION_SMOOTHING_ALPHA = 0.32;
-const ORBIT_WIDTH_MODE_VISUAL = "visual";
-const ORBIT_WIDTH_MODE_PHYSICAL = "physical";
-const ORBIT_PHYSICAL_REF_DISTANCE_M = 1000000;
-const ORBIT_PHYSICAL_MIN_FACTOR = 0.2;
-const ORBIT_PHYSICAL_MAX_FACTOR = 3.0;
-const ORBIT_MIN_PIXEL_WIDTH = 1.6;
+// Orbit lines use one stable screen-space width.  Scaling their width by
+// camera distance made a close view blow out the permanent glow and obscured
+// the globe when several satellites overlapped.
+const ORBIT_DEFAULT_LINE_WIDTH_PX = 2.5;
+const ORBIT_MIN_PIXEL_WIDTH = 2;
+const ORBIT_MAX_PIXEL_WIDTH = 5;
 const SAT_LABEL_FONT_WEIGHT = 600;
 const SAT_LABEL_FONT_FAMILY = "sans-serif";
 const SAT_LABEL_FILL_COLOR = "#dfe9f3";
@@ -35,7 +36,7 @@ const SAT_OUT_OF_TIME_POINT_OUTLINE_COLOR = "#8a93a0";
 const SAT_OUT_OF_TIME_LABEL_COLOR = "#cfd5dc";
 const SAT_OUT_OF_TIME_LABEL_OUTLINE_COLOR = "#4f5864";
 const DEFAULT_SELECTED_ORBIT_COLOR = "#ff2d2d";
-const SELECTED_ORBIT_WIDTH_BOOST_PX = 2;
+const SELECTED_ORBIT_WIDTH_BOOST_PX = 1;
 const GROUND_TRACK_WIDTH_FACTOR = 0.85;
 const FOOTPRINT_FILL_ALPHA = 0.32;
 const FOOTPRINT_OUTLINE_ALPHA = 0.95;
@@ -47,11 +48,8 @@ const FOOTPRINT_SURFACE_HEIGHT = 30000;
 // Altura a la que se eleva la traza de suelo (ground track) para evitar el
 // z-fighting con la textura del mapa. Se mantiene por debajo del footprint.
 const GROUND_TRACK_SURFACE_HEIGHT = 20000;
-const DEFAULT_MAX_ACTIVE_SATELLITES = 100;
 const PROPAGATION_HOURS_MIN = 0;
 const PROPAGATION_HOURS_MAX = Number.POSITIVE_INFINITY;
-const PAST_SECONDS_MIN = 0;
-const PAST_SECONDS_MAX = 86400;
 
 function createSatelliteModelGraphics() {
     return new Cesium.ModelGraphics({
@@ -139,8 +137,6 @@ class EntityPool {
 
         this.activeEntities.set(id, {
             entity,
-            trailPositions: [position],
-            trailEntity: null,
             orbitEntity: null,
             groundTrackEntity: null,
             footprintEntity: null
@@ -154,12 +150,9 @@ class EntityPool {
         const state = this.activeEntities.get(id);
         if (!state) return;
 
-        const { entity, trailEntity, orbitEntity, groundTrackEntity, footprintEntity } = state;
+        const { entity, orbitEntity, groundTrackEntity, footprintEntity } = state;
 
         // Limpiar polylines
-        if (trailEntity) {
-            this.viewer.entities.remove(trailEntity);
-        }
         if (orbitEntity) {
             this.viewer.entities.remove(orbitEntity);
         }
@@ -215,6 +208,56 @@ const activeLayerSatelliteIds = new Set();
 const tleBySatelliteId = new Map();
 const catalogEntryMetaBySatelliteId = new Map();
 const oemEphemerisTrackById = new Map();
+
+function catalogMetadataText(entry, keys, fallback = "") {
+    for (const key of keys) {
+        const value = entry?.[key];
+        if (value === undefined || value === null) {
+            continue;
+        }
+        const normalized = String(value).trim();
+        if (normalized) {
+            return normalized;
+        }
+    }
+    return fallback;
+}
+
+// Keep the compact fields used by the rendering runtime while retaining common
+// catalogue metadata for the object card.  The server passes unknown future
+// fields through its page endpoint, so this makes those fields available to
+// the UI without pretending they exist in today's catalogue.
+function createCatalogEntryMeta(entry = {}, fallbackName = "") {
+    const name = catalogMetadataText(entry, ["name", "catalogName", "catalog_name"], fallbackName);
+    const operatorLabel = catalogMetadataText(entry, ["operator", "operatorName", "operator_name"]);
+    const ownerLabel = catalogMetadataText(entry, ["owner", "ownerName", "owner_name"]);
+    const mission = catalogMetadataText(entry, ["mission", "missionType", "mission_type"]);
+    const missionType = catalogMetadataText(entry, ["missionType", "mission_type", "mission"]);
+
+    return {
+        name,
+        catalogName: name,
+        catalogId: catalogMetadataText(entry, ["catalogId", "catalog_id"]),
+        sourceFormat: catalogMetadataText(entry, ["sourceFormat", "format"], "TLE").toUpperCase(),
+        sourceOrigin: catalogMetadataText(entry, ["sourceOrigin", "source_origin"], "CATALOG").toUpperCase(),
+        operator: operatorLabel.toLowerCase(),
+        operatorLabel,
+        owner: ownerLabel.toLowerCase(),
+        ownerLabel,
+        country: catalogMetadataText(entry, ["country", "countryCode", "country_code", "operatorCountry", "operator_country"]),
+        agency: catalogMetadataText(entry, ["agency", "operatorAgency", "operator_agency"]),
+        mission,
+        missionType,
+        objectId: catalogMetadataText(entry, ["objectId", "object_id", "internationalDesignator", "international_designator"]),
+        launchDate: catalogMetadataText(entry, ["launchDate", "launch_date", "launchTimestamp", "launch_timestamp"]),
+        launchVehicle: catalogMetadataText(entry, ["launchVehicle", "launch_vehicle", "vehicle"]),
+        launchSite: catalogMetadataText(entry, ["launchSite", "launch_site", "site"]),
+        tleSource: catalogMetadataText(entry, ["tleSource", "tle_source", "sourceProvider", "source_provider", "sourceName", "source_name", "provider", "providerName"]),
+        updatedAt: catalogMetadataText(entry, ["updatedAt", "updated_at", "lastUpdated", "last_updated", "tleUpdatedAt", "tle_updated_at"]),
+        perigee_km: Number.isFinite(Number(entry?.perigee_km)) ? Number(entry.perigee_km) : null,
+        decayRisk: entry?.decayRisk === true
+    };
+}
 let catalogLoaded = false;
 let lastCatalogUrl = "/config/catalog.json";
 let cachedSatelliteIds = [];
@@ -226,25 +269,18 @@ let satelliteLabelSizePx = 14;
 let satelliteModelScale = 1.0;
 let satelliteUse3DModel = true;
 let satelliteSizeMode = "visual";
-let maxActiveSatellites = DEFAULT_MAX_ACTIVE_SATELLITES;
 let lastUpdateTime = Date.now();
 let animationFrameId = null;
 let simulationTimelineProvider = null;
 let sourceFutureOrbitHours = null;
-let sourceFutureOrbitSamples = null;
 let selectedOrbitSatelliteId = null;
 const satelliteVisualOverridesById = new Map();
 let orbitConfig = {
     orbit_future_show: true,
     orbit_ground_track_show: true,
-    orbit_past_show: true,
-    orbit_width_mode: ORBIT_WIDTH_MODE_VISUAL,
-    orbit_future_line_width: 3,
+    orbit_future_line_width: ORBIT_DEFAULT_LINE_WIDTH_PX,
     orbit_future_color: "#00ff88",
     orbit_selected_color: DEFAULT_SELECTED_ORBIT_COLOR,
-    orbit_past_color: "#ff0000",
-    orbit_past_seconds: 2,
-    orbit_past_line_width: 5,
     propagation_hours: 12,
     websocket_state_interval_seconds: 1.0
 };
@@ -274,14 +310,6 @@ function shouldShowGroundTrack(id) {
         && getPropagationHoursForSatellite(id) > 0;
 }
 
-function shouldShowPastOrbit(id) {
-    if (isRangeSimulationModeActive()) {
-        return false;
-    }
-    return getSatelliteConfigValue(id, "orbit_past_show", orbitConfig.orbit_past_show) !== false
-        && getPastSecondsForSatellite(id) > 0;
-}
-
 function getPropagationHoursForSatellite(id) {
     const requested = Number(getSatelliteConfigValue(id, "propagation_hours", orbitConfig.propagation_hours));
     if (!Number.isFinite(requested) || requested < 0) {
@@ -290,12 +318,57 @@ function getPropagationHoursForSatellite(id) {
     return clamp(requested, PROPAGATION_HOURS_MIN, PROPAGATION_HOURS_MAX);
 }
 
-function getPastSecondsForSatellite(id) {
-    const requested = Number(getSatelliteConfigValue(id, "orbit_past_seconds", orbitConfig.orbit_past_seconds));
-    if (!Number.isFinite(requested) || requested < 0) {
-        return 2 * 3600;
+function finiteVector(value) {
+    if (!value || typeof value !== "object") {
+        return null;
     }
-    return Math.max(PAST_SECONDS_MIN, requested * 3600);
+
+    const x = Number(value.x);
+    const y = Number(value.y);
+    const z = Number(value.z);
+    if (![x, y, z].every(Number.isFinite)) {
+        return null;
+    }
+
+    return { x, y, z };
+}
+
+function vectorMagnitude(value) {
+    const vector = finiteVector(value);
+    if (!vector) {
+        return null;
+    }
+    return Math.hypot(vector.x, vector.y, vector.z);
+}
+
+function isEarthFixedFrame(frame) {
+    const normalized = String(frame || "").trim().toUpperCase();
+    return normalized === "ECEF"
+        || normalized === "PEF"
+        || normalized === "WGS84"
+        || normalized.startsWith("ITRF");
+}
+
+function normalizeReferenceFrame(value) {
+    const frame = String(value || "").trim().toUpperCase();
+    return frame || null;
+}
+
+function deriveAcceleration(previousVelocity, nextVelocity, elapsedSeconds) {
+    const previous = finiteVector(previousVelocity);
+    const next = finiteVector(nextVelocity);
+    const duration = Number(elapsedSeconds);
+    // Backend state messages normally arrive once per second. Ignore an
+    // implausibly short/long gap instead of exposing a noisy pseudo-value.
+    if (!previous || !next || !Number.isFinite(duration) || duration < 0.05 || duration > 10) {
+        return null;
+    }
+
+    return {
+        x: (next.x - previous.x) / duration,
+        y: (next.y - previous.y) / duration,
+        z: (next.z - previous.z) / duration
+    };
 }
 
 function getSatelliteLabelSize(id) {
@@ -393,14 +466,21 @@ function clipOrbitBySimulationRange(state, orbitPoints) {
     return orbitPoints.slice(fromIndex, toIndex + 1);
 }
 
-function sampleOrbitPositionForDate(state, simulationDate) {
-    if (!state || !(simulationDate instanceof Date)) {
+function getSimulationSampleTimes(state, positions) {
+    if (!state || !Array.isArray(positions) || positions.length < 2) {
         return null;
     }
 
-    const positions = state.simOrbitPositions;
-    if (!Array.isArray(positions) || positions.length < 2) {
-        return null;
+    const explicitTimes = state.simOrbitSampleTimesMs;
+    if (Array.isArray(explicitTimes) && explicitTimes.length === positions.length) {
+        let previous = Number.NEGATIVE_INFINITY;
+        const valid = explicitTimes.every((time) => {
+            const numeric = Number(time);
+            if (!Number.isFinite(numeric) || numeric <= previous) return false;
+            previous = numeric;
+            return true;
+        });
+        if (valid) return explicitTimes.map(Number);
     }
 
     const referenceMs = Number(state.simOrbitReferenceMs);
@@ -408,39 +488,23 @@ function sampleOrbitPositionForDate(state, simulationDate) {
     if (!Number.isFinite(referenceMs) || !Number.isFinite(horizonSeconds) || horizonSeconds <= 0) {
         return null;
     }
+    return buildUniformSampleTimes(positions.length, referenceMs, referenceMs + (horizonSeconds * 1000));
+}
 
-    const simulationCtx = resolveSimulationTimelineContext();
-    let ratio;
-
-    const trackStartMs = Number(state.simTrackStartMs);
-    const trackEndMs = Number(state.simTrackEndMs);
-    const hasTrackWindow = Number.isFinite(trackStartMs) && Number.isFinite(trackEndMs) && trackEndMs > trackStartMs;
-
-    if (hasTrackWindow) {
-        const simMs = simulationDate.getTime();
-        if (simMs < trackStartMs || simMs > trackEndMs) {
-            return null;
-        }
-
-        const spanMs = Math.max(1000, trackEndMs - trackStartMs);
-        ratio = clamp((simMs - trackStartMs) / spanMs, 0, 1);
-    } else if (simulationCtx && simulationCtx.mode === "range" && simulationCtx.rangeStart && simulationCtx.rangeEnd) {
-        const rangeStartMs = simulationCtx.rangeStart.getTime();
-        const rangeEndMs = simulationCtx.rangeEnd.getTime();
-        const spanMs = Math.max(1000, rangeEndMs - rangeStartMs);
-        ratio = clamp((simulationDate.getTime() - rangeStartMs) / spanMs, 0, 1);
-    } else {
-        const elapsedSeconds = (simulationDate.getTime() - referenceMs) / 1000;
-        ratio = clamp(elapsedSeconds / horizonSeconds, 0, 1);
+function sampleSimulationTrackKinematics(state, simulationDate) {
+    if (!state || !(simulationDate instanceof Date) || Number.isNaN(simulationDate.getTime())) {
+        return null;
     }
+    const positions = state.simOrbitPositions;
+    const sampleTimes = getSimulationSampleTimes(state, positions);
+    return sampleTimes ? sampleTrackKinematics(positions, sampleTimes, simulationDate.getTime()) : null;
+}
 
-    const maxIndex = positions.length - 1;
-    const exactIndex = ratio * maxIndex;
-    const leftIndex = Math.floor(exactIndex);
-    const rightIndex = Math.min(maxIndex, leftIndex + 1);
-    const t = exactIndex - leftIndex;
-
-    return lerpCartesian(positions[leftIndex], positions[rightIndex], t);
+function sampleOrbitPositionForDate(state, simulationDate) {
+    const sampled = sampleSimulationTrackKinematics(state, simulationDate);
+    return sampled?.position
+        ? new Cesium.Cartesian3(sampled.position.x, sampled.position.y, sampled.position.z)
+        : null;
 }
 
 function hasValidSimulationTrackWindow(state) {
@@ -486,9 +550,6 @@ function applyOutOfTimeVisualState(id, state, outOfTime) {
             entity.label.fillColor = Cesium.Color.fromCssColorString(SAT_OUT_OF_TIME_LABEL_COLOR);
             entity.label.outlineColor = Cesium.Color.fromCssColorString(SAT_OUT_OF_TIME_LABEL_OUTLINE_COLOR);
         }
-        if (state.trailEntity) {
-            state.trailEntity.show = false;
-        }
         if (state.orbitEntity) {
             state.orbitEntity.show = false;
         }
@@ -518,9 +579,6 @@ function applySatelliteVisibility(id, state) {
     const visible = isActiveLayer && !hiddenSatelliteIds.has(id) && !outOfTime;
     state.entity.show = visible;
 
-    if (state.trailEntity) {
-        state.trailEntity.show = visible && shouldShowPastOrbit(id);
-    }
     if (state.orbitEntity) {
         state.orbitEntity.show = visible && shouldShowFutureOrbit(id) && !isViewerIn2D(currentViewer);
     }
@@ -532,58 +590,6 @@ function applySatelliteVisibility(id, state) {
     }
 
     return visible;
-}
-
-function normalizeMaxActiveSatellites(value) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < 1) {
-        return DEFAULT_MAX_ACTIVE_SATELLITES;
-    }
-    return Math.max(1, Math.floor(parsed));
-}
-
-function getAvailableActiveSatelliteSlots() {
-    return Math.max(0, maxActiveSatellites - activeLayerSatelliteIds.size);
-}
-
-function trimActiveSatelliteLayersToLimit() {
-    if (activeLayerSatelliteIds.size <= maxActiveSatellites) {
-        return [];
-    }
-
-    const activeIds = Array.from(activeLayerSatelliteIds);
-    const idsToRemove = activeIds.slice(maxActiveSatellites);
-
-    for (const id of idsToRemove) {
-        activeLayerSatelliteIds.delete(id);
-        wsClient?.unsubscribe([id]);
-
-        const state = satelliteState[id];
-        if (!state) {
-            continue;
-        }
-
-        if (state.trailEntity && currentViewer) {
-            currentViewer.entities.remove(state.trailEntity);
-            state.trailEntity = null;
-        }
-        if (state.orbitEntity && currentViewer) {
-            currentViewer.entities.remove(state.orbitEntity);
-            state.orbitEntity = null;
-        }
-        if (currentViewer) {
-            remove2DOverlays(currentViewer, state);
-        }
-        if (state.entity) {
-            state.entity.show = false;
-        }
-    }
-
-    if (idsToRemove.length) {
-        activeLayerIdsDirty = true;
-    }
-
-    return idsToRemove;
 }
 
 export function setOrbitConfig(config) {
@@ -600,10 +606,17 @@ export function setOrbitConfig(config) {
         nextOrbitConfig.propagation_hours = clamp(requestedHours, PROPAGATION_HOURS_MIN, PROPAGATION_HOURS_MAX);
     }
 
-    const requestedPastHours = Number(nextOrbitConfig.orbit_past_seconds);
-    if (Number.isFinite(requestedPastHours) && requestedPastHours >= 0) {
-        nextOrbitConfig.orbit_past_seconds = requestedPastHours;
-    }
+    // The former animated trail is now the fixed glow of the future orbit.
+    // Ignore any value still present in an old persisted Docker volume.
+    delete nextOrbitConfig.orbit_trail_show;
+    delete nextOrbitConfig.orbit_trail_color;
+    delete nextOrbitConfig.orbit_trail_speed_seconds;
+    delete nextOrbitConfig.orbit_trail_length_percent;
+    delete nextOrbitConfig.orbit_trail_line_width;
+    // `orbit_width_mode` used to select a distance-scaled width. It is
+    // intentionally retired: all orbit paths now use the stable visual mode.
+    delete nextOrbitConfig.orbit_width_mode;
+    nextOrbitConfig.orbit_future_line_width = normalizeOrbitLineWidth(nextOrbitConfig.orbit_future_line_width);
 
     orbitConfig = nextOrbitConfig;
 
@@ -624,8 +637,6 @@ export function setOrbitConfig(config) {
     satelliteUse3DModel = config?.satellite_use_3d_model !== false;
 
     satelliteSizeMode = config?.satellite_size_mode === "physical" ? "physical" : "visual";
-    maxActiveSatellites = normalizeMaxActiveSatellites(config?.max_satellites_visible);
-    trimActiveSatelliteLayersToLimit();
 
     // Reaplicar estilo en entidades activas cuando cambia configuración
     if (entityPool) {
@@ -641,15 +652,6 @@ export function setOrbitConfig(config) {
                 applySatelliteVisibility(id, state);
             }
 
-            // Si se desactiva estela pasada, limpiar entidades y buffers para ahorrar carga.
-            if (state && !shouldShowPastOrbit(id)) {
-                if (state.trailEntity) {
-                    entityPool.viewer.entities.remove(state.trailEntity);
-                    state.trailEntity = null;
-                }
-                state.trailPositions = [];
-            }
-
             // Si se desactiva órbita futura, limpiar entidad inmediatamente.
             if (state && !shouldShowFutureOrbit(id)) {
                 if (state.orbitEntity) {
@@ -660,15 +662,6 @@ export function setOrbitConfig(config) {
 
             if (state && !shouldShowGroundTrack(id)) {
                 remove2DOverlays(entityPool.viewer, state);
-            }
-
-            // Refrescar de inmediato el color de la estela pasada al cambiar la configuración global.
-            if (state && state.trailEntity && shouldShowPastOrbit(id)) {
-                const configuredPastColor = String(getSatelliteConfigValue(id, "orbit_past_color", orbitConfig.orbit_past_color) || "#ff0000");
-                const trailColor = getOpaqueColor(configuredPastColor, "#ff0000");
-                state.trailEntity.polyline.material = createOrbitMaterial(trailColor);
-                state.trailEntity.polyline.depthFailMaterial = createOrbitMaterial(trailColor);
-                state.trailColorCss = configuredPastColor;
             }
 
             // Si hay órbita cacheada, re-renderizar con la nueva configuración local.
@@ -694,6 +687,8 @@ export function setOrbitConfig(config) {
     if ((propagationChanged || orbitFutureChanged) && wsClient) {
         wsClient.setSubscriptions(Array.from(activeLayerSatelliteIds));
     }
+
+    emitObjectStateChanged({ scope: "all-satellites", reason: "global-visualization" });
 }
 
 // =============================
@@ -712,27 +707,6 @@ function lerpCartesian(from, to, t) {
         lerp(from.y, to.y, tt),
         lerp(from.z, to.z, tt)
     );
-}
-
-function smoothTrail(positions, smoothness = 2) {
-    /**Suaviza un trail usando Catmull-Rom spline*/
-    if (positions.length < 2) return positions;
-    
-    const smoothed = [];
-    smoothed.push(positions[0]);
-    
-    for (let i = 1; i < positions.length; i++) {
-        smoothed.push(positions[i]);
-        if (i < positions.length - 1) {
-            // Agregar puntos intermedios interpolados
-            for (let j = 0; j < smoothness - 1; j++) {
-                const t = (j + 1) / smoothness;
-                smoothed.push(lerpCartesian(positions[i - 1], positions[i], t));
-            }
-        }
-    }
-    
-    return smoothed;
 }
 
 function clamp(value, min, max) {
@@ -811,101 +785,6 @@ function applyVisualStyle(entity) {
 
     entity.model.minimumPixelSize = minimumPixelSize;
     entity.model.maximumScale = SAT_MODEL_BASE_MAX_SCALE * safeScale;
-}
-
-function getFutureSampleStepSeconds() {
-    const safeHours = Number.isFinite(sourceFutureOrbitHours) && sourceFutureOrbitHours > 0
-        ? sourceFutureOrbitHours
-        : (Number.isFinite(Number(orbitConfig.propagation_hours)) && Number(orbitConfig.propagation_hours) > 0
-            ? Number(orbitConfig.propagation_hours)
-            : 12);
-    const safeSamples = Number.isFinite(sourceFutureOrbitSamples) && sourceFutureOrbitSamples > 1
-        ? Math.floor(sourceFutureOrbitSamples)
-        : 120;
-    return (safeHours * 3600) / (safeSamples - 1);
-}
-
-function getPastSampleStepSeconds() {
-    const stateInterval = Number(orbitConfig.websocket_state_interval_seconds);
-    return Number.isFinite(stateInterval) && stateInterval > 0 ? stateInterval : 1.0;
-}
-
-function getPastTrailMaxPoints(id) {
-    const pastSecondsRaw = Number(getPastSecondsForSatellite(id));
-    const pastSeconds = Number.isFinite(pastSecondsRaw) && pastSecondsRaw > 0
-        ? pastSecondsRaw
-        : 0;
-    if (pastSeconds <= 0) {
-        return 0;
-    }
-    const stepSeconds = getPastSampleStepSeconds();
-    return Math.max(2, Math.floor(pastSeconds / stepSeconds) + 1);
-}
-
-function getHiddenPastSamples() {
-    return 0;
-}
-
-function getHiddenFutureSamples() {
-    return 0;
-}
-
-function trimTrailNearSatellite(positions, hideSamples) {
-    if (!Array.isArray(positions) || positions.length < 2 || hideSamples <= 0) {
-        return positions;
-    }
-
-    const maxSpan = positions.length - 1;
-    if (hideSamples >= maxSpan) {
-        return [];
-    }
-
-    const whole = Math.floor(hideSamples);
-    const frac = hideSamples - whole;
-    const boundaryIndex = positions.length - 1 - whole;
-
-    if (frac <= 0 || boundaryIndex <= 0) {
-        return positions.slice(0, boundaryIndex + 1);
-    }
-
-    const olderIndex = boundaryIndex - 1;
-    const olderPoint = positions[olderIndex];
-    const newerPoint = positions[boundaryIndex];
-    const cutPoint = lerpCartesian(newerPoint, olderPoint, frac);
-
-    const trimmed = positions.slice(0, olderIndex + 1);
-    trimmed.push(cutPoint);
-    return trimmed;
-}
-
-function trimOrbitNearSatellite(orbitPoints, hideSamples) {
-    if (!Array.isArray(orbitPoints) || orbitPoints.length < 2 || hideSamples <= 0) {
-        return orbitPoints;
-    }
-
-    const maxSpan = orbitPoints.length - 1;
-    if (hideSamples >= maxSpan) {
-        return [];
-    }
-
-    const whole = Math.floor(hideSamples);
-    const frac = hideSamples - whole;
-
-    if (frac <= 0) {
-        return orbitPoints.slice(whole);
-    }
-
-    const from = orbitPoints[whole];
-    const to = orbitPoints[whole + 1];
-    const startPoint = {
-        x: lerp(from.x, to.x, frac),
-        y: lerp(from.y, to.y, frac),
-        z: lerp(from.z, to.z, frac)
-    };
-
-    const trimmed = [startPoint];
-    trimmed.push(...orbitPoints.slice(whole + 1));
-    return trimmed;
 }
 
 function isViewerIn2D(viewer) {
@@ -1131,7 +1010,7 @@ export function initSatelliteReceiver(viewer) {
         if (message && message.type === "state") {
             const payload = Array.isArray(message.data) ? message.data : [];
             payload.forEach((s) => updateSatelliteState(viewer, s));
-            // Aplicar límite de memoria
+            // Mantener el pool de entidades de renderizado.
             entityPool.enforceLimit();
             return;
         }
@@ -1150,14 +1029,9 @@ export function initSatelliteReceiver(viewer) {
 
     ws.onCatalog((catalog) => {
         catalogSatelliteIds.clear();
-        let loaded = 0;
         for (const id of catalog) {
             if (typeof id === "string") {
                 catalogSatelliteIds.add(id);
-                loaded += 1;
-                if (loaded >= MAX_WS_CATALOG_IDS_IN_MEMORY) {
-                    break;
-                }
             }
         }
         catalogLoaded = true;
@@ -1290,34 +1164,21 @@ function getOpaqueColor(colorString, defaultColor) {
     return getColor(colorString, defaultColor).withAlpha(1.0);
 }
 
-function computeOrbitWidth(viewer, baseWidth, referencePosition) {
-    const safeBase = Number.isFinite(baseWidth) && baseWidth > 0 ? baseWidth : 1;
-    if (orbitConfig.orbit_width_mode !== ORBIT_WIDTH_MODE_PHYSICAL) {
-        return Math.max(ORBIT_MIN_PIXEL_WIDTH, safeBase);
-    }
-
-    if (!viewer?.camera?.positionWC || !referencePosition) {
-        return safeBase;
-    }
-
-    const distance = Cesium.Cartesian3.distance(viewer.camera.positionWC, referencePosition);
-    if (!Number.isFinite(distance) || distance <= 0) {
-        return safeBase;
-    }
-
-    const factor = Math.max(
-        ORBIT_PHYSICAL_MIN_FACTOR,
-        Math.min(ORBIT_PHYSICAL_MAX_FACTOR, ORBIT_PHYSICAL_REF_DISTANCE_M / distance)
-    );
-    return Math.max(ORBIT_MIN_PIXEL_WIDTH, safeBase * factor);
+function normalizeOrbitLineWidth(value) {
+    const requested = Number(value);
+    const safeWidth = Number.isFinite(requested) && requested > 0
+        ? requested
+        : ORBIT_DEFAULT_LINE_WIDTH_PX;
+    return Math.max(ORBIT_MIN_PIXEL_WIDTH, Math.min(ORBIT_MAX_PIXEL_WIDTH, safeWidth));
 }
 
 function createOrbitMaterial(color) {
-    // A narrow illuminated core is closer to an orbital path than a thick,
-    // flat colour band. Cesium renders the soft falloff in the same WebGL pass.
+    // One geometry provides both the line and its permanent soft halo.  Keeping
+    // them in the same material avoids a duplicate animated overlay and means
+    // the halo always follows the exact future-orbit width.
     return new Cesium.PolylineGlowMaterialProperty({
-        color: color.withAlpha(0.96),
-        glowPower: 0.25,
+        color: color.withAlpha(0.92),
+        glowPower: 0.28,
         taperPower: 1
     });
 }
@@ -1333,9 +1194,9 @@ function getFutureOrbitColor(id) {
 }
 
 function getFutureOrbitRenderWidth(id, baseWidth) {
-    const safeBaseWidth = Number.isFinite(baseWidth) ? baseWidth : ORBIT_MIN_PIXEL_WIDTH;
+    const safeBaseWidth = normalizeOrbitLineWidth(baseWidth);
     if (selectedOrbitSatelliteId && id === selectedOrbitSatelliteId) {
-        return safeBaseWidth + SELECTED_ORBIT_WIDTH_BOOST_PX;
+        return Math.min(ORBIT_MAX_PIXEL_WIDTH, safeBaseWidth + SELECTED_ORBIT_WIDTH_BOOST_PX);
     }
     return safeBaseWidth;
 }
@@ -1344,16 +1205,15 @@ export function setSelectedOrbitSatelliteId(id) {
     selectedOrbitSatelliteId = id ? String(id) : null;
 
     for (const [satId, state] of Object.entries(satelliteState)) {
-        if (!state?.orbitEntity?.polyline) {
-            continue;
+        if (state?.orbitEntity?.polyline) {
+            const orbitColor = getFutureOrbitColor(satId);
+            state.orbitEntity.polyline.material = createOrbitMaterial(orbitColor);
+            const baseWidth = Number.isFinite(state.orbitBaseWidth)
+                ? state.orbitBaseWidth
+                : Number(state.orbitEntity.polyline.width) || ORBIT_MIN_PIXEL_WIDTH;
+            state.orbitEntity.polyline.width = getFutureOrbitRenderWidth(satId, baseWidth);
         }
 
-        const orbitColor = getFutureOrbitColor(satId);
-        state.orbitEntity.polyline.material = createOrbitMaterial(orbitColor);
-        const baseWidth = Number.isFinite(state.orbitBaseWidth)
-            ? state.orbitBaseWidth
-            : Number(state.orbitEntity.polyline.width) || ORBIT_MIN_PIXEL_WIDTH;
-        state.orbitEntity.polyline.width = getFutureOrbitRenderWidth(satId, baseWidth);
     }
 }
 
@@ -1369,6 +1229,9 @@ function createOrbitEntity(viewer, id, positions, color, width) {
             positions,
             width,
             material: createOrbitMaterial(color),
+            // The samples are already propagated in ECEF coordinates.  Joining
+            // them as a geodesic would bend the orbit toward the ellipsoid.
+            arcType: Cesium.ArcType.NONE,
             clampToGround: false
         }
     });
@@ -1406,31 +1269,16 @@ function clipFutureOrbitByRequestedHorizon(id, orbit) {
     return orbit.slice(0, clippedCount);
 }
 
-function createTrailEntity(viewer, id, positions, color, width) {
-    return viewer.entities.add({
-        id: `${id}-trail`,
-        polyline: {
-            positions: Array.isArray(positions) ? positions.slice() : positions,
-            width,
-            material: createOrbitMaterial(color),
-            arcType: Cesium.ArcType.NONE,
-            clampToGround: false
-        }
-    });
-}
-
 function ensureSatelliteState(viewer, id, cart, orientation) {
     // Usar object pool para reutilizar entidades
     const poolState = entityPool.getState(id);
     const now = Date.now();
     
     if (poolState) {
-        // Unificar referencia de estado para que interpolación y trail usen el mismo objeto
+        // Unificar la referencia de estado con la entidad reutilizada del pool.
         const state = satelliteState[id] || poolState;
         satelliteState[id] = state;
         state.entity = poolState.entity;
-        state.trailPositions = poolState.trailPositions;
-        state.trailEntity = poolState.trailEntity;
         state.orbitEntity = poolState.orbitEntity;
         
         // Guardar posición anterior para interpolación
@@ -1441,15 +1289,6 @@ function ensureSatelliteState(viewer, id, cart, orientation) {
         state.lastUpdateTime = now;
         state.lastMessageTime = now;
         
-        if (shouldShowPastOrbit(id)) {
-            state.trailPositions.push(cart);
-            const maxTrailPoints = getPastTrailMaxPoints(id);
-            if (state.trailPositions.length > maxTrailPoints) {
-                state.trailPositions.shift();
-            }
-        } else {
-            state.trailPositions = [];
-        }
         return state;
     }
 
@@ -1457,8 +1296,6 @@ function ensureSatelliteState(viewer, id, cart, orientation) {
     const entity = entityPool.acquire(id, cart, orientation);
     const state = entityPool.getState(id) || {
         entity,
-        trailPositions: [cart],
-        trailEntity: null,
         orbitEntity: null,
         groundTrackEntity: null,
         footprintEntity: null
@@ -1480,6 +1317,7 @@ function ensureSatelliteState(viewer, id, cart, orientation) {
 
 function updateSatelliteState(viewer, satData) {
     const id = satData.satellite || "UNKNOWN";
+    const receivedAtMs = Date.now();
 
     try {
         logger.debug(`updateSatelliteState: id=${id} active=${activeLayerSatelliteIds.has(id)} hidden=${hiddenSatelliteIds.has(id)} hasPos=${Boolean(satData.position)}`);
@@ -1499,24 +1337,31 @@ function updateSatelliteState(viewer, satData) {
     }
 
     const pos = satData.position;
-    const vel = satData.velocity || { x: 0, y: 0, z: 0 };
+    const vel = finiteVector(satData.velocity);
 
     if (!pos) {
         return;
     }
 
     const cart = new Cesium.Cartesian3(pos.x, pos.y, pos.z);
-    const orientation = shouldUse3DModelForSatellite(id) ? calculateOrientation(pos, vel) : undefined;
+    const orientation = shouldUse3DModelForSatellite(id) ? calculateOrientation(pos, vel || { x: 0, y: 0, z: 0 }) : undefined;
 
     const state = ensureSatelliteState(viewer, id, cart, orientation);
     if (isNewSatellite) {
         satelliteIdsDirty = true;
     }
-    state.lastVelocity = {
-        x: Number(vel.x) || 0,
-        y: Number(vel.y) || 0,
-        z: Number(vel.z) || 0
-    };
+    const previousVelocity = state.lastVelocity;
+    const previousVelocityTimestampMs = Number(state.lastVelocityTimestampMs);
+    const elapsedSeconds = (receivedAtMs - previousVelocityTimestampMs) / 1000;
+    state.lastAcceleration = deriveAcceleration(previousVelocity, vel, elapsedSeconds);
+    state.lastVelocity = vel;
+    state.lastVelocityTimestampMs = receivedAtMs;
+    // The current backend publishes earth-fixed state vectors. Retain an
+    // explicit frame when the stream supplies one so the details panel does
+    // not silently relabel a future non-Earth-fixed source as ECEF.
+    state.lastStateReferenceFrame = normalizeReferenceFrame(
+        satData.reference_frame || satData.referenceFrame || satData.ref_frame || satData.frame
+    ) || state.lastStateReferenceFrame || "ITRF";
 
     const isVisible = applySatelliteVisibility(id, state);
 
@@ -1529,64 +1374,6 @@ function updateSatelliteState(viewer, satData) {
 
     if (!isVisible) {
         return;
-    }
-
-    if (!shouldShowPastOrbit(id)) {
-        if (state.trailEntity) {
-            viewer.entities.remove(state.trailEntity);
-            state.trailEntity = null;
-        }
-        state.trailPositions = [];
-        return;
-    }
-
-    if (state.trailPositions.length > 1) {
-        const hiddenPastSamples = getHiddenPastSamples();
-        const visibleTrail = trimTrailNearSatellite(state.trailPositions, hiddenPastSamples);
-
-        if (visibleTrail.length < 2) {
-            if (state.trailEntity) {
-                viewer.entities.remove(state.trailEntity);
-                state.trailEntity = null;
-            }
-            return;
-        }
-
-        const configuredPastColor = String(getSatelliteConfigValue(id, "orbit_past_color", orbitConfig.orbit_past_color) || "#ff0000");
-        const trailColor = getOpaqueColor(configuredPastColor, "#ff0000");
-        const configuredPastWidth = Number(getSatelliteConfigValue(id, "orbit_past_line_width", orbitConfig.orbit_past_line_width));
-        const trailReferencePosition = visibleTrail[visibleTrail.length - 1] || state.entity.position;
-        const futureOrbitEnabled = shouldShowFutureOrbit(id);
-        const targetTrailWidth = futureOrbitEnabled
-            ? computeOrbitWidth(viewer, configuredPastWidth, trailReferencePosition)
-            : Math.max(ORBIT_MIN_PIXEL_WIDTH, configuredPastWidth);
-        const previousTrailWidth = Number(state.trailRenderWidth);
-        const trailWidth = Number.isFinite(previousTrailWidth)
-            ? lerp(previousTrailWidth, targetTrailWidth, orbitConfig.orbit_width_mode === ORBIT_WIDTH_MODE_PHYSICAL ? 0.18 : 1)
-            : targetTrailWidth;
-        if (!state.trailEntity) {
-            state.trailEntity = createTrailEntity(
-                viewer,
-                id,
-                visibleTrail,
-                trailColor,
-                trailWidth
-            );
-            state.trailColorCss = configuredPastColor;
-            state.trailRenderWidth = trailWidth;
-        } else {
-            // Mantener geometría directa y estable reduce oscilación visual al actualizar en alta frecuencia.
-            state.trailEntity.polyline.positions = visibleTrail.slice();
-            if (state.trailColorCss !== configuredPastColor) {
-                state.trailEntity.polyline.material = createOrbitMaterial(trailColor);
-                state.trailEntity.polyline.depthFailMaterial = createOrbitMaterial(trailColor);
-                state.trailColorCss = configuredPastColor;
-            }
-            if (!Number.isFinite(previousTrailWidth) || Math.abs(previousTrailWidth - trailWidth) > 0.01) {
-                state.trailEntity.polyline.width = trailWidth;
-                state.trailRenderWidth = trailWidth;
-            }
-        }
     }
 }
 
@@ -1661,25 +1448,19 @@ export async function fetchCatalogPage({
 
     for (const item of items) {
         const name = String(item?.name || "").trim();
+        const catalogId = String(item?.catalogId || name).trim();
         const line1 = String(item?.line1 || "").trim();
         const line2 = String(item?.line2 || "").trim();
-        if (!name) {
+        if (!name || !catalogId) {
             continue;
         }
 
-        ids.push(name);
-        catalogSatelliteIds.add(name);
+        ids.push(catalogId);
+        catalogSatelliteIds.add(catalogId);
         if (line1 && line2) {
-            tleBySatelliteId.set(name, { line1, line2 });
+            tleBySatelliteId.set(catalogId, { line1, line2 });
         }
-        catalogEntryMetaBySatelliteId.set(name, {
-            sourceFormat: String(item?.sourceFormat || item?.format || "TLE").toUpperCase(),
-            sourceOrigin: String(item?.sourceOrigin || item?.source_origin || "CATALOG").toUpperCase(),
-            operator: String(item?.operator || "").trim().toLowerCase(),
-            owner: String(item?.owner || "").trim().toLowerCase(),
-            perigee_km: Number.isFinite(Number(item?.perigee_km)) ? Number(item.perigee_km) : null,
-            decayRisk: item?.decayRisk === true
-        });
+        catalogEntryMetaBySatelliteId.set(catalogId, createCatalogEntryMeta(item, name));
     }
 
     if (ids.length) {
@@ -1780,14 +1561,7 @@ export async function getSatelliteTleAsync(id) {
         const tle = { line1, line2 };
         tleBySatelliteId.set(name, tle);
         catalogSatelliteIds.add(name);
-        catalogEntryMetaBySatelliteId.set(name, {
-            sourceFormat: String(item?.sourceFormat || "TLE").toUpperCase(),
-            sourceOrigin: String(item?.sourceOrigin || item?.source_origin || "CATALOG").toUpperCase(),
-            operator: String(item?.operator || "").trim().toLowerCase(),
-            owner: String(item?.owner || "").trim().toLowerCase(),
-            perigee_km: Number.isFinite(Number(item?.perigee_km)) ? Number(item.perigee_km) : null,
-            decayRisk: item?.decayRisk === true
-        });
+        catalogEntryMetaBySatelliteId.set(name, createCatalogEntryMeta(item, name));
         satelliteIdsDirty = true;
         catalogLoaded = true;
         return tle;
@@ -1810,38 +1584,66 @@ export function getSatelliteTelemetry(id) {
         return null;
     }
 
-    const position = state.renderPosition || state.targetPosition || state.entity.position;
+    const simulationCtx = resolveSimulationTimelineContext();
+    const isSimulated = Boolean(simulationCtx && simulationCtx.mode === "range");
+    const simulatedKinematics = isSimulated
+        ? sampleSimulationTrackKinematics(state, simulationCtx.date)
+        : null;
+    const simulatedPosition = simulatedKinematics?.position
+        ? new Cesium.Cartesian3(
+            simulatedKinematics.position.x,
+            simulatedKinematics.position.y,
+            simulatedKinematics.position.z
+        )
+        : null;
+    const position = simulatedPosition || state.renderPosition || state.targetPosition || state.entity.position;
     if (!position) {
         return null;
     }
 
-    const velocity = state.lastVelocity || { x: 0, y: 0, z: 0 };
-    const speed = Math.sqrt(
-        velocity.x * velocity.x +
-        velocity.y * velocity.y +
-        velocity.z * velocity.z
-    );
+    const entryMeta = getCatalogEntryMeta(id) || {};
+    const sourceFormat = String(entryMeta.sourceFormat || "TLE").toUpperCase();
+    const sourceOrigin = String(entryMeta.sourceOrigin || "CATALOG").toUpperCase();
+    const oemTrack = oemEphemerisTrackById.get(id);
+    // TLE/SGP4 state is converted from TEME to Cesium-compatible ECEF by the
+    // backend. An OEM can declare another source frame, so only call it ECEF
+    // when that declaration is explicitly earth-fixed.
+    const sourceFrame = sourceFormat === "OEM"
+        ? String(oemTrack?.refFrame || "").trim().toUpperCase() || null
+        : normalizeReferenceFrame(state.lastStateReferenceFrame) || "ITRF";
+    const coordinatesAreEarthFixed = isEarthFixedFrame(sourceFrame);
+    const positionVector = finiteVector(position);
+    // In range simulation the rendered position comes from the sampled orbit,
+    // not the latest realtime WebSocket message. Never mix that realtime
+    // velocity/acceleration into the simulated frame; derive both from the
+    // neighbouring track samples, or leave them unavailable.
+    const velocityVector = isSimulated
+        ? finiteVector(simulatedKinematics?.velocity)
+        : finiteVector(state.lastVelocity);
+    const accelerationVector = isSimulated
+        ? finiteVector(simulatedKinematics?.acceleration)
+        : finiteVector(state.lastAcceleration);
+    const positionEcef = coordinatesAreEarthFixed ? positionVector : null;
+    const velocityEcef = coordinatesAreEarthFixed ? velocityVector : null;
+    const accelerationEcef = coordinatesAreEarthFixed ? accelerationVector : null;
+    const speed = vectorMagnitude(velocityVector);
 
-    const cartographic = Cesium.Cartographic.fromCartesian(position);
+    const cartographic = coordinatesAreEarthFixed ? Cesium.Cartographic.fromCartesian(position) : null;
     const latitudeDeg = cartographic ? Cesium.Math.toDegrees(cartographic.latitude) : null;
     const longitudeDeg = cartographic ? Cesium.Math.toDegrees(cartographic.longitude) : null;
     const altitudeM = cartographic ? cartographic.height : null;
 
     let distanceToCameraM = null;
-    if (currentViewer?.camera?.positionWC) {
+    if (coordinatesAreEarthFixed && currentViewer?.camera?.positionWC) {
         distanceToCameraM = Cesium.Cartesian3.distance(currentViewer.camera.positionWC, position);
     }
 
-    const speedKmS = speed / 1000;
-    const speedKmH = speed * 3.6;
+    const speedKmS = Number.isFinite(speed) ? speed / 1000 : null;
+    const speedKmH = Number.isFinite(speed) ? speed * 3.6 : null;
     const nowMs = Date.now();
-    const telemetryAgeMs = nowMs - (state.lastMessageTime || nowMs);
-    const entryMeta = getCatalogEntryMeta(id) || {};
-    const sourceFormat = String(entryMeta.sourceFormat || "TLE").toUpperCase();
-    const sourceOrigin = String(entryMeta.sourceOrigin || "CATALOG").toUpperCase();
+    const frameTimeMs = isSimulated ? simulationCtx.date.getTime() : nowMs;
+    const telemetryAgeMs = isSimulated ? null : nowMs - (state.lastMessageTime || nowMs);
     const propagationFutureHours = getPropagationHoursForSatellite(id);
-    const propagationPastSeconds = getPastSecondsForSatellite(id);
-    const oemTrack = oemEphemerisTrackById.get(id);
 
     let oem = null;
     if (sourceFormat === "OEM" && oemTrack) {
@@ -1860,40 +1662,53 @@ export function getSatelliteTelemetry(id) {
             time_system: oemTrack.timeSystem || null,
             start_time_raw: oemTrack.startTimeRaw || null,
             stop_time_raw: oemTrack.stopTimeRaw || null,
-            is_in_time_window: hasWindow ? (nowMs >= startMs && nowMs <= endMs) : null
+            is_in_time_window: hasWindow ? (frameTimeMs >= startMs && frameTimeMs <= endMs) : null
         };
     }
+
+    const earthCenterDistanceM = vectorMagnitude(positionVector);
+    const footprintAngularRadius = positionEcef ? computeFootprintAngularRadius(positionEcef) : 0;
+    const footprintRadiusM = footprintAngularRadius > 0
+        ? Cesium.Ellipsoid.WGS84.maximumRadius * footprintAngularRadius
+        : null;
+    const isActive = activeLayerSatelliteIds.has(id);
+    const isInView = Boolean(state.entity.show) && !hiddenSatelliteIds.has(id);
 
     return {
         id,
         source_format: sourceFormat,
         source_origin: sourceOrigin,
-        position: {
-            x: Number(position.x) || 0,
-            y: Number(position.y) || 0,
-            z: Number(position.z) || 0
-        },
-        geo: {
+        // `position` is kept as the raw vector for legacy consumers. Its
+        // explicit reference frame below determines whether it is ECEF.
+        position: positionVector,
+        position_ecef_m: positionEcef,
+        position_frame: sourceFrame,
+        geo: coordinatesAreEarthFixed ? {
             latitude_deg: latitudeDeg,
             longitude_deg: longitudeDeg,
             altitude_m: altitudeM
-        },
-        velocity,
+        } : null,
+        velocity: velocityVector || { x: null, y: null, z: null },
+        velocity_frame: sourceFrame,
+        velocity_ecef_m_s: velocityEcef,
+        acceleration_ecef_m_s2: accelerationEcef,
+        earth_center_distance_m: earthCenterDistanceM,
         speed_m_s: speed,
         speed_km_s: speedKmS,
         speed_km_h: speedKmH,
         distance_to_camera_m: distanceToCameraM,
-        trail_points: state.trailPositions?.length || 0,
         has_future_orbit: Boolean(state.orbitEntity),
         orbit_future_enabled: shouldShowFutureOrbit(id),
-        orbit_past_enabled: shouldShowPastOrbit(id),
+        ground_track_enabled: shouldShowGroundTrack(id),
+        ground_track_visible: Boolean(state.groundTrackEntity?.show) && isInView,
+        footprint_enabled: shouldShowGroundTrack(id),
+        footprint_radius_m: footprintRadiusM,
         propagation_future_hours: propagationFutureHours,
-        propagation_past_seconds: propagationPastSeconds,
-        propagation_past_hours: propagationPastSeconds / 3600,
         oem,
         is_visible: !hiddenSatelliteIds.has(id),
+        runtime_state: !isActive ? "IDLE" : isInView ? "ACTIVE" : "OUT OF VIEW",
         telemetry_age_ms: telemetryAgeMs,
-        timestamp_ms: nowMs
+        timestamp_ms: frameTimeMs
     };
 }
 
@@ -1914,16 +1729,15 @@ export function setSatelliteLayerActive(id, active) {
         if (activeLayerSatelliteIds.has(id)) {
             return true;
         }
-        if (activeLayerSatelliteIds.size >= maxActiveSatellites) {
-            return false;
-        }
         activeLayerSatelliteIds.add(id);
         activeLayerIdsDirty = true;
         wsClient?.subscribe([id]);
+        emitObjectStateChanged({ sourceId: id, reason: "activation" });
         return true;
     } else {
         if (oemEphemerisTrackById.has(id)) {
             removeOemEphemerisTrack(id);
+            emitObjectStateChanged({ sourceId: id, reason: "activation" });
             return true;
         }
 
@@ -1934,10 +1748,6 @@ export function setSatelliteLayerActive(id, active) {
         // Al quitar capa, ocultar y liberar recursos render de ese objeto.
         const state = satelliteState[id];
         if (state) {
-            if (state.trailEntity && currentViewer) {
-                currentViewer.entities.remove(state.trailEntity);
-                state.trailEntity = null;
-            }
             if (state.orbitEntity && currentViewer) {
                 currentViewer.entities.remove(state.orbitEntity);
                 state.orbitEntity = null;
@@ -1949,6 +1759,7 @@ export function setSatelliteLayerActive(id, active) {
                 state.entity.show = false;
             }
         }
+        emitObjectStateChanged({ sourceId: id, reason: "activation" });
         return true;
     }
 }
@@ -1956,20 +1767,19 @@ export function setSatelliteLayerActive(id, active) {
 export function setAllSatelliteLayersActive(active) {
     const ids = getSatelliteIds();
     if (!ids.length) {
-        return { added: 0, skipped: 0, limitReached: false, maxActiveSatellites };
+        return { added: 0, skipped: 0 };
     }
 
     if (active) {
-        const nextIds = ids.slice(0, maxActiveSatellites);
+        const nextIds = ids;
         activeLayerSatelliteIds.clear();
         nextIds.forEach((id) => activeLayerSatelliteIds.add(id));
         activeLayerIdsDirty = true;
         wsClient?.setSubscriptions(nextIds);
+        emitObjectStateChanged({ scope: "all-satellites", reason: "activation" });
         return {
             added: nextIds.length,
-            skipped: Math.max(0, ids.length - nextIds.length),
-            limitReached: ids.length > nextIds.length,
-            maxActiveSatellites
+            skipped: 0
         };
     }
 
@@ -1983,10 +1793,6 @@ export function setAllSatelliteLayersActive(active) {
             continue;
         }
 
-        if (state.trailEntity && currentViewer) {
-            currentViewer.entities.remove(state.trailEntity);
-            state.trailEntity = null;
-        }
         if (state.orbitEntity && currentViewer) {
             currentViewer.entities.remove(state.orbitEntity);
             state.orbitEntity = null;
@@ -1999,15 +1805,9 @@ export function setAllSatelliteLayersActive(active) {
         }
     }
 
-    return { added: 0, skipped: 0, limitReached: false, maxActiveSatellites };
-}
+    emitObjectStateChanged({ scope: "all-satellites", reason: "activation" });
 
-export function getMaxActiveSatellites() {
-    return maxActiveSatellites;
-}
-
-export function getAvailableActiveSatelliteLayerSlots() {
-    return getAvailableActiveSatelliteSlots();
+    return { added: 0, skipped: 0 };
 }
 
 export function setAllSatellitesVisible(visible) {
@@ -2030,6 +1830,8 @@ export function setAllSatellitesVisible(visible) {
             applySatelliteVisibility(id, state);
         }
     }
+
+    emitObjectStateChanged({ scope: "all-satellites", reason: "visibility" });
 }
 
 export function setSatelliteVisible(id, visible) {
@@ -2047,6 +1849,8 @@ export function setSatelliteVisible(id, visible) {
     if (state) {
         applySatelliteVisibility(id, state);
     }
+
+    emitObjectStateChanged({ sourceId: id, reason: "visibility" });
 }
 
 function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
@@ -2071,11 +1875,6 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         const fallbackHours = Number(orbitConfig.propagation_hours);
         sourceFutureOrbitHours = Number.isFinite(fallbackHours) && fallbackHours > 0 ? fallbackHours : 12;
     }
-
-    const announcedSamples = Number(orbitPayload?.orbit_samples);
-    sourceFutureOrbitSamples = Number.isFinite(announcedSamples) && announcedSamples > 1
-        ? Math.floor(announcedSamples)
-        : orbit.length;
 
     const horizonClippedOrbit = clipFutureOrbitByRequestedHorizon(id, orbit);
     const effectiveHorizonHoursRaw = Number(getPropagationHoursForSatellite(id));
@@ -2109,6 +1908,14 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
     );
 
     state.simOrbitPositions = toCartesianArray(horizonClippedOrbit);
+    const sourceSampleTimes = Array.isArray(state.simTrackSampleTimesMs)
+        ? state.simTrackSampleTimesMs
+        : null;
+    // OEM samples can be irregularly spaced. Preserve their real timestamps
+    // so both rendering and simulated telemetry interpolate the same track.
+    state.simOrbitSampleTimesMs = sourceSampleTimes && sourceSampleTimes.length === orbit.length
+        ? sourceSampleTimes.slice(0, horizonClippedOrbit.length)
+        : null;
     if (hasRangeWindow) {
         const rangeStartMs = simulationCtx.rangeStart.getTime();
         const rangeEndMs = simulationCtx.rangeEnd.getTime();
@@ -2132,9 +1939,7 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         return;
     }
 
-    const simulationClippedOrbit = clipOrbitBySimulationRange(state, horizonClippedOrbit);
-    const hiddenFutureSamples = getHiddenFutureSamples();
-    const visibleOrbit = trimOrbitNearSatellite(simulationClippedOrbit, hiddenFutureSamples);
+    const visibleOrbit = clipOrbitBySimulationRange(state, horizonClippedOrbit);
 
     if (visibleOrbit.length < 2) {
         if (state.orbitEntity) {
@@ -2145,19 +1950,21 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         return;
     }
 
+    // The backend chooses an altitude/period-aware propagation density.  Keep
+    // every render vertex as an actual propagated state: linear or spline
+    // interpolation would only disguise a sparse ephemeris and could move the
+    // visual orbit away from the physical trajectory.
     const orbitPositions = toCartesianArray(visibleOrbit);
-    const smoothedOrbit = smoothTrail(orbitPositions, 1);
     const futureColor = getFutureOrbitColor(id);
-    const referencePosition = state.entity?.position || orbitPositions[0];
     const configuredFutureWidth = Number(getSatelliteConfigValue(id, "orbit_future_line_width", orbitConfig.orbit_future_line_width));
-    const futureWidthBase = computeOrbitWidth(viewer, configuredFutureWidth, referencePosition);
+    const futureWidthBase = normalizeOrbitLineWidth(configuredFutureWidth);
     state.orbitBaseWidth = futureWidthBase;
     const futureWidth = getFutureOrbitRenderWidth(id, futureWidthBase);
 
     if (futureOrbitVisible && !state.orbitEntity) {
-        state.orbitEntity = createOrbitEntity(viewer, id, smoothedOrbit, futureColor, futureWidth);
+        state.orbitEntity = createOrbitEntity(viewer, id, orbitPositions, futureColor, futureWidth);
     } else if (futureOrbitVisible && state.orbitEntity) {
-        state.orbitEntity.polyline.positions = smoothedOrbit;
+        state.orbitEntity.polyline.positions = orbitPositions;
         state.orbitEntity.polyline.material = createOrbitMaterial(futureColor);
         state.orbitEntity.polyline.width = futureWidth;
     } else {
@@ -2213,8 +2020,7 @@ function updateSatelliteOrbit(viewer, satData) {
     const orbit = satData.orbit;
     state.lastOrbitPayload = {
         orbit,
-        orbit_horizon_hours: satData?.orbit_horizon_hours,
-        orbit_samples: satData?.orbit_samples
+        orbit_horizon_hours: satData?.orbit_horizon_hours
     };
 
     if (!Array.isArray(orbit) || orbit.length < 2) {
@@ -2240,14 +2046,10 @@ export function getSatelliteVisualizationConfig(id) {
         effective: {
             orbit_future_show: shouldShowFutureOrbit(satId),
             orbit_ground_track_show: shouldShowGroundTrack(satId),
-            orbit_past_show: shouldShowPastOrbit(satId),
-            orbit_future_line_width: Number(getSatelliteConfigValue(satId, "orbit_future_line_width", orbitConfig.orbit_future_line_width)),
-            orbit_past_line_width: Number(getSatelliteConfigValue(satId, "orbit_past_line_width", orbitConfig.orbit_past_line_width)),
+            orbit_future_line_width: normalizeOrbitLineWidth(getSatelliteConfigValue(satId, "orbit_future_line_width", orbitConfig.orbit_future_line_width)),
             orbit_future_color: String(getSatelliteConfigValue(satId, "orbit_future_color", orbitConfig.orbit_future_color) || "#7fd7ff"),
-            orbit_past_color: String(getSatelliteConfigValue(satId, "orbit_past_color", orbitConfig.orbit_past_color) || "#ff9a5a"),
             orbit_selected_color: String(getSatelliteConfigValue(satId, "orbit_selected_color", orbitConfig.orbit_selected_color) || DEFAULT_SELECTED_ORBIT_COLOR),
             propagation_hours: getPropagationHoursForSatellite(satId),
-            orbit_past_seconds: getPastSecondsForSatellite(satId),
             satellite_label_size_px: getSatelliteLabelSize(satId),
             satellite_model_scale: getModelScaleForSatellite(satId),
             satellite_use_3d_model: shouldUse3DModelForSatellite(satId),
@@ -2265,17 +2067,18 @@ export function setSatelliteVisualizationConfig(id, patch = {}) {
 
     const current = getSatelliteOverrides(satId) || {};
     const next = { ...current };
+    delete next.orbit_trail_show;
+    delete next.orbit_trail_color;
+    delete next.orbit_trail_speed_seconds;
+    delete next.orbit_trail_length_percent;
+    delete next.orbit_trail_line_width;
     const allowedFields = [
         "orbit_future_show",
         "orbit_ground_track_show",
-        "orbit_past_show",
         "orbit_future_line_width",
-        "orbit_past_line_width",
         "orbit_future_color",
-        "orbit_past_color",
         "orbit_selected_color",
         "propagation_hours",
-        "orbit_past_seconds",
         "satellite_label_size_px",
         "satellite_model_scale",
         "satellite_use_3d_model",
@@ -2302,6 +2105,7 @@ export function setSatelliteVisualizationConfig(id, patch = {}) {
 
     const state = satelliteState[satId];
     if (!state || !currentViewer) {
+        emitObjectStateChanged({ sourceId: satId, reason: "visualization" });
         return;
     }
 
@@ -2315,40 +2119,25 @@ export function setSatelliteVisualizationConfig(id, patch = {}) {
 
     applySatelliteVisibility(satId, state);
 
-    if (!shouldShowPastOrbit(satId) && state.trailEntity) {
-        currentViewer.entities.remove(state.trailEntity);
-        state.trailEntity = null;
-    }
-
     if (!shouldShowGroundTrack(satId)) {
         remove2DOverlays(currentViewer, state);
-    }
-
-    if (state.trailEntity && shouldShowPastOrbit(satId)) {
-        const configuredPastColor = String(getSatelliteConfigValue(satId, "orbit_past_color", orbitConfig.orbit_past_color) || "#ff0000");
-        const trailColor = getOpaqueColor(configuredPastColor, "#ff0000");
-        state.trailEntity.polyline.material = createOrbitMaterial(trailColor);
-        state.trailEntity.polyline.depthFailMaterial = createOrbitMaterial(trailColor);
-        state.trailColorCss = configuredPastColor;
     }
 
     if (state.lastOrbitPayload) {
         renderFutureOrbitForState(currentViewer, satId, state, state.lastOrbitPayload);
     }
+
+    emitObjectStateChanged({ sourceId: satId, reason: "visualization" });
 }
 
 export function clearSatelliteVisualizationConfig(id) {
     setSatelliteVisualizationConfig(id, {
         orbit_future_show: null,
         orbit_ground_track_show: null,
-        orbit_past_show: null,
         orbit_future_line_width: null,
-        orbit_past_line_width: null,
         orbit_future_color: null,
-        orbit_past_color: null,
         orbit_selected_color: null,
         propagation_hours: null,
-        orbit_past_seconds: null,
         satellite_label_size_px: null,
         satellite_model_scale: null,
         satellite_use_3d_model: null,
@@ -2367,7 +2156,72 @@ export function clearAllSatelliteVisualizationConfigs() {
     setOrbitConfig({});
 }
 
-function parseOemEphemerisContent(content, fileName = "") {
+function normalizeOemUnit(value, kind) {
+    const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "");
+    if (kind === "position") {
+        if (["m", "meter", "meters", "metre", "metres"].includes(normalized)) return "m";
+        if (["km", "kilometer", "kilometers", "kilometre", "kilometres"].includes(normalized)) return "km";
+    }
+    if (kind === "velocity") {
+        if (["m/s", "mps", "meter/s", "meters/s", "metre/s", "metres/s"].includes(normalized)) return "m/s";
+        if (["km/s", "kmps", "kilometer/s", "kilometers/s", "kilometre/s", "kilometres/s"].includes(normalized)) return "km/s";
+    }
+    return null;
+}
+
+function parseOemUnitComment(comment, metadata) {
+    const text = String(comment || "").trim();
+    const positionMatch = /(?:ORBIT_)?(?:POSITION_)?UNIT\s*=\s*([^,;\s]+)/i.exec(text);
+    const velocityMatch = /(?:ORBIT_)?VELOCITY_UNIT\s*=\s*([^,;\s]+)/i.exec(text);
+    const positionUnit = normalizeOemUnit(positionMatch?.[1], "position");
+    const velocityUnit = normalizeOemUnit(velocityMatch?.[1], "velocity");
+    if (positionUnit) metadata.positionUnit = positionUnit;
+    if (velocityUnit) metadata.velocityUnit = velocityUnit;
+}
+
+function inferOemPositionUnit(points, metadata) {
+    if (metadata.positionUnit) return metadata.positionUnit;
+    const largestRadius = points.reduce((largest, point) => Math.max(largest, Math.hypot(point.x, point.y, point.z)), 0);
+    // CCSDS OEM coordinates are kilometres. Older Orbit builds incorrectly
+    // wrote the backend's metre vectors while declaring TEME. Keep those files
+    // usable without re-scaling current standard OEM products.
+    return largestRadius >= 1000000 ? "m" : "km";
+}
+
+function normalizeOemPointsToRuntimeUnits(points, metadata) {
+    const positionUnit = inferOemPositionUnit(points, metadata);
+    const velocityUnit = metadata.velocityUnit || (positionUnit === "km" ? "km/s" : "m/s");
+    const positionScale = positionUnit === "km" ? 1000 : 1;
+    const velocityScale = velocityUnit === "km/s" ? 1000 : 1;
+    const declaredFrame = normalizeReferenceFrame(metadata.declaredRefFrame || metadata.refFrame);
+    const isLegacyOrbitExport = positionUnit === "m"
+        && declaredFrame === "TEME"
+        && String(metadata.originator || "").trim().toLowerCase() === "orbit";
+
+    metadata.positionUnit = positionUnit;
+    metadata.velocityUnit = velocityUnit;
+    metadata.legacyOrbitEcef = isLegacyOrbitExport;
+    // The historical exporter emitted backend Earth-fixed vectors but marked
+    // them TEME. Only recognise this narrowly identified Orbit legacy form;
+    // third-party TEME OEMs remain TEME and are never labelled ECEF.
+    metadata.refFrame = isLegacyOrbitExport ? "ITRF" : declaredFrame;
+
+    return points.map((point) => ({
+        timeMs: point.timeMs,
+        x: point.x * positionScale,
+        y: point.y * positionScale,
+        z: point.z * positionScale,
+        velocity: point.velocity
+            ? {
+                x: point.velocity.x * velocityScale,
+                y: point.velocity.y * velocityScale,
+                z: point.velocity.z * velocityScale
+            }
+            : null
+    }));
+}
+
+export function parseOemEphemerisContent(content, fileName = "") {
     const text = String(content || "");
     const objectName = /OBJECT_NAME\s*=\s*(.+)/i.exec(text)?.[1]?.trim()
         || /OBJECT_ID\s*=\s*(.+)/i.exec(text)?.[1]?.trim()
@@ -2379,9 +2233,13 @@ function parseOemEphemerisContent(content, fileName = "") {
         objectId: null,
         centerName: null,
         refFrame: null,
+        declaredRefFrame: null,
         timeSystem: null,
         startTimeRaw: null,
         stopTimeRaw: null,
+        originator: null,
+        positionUnit: null,
+        velocityUnit: null,
         fileName: String(fileName || "").trim() || null
     };
 
@@ -2399,10 +2257,15 @@ function parseOemEphemerisContent(content, fileName = "") {
             if (key === "OBJECT_NAME" && value) metadata.objectName = value;
             if (key === "OBJECT_ID" && value) metadata.objectId = value;
             if (key === "CENTER_NAME" && value) metadata.centerName = value;
-            if (key === "REF_FRAME" && value) metadata.refFrame = value;
+            if (key === "REF_FRAME" && value) {
+                metadata.refFrame = value;
+                metadata.declaredRefFrame = value;
+            }
             if (key === "TIME_SYSTEM" && value) metadata.timeSystem = value;
             if (key === "START_TIME" && value) metadata.startTimeRaw = value;
             if (key === "STOP_TIME" && value) metadata.stopTimeRaw = value;
+            if (key === "ORIGINATOR" && value) metadata.originator = value;
+            if (key === "COMMENT") parseOemUnitComment(value, metadata);
         }
 
         if (/^(CCSDS_|CREATION_DATE|ORIGINATOR|META_|OBJECT_|CENTER_|REF_FRAME|TIME_SYSTEM|START_TIME|STOP_TIME|COMMENT)/i.test(line)) {
@@ -2426,11 +2289,20 @@ function parseOemEphemerisContent(content, fileName = "") {
             continue;
         }
 
-        points.push({ timeMs: time.getTime(), x, y, z });
+        const vx = Number(parts[4]);
+        const vy = Number(parts[5]);
+        const vz = Number(parts[6]);
+        points.push({
+            timeMs: time.getTime(),
+            x,
+            y,
+            z,
+            velocity: [vx, vy, vz].every(Number.isFinite) ? { x: vx, y: vy, z: vz } : null
+        });
     }
 
     points.sort((a, b) => a.timeMs - b.timeMs);
-    return { objectName, points, metadata };
+    return { objectName, points: normalizeOemPointsToRuntimeUnits(points, metadata), metadata };
 }
 
 function buildUniqueCustomTrackId(baseName) {
@@ -2461,25 +2333,24 @@ export function importOemEphemerisTrack(content, fileName = "") {
     const state = ensureSatelliteState(currentViewer, id, firstPosition, Cesium.Quaternion.IDENTITY);
     state.simTrackStartMs = parsed.points[0].timeMs;
     state.simTrackEndMs = parsed.points[parsed.points.length - 1].timeMs;
+    state.simTrackSampleTimesMs = parsed.points.map((point) => point.timeMs);
+    state.lastStateReferenceFrame = normalizeReferenceFrame(parsed.metadata?.refFrame);
 
     const orbit = parsed.points.map((p) => ({ x: p.x, y: p.y, z: p.z }));
     const spanHours = Math.max(1 / 3600, (parsed.points[parsed.points.length - 1].timeMs - parsed.points[0].timeMs) / 3600000);
 
     state.lastOrbitPayload = {
         orbit,
-        orbit_horizon_hours: spanHours,
-        orbit_samples: orbit.length
+        orbit_horizon_hours: spanHours
     };
 
     catalogSatelliteIds.add(id);
-    catalogEntryMetaBySatelliteId.set(id, {
+    catalogEntryMetaBySatelliteId.set(id, createCatalogEntryMeta({
+        name: parsed.metadata?.objectName || id,
+        objectId: parsed.metadata?.objectId || "",
         sourceFormat: "OEM",
-        sourceOrigin: "CUSTOM",
-        operator: "",
-        owner: "",
-        perigee_km: null,
-        decayRisk: false
-    });
+        sourceOrigin: "CUSTOM"
+    }, id));
 
     activeLayerSatelliteIds.add(id);
     oemEphemerisTrackById.set(id, {
@@ -2491,6 +2362,10 @@ export function importOemEphemerisTrack(content, fileName = "") {
         objectId: parsed.metadata?.objectId || null,
         centerName: parsed.metadata?.centerName || null,
         refFrame: parsed.metadata?.refFrame || null,
+        declaredRefFrame: parsed.metadata?.declaredRefFrame || null,
+        positionUnit: parsed.metadata?.positionUnit || null,
+        velocityUnit: parsed.metadata?.velocityUnit || null,
+        legacyOrbitEcef: parsed.metadata?.legacyOrbitEcef === true,
         timeSystem: parsed.metadata?.timeSystem || null,
         startTimeRaw: parsed.metadata?.startTimeRaw || null,
         stopTimeRaw: parsed.metadata?.stopTimeRaw || null
@@ -2502,6 +2377,8 @@ export function importOemEphemerisTrack(content, fileName = "") {
 
     renderFutureOrbitForState(currentViewer, id, state, state.lastOrbitPayload);
     applySatelliteVisibility(id, state);
+
+    emitObjectStateChanged({ sourceId: id, reason: "oem-import" });
 
     return {
         id,
@@ -2523,10 +2400,6 @@ function removeOemEphemerisTrack(id) {
 
     const state = satelliteState[id];
     if (state && currentViewer) {
-        if (state.trailEntity) {
-            currentViewer.entities.remove(state.trailEntity);
-            state.trailEntity = null;
-        }
         if (state.orbitEntity) {
             currentViewer.entities.remove(state.orbitEntity);
             state.orbitEntity = null;

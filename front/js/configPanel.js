@@ -1,23 +1,17 @@
 const CONFIG_SCHEMA = {
     orbit: [
         { key: "propagation_hours", label: "Propagation Hours", type: "number", step: "0.1", min: "0" },
-        { key: "width_mode", label: "Orbit Width Mode", type: "select", options: ["visual", "physical"] },
         { key: "future_show", label: "Future Show", type: "checkbox" },
         { key: "ground_track_show", label: "Ground Track Show", type: "checkbox" },
-        { key: "future_line_width", label: "Future Line Width", type: "number", step: "0.1", min: "0.1" },
+        { key: "future_line_width", label: "Future Line Width", type: "number", step: "0.25", min: "2", max: "5" },
         { key: "future_color", label: "Future Color", type: "color" },
-        { key: "selected_color", label: "Selected Orbit Color", type: "color" },
-        { key: "past_show", label: "Past Show", type: "checkbox" },
-        { key: "past_seconds", label: "Past Duration (hours)", type: "number", step: "0.1", min: "0" },
-        { key: "past_line_width", label: "Past Line Width", type: "number", step: "0.1", min: "0.1" },
-        { key: "past_color", label: "Past Color", type: "color" }
+        { key: "selected_color", label: "Selected Orbit Color", type: "color" }
     ],
     satellites: [
         { key: "label_size_px", label: "Label Size (px)", type: "number", step: "1", min: "0" },
         { key: "model_scale", label: "Model Scale", type: "number", step: "1", min: "0.000001" },
         { key: "use_3d_model", label: "Use 3D Model", type: "checkbox" },
         { key: "size_mode", label: "Size Mode", type: "select", options: ["visual", "physical"] },
-        { key: "max_visible", label: "Max Active Layers", type: "number", step: "1", min: "1" },
         { key: "decay_alert_perigee_km", label: "Decay Alert Perigee (km)", type: "number", step: "1", min: "50", max: "5000" }
     ],
     realtime: [
@@ -67,20 +61,14 @@ const FIELD_HELP = {
     "orbit.propagation_hours": "Horas de proyeccion de la orbita futura. Si se configura un rango temporal grande, puede impactar en el rendimiento.",
     "orbit.future_show": "Muestra u oculta la orbita futura.",
     "orbit.ground_track_show": "Muestra u oculta la traza de suelo y footprint del satelite en 2D y 3D.",
-    "orbit.future_line_width": "Grosor de la linea de orbita futura.",
-    "orbit.width_mode": "visual: grosor fijo en pantalla. physical: grosor aparente cambia con distancia.",
+    "orbit.future_line_width": "Grosor visual fijo de la linea de orbita futura (2 a 5 px).",
     "orbit.future_color": "Color de la orbita futura.",
     "orbit.selected_color": "Color de la orbita del satelite seleccionado.",
-    "orbit.past_show": "Muestra u oculta la estela/orbita pasada.",
-    "orbit.past_seconds": "Duración temporal de la estela pasada en horas. Sin límite artificial.",
-    "orbit.past_line_width": "Grosor de la linea de orbita pasada.",
-    "orbit.past_color": "Color de la orbita pasada.",
 
     "satellites.label_size_px": "Tamano de texto de label. 0 oculta labels.",
     "satellites.model_scale": "Escala visual del modelo 3D del satelite.",
     "satellites.use_3d_model": "Si esta activo, el satelite se renderiza como modelo 3D. Si no, se dibuja como punto.",
     "satellites.size_mode": "visual: mantiene visibilidad por pixel. physical: respeta mas el tamano angular real por distancia.",
-    "satellites.max_visible": "Numero maximo de capas activas permitidas al mismo tiempo. Al alcanzarlo, no se pueden anadir mas hasta quitar alguna.",
     "satellites.decay_alert_perigee_km": "Umbral de perigeo (km) para marcar objetos en riesgo de decaimiento en filtros y alertas.",
 
     "realtime.state_interval_seconds": "Cada cuantos segundos llega el estado por WebSocket.",
@@ -325,99 +313,6 @@ function renderConfigSection(sectionName, fields, currentSystemConfig, onChange,
     const title = document.createElement("h4");
     title.className = "config-section-title";
     title.textContent = SECTION_TITLES[sectionName] || sectionName;
-
-    // Special handling for 'orbit' to separate future and past groups
-    if (sectionName === "orbit") {
-        const orbitWrapper = document.createElement("div");
-        orbitWrapper.className = "orbit-wrapper";
-
-        const futureTitle = document.createElement("div");
-        futureTitle.className = "orbit-subtitle";
-        futureTitle.textContent = "Futuro";
-
-        const futureGrid = document.createElement("div");
-        futureGrid.className = "config-grid orbit-grid";
-
-        const pastTitle = document.createElement("div");
-        pastTitle.className = "orbit-subtitle";
-        pastTitle.textContent = "Pasado";
-
-        const pastGrid = document.createElement("div");
-        pastGrid.className = "config-grid orbit-grid";
-
-        const futureFields = [];
-        const pastFields = [];
-        const otherOrbitFields = [];
-        const fieldByKey = new Map();
-        for (const field of fields) {
-            fieldByKey.set(String(field.key), field);
-            if (String(field.key).startsWith("future")) {
-                futureFields.push(field);
-            } else if (String(field.key).startsWith("past")) {
-                pastFields.push(field);
-            } else {
-                otherOrbitFields.push(field);
-            }
-        }
-
-        const desiredFutureOrder = [
-            "future_line_width",
-            "width_mode",
-            "future_color",
-            "selected_color",
-            "future_show",
-            "ground_track_show"
-        ];
-
-        const usedFuture = new Set();
-        for (const key of desiredFutureOrder) {
-            const f = fieldByKey.get(key);
-            if (f) {
-                const el = createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk);
-                if (key === "future_color" || key === "future_show" || key === "ground_track_show") {
-                    el.classList.add("align-left");
-                }
-                futureGrid.appendChild(el);
-                usedFuture.add(key);
-            }
-        }
-
-        for (const f of futureFields) {
-            const k = String(f.key || "");
-            if (usedFuture.has(k)) continue;
-            futureGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk));
-            usedFuture.add(k);
-        }
-
-        const desiredPastOrder = ["past_seconds", "past_line_width", "past_color", "past_show"];
-        const used = new Set();
-        for (const key of desiredPastOrder) {
-            const f = fieldByKey.get(key);
-            if (f) {
-                pastGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk));
-                used.add(key);
-            }
-        }
-        for (const f of pastFields) {
-            if (!used.has(String(f.key))) {
-                pastGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk));
-            }
-        }
-
-        const otherFiltered = otherOrbitFields.filter((f) => String(f.key) !== "width_mode" && !usedFuture.has(String(f.key)));
-        for (const f of otherFiltered) {
-            futureGrid.appendChild(createFieldElement(sectionName, f, currentSystemConfig, onChange, onValidationError, onValidationOk));
-        }
-
-        orbitWrapper.appendChild(futureTitle);
-        orbitWrapper.appendChild(futureGrid);
-        orbitWrapper.appendChild(pastTitle);
-        orbitWrapper.appendChild(pastGrid);
-
-        section.appendChild(title);
-        section.appendChild(orbitWrapper);
-        return section;
-    }
 
     const grid = document.createElement("div");
     grid.className = "config-grid";

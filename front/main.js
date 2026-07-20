@@ -18,8 +18,6 @@ import {
     setSatelliteLayerActive,
     setAllSatelliteLayersActive,
     setAllSatellitesVisible,
-    getMaxActiveSatellites,
-    getAvailableActiveSatelliteLayerSlots,
     setSelectedOrbitSatelliteId,
     refreshSatelliteOverlays,
     getSatelliteVisualizationConfig,
@@ -65,6 +63,7 @@ import { createCompositeLayerManager } from "./js/features/layers/compositeLayer
 import { createAdaptiveDisplayController } from "./js/runtime/adaptiveDisplayController.js";
 import { bindProjectLifecycleEvents } from "./js/runtime/projectEventBridge.js";
 import { markOrbitRuntimeFailed } from "./js/runtime/runtimeStatus.js";
+import { emitObjectStateChanged } from "./js/runtime/objectDetailsEvents.js";
 
 const logger = getLogger("main");
 logger.info("Iniciando Cesium...");
@@ -271,7 +270,6 @@ const UI_TEXT = {
     es: {
         toolbarToggle: "Herramientas rapidas",
         future: "Futuro",
-        past: "Pasado",
         ground: "Ground",
         presentation: "Presentacion",
         theme: "Tema",
@@ -326,7 +324,7 @@ const UI_TEXT = {
         satResetBtn: "Resetear satelite",
         applyBtn: "Aplicar",
         explainParams: "Explicar parametros orbitales",
-        satInfoTitle: "Informacion satelite",
+        tleInfoTitle: "Parametros TLE",
         confirmBtn: "Aceptar",
         cancelBtn: "Cancelar",
         updateCatalog: "Actualizar Catalogo",
@@ -338,11 +336,9 @@ const UI_TEXT = {
         removeAllLayersMsg: "Se quitaran {total} capas activas. Esta accion no se puede deshacer.",
         removeAllBtn: "Quitar todo",
         confirmInclusion: "Confirmar Inclusion",
-        includeElementsMsg: "Se incluiran {count} elementos. {skipped} se omitiran para respetar el limite de {maxLayers} capas activas.",
-        includeElementsMsgNoSkip: "Se incluiran {count} elementos que aun no estan en capas activas.",
+        includeElementsMsg: "Se incluiran {count} elementos que aun no estan en capas activas.",
         includeBtn: "Incluir",
         addingLayers: "Anadiendo capas...",
-        layersAdded: "Se anadieron {count} capas. {skipped} quedaron fuera por el limite de {maxLayers} activas.",
         latLabel: "Latitud",
         lonLabel: "Longitud",
         altLabel: "Altitud",
@@ -352,13 +348,10 @@ const UI_TEXT = {
         speedLabel: "Modulo velocidad",
         speedKmhLabel: "Velocidad",
         distToCameraLabel: "Distancia a camara",
-        trailPointsLabel: "Puntos de estela",
         telemetryAgeLabel: "Edad telemetria",
         propagationLabel: "Propagacion",
         orbitTypeLabel: "Tipo orbita",
         futurePropLabel: "Propagacion futura",
-        pastPropLabel: "Propagacion pasada",
-        pastConfiguredLabel: "Pasado configurado",
         orbitTypeLabel2: "Tipo de orbita",
         estAltLabel: "Altitud estimada",
         tleAgeLabel: "Edad TLE",
@@ -393,7 +386,6 @@ const UI_TEXT = {
     en: {
         toolbarToggle: "Quick tools",
         future: "Future",
-        past: "Past",
         ground: "Ground",
         presentation: "Presentation",
         theme: "Theme",
@@ -448,7 +440,7 @@ const UI_TEXT = {
         satResetBtn: "Reset satellite",
         applyBtn: "Apply",
         explainParams: "Explain orbital parameters",
-        satInfoTitle: "Satellite information",
+        tleInfoTitle: "TLE parameters",
         confirmBtn: "Accept",
         cancelBtn: "Cancel",
         updateCatalog: "Update Catalog",
@@ -460,11 +452,9 @@ const UI_TEXT = {
         removeAllLayersMsg: "Will remove {total} active layers. This action cannot be undone.",
         removeAllBtn: "Remove All",
         confirmInclusion: "Confirm Inclusion",
-        includeElementsMsg: "Will include {count} elements. {skipped} will be skipped to respect the limit of {maxLayers} active layers.",
-        includeElementsMsgNoSkip: "Will include {count} elements that are not yet in active layers.",
+        includeElementsMsg: "Will include {count} elements that are not yet in active layers.",
         includeBtn: "Include",
         addingLayers: "Adding layers...",
-        layersAdded: "Added {count} layers. {skipped} were left out due to the limit of {maxLayers} active layers.",
         latLabel: "Latitude",
         lonLabel: "Longitude",
         altLabel: "Altitude",
@@ -474,13 +464,10 @@ const UI_TEXT = {
         speedLabel: "Speed magnitude",
         speedKmhLabel: "Speed",
         distToCameraLabel: "Distance to camera",
-        trailPointsLabel: "Trail points",
         telemetryAgeLabel: "Telemetry age",
         propagationLabel: "Propagation",
         orbitTypeLabel: "Orbit type",
         futurePropLabel: "Future propagation",
-        pastPropLabel: "Past propagation",
-        pastConfiguredLabel: "Past configured",
         orbitTypeLabel2: "Orbit type",
         estAltLabel: "Estimated altitude",
         tleAgeLabel: "TLE age",
@@ -572,6 +559,60 @@ function getDisplayedSimulationDate() {
     }
     const date = simulationState.currentDate instanceof Date ? simulationState.currentDate : new Date(simulationState.currentDate);
     return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function formatObjectTimeRangeHours(hours) {
+    const rounded = Math.round(Math.max(0, Number(hours) || 0) * 100) / 100;
+    return `${rounded} h`;
+}
+
+// The visible future orbit is anchored to the current clock in realtime, while
+// range mode maps it onto the explicit simulation interval. Keep that exact
+// domain with the selected-object payload so the details card never presents
+// stale bootstrap dates as its start/end range.
+function getObjectTimeRange(layerId, telemetry) {
+    const isRangeMode = simulationState.mode === SIMULATION_MODE_RANGE;
+    const startDate = isRangeMode
+        ? new Date(simulationState.startDate)
+        : getDisplayedSimulationDate();
+    if (Number.isNaN(startDate.getTime())) {
+        return null;
+    }
+
+    if (isRangeMode) {
+        const endDate = new Date(simulationState.endDate);
+        if (Number.isNaN(endDate.getTime())) {
+            return null;
+        }
+        const oemRangeHours = getRangeHours(startDate, endDate);
+        return {
+            mode: SIMULATION_MODE_RANGE,
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString(),
+            oemRangeHours,
+            label: `${formatObjectTimeRangeHours(oemRangeHours)} (inicio → fin)`
+        };
+    }
+
+    const sourceId = isGroundStationLayerId(layerId)
+        ? ""
+        : getSatelliteSourceIdFromLayerId(layerId);
+    const configuredHours = sourceId
+        ? getSatelliteVisualizationConfig(sourceId)?.effective?.propagation_hours
+        : undefined;
+    const requestedHours = Number(telemetry?.propagation_future_hours ?? configuredHours);
+    const oemRangeHours = Number.isFinite(requestedHours) && requestedHours >= 0
+        ? requestedHours
+        : 0;
+    const endDate = new Date(startDate.getTime() + (oemRangeHours * 60 * 60 * 1000));
+
+    return {
+        mode: SIMULATION_MODE_REALTIME,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        oemRangeHours,
+        label: `${formatObjectTimeRangeHours(oemRangeHours)} hacia futuro`
+    };
 }
 
 function getTimelineRatioByDate(dateValue) {
@@ -798,6 +839,7 @@ function setCompositeLayerVisibility(layerId, visible) {
         }
         groundStationHeatMaps.setVisible(layerId, station.visible);
         updateGroundStationHeatLegendVisibility();
+        emitObjectStateChanged({ layerId, sourceId: layerId, reason: "visibility" });
         return;
     }
     compositeLayers.setVisibility(layerId, visible);
@@ -817,6 +859,7 @@ function removeGroundStationLayer(layerId) {
     groundStationHeatMaps.clear(layerId);
     groundStationLayers.delete(layerId);
     layerDisplayNameOverrides.delete(layerId);
+    emitObjectStateChanged({ layerId, sourceId: layerId, reason: "activation" });
 }
 
 function setCompositeLayerActive(layerId, active) {
@@ -830,8 +873,10 @@ function setCompositeLayerActive(layerId, active) {
 
     if (isSatelliteDuplicateLayerId(layerId)) {
         if (!isActive) {
+            const sourceId = getSatelliteSourceIdFromLayerId(layerId);
             satelliteDuplicateLayers.delete(layerId);
             layerDisplayNameOverrides.delete(layerId);
+            emitObjectStateChanged({ layerId, sourceId, reason: "activation" });
             return true;
         }
         return false;
@@ -874,6 +919,7 @@ function renameLayer(layerId, nextName) {
             }
         }
     }
+    emitObjectStateChanged({ layerId: id, sourceId: getSatelliteSourceIdFromLayerId(id), reason: "rename" });
     return true;
 }
 
@@ -1066,6 +1112,7 @@ function updateGroundStationLayer(layerId, patch = {}) {
     layerDisplayNameOverrides.set(layerId, station.name);
     applyGroundStationVisuals(station);
     groundStationHeatMaps.update(layerId);
+    emitObjectStateChanged({ layerId, sourceId: layerId, reason: "configuration" });
     return true;
 }
 
@@ -1082,6 +1129,7 @@ function toggleGroundStationHeatMap(layerId, enabled) {
         groundStationHeatMaps.update(layerId);
     }
     updateGroundStationHeatLegendVisibility();
+    emitObjectStateChanged({ layerId, sourceId: layerId, reason: "heatmap" });
     return true;
 }
 
@@ -1219,9 +1267,26 @@ function buildGroundStationTelemetry(layerId) {
     });
 }
 
+function getSimulationTelemetryContext() {
+    const isRangeMode = simulationState.mode === SIMULATION_MODE_RANGE;
+    const currentDate = getDisplayedSimulationDate();
+    const currentTime = currentDate instanceof Date && !Number.isNaN(currentDate.getTime())
+        ? currentDate.toISOString()
+        : null;
+    const configuredScale = Number(simulationState.speed);
+
+    return {
+        mode: isRangeMode ? "simulated" : "realtime",
+        current_time: currentTime,
+        time_scale: isRangeMode && Number.isFinite(configuredScale) && configuredScale > 0 ? configuredScale : 1,
+        is_playing: Boolean(simulationState.isPlaying)
+    };
+}
+
 function getCompositeLayerTelemetry(layerId) {
     if (isGroundStationLayerId(layerId)) {
-        return buildGroundStationTelemetry(layerId);
+        const telemetry = buildGroundStationTelemetry(layerId);
+        return telemetry ? { ...telemetry, simulation: getSimulationTelemetryContext() } : null;
     }
 
     const sourceId = getSatelliteSourceIdFromLayerId(layerId);
@@ -1232,7 +1297,8 @@ function getCompositeLayerTelemetry(layerId) {
 
     return {
         ...telemetry,
-        id: getLayerDisplayName(layerId)
+        id: getLayerDisplayName(layerId),
+        simulation: getSimulationTelemetryContext()
     };
 }
 
@@ -1242,16 +1308,6 @@ function getCompositeLayerEntity(layerId) {
     }
     const sourceId = getSatelliteSourceIdFromLayerId(layerId);
     return getSatelliteEntity(sourceId);
-}
-
-function getCompositeMaxLayers() {
-    return getMaxActiveSatellites();
-}
-
-function getCompositeAvailableLayerSlots() {
-    const max = Math.max(1, Number(getCompositeMaxLayers()) || 100);
-    const used = getCompositeLayerIds().length;
-    return Math.max(0, max - used);
 }
 
 function activateSatelliteSelection(satelliteId, focus = true) {
@@ -1678,7 +1734,7 @@ function persistSystemSectionPatch(sectionName, patch) {
 
 function getOrbitToggleState(kind) {
     const selectedConfig = selectedSatelliteId ? getSatelliteVisualizationConfig(selectedSatelliteId) : null;
-    const effectiveKey = kind === "ground" ? "orbit_ground_track_show" : (kind === "future" ? "orbit_future_show" : "orbit_past_show");
+    const effectiveKey = kind === "ground" ? "orbit_ground_track_show" : "orbit_future_show";
 
     if (selectedConfig) {
         return Boolean(selectedConfig.effective[effectiveKey]);
@@ -1690,8 +1746,8 @@ function getOrbitToggleState(kind) {
 function setOrbitVisibilityFromToolbar(kind) {
     const currentValue = getOrbitToggleState(kind);
     const nextValue = !currentValue;
-    const overrideKey = kind === "ground" ? "orbit_ground_track_show" : (kind === "future" ? "orbit_future_show" : "orbit_past_show");
-    const globalKey = kind === "ground" ? "ground_track_show" : (kind === "future" ? "future_show" : "past_show");
+    const overrideKey = kind === "ground" ? "orbit_ground_track_show" : "orbit_future_show";
+    const globalKey = kind === "ground" ? "ground_track_show" : "future_show";
 
     if (selectedSatelliteId) {
         setSatelliteVisualizationConfig(selectedSatelliteId, {
@@ -2165,10 +2221,10 @@ function openSatelliteVisualizationModal(satelliteId) {
     const isOem = sourceFormat === "OEM";
     const oemDomainActive = hasLoadedOemEphemerisTracks()
         || Boolean(getLoadedOemEphemerisTimeBounds());
-    const hidePastAndPropagation = isOem || oemDomainActive;
+    const hidePropagation = isOem || oemDomainActive;
 
     const effective = config.effective;
-    window.dispatchEvent(new CustomEvent("orbit:satellite-viz-open", { detail: { id: satelliteId, values: { ...effective }, hidePast: hidePastAndPropagation } }));
+    window.dispatchEvent(new CustomEvent("orbit:satellite-viz-open", { detail: { id: satelliteId, values: { ...effective }, hidePropagation } }));
 }
 
 window.addEventListener("orbit:satellite-viz-action", (event) => {
@@ -2330,8 +2386,19 @@ function toggleSessionRecording() {
 
 function updateCameraModeButtonLabel() {
     window.dispatchEvent(new CustomEvent("orbit:camera-mode-state", {
-        detail: { mode: cameraNavigationMode, isFreeMode: cameraNavigationMode === "free" }
+        detail: {
+            mode: cameraNavigationMode,
+            isFreeMode: cameraNavigationMode === "free",
+            viewMode: getCameraViewMode()
+        }
     }));
+}
+
+function getCameraViewMode() {
+    const sceneMode = viewer?.scene?.mode;
+    if (sceneMode === Cesium.SceneMode.SCENE2D) return "2d";
+    if (sceneMode === Cesium.SceneMode.COLUMBUS_VIEW) return "columbus";
+    return "3d";
 }
 
 function applyCameraNavigationMode(mode, options = {}) {
@@ -2392,7 +2459,9 @@ function applyCameraNavigationMode(mode, options = {}) {
 setupCameraActions({
     viewer,
     resetView: resetCameraView,
-    toggleNavigation: () => applyCameraNavigationMode(cameraNavigationMode === "free" ? "centered" : "free")
+    toggleNavigation: () => applyCameraNavigationMode(cameraNavigationMode === "free" ? "centered" : "free"),
+    setNavigationMode: (mode) => applyCameraNavigationMode(mode),
+    publishCameraState: updateCameraModeButtonLabel
 });
 
 function setConfigSaveState(state, message) {
@@ -2431,61 +2500,6 @@ function schedulePersistSystemConfig(nextSectionedSystemConfig) {
             setConfigSaveState("error", `${uiText("configError")} (${shortDetail})`);
         }
     }, 250);
-}
-
-function computeAdaptiveResolutionScale() {
-    return getAdaptiveResolutionScale(window);
-}
-
-function computeAdaptiveUiScale() {
-    return getAdaptiveUiScale(window);
-}
-
-function applyResolutionScaleConfig(systemConfig, options = {}) {
-    let resolvedScale = computeAdaptiveResolutionScale();
-
-    const antialiasMode = systemConfig.antialias_mode ?? (systemConfig.antialias_enabled !== false ? "fxaa" : "off");
-    if (antialiasMode !== "off") {
-        // Con AA activo priorizamos nitidez en líneas orbitales.
-        resolvedScale = Math.max(0.9, resolvedScale);
-    }
-
-    const shouldUpdate =
-        !Number.isFinite(lastAppliedResolutionScale) ||
-        Math.abs(lastAppliedResolutionScale - resolvedScale) > 0.005;
-
-    if (!shouldUpdate) {
-        return;
-    }
-
-    // Tomamos control explícito para mantener resultado consistente entre DPIs.
-    viewer.useBrowserRecommendedResolution = false;
-    viewer.resolutionScale = resolvedScale;
-    viewer.resize();
-    lastAppliedResolutionScale = resolvedScale;
-
-    if (!options.silent) {
-        logger.info(`Resolution scale: ${resolvedScale.toFixed(3)} (auto)`);
-    }
-}
-
-function applyUiScaleConfig(systemConfig, options = {}) {
-    const resolvedScale = computeAdaptiveUiScale();
-
-    const shouldUpdate =
-        !Number.isFinite(lastAppliedUiScale) ||
-        Math.abs(lastAppliedUiScale - resolvedScale) > 0.005;
-
-    if (!shouldUpdate) {
-        return;
-    }
-
-    document.documentElement.style.setProperty("--orbit-ui-scale", resolvedScale.toFixed(3));
-    lastAppliedUiScale = resolvedScale;
-
-    if (!options.silent) {
-        logger.info(`UI scale: ${resolvedScale.toFixed(3)} (auto)`);
-    }
 }
 
 function applyEarthDayNightBlend(systemConfig) {
@@ -2744,12 +2758,11 @@ function firstPersonSatellite(entity) {
         fetchCatalogPage: (params) => fetchCatalogPage(params),
         getLayerIds: () => getCompositeLayerIds(),
         getObjectTelemetry: (id) => getCompositeLayerTelemetry(id),
+        getObjectTimeRange: (id, telemetry) => getObjectTimeRange(id, telemetry),
         getObjectVisibility: (id) => getCompositeLayerVisibility(id),
         onToggleObjectVisibility: (id, visible) => setCompositeLayerVisibility(id, visible),
         getObjectLayerActive: (id) => isCompositeLayerActive(id),
         onToggleObjectLayer: (id, active) => setCompositeLayerActive(id, active),
-        getMaxActiveLayers: () => getCompositeMaxLayers(),
-        getAvailableLayerSlots: () => getCompositeAvailableLayerSlots(),
         onAddAllLayers: () => setAllSatelliteLayersActive(true),
         onRemoveAllLayers: () => {
             setAllSatelliteLayersActive(false);
@@ -2843,6 +2856,7 @@ function firstPersonSatellite(entity) {
         onRequestRenameLayer: (id, newName) => renameLayer(id, newName),
         getLayerDisplayName: (id) => getLayerDisplayName(id),
         getLayerType: (id) => getLayerType(id),
+        getObjectSourceId: (id) => isGroundStationLayerId(id) ? String(id || "") : getSatelliteSourceIdFromLayerId(id),
         getGroundStationParams: (id) => getGroundStationParams(id),
         isCatalogReady: () => isCatalogLoaded(),
         getObjectTle: (id) => getSatelliteTle(getSatelliteSourceIdFromLayerId(id)),
@@ -2914,7 +2928,7 @@ function firstPersonSatellite(entity) {
             return null;
         }
 
-        const suffixes = ["-orbit", "-trail", "-ground-track", "-footprint"];
+        const suffixes = ["-orbit", "-ground-track", "-footprint"];
         for (const suffix of suffixes) {
             if (!rawId.endsWith(suffix)) {
                 continue;

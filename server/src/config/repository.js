@@ -8,9 +8,36 @@ function normalizeConfig(payload, fallback) {
     if (!isPlainObject(payload)) return fallback();
     const fallbackConfig = fallback();
     const data = isPlainObject(payload.data) ? payload.data : fallbackConfig.data;
+    const system = isPlainObject(payload.system) ? { ...payload.system } : {};
+    if (isPlainObject(system.satellites)) {
+        system.satellites = { ...system.satellites };
+        delete system.satellites.max_visible;
+    }
+    if (isPlainObject(system.orbit)) {
+        system.orbit = { ...system.orbit };
+        delete system.orbit.width_mode;
+        delete system.orbit.trail_show;
+        delete system.orbit.trail_color;
+        delete system.orbit.trail_speed_seconds;
+        delete system.orbit.trail_length_percent;
+        delete system.orbit.trail_line_width;
+        delete system.orbit.past_show;
+        delete system.orbit.past_color;
+        delete system.orbit.past_line_width;
+    }
+    delete system.max_satellites_visible;
+    delete system.orbit_width_mode;
+    delete system.orbit_trail_show;
+    delete system.orbit_trail_color;
+    delete system.orbit_trail_speed_seconds;
+    delete system.orbit_trail_length_percent;
+    delete system.orbit_trail_line_width;
+    delete system.orbit_past_show;
+    delete system.orbit_past_color;
+    delete system.orbit_past_line_width;
     return {
         ...payload,
-        system: isPlainObject(payload.system) ? payload.system : {},
+        system,
         data: {
             ...data,
             satellites_catalog_file: normalizeCatalogFileName(

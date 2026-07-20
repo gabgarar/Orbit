@@ -12,9 +12,20 @@ export function createCatalogRepository({ getCatalogPath }) {
     // cannot write stale data back after its downloads complete.
     let replacementVersion = 0;
 
-    function normalize(entries) {
+    function hasEntryUpdateTimestamp(entry) {
+        return ["updatedAt", "updated_at", "lastUpdated", "last_updated", "tleUpdatedAt", "tle_updated_at"]
+            .some((key) => String(entry?.[key] ?? "").trim());
+    }
+
+    function validGeneratedAt(value) {
+        const timestamp = Date.parse(String(value ?? "").trim());
+        return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+    }
+
+    function normalize(entries, { fallbackUpdatedAt = "" } = {}) {
         return Array.isArray(entries) ? entries.map((entry) => withCatalogMetadata({
             ...entry,
+            ...(!hasEntryUpdateTimestamp(entry) && fallbackUpdatedAt ? { updatedAt: fallbackUpdatedAt } : {}),
             name: String(entry?.name || "").trim(),
             line1: String(entry?.line1 || "").trim(),
             line2: String(entry?.line2 || "").trim(),
@@ -27,7 +38,9 @@ export function createCatalogRepository({ getCatalogPath }) {
             return normalize(parseTleCatalog(raw));
         }
         const payload = JSON.parse(raw);
-        return normalize(Array.isArray(payload) ? payload : payload?.entries);
+        return normalize(Array.isArray(payload) ? payload : payload?.entries, {
+            fallbackUpdatedAt: Array.isArray(payload) ? "" : validGeneratedAt(payload?.generatedAt)
+        });
     }
 
     async function read({ force = false } = {}) {

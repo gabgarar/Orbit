@@ -15,10 +15,13 @@ def create_orbits_router(resolve_propagator, serialize_state, auto_samples: Call
 
     def orbit_payload(name, propagator, horizon_hours: float, samples: int | None) -> dict:
         sample_count = samples or auto_samples(horizon_hours, 1, propagator)
+        reference_time = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
         points = []
         for index in range(sample_count):
             offset = (index / max(sample_count - 1, 1)) * horizon_hours * 3600
-            x, y, z, _, _, _ = propagator.propagate_offset(offset)
+            x, y, z, _, _, _ = propagator.propagate_datetime(
+                reference_time + datetime.timedelta(seconds=offset)
+            )
             points.append({"x": x, "y": y, "z": z})
         return {
             "satellite": name,

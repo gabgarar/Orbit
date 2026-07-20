@@ -7,7 +7,14 @@ export function HelpIcon() {
 }
 
 export function SatelliteIcon() {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 8 4 4-4 4-4-4zM8.8 9.2 5 5.4 3.2 7.2 7 11M15.2 14.8 19 18.6l1.8-1.8L17 13M9.2 14.8 6 18M14.8 9.2 18 6" /><path d="M5 19h4M15 5h4" /></svg>;
+    return <svg viewBox="0 0 24 24" aria-hidden="true">
+        <g transform="rotate(-45 12 12)">
+            <rect x="9" y="9" width="6" height="6" rx="1.15" />
+            <rect x="3.5" y="9.5" width="5.5" height="5" rx=".45" />
+            <rect x="15" y="9.5" width="5.5" height="5" rx=".45" />
+            <path d="M6.25 9.5v5M17.75 9.5v5M9 11.5h6M12 9v6M12 9V6.4M12 17.6V15" />
+        </g>
+    </svg>;
 }
 
 export function TelemetryIcon() {
@@ -30,6 +37,14 @@ export function EyeIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.6" /></svg>;
 }
 
+export function EyeOffIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18" /><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" /><path d="M9.7 4.2A10.8 10.8 0 0 1 12 4c6 0 9.5 6 9.5 8a11 11 0 0 1-3 4.1" /><path d="M6.5 6.5C4 8.1 2.5 10.7 2.5 12c0 2 3.5 8 9.5 8 1.3 0 2.6-.3 3.7-.8" /></svg>;
+}
+
+export function TrashIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg>;
+}
+
 export function PlusIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>;
 }
@@ -42,6 +57,6 @@ export function SlidersIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6" /></svg>;
 }
 
-export function HomeIcon() {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 8-7 8 7v8a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1z" /></svg>;
+export function CameraIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.75" y="7" width="12.75" height="10" rx="2.1" /><path d="m15.5 10 4.1-2.05A1.25 1.25 0 0 1 21.5 9v6a1.25 1.25 0 0 1-1.9 1.05L15.5 14Z" /><circle cx="9.15" cy="12" r="2.45" /><path d="M5.5 5.25h5.25" /></svg>;
 }

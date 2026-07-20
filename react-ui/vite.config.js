@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { access, copyFile, cp, mkdir } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -39,7 +40,7 @@ function copyLocalRuntimeAssets() {
 }
 
 export default defineConfig({
-    plugins: [react(), copyLocalRuntimeAssets()],
+    plugins: [react(), tailwindcss(), copyLocalRuntimeAssets()],
     // The vendor script runs before both `vite` and `vite build`. Exposing the
     // same directory here keeps /Cesium and /vendor available in development,
     // while the plugin above verifies and copies them into the final bundle.

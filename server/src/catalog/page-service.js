@@ -52,11 +52,29 @@ export function createCatalogPageService({ catalog, config }) {
             filtered = filtered.filter((entry) => String(entry.sourceOrigin || "CATALOG").trim().toUpperCase() === sourceOrigin);
         }
 
-        const items = filtered.slice(offset, offset + limit).map((entry) => ({
-            ...entry,
-            noradId: getNoradId(entry),
-            decayRisk: isDecayRisk(entry, decayPerigeeKm)
-        }));
+        const duplicateNames = new Set();
+        const knownNames = new Set();
+        for (const entry of filtered) {
+            const name = String(entry?.name || "").trim();
+            if (!name) continue;
+            if (knownNames.has(name)) duplicateNames.add(name);
+            else knownNames.add(name);
+        }
+        const items = filtered.slice(offset, offset + limit).map((entry, index) => {
+            const name = String(entry?.name || "").trim();
+            const noradId = getNoradId(entry);
+            // Display and interaction IDs must be unique: launch debris often
+            // shares a human-readable name while representing distinct TLEs.
+            const catalogId = duplicateNames.has(name)
+                ? `${name} · NORAD ${noradId || offset + index + 1}`
+                : name;
+            return {
+                ...entry,
+                catalogId,
+                noradId,
+                decayRisk: isDecayRisk(entry, decayPerigeeKm)
+            };
+        });
         return {
             ok: true,
             total: filtered.length,

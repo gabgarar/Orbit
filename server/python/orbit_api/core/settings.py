@@ -9,7 +9,10 @@ SYSTEM_CONFIG_PATH = CONFIG_DIR / "system_config.json"
 
 MAX_CACHED_ORBITS = 50
 AUTO_MIN_ORBIT_SAMPLES = 24
-AUTO_MAX_ORBIT_SAMPLES = 1440
+# Enough for a 12-hour low-Earth path at the angular tessellation used by the
+# renderer.  The shared batch budget in sampling.py still protects large layer
+# sets from allocating this number for every object.
+AUTO_MAX_ORBIT_SAMPLES = 7200
 PROPAGATION_HOURS_MIN = 0.1
 PROPAGATION_HOURS_MAX = 24.0 * 365.0
 ORBIT_CACHE_TTL_SECONDS = 10

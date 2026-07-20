@@ -5,7 +5,6 @@ import HelpPanel from "./components/overlays/HelpPanel.jsx";
 import NotificationCenter from "./components/overlays/NotificationCenter.jsx";
 import OrbitOverlays from "./components/overlays/OrbitOverlays.jsx";
 import ProjectWelcome from "./components/overlays/ProjectWelcome.jsx";
-import CameraControls from "./features/camera/CameraControls.jsx";
 import TimeControlBar from "./features/simulation/TimeControlBar.jsx";
 import useOrbitNotifications from "./hooks/useOrbitNotifications.js";
 import useProjectWelcome from "./hooks/useProjectWelcome.js";
@@ -21,5 +20,5 @@ export default function App() {
             window.dispatchEvent(new CustomEvent("orbit:project-dialog-request", { detail: action }));
         }
     };
-    return <><TopToolbar hasNotifications={notifications.length > 0} onToggleNotifications={() => setNotificationsOpen((value) => !value)} onToggleHelp={() => setHelpOpen((value) => !value)} /><CesiumGlobe /><OrbitOverlays /><CameraControls /><TimeControlBar />{welcomeOpen && <ProjectWelcome onAction={startProjectAction} runtimeStatus={runtimeStatus} />}{notificationsOpen && <NotificationCenter notifications={notifications} onClose={() => setNotificationsOpen(false)} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}</>;
+    return <><TopToolbar hasNotifications={notifications.length > 0} onToggleNotifications={() => setNotificationsOpen((value) => !value)} onToggleHelp={() => setHelpOpen((value) => !value)} /><CesiumGlobe /><OrbitOverlays /><TimeControlBar />{welcomeOpen && <ProjectWelcome onAction={startProjectAction} runtimeStatus={runtimeStatus} />}{notificationsOpen && <NotificationCenter notifications={notifications} onClose={() => setNotificationsOpen(false)} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}</>;
 }

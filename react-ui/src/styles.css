@@ -1,3 +1,8 @@
+/* Tailwind v4 utilities are enabled without Preflight so Cesium and legacy DOM
+   keep their established baseline styles during the incremental migration. */
+@import "tailwindcss/theme" layer(theme);
+@import "tailwindcss/utilities" layer(utilities);
+
 html, body, #root, #cesiumContainer { width: 100%; height: 100%; margin: 0; }
 html, body, #root { background: #000; overflow: hidden; }
 
@@ -67,52 +72,24 @@ body.with-toolbars #cesiumContainer {
 #leftSidebar .sidebar-btn { width: 38px; height: 38px; border-radius: 7px; color: #aebed7; pointer-events: auto; }
 #leftSidebar .sidebar-btn.active { background: #13294b; color: #75a4ff; }
 #leftSidebar .sidebar-btn svg { width: 15px; height: 15px; }
+#leftSidebar #leftSatellitesBtn svg { width: 21px; height: 21px; stroke-width: 1.65; }
+#leftSidebar #leftSatellitesBtn.active { box-shadow: inset 0 0 0 1px rgba(104, 150, 255, 0.14), 0 4px 14px rgba(25, 74, 157, 0.2); }
 
-.react-camera-controls { position: fixed; right: 18px; bottom: 22px; z-index: 34; }
-.react-camera-controls > button { min-height: 34px; padding: 0 12px; border: 1px solid #36548a; border-radius: 8px; background: #12233e; color: #eaf1ff; font: 600 12px/1 inherit; }
-.react-camera-controls > div { position: absolute; right: 0; bottom: calc(100% + 8px); display: grid; min-width: 164px; padding: 5px; border: 1px solid #36548a; border-radius: 8px; background: #101c31; box-shadow: 0 10px 28px rgba(0, 0, 0, .35); }
-.react-camera-controls > div button { padding: 8px 10px; border: 0; border-radius: 5px; background: transparent; color: #dfe9fa; text-align: left; font: 600 12px/1.2 inherit; }
-.react-camera-controls > div button:hover { background: #1c3153; }
-
-#leftSatellitesPanel .react-layers-header {
+/* A calm, contiguous header: the old decorative orb is intentionally removed
+   so the panel reads as one surface instead of a second floating card. */
+#leftSatellitesPanel .orbit-layers-panel-header {
     min-height: 54px;
     padding: 13px 14px 9px;
     border: 0;
-    background: transparent;
+    border-bottom: 1px solid #1b2b43;
+    background: linear-gradient(106deg, #101e32 0%, #0c1727 56%, #09121f 100%);
+    box-shadow: inset 0 1px rgba(174, 205, 255, 0.035), inset 0 -1px rgba(0, 0, 0, 0.18);
 }
-#leftSatellitesPanel .react-layers-header::after { display: none; }
-.react-layers-heading { color: #f1f5ff; font: 700 16px/1 system-ui, sans-serif; letter-spacing: 0.07em; }
-#leftSatellitesPanel .react-layers-header .sidebar-panel-actions { gap: 6px; }
-#leftSatellitesPanel .react-layers-header .sidebar-panel-actions button { width: 33px; height: 33px; border: 1px solid #17263c; border-radius: 7px; background: #0c1522; color: #c9d6ec; font-size: 15px; }
-#leftSatellitesPanel .react-layers-header .sidebar-panel-actions .object-add-btn { border-color: #4167ff; background: #3d5cf4; color: #fff; font-size: 25px; box-shadow: 0 6px 14px rgba(54, 84, 238, 0.3); }
-#leftSatellitesPanel .react-layers-header .object-global-remove-btn { display: none; }
-
-.react-layers-search {
-    display: grid;
-    grid-template-columns: 36px 1fr 42px;
-    align-items: center;
-    height: 38px;
-    margin: 0 14px 12px;
-    border: 1px solid #1a2a47;
-    border-radius: 8px;
-    background: #0a1221;
-    color: #a5b2c9;
-    font: 500 14px/1 system-ui, sans-serif;
+#leftSatellitesPanel .orbit-layers-heading {
+    color: #f0f5ff;
+    font: 700 16px/1 system-ui, sans-serif;
+    letter-spacing: 0.07em;
 }
-.react-layers-search > span:first-child { justify-self: center; color: #c4d0e5; font-size: 20px; }
-.react-layers-search > svg { width: 18px; height: 18px; margin: auto; color: #a5b2c9; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-.react-layers-search input { width: 100%; min-width: 0; border: 0; outline: 0; appearance: textfield; -webkit-appearance: textfield; background: transparent; color: #dce8fa; font: inherit; }
-.react-layers-search input::-webkit-search-decoration, .react-layers-search input::-webkit-search-cancel-button, .react-layers-search input::-webkit-search-results-button, .react-layers-search input::-webkit-search-results-decoration { display: none; }
-.react-layers-search input::placeholder { color: #8a98ad; opacity: 1; }
-.react-layer-search-options { position: relative; height: 100%; }
-.react-layers-search > .react-layer-search-options > button { width: 100%; height: 100%; border: 0; border-left: 1px solid #1a2a47; background: transparent; color: #b9c8df; cursor: pointer; }
-.react-layers-search > .react-layer-search-options > button.active, .react-layers-search > .react-layer-search-options > button:hover { background: #13213a; color: #e2ebfa; }
-.react-layer-search-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10220; display: grid; gap: 3px; width: 190px; padding: 5px; border: 1px solid #315178; border-radius: 8px; background: #0c1728; box-shadow: 0 12px 28px rgba(0, 0, 0, .45); }
-.react-layer-search-menu button { display: flex; align-items: center; gap: 9px; width: 100%; border: 0; border-radius: 5px; padding: 8px; background: transparent; color: #bdcbe0; cursor: pointer; text-align: left; font: 600 11px/1 system-ui, sans-serif; }
-.react-layer-search-menu button:hover, .react-layer-search-menu button.active { background: #193057; color: #eaf1ff; }
-.react-layer-search-menu button b { display: inline-grid; min-width: 22px; place-items: center; color: #8cadff; font-size: 11px; }
-.react-vector-action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.react-project-section { margin: 0 14px 8px; padding-top: 11px; border-top: 1px solid #172334; color: #b8c5da; font: 700 10px/1 system-ui, sans-serif; letter-spacing: 0.1em; }
 
 #leftSatellitesPanel #leftSatellitesPanelContent { padding: 0 10px 10px 14px; }
 #leftSatellitesPanel .object-sidebar-body-compact { padding: 0; gap: 8px; }
@@ -124,33 +101,12 @@ body.with-toolbars #cesiumContainer {
 #leftSatellitesPanel .layer-tree-folder-body { margin-left: 16px; padding-left: 16px; border-left: 0; }
 #leftSatellitesPanel .layer-tree-folder-body:not([hidden]):not(.is-empty) { border-left: 1px solid #31455f; }
 #leftSatellitesPanel .object-sidebar-body-compact .object-list-row { min-height: 33px; border: 0; border-radius: 6px; background: transparent; }
-#leftSatellitesPanel .object-sidebar-body-compact .object-list-item { padding: 7px 8px; color: #dfe9fa; font-size: 13px; font-weight: 600; }
+#leftSatellitesPanel .object-sidebar-body-compact .object-list-item { padding: 7px 8px; color: #dfe9fa; font-size: 12px; font-weight: 600; }
 #leftSatellitesPanel .object-sidebar-body-compact .object-list-row:hover { border-color: transparent; background: #101d31; }
 #leftSatellitesPanel .object-sidebar-body-compact .object-visibility-btn { padding: 6px 7px; color: #c8d6ed; font-size: 15px; opacity: 0.9; }
 #leftSatellitesPanel .object-sidebar-body-compact .object-remove-layer-btn { padding: 6px 7px; font-size: 11px; }
 #leftSatellitesPanel .object-sidebar-body-compact .object-list-row-add { min-height: 40px; border-color: #3454d0; border-radius: 8px; background: rgba(46, 74, 200, 0.1); }
 #leftSatellitesPanel .object-sidebar-body-compact .object-list-add-item { min-height: 40px; color: #aebfff; font-size: 12px; }
-
-.react-project-time { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; min-height: 74px; margin: 0 14px; padding: 11px 4px 13px; border-top: 1px solid #17283d; color: #dbe6f8; }
-.react-project-time-icon { display: grid; width: 30px; height: 30px; place-items: center; border-right: 1px solid #203148; color: #b9c9df; }
-.react-project-time-icon svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.react-project-time div { display: grid; gap: 4px; }
-.react-project-time small { color: #aab8cf; font: 600 11px/1 system-ui, sans-serif; }
-.react-project-time strong { color: #f2f6ff; font: 500 16px/1 system-ui, sans-serif; letter-spacing: .02em; }
-.react-project-time-status { display: inline-flex; align-items: center; gap: 7px; color: #bed0e8; font: 600 11px/1 system-ui, sans-serif; white-space: nowrap; }
-.react-project-time-status i { width: 7px; height: 7px; border-radius: 50%; background: #46d481; box-shadow: 0 0 8px rgba(70, 212, 129, .65); }
-.react-project-time-status.is-simulated i { background: #f0ae45; box-shadow: 0 0 8px rgba(240, 174, 69, .65); }
-
-/* React-owned layer tree; the legacy list is kept hidden only as an adapter. */
-.react-layer-tree { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 8px 14px 12px; }
-.react-layer-tree .object-list-row { margin: 2px 0; }
-.react-layer-tree .layer-tree-folder-body { margin-left: 16px; }
-.react-layer-tree .layer-tree-folder-header { display: flex; align-items: center; }
-.react-layer-tree .layer-tree-folder-header > button:first-child { flex: 1; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.react-layer-tree .layer-tree-folder-header > button:last-child { border: 0; background: transparent; color: #9eb5d7; cursor: pointer; font-size: 16px; }
-
-/* Keep the project-file drop target centred in the open-project dialog. */
-.project-action-dialog .project-file-picker { width: min(225px, 100%); box-sizing: border-box; margin: 0 auto; }
 
 /* Every layer item branches off the vertical tree guide. */
 #leftSatellitesPanel .layer-tree-folder-body > .object-list-row,
@@ -164,189 +120,8 @@ body.with-toolbars #cesiumContainer {
     #leftSatellitesPanel { top: 64px !important; left: 8px; bottom: 8px; border-radius: 12px; }
     #leftInfoPanel { top: 64px !important; left: 8px; bottom: 8px; border-radius: 12px; }
     #leftSidebar { top: 64px !important; bottom: 8px; left: 4px; }
-    .react-layers-heading { font-size: 18px; }
-    #leftSatellitesPanel .react-layers-header { min-height: 62px; padding: 14px; }
-    .react-layers-search, .react-project-section { margin-inline: 14px; }
 }
 
 /* The engine's original simulation dock is retained only as a hidden controller.
    React owns the visible interface below. */
 #simulationControlDock { display: none !important; }
-
-.react-simulation-dock {
-    position: fixed;
-    right: 14px;
-    /* Match the 74px project-time footer in the Layers panel. */
-    bottom: 6px;
-    left: max(62px, calc(68px * var(--orbit-ui-scale)));
-    z-index: 10110;
-    display: grid;
-    grid-template-columns: max-content minmax(260px, 1fr);
-    align-items: center;
-    row-gap: 9px;
-    column-gap: 18px;
-    height: 74px;
-    padding: 7px 14px;
-    box-sizing: border-box;
-    border: 1px solid rgba(72, 103, 151, .45);
-    border-radius: 10px;
-    background: linear-gradient(120deg, rgba(10, 22, 39, .97), rgba(5, 13, 24, .97));
-    box-shadow: 0 16px 38px rgba(0, 0, 0, .38), inset 0 1px rgba(255, 255, 255, .035);
-    backdrop-filter: blur(10px);
-    transition: opacity .18s ease, transform .18s ease;
-}
-.react-simulation-dock.is-collapsed { opacity: 0; pointer-events: none; transform: translateY(14px); }
-.react-sim-controls-row { display: flex; grid-column: 1; min-height: 53px; align-items: center; gap: 7px; min-width: 0; flex-wrap: wrap; transform: translateY(-6px); }
-.react-simulation-dock button, .react-simulation-dock input { font: 600 11px/1 system-ui, sans-serif; }
-.react-simulation-dock button { height: 31px; border: 1px solid #213653; border-radius: 7px; padding: 0 10px; background: #0c1728; color: #b9c9df; cursor: pointer; }
-.react-simulation-dock button:hover { border-color: #4168a3; background: #14243d; color: #edf4ff; }
-.react-simulation-dock button:disabled { cursor: not-allowed; opacity: .42; }
-.react-simulation-dock button.active { border-color: #4774ff; background: #17357b; color: #dfe8ff; box-shadow: inset 0 0 0 1px rgba(114, 145, 255, .18); }
-.react-sim-record { display: inline-flex; align-items: center; gap: 6px; }
-.react-sim-record i { width: 7px; height: 7px; border-radius: 50%; background: #ff576d; box-shadow: 0 0 7px rgba(255, 87, 109, .55); }
-.react-sim-record.is-recording { width: 34px; min-width: 34px; justify-content: center; gap: 5px; padding: 0; border-color: #d2556b !important; background: #351724 !important; color: #ffd9df !important; }
-.react-sim-pause-icon { display: inline-flex; gap: 3px; align-items: center; }
-.react-sim-pause-icon b { display: block; width: 2px; height: 10px; border-radius: 1px; background: #f5d6dd; }
-.react-sim-mode-group, .react-sim-actions-group, .react-sim-range-group { display: inline-flex; align-items: center; gap: 5px; }
-.react-sim-domain { height: 31px; display: inline-flex; align-items: center; padding: 0 10px; border: 1px solid #1c3049; border-radius: 7px; background: rgba(13, 25, 42, .7); color: #8ea2bf; font: 700 10px/1 system-ui, sans-serif; }
-.react-sim-range-group { order: 3; width: 100%; }
-.react-sim-range-group label { display: inline-flex; align-items: center; gap: 5px; color: #9cafc9; font: 600 10px/1 system-ui, sans-serif; }
-.react-sim-range-group input { width: 150px; height: 31px; border: 1px solid #213653; border-radius: 7px; padding: 0 7px; background: #0a1422; color: #dce8fb; color-scheme: dark; }
-.react-sim-actions-group { order: 2; }
-.react-simulation-dock .react-sim-icon { width: 31px; min-width: 31px; padding: 0; font-size: 14px; }
-.react-simulation-dock .react-sim-play { border-color: #4167f4; background: #3158da; color: #fff; }
-.react-simulation-dock .react-sim-play:hover { background: #426bf1; }
-.react-sim-speed-menu { position: relative; }
-.react-sim-speed-options { position: absolute; right: 0; bottom: calc(100% + 7px); z-index: 2; display: grid; gap: 4px; min-width: 78px; padding: 5px; border: 1px solid #315178; border-radius: 8px; background: #0c1728; box-shadow: 0 12px 28px rgba(0, 0, 0, .45); }
-.react-sim-speed-options button { width: 100%; text-align: left; }
-.react-sim-mode-menu { position: relative; }
-.react-sim-mode-menu > button { min-width: 92px; }
-.react-sim-record { min-width: 66px; justify-content: center; }
-.react-sim-mode-options { position: absolute; bottom: calc(100% + 7px); left: 0; z-index: 3; display: grid; gap: 4px; min-width: 108px; padding: 5px; border: 1px solid #315178; border-radius: 8px; background: #0c1728; box-shadow: 0 12px 28px rgba(0, 0, 0, .45); }
-.react-sim-mode-options button { width: 100%; text-align: left; }
-.react-sim-date-menu { position: relative; }
-.react-simulation-dock .react-sim-calendar-btn { width: 31px; min-width: 31px; padding: 0; }
-.react-sim-calendar-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.react-sim-date-options { position: absolute; right: 0; bottom: calc(100% + 7px); z-index: 3; display: grid; gap: 8px; width: 238px; padding: 10px; border: 1px solid #315178; border-radius: 8px; background: #0c1728; box-shadow: 0 12px 28px rgba(0, 0, 0, .45); }
-.react-sim-date-options label { display: grid; gap: 5px; color: #aebed5; font: 700 10px/1 system-ui, sans-serif; }
-.react-sim-date-options input { width: 100%; height: 30px; box-sizing: border-box; border: 1px solid #233957; border-radius: 6px; padding: 0 6px; background: #091321; color: #dce8fb; color-scheme: dark; }
-.react-sim-timeline-row { display: grid; grid-column: 2; grid-template-columns: minmax(160px, 1fr); align-items: center; min-width: 0; }
-.react-sim-timeline-track { position: relative; min-width: 0; padding: 18px 0 31px; }
-.react-sim-timeline-row input { position: relative; z-index: 3; width: 100%; height: 12px; margin: -4px 0; appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer; }
-.react-sim-timeline-row input::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(to right, #4779ff 0 var(--timeline-progress), #253a57 var(--timeline-progress) 100%); box-shadow: inset 0 0 0 1px rgba(113, 141, 181, .18); }
-.react-sim-timeline-row input::-webkit-slider-thumb { width: 12px; height: 12px; margin-top: -4px; appearance: none; -webkit-appearance: none; border: 2px solid #6f98ff; border-radius: 50%; background: #2860ed; box-shadow: 0 0 0 3px rgba(54, 99, 239, .2); }
-.react-sim-timeline-row input::-moz-range-track { height: 4px; border-radius: 4px; background: #253a57; box-shadow: inset 0 0 0 1px rgba(113, 141, 181, .18); }
-.react-sim-timeline-row input::-moz-range-progress { height: 4px; border-radius: 4px; background: #4779ff; }
-.react-sim-timeline-row input::-moz-range-thumb { width: 9px; height: 9px; border: 2px solid #6f98ff; border-radius: 50%; background: #2860ed; box-shadow: 0 0 0 3px rgba(54, 99, 239, .2); }
-.react-sim-current-time { position: absolute; z-index: 3; top: -5px; transform: translateX(-50%); padding: 5px 7px; border: 1px solid #3d70f4; border-radius: 5px; background: #2459d9; color: #fff; box-shadow: 0 6px 15px rgba(21, 71, 198, .4); font: 700 10px/1 system-ui, sans-serif; white-space: nowrap; pointer-events: none; }
-.react-sim-current-time::after { position: absolute; bottom: -5px; left: 50%; width: 8px; height: 8px; border-right: 1px solid #3d70f4; border-bottom: 1px solid #3d70f4; background: #2459d9; content: ""; transform: translateX(-50%) rotate(45deg); }
-.react-sim-current-time.is-start { transform: none; }
-.react-sim-current-time.is-start::after { left: 6px; transform: translateX(0) rotate(45deg); }
-.react-sim-current-time.is-end { transform: translateX(-100%); }
-.react-sim-current-time.is-end::after { left: auto; right: 6px; transform: translateX(0) rotate(45deg); }
-.react-sim-timeline-subdivisions { position: absolute; z-index: 2; top: 12px; right: 0; left: 0; height: 42px; pointer-events: none; }
-.react-sim-timeline-subdivisions > span { position: absolute; top: 0; width: 1px; height: 100%; transform: translateX(-50%); }
-.react-sim-timeline-subdivisions > span:first-child { transform: none; }
-.react-sim-timeline-subdivisions > span:last-child { transform: translateX(-100%); }
-.react-sim-timeline-subdivisions i { position: absolute; top: 2px; left: 0; width: 1px; height: 12px; background: #64738a; opacity: .72; }
-.react-sim-timeline-subdivisions .is-major i { top: -1px; height: 18px; background: #9aa8ba; opacity: .9; }
-.react-sim-timeline-subdivisions time { position: absolute; top: 22px; left: 0; display: grid; gap: 1px; color: #8497b3; font: 600 9px/1 system-ui, sans-serif; line-height: 1.15; white-space: nowrap; text-align: center; transform: translateX(-50%); }
-.react-sim-timeline-subdivisions > span:first-child time { transform: none; text-align: left; }
-.react-sim-timeline-subdivisions > span:last-child time { transform: translateX(-100%); text-align: right; }
-.react-sim-timeline-subdivisions time b { color: #b8c8df; font-weight: 700; }
-.react-sim-timeline-info { display: inline-flex; align-items: center; gap: 9px; color: #879ab5; font: 600 10px/1 system-ui, sans-serif; white-space: nowrap; }
-.react-sim-timeline-info strong { color: #cbd9ed; font-weight: 600; }
-.react-simulation-collapse { position: fixed; right: 26px; bottom: 72px; z-index: 10111; width: 29px; height: 22px; border: 1px solid #294465; border-radius: 6px 6px 0 0; background: #0d192a; color: #b8cbe5; cursor: pointer; font-size: 10px; }
-.react-simulation-collapse.is-collapsed { right: 22px; bottom: 8px; border-radius: 6px; }
-
-.object-details-panel { position: fixed; top: 86px; right: 14px; bottom: 132px; z-index: 10124; display: flex; width: min(300px, calc(100vw - 28px)); min-height: 300px; flex-direction: column; padding: 16px; overflow: auto; box-sizing: border-box; border: 1px solid rgba(65, 99, 147, .58); border-radius: 10px; background: linear-gradient(145deg, rgba(12, 25, 42, .97), rgba(5, 14, 25, .97)); box-shadow: 0 22px 60px rgba(0, 0, 0, .46), inset 0 1px rgba(255,255,255,.045); color: #dbe7fa; font-family: system-ui, sans-serif; pointer-events: auto; }
-.object-details-panel h2 { max-width: calc(100% - 30px); margin: 0 0 9px; overflow: hidden; color: #f1f6ff; font: 500 17px/1.2 system-ui, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
-.object-details-close { position: absolute; top: 14px; right: 15px; border: 0; background: transparent; color: #b7c6dc; cursor: pointer; font-size: 24px; line-height: 1; }
-.object-details-close:hover { color: #fff; }
-.object-details-meta { display: flex; align-items: center; gap: 10px; padding-bottom: 17px; border-bottom: 1px solid #1c2c43; color: #8fa1ba; font: 600 11px/1 system-ui, sans-serif; letter-spacing: .03em; }
-.object-status { display: inline-flex; padding: 6px 8px; border-radius: 5px; font: 700 10px/1 system-ui, sans-serif; }
-.object-status.active { background: rgba(39, 169, 95, .19); color: #73e3a0; }
-.object-status.hidden { background: rgba(133, 75, 193, .24); color: #d2a8ff; }
-.object-details-tabs { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(4, 1fr); margin: 11px 0 13px; border-bottom: 1px solid #1c2c43; }
-.object-details-tabs button { position: relative; border: 0; padding: 9px 2px 11px; background: transparent; color: #8d9bb1; cursor: pointer; font: 700 10px/1 system-ui, sans-serif; }
-.object-details-tabs button.active { color: #eaf1ff; }
-.object-details-tabs button.active::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: #4476ff; box-shadow: 0 0 8px #4476ff; content: ""; }
-.object-details-rows { display: grid; gap: 11px; padding: 2px 0 14px; }
-.object-details-row { display: grid; grid-template-columns: minmax(92px, 1fr) minmax(80px, 1.25fr); gap: 10px; align-items: start; color: #91a1b8; font: 500 11px/1.35 system-ui, sans-serif; }
-.object-details-row strong { color: #e0e9f8; text-align: right; font-weight: 600; overflow-wrap: anywhere; }
-.object-details-row strong.is-operational { color: #73e3a0; }
-.object-details-row strong.is-hidden { color: #d2a8ff; }
-.object-details-full { margin-top: auto; border: 1px solid #294464; border-radius: 7px; padding: 10px; background: #0b1829; color: #70a1ff; cursor: pointer; font: 600 12px/1 system-ui, sans-serif; }
-.object-details-full span { float: right; font-size: 16px; }
-@media (max-width: 760px) { .object-details-panel { top: 80px; right: 10px; bottom: 74px; width: min(330px, calc(100vw - 20px)); } }
-
-@media (max-width: 1100px) {
-    .react-simulation-dock { grid-template-columns: 1fr; }
-    .react-sim-controls-row, .react-sim-timeline-row { grid-column: 1; }
-    .react-sim-range-group { width: 100%; }
-    .react-sim-range-group label { flex: 1; }
-    .react-sim-range-group input { width: 100%; }
-    .react-sim-timeline-row { grid-template-columns: 1fr; gap: 8px; }
-}
-
-.react-help-panel {
-    position: fixed;
-    top: 82px;
-    right: 22px;
-    z-index: 10120;
-    width: 260px;
-    padding: 18px;
-    border: 1px solid #29466f;
-    border-radius: 12px;
-    background: #0d1728;
-    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
-    color: #c9d7ed;
-    font: 13px/1.45 system-ui, sans-serif;
-}
-.react-help-panel strong { display: block; color: #f0f5ff; font-size: 15px; }
-.react-help-panel p { margin: 8px 0 0; }
-.react-help-panel button { position: absolute; top: 8px; right: 9px; border: 0; background: transparent; color: #b8c7df; cursor: pointer; font-size: 20px; }
-
-.react-notification-center {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    z-index: 10200;
-    width: min(480px, calc(100vw - 32px));
-    max-height: min(560px, calc(100vh - 140px));
-    padding: 16px;
-    overflow: auto;
-    transform: translate(-50%, -50%);
-    border: 1px solid #37557f;
-    border-radius: 14px;
-    background: #0c1627;
-    box-shadow: 0 24px 72px rgba(0, 0, 0, 0.58);
-    color: #dce7fb;
-}
-.react-notification-center header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; font: 700 16px/1 system-ui, sans-serif; }
-.react-notification-center header button, .react-notification-item button { border: 0; background: transparent; color: #aebdd6; cursor: pointer; font-size: 20px; }
-.react-notification-list { display: grid; gap: 9px; }
-.react-notification-item { position: relative; padding: 12px 38px 12px 12px; border: 1px solid #314b70; border-radius: 10px; background: #111f34; }
-.react-notification-item.is-error { border-color: #a14658; background: #291821; }
-.react-notification-item button { position: absolute; top: 8px; right: 8px; }
-.react-notification-item strong { color: #eff5ff; font: 700 12px/1 system-ui, sans-serif; text-transform: uppercase; }
-.react-notification-item p { margin: 7px 0 0; color: #c1cee3; white-space: pre-wrap; font: 13px/1.45 system-ui, sans-serif; }
-.react-notification-clear { display: block; margin: 14px 0 0 auto; border: 1px solid #3b587e; border-radius: 7px; padding: 7px 10px; background: #14243d; color: #c9d8f0; cursor: pointer; font: 600 12px/1 system-ui, sans-serif; }
-.react-notification-empty { margin: 0; color: #aebbd1; font: 13px/1.4 system-ui, sans-serif; }
-
-.react-project-title { position: relative; display: flex; align-items: center; gap: 7px; }
-.react-project-menu-button { width: 21px; height: 21px; padding: 0; border: 1px solid #3b587f; border-radius: 5px; background: #14233b; color: #dce9ff; cursor: pointer; font: 700 16px/1 system-ui, sans-serif; }
-.react-project-menu { position: absolute; top: calc(100% + 7px); left: 0; z-index: 10210; width: 175px; padding: 5px; border: 1px solid #38557d; border-radius: 8px; background: #101b2e; box-shadow: 0 12px 32px rgba(0, 0, 0, .4); }
-.react-project-menu button { display: block; width: 100%; border: 0; border-radius: 5px; padding: 8px; background: transparent; color: #d5e1f7; cursor: pointer; text-align: left; font: 600 12px/1 system-ui, sans-serif; }
-.react-project-menu button:hover { background: #1d3151; }
-
-@media (max-width: 900px) {
-    .react-time-control { left: 0; grid-template-columns: 115px 145px 1fr; gap: 14px; padding-inline: 14px; }
-    .react-time-live { display: none; }
-}
-
-@media (max-width: 620px) {
-    .react-time-control { grid-template-columns: 1fr auto; min-height: 68px; }
-    .react-time-status span, .react-time-status small, .react-time-timeline { display: none; }
-    .react-time-playback { justify-self: end; }
-}

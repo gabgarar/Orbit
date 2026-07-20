@@ -1,4 +1,17 @@
 import { createLayerTree } from "./features/layers/layerTree.js";
+import { OBJECT_STATE_CHANGED_EVENT } from "./runtime/objectDetailsEvents.js";
+import { deriveLayerActionsState, emitLayerActionsState } from "./runtime/layerActionsState.js";
+import { deriveTleOrbitalMetrics } from "./features/objectDetails/tleMetrics.js";
+import { tleEpochAgeMs, tleEpochToDate } from "./features/objectDetails/tleEpoch.js";
+import { getCatalogRefreshRetryAt } from "./features/catalog/refreshStatus.js";
+
+function visibilityIconMarkup(isVisible) {
+    return isVisible
+        ? '<svg class="orbit-visibility-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.6"/></svg>'
+        : '<svg class="orbit-visibility-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.7 4.2A10.8 10.8 0 0 1 12 4c6 0 9.5 6 9.5 8a11 11 0 0 1-3 4.1"/><path d="M6.5 6.5C4 8.1 2.5 10.7 2.5 12c0 2 3.5 8 9.5 8 1.3 0 2.6-.3 3.7-.8"/></svg>';
+}
+
+const trashIconMarkup = '<svg class="orbit-trash-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>';
 
 function formatNumber(value, decimals = 2) {
     const n = Number(value);
@@ -185,7 +198,6 @@ function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOp
 
     const statusRows = [
         row("Distancia a camara", formatNumber(telemetry.distance_to_camera_m, 2), " m"),
-        row("Puntos de estela", formatNumber(telemetry.trail_points, 0)),
         row("Edad telemetria", formatNumber(telemetry.telemetry_age_ms, 0), " ms"),
         row("Fuente orbital", sourceFormat),
         row("Origen", sourceOrigin),
@@ -218,9 +230,7 @@ function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOp
         orbitRows = [
             row("Tipo de fuente", "TLE"),
             ...(oemDomainActive ? [] : [
-                row("Propagacion futura", formatDurationHoursAndDays(telemetry.propagation_future_hours)),
-                row("Propagacion pasada", formatDurationHoursAndDays(telemetry.propagation_past_hours)),
-                row("Pasado configurado", formatNumber(telemetry.propagation_past_seconds, 1), " s")
+                row("Propagacion futura", formatDurationHoursAndDays(telemetry.propagation_future_hours))
             ]),
             row("Tipo de orbita", orbitInfo?.label || "Desconocida"),
             row("Altitud estimada", Number.isFinite(orbitInfo?.altitudeKm) ? formatNumber(orbitInfo.altitudeKm, 1) : "-", " km"),
@@ -258,9 +268,14 @@ function parseTleSummary(tle) {
     const line1 = tle.line1;
     const line2 = tle.line2;
 
+    const noradId = line1.slice(2, 7).trim();
+    const classification = line1.slice(7, 8).trim();
+    const internationalDesignator = line1.slice(9, 17).trim();
     const epoch = line1.slice(18, 32).trim();
     const meanMotionDot = line1.slice(33, 43).trim();
     const bstar = line1.slice(53, 61).trim();
+    const ephemerisType = line1.slice(62, 63).trim();
+    const elementSetNumber = line1.slice(64, 68).trim();
 
     const inclinationDeg = line2.slice(8, 16).trim();
     const raanDeg = line2.slice(17, 25).trim();
@@ -268,42 +283,27 @@ function parseTleSummary(tle) {
     const argPerigeeDeg = line2.slice(34, 42).trim();
     const meanAnomalyDeg = line2.slice(43, 51).trim();
     const meanMotionRevDay = line2.slice(52, 63).trim();
+    const revolutionNumberAtEpoch = line2.slice(63, 68).trim();
 
     return {
+        noradId,
+        classification,
+        internationalDesignator,
         epoch,
         meanMotionDot,
         bstar,
+        ephemerisType,
+        elementSetNumber,
         inclinationDeg,
         raanDeg,
         eccentricity: eccentricityRaw ? `0.${eccentricityRaw}` : "-",
         argPerigeeDeg,
         meanAnomalyDeg,
         meanMotionRevDay,
+        revolutionNumberAtEpoch,
         line1,
         line2
     };
-}
-
-// Convertir epoch TLE (YYDDD.dddddd) a Date UTC
-function tleEpochToDate(epochStr) {
-    if (!epochStr) return null;
-    // Normalizar y asegurar formato
-    const s = String(epochStr).trim();
-    if (!/^[0-9]{5}(.+)?/.test(s)) {
-        // intentar parsear con partes
-    }
-    const yy = Number(s.slice(0, 2));
-    const doy = Number(s.slice(2));
-    if (!Number.isFinite(yy) || !Number.isFinite(doy)) return null;
-    const year = yy >= 57 ? 1900 + yy : 2000 + yy;
-    const dayIndex = Math.floor(doy) - 1;
-    const fraction = doy - Math.floor(doy);
-    const ms = Math.round(fraction * 24 * 3600 * 1000);
-    const date = new Date(Date.UTC(year, 0, 1));
-    date.setUTCDate(date.getUTCDate() + dayIndex);
-    // añadir fraccion del dia
-    date.setTime(date.getTime() + ms);
-    return date;
 }
 
 const EARTH_RADIUS_KM = 6378.137;
@@ -317,22 +317,7 @@ const ORBIT_KIND = {
     UNKNOWN: "unknown"
 };
 
-const MISSION_RULES = [
-    { value: "starlink", label: "Starlink", test: /\bstarlink\b/i },
-    { value: "sentinel", label: "Sentinel", test: /\bsentinel\b/i },
-    { value: "oneweb", label: "OneWeb", test: /\boneweb\b/i },
-    { value: "planet", label: "Planet", test: /\bplanet\b/i },
-    { value: "gnss", label: "GNSS", test: /\b(gps|galileo|glonass|beidou|navstar|qzss|irnss|navic)\b/i },
-    { value: "weather", label: "Weather", test: /\b(weather|goes|noaa|meteo|metop|himawari|fy-|fengyun)\b/i },
-    { value: "communications", label: "Communications", test: /\b(intelsat|iridium|orbcomm|globalstar|ses|viasat|echostar)\b/i },
-    { value: "stations", label: "Stations", test: /\b(iss|tiangong|css|station)\b/i },
-    { value: "military", label: "Military", test: /\b(nrol|yaogan|military|defense|usa )\b/i },
-    { value: "science", label: "Science", test: /\b(hubble|jwst|fermi|swift|gaia|tess|science)\b/i },
-    { value: "earth-observation", label: "Earth Observation", test: /\b(landsat|resource|dmc|radarsat|spot|pleiades)\b/i }
-];
-
-const ORBIT_FILTER_ORDER = [ORBIT_KIND.LEO, ORBIT_KIND.MEO, ORBIT_KIND.GEO, ORBIT_KIND.HEO, ORBIT_KIND.UNKNOWN];
-const MISSION_FILTER_ORDER = [...MISSION_RULES.map((rule) => rule.value), "other"];
+const ORBIT_FILTER_ORDER = [ORBIT_KIND.LEO, ORBIT_KIND.MEO, ORBIT_KIND.GEO, ORBIT_KIND.HEO];
 
 function orbitTagCode(kind) {
     switch (kind) {
@@ -347,7 +332,7 @@ function orbitTagCode(kind) {
 function buildOrbitTypeTagHtml(orbitInfo) {
     if (!orbitInfo) return "";
     const code = orbitTagCode(orbitInfo.kind);
-    return `<span class="orbit-type-tag orbit-type-${escapeHtml(orbitInfo.kind)}" title="${escapeHtml(orbitInfo.label)}">[${escapeHtml(code)}]</span> `;
+    return `<span class="orbit-type-tag orbit-type-${escapeHtml(orbitInfo.kind)}" title="${escapeHtml(code)}">${escapeHtml(code)}</span> `;
 }
 
 function createOrbitTypeTagElement(orbitInfo) {
@@ -355,8 +340,8 @@ function createOrbitTypeTagElement(orbitInfo) {
     const code = orbitTagCode(orbitInfo.kind);
     const tag = document.createElement("span");
     tag.className = `orbit-type-tag orbit-type-${orbitInfo.kind}`;
-    tag.title = orbitInfo.label;
-    tag.textContent = `[${code}]`;
+    tag.title = code;
+    tag.textContent = code;
     return tag;
 }
 
@@ -384,26 +369,16 @@ function classifyOrbitByName(satelliteId) {
     return ORBIT_KIND.UNKNOWN;
 }
 
-function inferMissionInfo(satelliteId) {
-    const normalized = String(satelliteId || "").trim();
-    for (const rule of MISSION_RULES) {
-        if (rule.test.test(normalized)) {
-            return { value: rule.value, label: rule.label };
-        }
-    }
-    return { value: "other", label: "Other" };
-}
-
 function getOrbitRecommendation(orbitKind) {
     switch (orbitKind) {
     case ORBIT_KIND.LEO:
-        return { label: "LEO - Low Earth Orbit", recommendedWindow: "1-3 dias", recommendedMaxDays: 3 };
+        return { label: "LEO", recommendedWindow: "1-3 dias", recommendedMaxDays: 3 };
     case ORBIT_KIND.MEO:
-        return { label: "MEO - Medium Earth Orbit", recommendedWindow: "1-2 semanas", recommendedMaxDays: 14 };
+        return { label: "MEO", recommendedWindow: "1-2 semanas", recommendedMaxDays: 14 };
     case ORBIT_KIND.GEO:
-        return { label: "GEO - Geostationary Orbit", recommendedWindow: "2-4 semanas", recommendedMaxDays: 28 };
+        return { label: "GEO", recommendedWindow: "2-4 semanas", recommendedMaxDays: 28 };
     case ORBIT_KIND.HEO:
-        return { label: "HEO - High Earth Orbit", recommendedWindow: "2-4 semanas", recommendedMaxDays: 28 };
+        return { label: "HEO", recommendedWindow: "2-4 semanas", recommendedMaxDays: 28 };
     default:
         return { label: "Desconocida", recommendedWindow: "Sin referencia", recommendedMaxDays: null };
     }
@@ -461,9 +436,8 @@ function buildTleFreshnessMessage(orbitInfo, ageDays) {
 
 function tleAgeDaysFromSummary(tleSummary) {
     if (!tleSummary || !tleSummary.epoch) return null;
-    const d = tleEpochToDate(tleSummary.epoch);
-    if (!d) return null;
-    return (Date.now() - d.getTime()) / (24 * 3600 * 1000);
+    const ageMs = tleEpochAgeMs(tleSummary.epoch);
+    return Number.isFinite(ageMs) ? ageMs / (24 * 3600 * 1000) : null;
 }
 
 function checkTleOldAdaptive(tleSummary, orbitInfo) {
@@ -475,50 +449,155 @@ function checkTleOldAdaptive(tleSummary, orbitInfo) {
     return { isOld: age > maxDays, days: Math.floor(age) };
 }
 
+function formatTleMetric(value, decimals, unit = "") {
+    const formatted = formatNumber(value, decimals);
+    return formatted === "-" ? "-" : `${formatted}${unit}`;
+}
+
+function formatTleAgeExact(ageMs) {
+    if (!Number.isFinite(ageMs)) return "-";
+    const result = `${formatNumber(Math.abs(ageMs) / (60 * 60 * 1000), 2)} h`;
+    return ageMs < 0 ? `dentro de ${result}` : result;
+}
+
+function getTleQualityStatus(ageDays, maxDays) {
+    if (!Number.isFinite(ageDays) || !Number.isFinite(maxDays) || maxDays <= 0 || ageDays < 0) return "-";
+    if (ageDays <= maxDays / 4) return "Excelente";
+    if (ageDays <= maxDays) return "Bueno";
+    if (ageDays <= maxDays * 2) return "Antiguo";
+    return "Caducado";
+}
+
+function interpretTleEccentricity(value) {
+    const eccentricity = Number(value);
+    if (!Number.isFinite(eccentricity) || eccentricity < 0 || eccentricity >= 1) return "-";
+    if (eccentricity < 0.01) return "Casi circular";
+    if (eccentricity < 0.25) return "Moderada";
+    return "Muy elíptica";
+}
+
+function getTleFreshnessDetails(tleSummary, orbitInfo, metrics) {
+    const epochDate = tleEpochToDate(tleSummary?.epoch);
+    const ageMs = tleEpochAgeMs(tleSummary?.epoch);
+    const ageDays = Number.isFinite(ageMs) ? ageMs / (24 * 3600 * 1000) : null;
+    const maxDays = Number.isFinite(orbitInfo?.recommendedMaxDays) ? Number(orbitInfo.recommendedMaxDays) : null;
+    const integrityValues = [metrics?.line1Checksum?.valid, metrics?.line2Checksum?.valid].filter((value) => typeof value === "boolean");
+    const integrity = integrityValues.length === 0
+        ? "Sin checksum"
+        : integrityValues.every(Boolean) ? "Checksum validado" : "Checksum no valido";
+
+    const quality = getTleQualityStatus(ageDays, maxDays);
+
+    return {
+        epochUtc: epochDate ? formatUtcDateTime(epochDate.getTime()) : "-",
+        exactAge: formatTleAgeExact(ageMs),
+        integrity,
+        quality,
+        status: quality,
+        recommendedWindow: orbitInfo?.recommendedWindow || "-"
+    };
+}
+
+const TLE_FIELD_HELP = Object.freeze({
+    "NORAD": "The unique catalogue number used to identify this tracked object.",
+    "Clasificacion": "The TLE security classification code; U normally means unclassified.",
+    "Designador internacional": "The COSPAR international designator: launch year, launch sequence, and object piece.",
+    "Epoca TLE": "The compact TLE epoch: the reference date and fractional day for this element set.",
+    "Epoca UTC": "The TLE epoch converted to a complete UTC timestamp.",
+    "Revolucion en epoch": "The orbit revolution number recorded at the TLE epoch.",
+    "Tipo de efemeride": "The ephemeris type code carried by the TLE; standard SGP4 elements normally use zero.",
+    "Conjunto de elementos": "The element-set number, incremented when a newer TLE is issued for the object.",
+    "Inclinacion": "The angle between the orbital plane and Earth's equatorial plane.",
+    "RAAN": "Right Ascension of the Ascending Node: the equatorial direction of the northbound equator crossing.",
+    "Excentricidad": "A dimensionless measure of orbital shape; zero is circular and values closer to one are more elliptical.",
+    "Forma orbital": "A plain-language interpretation of the eccentricity value.",
+    "Arg. Perigeo": "Argument of perigee: the angle locating perigee within the orbital plane.",
+    "Anomalia Media": "Mean anomaly: the satellite's phase along its ideal Keplerian orbit at the epoch.",
+    "Movimiento Medio": "The average number of orbital revolutions completed per day.",
+    "Derivada Mov. Medio": "The first time derivative of mean motion, indicating how the average orbital rate is changing.",
+    "BSTAR": "The SGP4 drag term used to model atmospheric drag and related perturbations.",
+    "Clase orbital": "The altitude-based orbital regime derived from the TLE, such as LEO, MEO, GEO, or HEO.",
+    "Periodo": "The estimated time required to complete one orbit.",
+    "Semieje mayor": "Half of the longest diameter of the orbit; it defines the orbit's overall size.",
+    "Perigeo": "The estimated lowest altitude above Earth reached during the orbit.",
+    "Apogeo": "The estimated highest altitude above Earth reached during the orbit.",
+    "Mov. medio angular": "Mean motion expressed as an angular rate in radians per second.",
+    "Edad exacta": "The exact elapsed time between the TLE epoch and the current simulation time.",
+    "Calidad estimada": "A freshness rating inferred from the TLE age and the recommended window for this orbit.",
+    "Integridad": "The result of validating the checksums encoded in the two TLE lines.",
+    "Estado": "The current TLE freshness status derived from its age.",
+    "Ventana recomendada": "The recommended maximum propagation period before obtaining a newer TLE."
+});
+
+function tleInfoField(label, value) {
+    const help = TLE_FIELD_HELP[label] || "TLE catalogue field.";
+    const displayValue = value === undefined || value === null || value === "" ? "-" : value;
+    const accessibleLabel = `${label}. ${help}`;
+    return `<div class="tle-info-field" tabindex="0" data-tooltip="${escapeHtml(help)}" title="${escapeHtml(help)}" aria-label="${escapeHtml(accessibleLabel)}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(displayValue)}</strong></div>`;
+}
+
 function buildTleExplanationHtml(satelliteId, tleSummary) {
     if (!tleSummary) {
         return `<div class="tle-info-empty">No hay TLE disponible para <strong>${escapeHtml(satelliteId)}</strong>.</div>`;
     }
 
     const orbitInfo = getOrbitInfoFromTleSummary(tleSummary, satelliteId);
-    const tleAgeDays = tleAgeDaysFromSummary(tleSummary);
-    const freshnessText = buildTleFreshnessMessage(orbitInfo, tleAgeDays);
+    const metrics = deriveTleOrbitalMetrics(tleSummary);
+    const freshness = getTleFreshnessDetails(tleSummary, orbitInfo, metrics);
 
     return `
-        <div class="tle-info-title">${buildOrbitTypeTagHtml(orbitInfo)}${escapeHtml(satelliteId)}</div>
+        <div class="tle-info-title">${buildOrbitTypeTagHtml(orbitInfo)}${escapeHtml(satelliteId)} — Parametros TLE</div>
         <section class="tle-info-section">
-            <h4>Lineas TLE</h4>
-            <pre>${escapeHtml(tleSummary.line1)}\n${escapeHtml(tleSummary.line2)}</pre>
-        </section>
-        <section class="tle-info-section">
-            <h4>Parametros Orbitales</h4>
+            <h4>Elemento TLE</h4>
             <div class="tle-info-grid">
-                <div><span>Epoca</span><strong>${escapeHtml(tleSummary.epoch || "-")}</strong></div>
-                <div><span>Tipo orbita</span><strong>${escapeHtml(orbitInfo.label)}</strong></div>
-                <div><span>Altitud estimada</span><strong>${Number.isFinite(orbitInfo.altitudeKm) ? `${escapeHtml(formatNumber(orbitInfo.altitudeKm, 1))} km` : "-"}</strong></div>
-                <div><span>Inclinacion</span><strong>${escapeHtml(tleSummary.inclinationDeg || "-")} deg</strong></div>
-                <div><span>RAAN</span><strong>${escapeHtml(tleSummary.raanDeg || "-")} deg</strong></div>
-                <div><span>Excentricidad</span><strong>${escapeHtml(tleSummary.eccentricity || "-")}</strong></div>
-                <div><span>Arg. Perigeo</span><strong>${escapeHtml(tleSummary.argPerigeeDeg || "-")} deg</strong></div>
-                <div><span>Anomalia Media</span><strong>${escapeHtml(tleSummary.meanAnomalyDeg || "-")} deg</strong></div>
-                <div><span>Movimiento Medio</span><strong>${escapeHtml(tleSummary.meanMotionRevDay || "-")} rev/dia</strong></div>
-                <div><span>Derivada Mov. Medio</span><strong>${escapeHtml(tleSummary.meanMotionDot || "-")}</strong></div>
-                <div><span>BSTAR</span><strong>${escapeHtml(tleSummary.bstar || "-")}</strong></div>
+                ${tleInfoField("NORAD", tleSummary.noradId)}
+                ${tleInfoField("Clasificacion", tleSummary.classification)}
+                ${tleInfoField("Designador internacional", tleSummary.internationalDesignator)}
+                ${tleInfoField("Epoca TLE", tleSummary.epoch)}
+                ${tleInfoField("Epoca UTC", freshness.epochUtc)}
+                ${tleInfoField("Revolucion en epoch", metrics.revolutionNumberAtEpoch)}
+                ${tleInfoField("Tipo de efemeride", tleSummary.ephemerisType)}
+                ${tleInfoField("Conjunto de elementos", tleSummary.elementSetNumber)}
             </div>
         </section>
         <section class="tle-info-section">
-            <h4>Vigencia recomendada</h4>
-            <p class="tle-info-paragraph">${escapeHtml(freshnessText)}</p>
+            <h4>Elementos e interpretacion</h4>
+            <div class="tle-info-grid">
+                ${tleInfoField("Inclinacion", `${tleSummary.inclinationDeg || "-"} deg`)}
+                ${tleInfoField("RAAN", `${tleSummary.raanDeg || "-"} deg`)}
+                ${tleInfoField("Excentricidad", tleSummary.eccentricity)}
+                ${tleInfoField("Forma orbital", interpretTleEccentricity(tleSummary.eccentricity))}
+                ${tleInfoField("Arg. Perigeo", `${tleSummary.argPerigeeDeg || "-"} deg`)}
+                ${tleInfoField("Anomalia Media", `${tleSummary.meanAnomalyDeg || "-"} deg`)}
+                ${tleInfoField("Movimiento Medio", `${tleSummary.meanMotionRevDay || "-"} rev/dia`)}
+                ${tleInfoField("Derivada Mov. Medio", tleSummary.meanMotionDot)}
+                ${tleInfoField("BSTAR", tleSummary.bstar)}
+            </div>
         </section>
         <section class="tle-info-section">
-            <h4>Interpretacion rapida</h4>
-            <ul>
-                <li><strong>Inclinacion</strong>: angulo del plano orbital.</li>
-                <li><strong>RAAN</strong>: orientacion del plano orbital.</li>
-                <li><strong>Excentricidad</strong>: forma de la orbita.</li>
-                <li><strong>Anomalia media</strong>: posicion del satelite en la epoca.</li>
-                <li><strong>Movimiento medio</strong>: vueltas por dia.</li>
-            </ul>
+            <h4>Derivados orbitales</h4>
+            <div class="tle-info-grid">
+                ${tleInfoField("Clase orbital", orbitInfo.label)}
+                ${tleInfoField("Periodo", formatTleMetric(metrics.periodMinutes, 2, " min"))}
+                ${tleInfoField("Semieje mayor", formatTleMetric(metrics.semiMajorAxisKm, 3, " km"))}
+                ${tleInfoField("Perigeo", formatTleMetric(metrics.perigeeKm, 3, " km"))}
+                ${tleInfoField("Apogeo", formatTleMetric(metrics.apogeeKm, 3, " km"))}
+                ${tleInfoField("Mov. medio angular", formatTleMetric(metrics.meanMotionRadSec, 8, " rad/s"))}
+            </div>
+        </section>
+        <section class="tle-info-section">
+            <h4>Calidad y vigencia</h4>
+            <div class="tle-info-grid">
+                ${tleInfoField("Edad exacta", freshness.exactAge)}
+                ${tleInfoField("Calidad estimada", freshness.quality)}
+                ${tleInfoField("Integridad", freshness.integrity)}
+                ${tleInfoField("Estado", freshness.status)}
+                ${tleInfoField("Ventana recomendada", freshness.recommendedWindow)}
+            </div>
+        </section>
+        <section class="tle-info-section">
+            <h4>Lineas TLE</h4>
+            <pre>${escapeHtml(tleSummary.line1)}\n${escapeHtml(tleSummary.line2)}</pre>
         </section>
     `;
 }
@@ -528,9 +607,13 @@ function buildOemExplanationHtml(satelliteId, telemetry, sourceMeta = null) {
     const sourceOrigin = String(sourceMeta?.sourceOrigin || telemetry?.source_origin || "CUSTOM").toUpperCase();
 
     return `
-        <div class="tle-info-title">${escapeHtml(satelliteId)}</div>
+        <div class="tle-info-title">${escapeHtml(satelliteId)} — Parametros TLE</div>
         <section class="tle-info-section">
-            <h4>Formato orbital</h4>
+            <h4>TLE no disponible</h4>
+            <p class="tle-info-paragraph">Este objeto usa efemerides OEM y no tiene un elemento TLE asociado. Los parametros TLE, sus derivados y su vigencia no aplican.</p>
+        </section>
+        <section class="tle-info-section">
+            <h4>Referencia OEM</h4>
             <div class="tle-info-grid">
                 <div><span>Fuente</span><strong>OEM</strong></div>
                 <div><span>Origen</span><strong>${escapeHtml(sourceOrigin)}</strong></div>
@@ -542,11 +625,6 @@ function buildOemExplanationHtml(satelliteId, telemetry, sourceMeta = null) {
                 <div><span>Estado temporal</span><strong>${oem.is_in_time_window === true ? "En ventana" : "Fuera de ventana"}</strong></div>
             </div>
         </section>
-        <section class="tle-info-section">
-            <h4>Interpretacion</h4>
-            <p class="tle-info-paragraph">Este objeto usa efemérides OEM del fichero importado, no una propagación TLE/SGP4.</p>
-            <p class="tle-info-paragraph">Cuando la simulación cae fuera del intervalo OEM, el objeto no se representa.</p>
-        </section>
     `;
 }
 
@@ -555,19 +633,19 @@ function buildOmmExplanationHtml(satelliteId, telemetry, sourceMeta = null, tleS
     const orbitInfo = getOrbitInfoFromTleSummary(tleSummary, satelliteId);
 
     return `
-        <div class="tle-info-title">${buildOrbitTypeTagHtml(orbitInfo)}${escapeHtml(satelliteId)}</div>
+        <div class="tle-info-title">${buildOrbitTypeTagHtml(orbitInfo)}${escapeHtml(satelliteId)} — Parametros TLE</div>
         <section class="tle-info-section">
-            <h4>Formato orbital</h4>
+            <h4>TLE no disponible</h4>
+            <p class="tle-info-paragraph">Este objeto esta definido como OMM y no dispone de dos lineas TLE para interpretar. Los parametros TLE se muestran como no disponibles.</p>
+        </section>
+        <section class="tle-info-section">
+            <h4>Referencia OMM</h4>
             <div class="tle-info-grid">
                 <div><span>Fuente</span><strong>OMM</strong></div>
                 <div><span>Origen</span><strong>${escapeHtml(sourceOrigin)}</strong></div>
                 <div><span>Tipo orbita</span><strong>${escapeHtml(orbitInfo?.label || "Desconocida")}</strong></div>
                 <div><span>Altitud estimada</span><strong>${Number.isFinite(orbitInfo?.altitudeKm) ? `${escapeHtml(formatNumber(orbitInfo.altitudeKm, 1))} km` : "-"}</strong></div>
             </div>
-        </section>
-        <section class="tle-info-section">
-            <h4>Interpretacion</h4>
-            <p class="tle-info-paragraph">Este objeto está marcado como OMM. La explicación prioriza metadatos de fuente y no asume TLE crudo.</p>
         </section>
     `;
 }
@@ -716,12 +794,11 @@ export function setupObjectSidebar({
     fetchCatalogPage,
     getLayerIds,
     getObjectTelemetry,
+    getObjectTimeRange,
     getObjectVisibility,
     onToggleObjectVisibility,
     getObjectLayerActive,
     onToggleObjectLayer,
-    getMaxActiveLayers,
-    getAvailableLayerSlots,
     onRemoveAllLayers,
     onShowAllObjects,
     onHideAllObjects,
@@ -738,6 +815,7 @@ export function setupObjectSidebar({
     onRequestRenameLayer,
     getLayerDisplayName,
     getLayerType,
+    getObjectSourceId = (id) => id,
     getGroundStationParams,
     isCatalogReady,
     getObjectTle,
@@ -759,6 +837,12 @@ export function setupObjectSidebar({
         return typeof translator === "function" ? translator(key) : key;
     };
     let selectedId = null;
+    // `selectedId` belongs to the legacy list selection and is intentionally
+    // cleared when the user clicks the globe.  Keep a separate target for the
+    // React detail card so that its data can still refresh while a dialog is
+    // open or after that transient selection has gone away.
+    let detailTargetId = null;
+    let detailSelectionRevision = 0;
     let layerFilterText = "";
     let layerSearchOptions = { matchCase: false, wholeWord: false, regex: false };
     let globalLayersVisible = true;
@@ -766,12 +850,11 @@ export function setupObjectSidebar({
     const catalogFilterState = {
         name: "",
         orbitKind: "",
-        mission: "",
-        sourceFormat: "",
         decayOnly: false
     };
 
     const CATALOG_PAGE_SIZE = 200;
+    const CATALOG_BULK_PAGE_SIZE = 1000;
     const BULK_PROCESS_CHUNK = 60;
 
     let catalogRenderToken = 0;
@@ -780,6 +863,13 @@ export function setupObjectSidebar({
     let catalogBusy = false;
     let catalogRefreshBusy = false;
     let catalogRefreshTimer = null;
+    let catalogRefreshUiState = {
+        status: "idle",
+        message: "",
+        detail: "",
+        progress: 0,
+        retryAt: null
+    };
     let catalogAnchorIndex = null;
     let catalogWaitInterval = null;
     let contextTargetId = null;
@@ -787,10 +877,8 @@ export function setupObjectSidebar({
     let exportSourceFormat = "TLE";
     let lastRenderedCatalogIds = [];
     let catalogServerTotal = 0;
-    let catalogOffset = 0;
     let catalogCurrentPage = 1;
     let catalogTotalPages = 1;
-    let catalogHasMore = false;
     let catalogLoadingPage = false;
     // Project ownership will provide persistence later; UI grouping is session-only.
     const layerTree = createLayerTree(null);
@@ -930,11 +1018,9 @@ export function setupObjectSidebar({
         const orbitInfo = getOrbitInfoFromTleSummary(tleSummary, id);
         const tleAgeDays = tleAgeDaysFromSummary(tleSummary);
         const tleAgeCheck = checkTleOldAdaptive(tleSummary, orbitInfo);
-        const missionInfo = inferMissionInfo(id);
         const meta = {
             tleSummary,
             orbitInfo,
-            missionInfo,
             hasTle,
             tleAgeDays,
             tleAgeWarning: Boolean(tleAgeCheck?.isOld)
@@ -951,11 +1037,6 @@ export function setupObjectSidebar({
         case ORBIT_KIND.HEO: return "HEO";
         default: return "Unknown";
         }
-    }
-
-    function missionFilterLabel(value) {
-        const rule = MISSION_RULES.find((item) => item.value === value);
-        return rule?.label || "Other";
     }
 
     const catalogRowElements = new Map();
@@ -985,8 +1066,8 @@ export function setupObjectSidebar({
             <div class="object-sidebar-header" id="objectSidebarHeader" role="button" tabindex="0" aria-expanded="false">
                 <h3 class="object-sidebar-title">Objetos en simulacion</h3>
                 <div class="object-sidebar-header-actions">
-                    <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas">🗑</button>
-                    <button class="object-global-eye-btn" id="toggleAllVisibilityBtn" type="button" title="Ocultar todas las capas" aria-label="Ocultar todas las capas">👁</button>
+                    <button class="object-global-remove-btn" id="removeAllLayersHeaderBtn" type="button" title="Quitar todas las capas" aria-label="Quitar todas las capas" hidden>${trashIconMarkup}</button>
+                    <button class="object-global-eye-btn" id="toggleAllVisibilityBtn" type="button" title="Ocultar todas las capas" aria-label="Ocultar todas las capas" hidden>${visibilityIconMarkup(true)}</button>
                     <button class="object-add-btn" id="openCatalogBtn" type="button" title="Añadir desde catalogo" aria-label="Añadir desde catalogo">+</button>
                     <button class="object-sidebar-toggle-btn" aria-hidden="true" title="Plegar panel">◂</button>
                 </div>
@@ -1007,14 +1088,12 @@ export function setupObjectSidebar({
             <div class="catalog-modal-header">
                 <h3>Catalogo</h3>
                 <div class="catalog-modal-header-actions">
-                    <button class="catalog-header-btn" id="catalogImportBtn" type="button">Importar</button>
                     <button class="catalog-header-btn" id="catalogFiltersBtn" type="button">Filtros</button>
                     <button class="catalog-header-btn" id="catalogRefreshBtn" type="button">Actualizar catalogo</button>
                     <button class="catalog-header-btn" id="catalogSelectAllBtn" type="button">Seleccionar todo</button>
                     <button class="catalog-close-btn" id="catalogCloseBtn" type="button" aria-label="Cerrar catalogo" title="Cerrar">✕</button>
                 </div>
             </div>
-            <input id="catalogImportFileInput" type="file" accept=".tle,.txt,.json,.xml,.omm,.oem" hidden />
             <input id="catalogSearch" type="text" placeholder="Buscar en catalogo..." />
             <div class="catalog-filter-summary" id="catalogFilterSummary" hidden></div>
             <div class="catalog-refresh-status" id="catalogRefreshStatus" hidden>
@@ -1046,20 +1125,8 @@ export function setupObjectSidebar({
             </div>
             <div class="catalog-filter-grid">
                 <label class="catalog-filter-field">
-                    <span>Nombre</span>
-                    <input id="catalogFilterName" type="text" placeholder="Filtrar por nombre..." />
-                </label>
-                <label class="catalog-filter-field">
                     <span>Tipo de orbita</span>
                     <select id="catalogOrbitFilter"></select>
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Tipo de mision</span>
-                    <select id="catalogMissionFilter"></select>
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Formato</span>
-                    <select id="catalogSourceFormatFilter"></select>
                 </label>
                 <label class="catalog-filter-field checkbox">
                     <span>Solo decay (perigeo bajo)</span>
@@ -1127,8 +1194,11 @@ export function setupObjectSidebar({
     const folderContextMenu = document.createElement("div");
     folderContextMenu.id = "folderContextMenu";
     folderContextMenu.innerHTML = `
-        <div class="folder-add-menu"><button class="catalog-context-action" type="button">Add <span>›</span></button><div class="folder-add-submenu">
-            <button class="catalog-context-action" data-folder-action="satellite" type="button">Satélite</button>
+        <div class="folder-add-menu"><button class="catalog-context-action" type="button">Add layer <span>›</span></button><div class="folder-add-submenu">
+            <div class="folder-add-menu"><button class="catalog-context-action" type="button">Add satellite <span>›</span></button><div class="folder-add-submenu">
+                <button class="catalog-context-action" data-folder-action="catalog" type="button">Add TLE from catalog</button>
+                <button class="catalog-context-action" data-folder-action="import" type="button">Import satellite</button>
+            </div></div>
             <button class="catalog-context-action" data-folder-action="station" type="button">Estación de tierra</button>
         </div></div>
         <button class="catalog-context-action" data-folder-action="create" type="button">Nueva subcarpeta</button>
@@ -1189,6 +1259,7 @@ export function setupObjectSidebar({
     });
     let folderContextTarget = null;
     let pendingFolderAssignment = null;
+    let pendingFolderImportAssignment = null;
 
     function openFolderContextMenu(folder, x, y) {
         folderContextTarget = folder;
@@ -1202,10 +1273,14 @@ export function setupObjectSidebar({
         const folder = folderContextTarget;
         folderContextMenu.classList.remove("open");
         if (!action || !folder) return;
-        if (action === "satellite") {
+        if (action === "catalog") {
             pendingFolderAssignment = { folderId: folder.id, knownIds: new Set(getRenderableLayerIds()) };
             onRequestAddSatellite?.();
             waitAndOpenCatalog();
+            return;
+        }
+        if (action === "import") {
+            requestSatelliteImport(folder);
             return;
         }
         if (action === "station") {
@@ -1221,7 +1296,13 @@ export function setupObjectSidebar({
         const tree = layerTree.snapshot(getRenderableLayerIds());
         const hasContent = tree.folders.some((item) => item.parentId === folder.id)
             || Object.values(tree.layerParents).some((parentId) => parentId === folder.id);
-        if (!hasContent || window.confirm(`La carpeta '${folder.name}' contiene elementos. ¿Eliminarla y devolver su contenido a la raíz?`)) {
+        const shouldDelete = !hasContent || await askConfirmation({
+            title: "Eliminar carpeta",
+            message: `La carpeta '${folder.name}' contiene elementos. ¿Eliminarla y devolver su contenido a la raíz?`,
+            confirmText: "Eliminar",
+            cancelText: "Cancelar"
+        });
+        if (shouldDelete) {
             const foldersToDelete = new Set([folder.id]);
             let foundNestedFolder = true;
             while (foundNestedFolder) {
@@ -1261,17 +1342,26 @@ export function setupObjectSidebar({
     const addMenu = document.createElement("div");
     addMenu.id = "layerAddMenu";
     addMenu.innerHTML = `
-        <button class="catalog-context-action" id="addSatelliteLayerBtn" type="button">Añadir satelite</button>
+        <input id="importSatelliteFileInput" type="file" accept=".tle,.txt,.json,.xml,.omm,.oem" hidden />
         <button class="catalog-context-action" id="addFolderBtn" type="button">Nueva carpeta</button>
-        <button class="catalog-context-action" id="addGroundStationBtn" type="button">Añadir estacion de tierra</button>
     `;
-    document.body.appendChild(addMenu);
     const addLayerEntry = document.createElement("div");
     addLayerEntry.className = "folder-add-menu";
-    addLayerEntry.innerHTML = `<button class="catalog-context-action" type="button">Add layer <span>›</span></button><div class="folder-add-submenu"><button class="catalog-context-action" data-add-kind="satellite" type="button">Satélite</button><button class="catalog-context-action" data-add-kind="station" type="button">Estación de tierra</button></div>`;
-    addLayerEntry.querySelector('[data-add-kind="satellite"]').addEventListener("click", () => addSatelliteLayerBtn.click());
-    addLayerEntry.querySelector('[data-add-kind="station"]').addEventListener("click", () => addGroundStationBtn.click());
+    addLayerEntry.innerHTML = `
+        <button class="catalog-context-action" type="button">Add layer <span>›</span></button>
+        <div class="folder-add-submenu">
+            <div class="folder-add-menu">
+                <button class="catalog-context-action" type="button">Add satellite <span>›</span></button>
+                <div class="folder-add-submenu">
+                    <button class="catalog-context-action" id="addTleFromCatalogBtn" type="button">Add TLE from catalog</button>
+                    <button class="catalog-context-action" id="importSatelliteBtn" type="button">Import satellite</button>
+                </div>
+            </div>
+            <button class="catalog-context-action" id="addGroundStationBtn" type="button">Ground station</button>
+        </div>
+    `;
     addMenu.prepend(addLayerEntry);
+    document.body.appendChild(addMenu);
     const projectActionsEntry = document.createElement("div");
     projectActionsEntry.className = "folder-add-menu project-actions-entry";
     projectActionsEntry.innerHTML = `
@@ -1464,6 +1554,7 @@ export function setupObjectSidebar({
     const header = sidebar.querySelector("#objectSidebarHeader");
     const removeAllLayersHeaderBtn = sidebar.querySelector("#removeAllLayersHeaderBtn") || document.getElementById("removeAllLayersHeaderBtn");
     const toggleAllVisibilityBtn = sidebar.querySelector("#toggleAllVisibilityBtn") || document.getElementById("toggleAllVisibilityBtn");
+    const reactOwnsVisibilityToggle = toggleAllVisibilityBtn?.dataset.reactVisibilityToggle === "true";
     const openCatalogBtn = sidebar.querySelector("#openCatalogBtn") || document.getElementById("openCatalogBtn");
     // In the React layout the Layers search is a sibling of this legacy list
     // container, so prefer it before falling back to the top-bar search.
@@ -1474,6 +1565,15 @@ export function setupObjectSidebar({
     const infoRoot = useSeparateInfo
         ? infoContainerElement.querySelector("#objectInfo")
         : sidebar.querySelector("#objectInfo");
+
+    const onListRootDragOver = (event) => event.preventDefault();
+    const onListRootDrop = (event) => {
+        event.preventDefault();
+        const id = event.dataTransfer.getData("text/plain");
+        if (layerTree.move(id, null)) renderList();
+    };
+    listRoot.addEventListener("dragover", onListRootDragOver);
+    listRoot.addEventListener("drop", onListRootDrop);
     const onInfoTogglePointerDown = (event) => {
         const toggleBtn = event.target?.closest?.("[data-info-toggle]");
         if (!toggleBtn || !infoRoot.contains(toggleBtn)) {
@@ -1493,8 +1593,6 @@ export function setupObjectSidebar({
     infoRoot.addEventListener("pointerdown", onInfoTogglePointerDown);
 
     const catalogCloseBtn = catalogModal.querySelector("#catalogCloseBtn");
-    const catalogImportBtn = catalogModal.querySelector("#catalogImportBtn");
-    const catalogImportFileInput = catalogModal.querySelector("#catalogImportFileInput");
     const catalogFiltersBtn = catalogModal.querySelector("#catalogFiltersBtn");
     const catalogRefreshBtn = catalogModal.querySelector("#catalogRefreshBtn");
     const catalogSelectAllBtn = catalogModal.querySelector("#catalogSelectAllBtn");
@@ -1511,10 +1609,7 @@ export function setupObjectSidebar({
     const catalogAddSelectedBtn = catalogModal.querySelector("#catalogAddSelectedBtn");
 
     const catalogFilterCloseBtn = catalogFilterModal.querySelector("#catalogFilterCloseBtn");
-    const catalogFilterNameInput = catalogFilterModal.querySelector("#catalogFilterName");
     const catalogOrbitFilter = catalogFilterModal.querySelector("#catalogOrbitFilter");
-    const catalogMissionFilter = catalogFilterModal.querySelector("#catalogMissionFilter");
-    const catalogSourceFormatFilter = catalogFilterModal.querySelector("#catalogSourceFormatFilter");
     const catalogDecayOnlyFilter = catalogFilterModal.querySelector("#catalogDecayOnlyFilter");
     const catalogFilterClearBtn = catalogFilterModal.querySelector("#catalogFilterClearBtn");
 
@@ -1534,7 +1629,9 @@ export function setupObjectSidebar({
     const contextToggleHeatMapBtn = contextMenu.querySelector("#contextToggleHeatMapBtn");
     const contextRemoveLayerBtn = contextMenu.querySelector("#contextRemoveLayerBtn");
 
-    const addSatelliteLayerBtn = addMenu.querySelector("#addSatelliteLayerBtn");
+    const addTleFromCatalogBtn = addMenu.querySelector("#addTleFromCatalogBtn");
+    const importSatelliteBtn = addMenu.querySelector("#importSatelliteBtn");
+    const importSatelliteFileInput = addMenu.querySelector("#importSatelliteFileInput");
     const addFolderBtn = addMenu.querySelector("#addFolderBtn");
     const addGroundStationBtn = addMenu.querySelector("#addGroundStationBtn");
 
@@ -1767,15 +1864,21 @@ export function setupObjectSidebar({
     const openCatalogModal = () => {
         catalogModal.classList.add("open");
         window.dispatchEvent(new Event("orbit:catalog-open"));
-        // asegurar que la barra de progreso está oculta al abrir
+        // Keep a CelesTrak cooldown visible across close/reopen. Otherwise the
+        // button appears usable again only to immediately return the same 429.
+        const keepRefreshCooldown = catalogRefreshUiState.status === "rate-limited"
+            && Number(catalogRefreshUiState.retryAt) > Date.now();
         stopCatalogRefreshProgressTimer();
-        setCatalogRefreshState({
-            visible: false,
-            text: "",
-            value: 0
-        });
+        if (!keepRefreshCooldown) {
+            setCatalogRefreshState({
+                visible: false,
+                text: "",
+                value: 0
+            });
+        }
         catalogProgress.textContent = "";
         syncCatalogFilterControls();
+        updateCatalogActionsState();
         renderCatalogList();
         catalogSearchInput.focus();
     };
@@ -1794,7 +1897,7 @@ export function setupObjectSidebar({
     function openCatalogFilterModal() {
         syncCatalogFilterControls();
         catalogFilterModal.classList.add("open");
-        catalogFilterNameInput.focus();
+        catalogOrbitFilter.focus();
     }
 
     function closeCatalogFilterModal() {
@@ -1818,10 +1921,7 @@ export function setupObjectSidebar({
 
     function updateCatalogFilterSummary() {
         const chips = [];
-        if (catalogFilterState.name) chips.push(buildFilterChip("name", "Nombre", catalogFilterState.name));
         if (catalogFilterState.orbitKind) chips.push(buildFilterChip("orbitKind", "Orbita", orbitFilterLabel(catalogFilterState.orbitKind)));
-        if (catalogFilterState.mission) chips.push(buildFilterChip("mission", "Mision", missionFilterLabel(catalogFilterState.mission)));
-        if (catalogFilterState.sourceFormat) chips.push(buildFilterChip("sourceFormat", "Formato", catalogFilterState.sourceFormat));
         if (catalogFilterState.decayOnly) chips.push(buildFilterChip("decayOnly", "Decay", "Perigeo bajo"));
         catalogFilterSummary.innerHTML = chips.join("");
         catalogFilterSummary.hidden = chips.length === 0;
@@ -1852,17 +1952,9 @@ export function setupObjectSidebar({
             value: kind,
             label: orbitFilterLabel(kind)
         }));
-        const missionOptions = MISSION_FILTER_ORDER.map((value) => ({
-            value,
-            label: missionFilterLabel(value)
-        }));
-        const sourceFormatOptions = ["TLE", "OMM", "OEM"].map((value) => ({ value, label: value }));
 
         catalogFilterState.orbitKind = populateCatalogSelect(catalogOrbitFilter, orbitOptions, catalogFilterState.orbitKind, "Todas las orbitas");
-        catalogFilterState.mission = populateCatalogSelect(catalogMissionFilter, missionOptions, catalogFilterState.mission, "Todas las misiones");
-        catalogFilterState.sourceFormat = populateCatalogSelect(catalogSourceFormatFilter, sourceFormatOptions, catalogFilterState.sourceFormat, "Todos los formatos");
         catalogSearchInput.value = catalogFilterState.name;
-        catalogFilterNameInput.value = catalogFilterState.name;
         catalogDecayOnlyFilter.checked = catalogFilterState.decayOnly === true;
         updateCatalogFilterSummary();
     }
@@ -1872,20 +1964,22 @@ export function setupObjectSidebar({
             catalogFilterState.name = String(nextState.name || "").toLowerCase().trim();
         }
         if (Object.prototype.hasOwnProperty.call(nextState, "orbitKind")) {
-            catalogFilterState.orbitKind = String(nextState.orbitKind || "");
-        }
-        if (Object.prototype.hasOwnProperty.call(nextState, "mission")) {
-            catalogFilterState.mission = String(nextState.mission || "");
-        }
-        if (Object.prototype.hasOwnProperty.call(nextState, "sourceFormat")) {
-            catalogFilterState.sourceFormat = String(nextState.sourceFormat || "").toUpperCase();
+            const orbitKind = String(nextState.orbitKind || "").trim().toLowerCase();
+            catalogFilterState.orbitKind = ORBIT_FILTER_ORDER.includes(orbitKind) ? orbitKind : "";
         }
         if (Object.prototype.hasOwnProperty.call(nextState, "decayOnly")) {
             catalogFilterState.decayOnly = nextState.decayOnly === true;
         }
 
         syncCatalogFilterControls();
-        renderCatalogList();
+        renderCatalogList({ resetPage: true });
+    }
+
+    function getCatalogDialogFilters() {
+        return {
+            orbitKind: catalogFilterState.orbitKind,
+            decayOnly: catalogFilterState.decayOnly
+        };
     }
 
     function closeContextMenu() {
@@ -2130,21 +2224,6 @@ export function setupObjectSidebar({
         pushNotification(message, "info", { sticky: false, autoHideMs: 6500 });
     }
 
-    function getLayerCapacity() {
-        const maxLayers = Number(getMaxActiveLayers?.());
-        const safeMaxLayers = Number.isFinite(maxLayers) && maxLayers > 0
-            ? Math.floor(maxLayers)
-            : 100;
-        const availableSlots = Number(getAvailableLayerSlots?.());
-        const safeAvailableSlots = Number.isFinite(availableSlots) && availableSlots >= 0
-            ? Math.floor(availableSlots)
-            : Math.max(0, safeMaxLayers - (Array.isArray(getLayerIds?.()) ? getLayerIds().length : 0));
-        return {
-            maxLayers: safeMaxLayers,
-            availableSlots: safeAvailableSlots
-        };
-    }
-
     function stopCatalogRefreshProgressTimer() {
         if (catalogRefreshTimer) {
             clearInterval(catalogRefreshTimer);
@@ -2152,7 +2231,7 @@ export function setupObjectSidebar({
         }
     }
 
-    function setCatalogRefreshState({ visible, text = "", value = 0 }) {
+    function setCatalogRefreshState({ visible, text = "", value = 0, status = visible ? "pending" : "idle", detail = "", retryAt = null }) {
         catalogRefreshStatus.hidden = !visible;
         catalogRefreshStatus.style.display = visible ? "grid" : "none";
         catalogRefreshText.hidden = !visible;
@@ -2160,6 +2239,19 @@ export function setupObjectSidebar({
         catalogRefreshText.textContent = visible ? text : "";
         const safeValue = Math.max(0, Math.min(100, Number(value) || 0));
         catalogRefreshBar.value = visible ? safeValue : 0;
+        const retryAtMs = Number(retryAt);
+        catalogRefreshUiState = visible
+            ? {
+                status: String(status || "pending"),
+                message: String(text || ""),
+                detail: String(detail || ""),
+                progress: safeValue,
+                retryAt: Number.isFinite(retryAtMs) && retryAtMs > Date.now() ? retryAtMs : null
+            }
+            : { status: "idle", message: "", detail: "", progress: 0, retryAt: null };
+        window.dispatchEvent(new CustomEvent("orbit:catalog-refresh-state", {
+            detail: { ...catalogRefreshUiState }
+        }));
     }
 
     async function refreshCatalogFromCelestrak() {
@@ -2167,33 +2259,24 @@ export function setupObjectSidebar({
             return;
         }
 
-        const ok = await askConfirmation({
-            title: uiText("updateCatalog"),
-            message: uiText("updateCatalogMsg"),
-            confirmText: uiText("updateBtn"),
-            cancelText: uiText("cancelBtn")
-        });
-
-        if (!ok) {
-            return;
-        }
-
         catalogRefreshBusy = true;
         if (catalogSearchInput) catalogSearchInput.hidden = true;
-        setCatalogBusyState(true, uiText("updatingCatalog"));
 
         let progress = 4;
         setCatalogRefreshState({
             visible: true,
-            text: "Descargando TLE/OMM/OEM...",
+            status: "pending",
+            text: "Actualizando catálogo desde CelesTrak…",
             value: progress
         });
+        setCatalogBusyState(true, uiText("updatingCatalog"));
 
         stopCatalogRefreshProgressTimer();
         catalogRefreshTimer = setInterval(() => {
             progress = Math.min(92, progress + Math.max(1, Math.random() * 7));
             setCatalogRefreshState({
                 visible: true,
+                status: "pending",
                 text: "Procesando catalogo...",
                 value: progress
             });
@@ -2208,12 +2291,27 @@ export function setupObjectSidebar({
             if (!response.ok || !payload?.ok) {
                 const rawError = payload?.error || `Error HTTP ${response.status}`;
                 if (payload?.rateLimited === true) {
+                    setCatalogRefreshState({
+                        visible: true,
+                        status: "rate-limited",
+                        text: "Actualización aplazada por el límite de CelesTrak.",
+                        detail: rawError,
+                        retryAt: getCatalogRefreshRetryAt(payload),
+                        value: 0
+                    });
                     showErrorPopup(`Actualizacion aplazada\n\n${rawError}\n\nEl catalogo actual sigue disponible.`);
                     return;
                 }
                 const isNetworkBlocked = payload?.networkBlocked === true
                     || /bloquea|block|timeout de conexion|cloud|Codespace/i.test(rawError);
                 if (isNetworkBlocked) {
+                    setCatalogRefreshState({
+                        visible: true,
+                        status: "error",
+                        text: "No se pudo conectar con CelesTrak.",
+                        detail: rawError,
+                        value: 0
+                    });
                     showErrorPopup(`⚠️ CelesTrak no es accesible desde esta red.\n\nAlternativas:\n• Importa un fichero .tle/.json/.xml/.omm directamente arrastrándolo aquí.\n• Usa un entorno con acceso directo a internet (no cloud/Codespace).\n\nDetalle: ${rawError}`);
                     return;
                 }
@@ -2222,6 +2320,7 @@ export function setupObjectSidebar({
 
             setCatalogRefreshState({
                 visible: true,
+                status: "pending",
                 text: "Recargando catalogo local...",
                 value: 96
             });
@@ -2232,7 +2331,7 @@ export function setupObjectSidebar({
 
             selectedCatalogIds.clear();
             catalogAnchorIndex = null;
-            renderCatalogList();
+            renderCatalogList({ resetPage: true });
             renderList();
             renderInfo();
 
@@ -2250,6 +2349,7 @@ export function setupObjectSidebar({
 
             setCatalogRefreshState({
                 visible: true,
+                status: "success",
                 text: summaryMsg,
                 value: 100
             });
@@ -2270,20 +2370,21 @@ export function setupObjectSidebar({
                 showErrorPopup(`Se descartaron ${discardedInvalid} entradas con formato invalido durante la actualizacion.`);
             }
         } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
             setCatalogRefreshState({
                 visible: true,
-                text: "No se pudo actualizar el catalogo.",
-                value: 100
+                status: "error",
+                text: "No se pudo actualizar el catálogo.",
+                detail,
+                value: 0
             });
-            showErrorPopup(`Error actualizando catalogo: ${error instanceof Error ? error.message : String(error)}`);
+            showErrorPopup(`Error actualizando catalogo: ${detail}`);
         } finally {
             stopCatalogRefreshProgressTimer();
             catalogRefreshBusy = false;
             setCatalogBusyState(false);
             // volver a mostrar el selector de búsqueda cuando termine
             if (catalogSearchInput) catalogSearchInput.hidden = false;
-            // ocultar la barra de progreso cuando la operación finalice
-            setCatalogRefreshState({ visible: false, text: "", value: 0 });
         }
     }
 
@@ -2330,8 +2431,8 @@ export function setupObjectSidebar({
         return tle;
     }
 
-    function openInfoModalWithHtml(html) {
-        window.dispatchEvent(new CustomEvent("orbit:tle-info", { detail: { html, title: uiText("satInfoTitle") } }));
+    function openInfoModalWithHtml(html, title = uiText("tleInfoTitle")) {
+        window.dispatchEvent(new CustomEvent("orbit:tle-info", { detail: { html, title } }));
     }
 
     async function openTleInfo(satelliteId, mode) {
@@ -2341,28 +2442,17 @@ export function setupObjectSidebar({
         const sourceFormat = String(sourceMeta?.sourceFormat || "TLE").toUpperCase();
         const telemetry = getObjectTelemetry?.(satelliteId) || null;
 
-        if (sourceFormat === "OEM") {
-            openInfoModalWithHtml(buildOemExplanationHtml(satelliteId, telemetry, sourceMeta));
-            return;
-        }
-
         const tleForOrbit = await resolveTle(satelliteId);
         const tleSummaryForOrbit = parseTleSummary(tleForOrbit);
         const orbitInfo = getOrbitInfoFromTleSummary(tleSummaryForOrbit, satelliteId);
 
-        if (sourceFormat === "OMM") {
-            openInfoModalWithHtml(buildOmmExplanationHtml(satelliteId, telemetry, sourceMeta, tleSummaryForOrbit));
-            return;
-        }
-
-        if (mode === "details") {
+        if (mode === "details" && tleSummaryForOrbit) {
             const details = await fetchCelestrakDetails(satelliteId) || await fetchWikipediaDetails(satelliteId);
             openInfoModalWithHtml(buildSatelliteDetailsHtml(satelliteId, details, orbitInfo));
             return;
         }
 
-        const tle = tleForOrbit;
-        const summary = parseTleSummary(tle);
+        const summary = tleSummaryForOrbit;
 
         if (mode === "raw") {
             if (!summary) {
@@ -2377,6 +2467,16 @@ export function setupObjectSidebar({
                     <pre>${escapeHtml(summary.line1)}\n${escapeHtml(summary.line2)}</pre>
                 </section>
             `);
+            return;
+        }
+
+        if (!summary && sourceFormat === "OEM") {
+            openInfoModalWithHtml(buildOemExplanationHtml(satelliteId, telemetry, sourceMeta));
+            return;
+        }
+
+        if (!summary && sourceFormat === "OMM") {
+            openInfoModalWithHtml(buildOmmExplanationHtml(satelliteId, telemetry, sourceMeta, null));
             return;
         }
 
@@ -2409,13 +2509,27 @@ export function setupObjectSidebar({
         openAddMenu(openCatalogBtn);
     });
 
-    addSatelliteLayerBtn?.addEventListener("click", () => {
+    function openCatalogSatelliteFlow() {
         closeAddMenu();
         if (typeof onRequestAddSatellite === "function") {
             onRequestAddSatellite();
         }
         waitAndOpenCatalog();
-    });
+    }
+
+    function requestSatelliteImport(folder = null) {
+        if (catalogBusy) {
+            return;
+        }
+        closeAddMenu();
+        pendingFolderImportAssignment = folder
+            ? { folderId: folder.id, knownIds: new Set(getRenderableLayerIds()) }
+            : null;
+        importSatelliteFileInput?.click();
+    }
+
+    addTleFromCatalogBtn?.addEventListener("click", openCatalogSatelliteFlow);
+    importSatelliteBtn?.addEventListener("click", () => requestSatelliteImport());
 
     addGroundStationBtn?.addEventListener("click", () => {
         openGroundStationModal();
@@ -2476,22 +2590,16 @@ export function setupObjectSidebar({
         const uniqueIds = [...new Set(importedIds.map((id) => String(id || "").trim()).filter(Boolean))];
         const candidates = uniqueIds.filter((id) => !getObjectLayerActive(id));
         if (!candidates.length) {
-            return { added: 0, skipped: 0, requested: uniqueIds.length };
+            return { added: 0, requested: uniqueIds.length };
         }
 
-        const { availableSlots } = getLayerCapacity();
-        if (availableSlots <= 0) {
-            return { added: 0, skipped: candidates.length, requested: uniqueIds.length };
-        }
-
-        const idsToAdd = candidates.slice(0, availableSlots);
-        const skipped = Math.max(0, candidates.length - idsToAdd.length);
+        const idsToAdd = candidates;
 
         setCatalogBusyState(true, `Anadiendo importados... 0/${idsToAdd.length}`);
         await processInChunks(
             idsToAdd,
             (id) => onToggleObjectLayer(id, true),
-            (done, total) => setCatalogBusyState(true, `Anadiendo importados... ${done}/${total}`)
+            (done, total) => setCatalogBusyState(true, `Anadiendo importados... ${done}/${total}`, { publish: false })
         );
 
         if (idsToAdd.length > 0) {
@@ -2499,7 +2607,7 @@ export function setupObjectSidebar({
             onSelectObject?.(selectedId);
         }
 
-        return { added: idsToAdd.length, skipped, requested: uniqueIds.length };
+        return { added: idsToAdd.length, requested: uniqueIds.length };
     }
 
     async function importCatalogFile(file, { autoAddToView = false, announce = true } = {}) {
@@ -2567,7 +2675,7 @@ export function setupObjectSidebar({
             const importedNames = Array.isArray(payload?.importedNames) ? payload.importedNames : [];
             const importedFormat = normalizeImportFormat(payload?.format);
             const renamedConflicts = Array.isArray(payload?.renamedConflicts) ? payload.renamedConflicts : [];
-            let addResult = { added: 0, skipped: 0, requested: importedNames.length };
+            let addResult = { added: 0, requested: importedNames.length };
             if (autoAddToView && importedNames.length > 0) {
                 addResult = await addImportedSatellitesToView(importedNames);
                 renderList();
@@ -2597,7 +2705,7 @@ export function setupObjectSidebar({
             if (announce) {
                 const importedCount = Number(payload?.imported) || importedNames.length;
                 if (autoAddToView) {
-                    showInfoPopup(`Importado ${file.name}: ${importedCount} entradas. Anadidas a vista: ${addResult.added}${addResult.skipped > 0 ? `, omitidas por limite: ${addResult.skipped}` : ""}.`);
+                    showInfoPopup(`Importado ${file.name}: ${importedCount} entradas. Anadidas a vista: ${addResult.added}.`);
                 } else {
                     showInfoPopup(`Importado ${file.name}: ${importedCount} entradas al catalogo.`);
                 }
@@ -2605,20 +2713,30 @@ export function setupObjectSidebar({
         } catch (error) {
             showErrorPopup(`No se pudo importar ${file?.name || "fichero"}: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
-            if (catalogImportFileInput) {
-                catalogImportFileInput.value = "";
-            }
             setCatalogBusyState(false, "");
         }
     }
 
-    catalogImportBtn.addEventListener("click", () => {
-        catalogImportFileInput?.click();
-    });
-
-    catalogImportFileInput?.addEventListener("change", async (event) => {
+    importSatelliteFileInput?.addEventListener("change", async (event) => {
         const file = event?.target?.files?.[0];
-        await importCatalogFile(file, { autoAddToView: false, announce: true });
+        const folderAssignment = pendingFolderImportAssignment;
+        pendingFolderImportAssignment = null;
+        event.target.value = "";
+        if (!file) {
+            return;
+        }
+        if (folderAssignment) {
+            pendingFolderAssignment = folderAssignment;
+        }
+        try {
+            await importCatalogFile(file, { autoAddToView: true, announce: true });
+        } finally {
+            // An invalid or duplicate-only import must not cause the next,
+            // unrelated layer to be moved into this folder.
+            if (pendingFolderAssignment === folderAssignment) {
+                pendingFolderAssignment = null;
+            }
+        }
     });
 
     catalogModal.addEventListener("dragover", (event) => {
@@ -2835,6 +2953,46 @@ export function setupObjectSidebar({
         actionButtons[event.detail]?.click();
     });
 
+    // React owns the selected-object card; this sidebar remains the adapter for
+    // actions that use the catalog and TLE services held by the runtime.
+    const onSelectedObjectAction = (event) => {
+        const action = event.detail || {};
+        const id = String(action.id || "").trim();
+        if (!id || !getObjectLayerActive(id)) {
+            return;
+        }
+        if (action.type === "visualization") {
+            onOpenVisualizationOptions?.(id);
+        } else if (action.type === "tle") {
+            void openTleInfo(id, "explain");
+        }
+    };
+    window.addEventListener("orbit:selected-object-action", onSelectedObjectAction);
+
+    const onObjectStateChanged = (event) => {
+        const change = event.detail || {};
+        const targetId = String(detailTargetId || "").trim();
+        if (!targetId) {
+            return;
+        }
+
+        const targetType = String(getLayerType?.(targetId) || "SATELLITE").toUpperCase();
+        if (change.scope === "all-satellites") {
+            if (targetType !== "GROUND_STATION") {
+                refreshDetailTarget();
+            }
+            return;
+        }
+
+        const changedLayerId = String(change.layerId || "").trim();
+        const changedSourceId = String(change.sourceId || changedLayerId).trim();
+        const targetSourceId = String(getObjectSourceId?.(targetId) || targetId).trim();
+        if (targetId === changedLayerId || (targetSourceId && targetSourceId === changedSourceId)) {
+            refreshDetailTarget();
+        }
+    };
+    window.addEventListener(OBJECT_STATE_CHANGED_EVENT, onObjectStateChanged);
+
     catalogExportCloseBtn.addEventListener("click", closeExportModal);
 
     exportModal.addEventListener("click", (event) => {
@@ -2972,25 +3130,8 @@ export function setupObjectSidebar({
         }, 120);
     });
 
-    catalogFilterNameInput.addEventListener("input", () => {
-        if (catalogSearchDebounce) {
-            clearTimeout(catalogSearchDebounce);
-        }
-        catalogSearchDebounce = setTimeout(() => {
-            applyCatalogFilters({ name: catalogFilterNameInput.value || "" });
-        }, 120);
-    });
-
     catalogOrbitFilter.addEventListener("change", () => {
         applyCatalogFilters({ orbitKind: catalogOrbitFilter.value || "" });
-    });
-
-    catalogMissionFilter.addEventListener("change", () => {
-        applyCatalogFilters({ mission: catalogMissionFilter.value || "" });
-    });
-
-    catalogSourceFormatFilter.addEventListener("change", () => {
-        applyCatalogFilters({ sourceFormat: catalogSourceFormatFilter.value || "" });
     });
 
     catalogDecayOnlyFilter.addEventListener("change", () => {
@@ -2999,10 +3140,7 @@ export function setupObjectSidebar({
 
     catalogFilterClearBtn.addEventListener("click", () => {
         applyCatalogFilters({
-            name: "",
             orbitKind: "",
-            mission: "",
-            sourceFormat: "",
             decayOnly: false
         });
     });
@@ -3039,7 +3177,7 @@ export function setupObjectSidebar({
         requestCatalogPage(catalogCurrentPage + 1);
     });
 
-    catalogAddSelectedBtn.addEventListener("click", async () => {
+    async function addSelectedCatalogLayers() {
         if (catalogBusy) {
             return;
         }
@@ -3051,12 +3189,6 @@ export function setupObjectSidebar({
 
         const idsInactive = ids.filter((id) => !getObjectLayerActive(id));
         const idsAlreadyActive = ids.filter((id) => getObjectLayerActive(id));
-
-        const { maxLayers, availableSlots } = getLayerCapacity();
-        if (availableSlots <= 0) {
-            showErrorPopup(`Has alcanzado el limite de ${maxLayers} capas activas. Quita alguna capa antes de anadir mas.`);
-            return;
-        }
 
         let allowDuplicates = false;
         if (idsAlreadyActive.length > 0) {
@@ -3077,14 +3209,11 @@ export function setupObjectSidebar({
             return;
         }
 
-        const idsToAdd = pending.slice(0, availableSlots);
-        const skippedCount = Math.max(0, pending.length - idsToAdd.length);
+        const idsToAdd = pending;
 
         const ok = await askConfirmation({
             title: uiText("confirmInclusion"),
-            message: skippedCount > 0
-                ? uiText("includeElementsMsg").replace("{count}", idsToAdd.length).replace("{skipped}", skippedCount).replace("{maxLayers}", maxLayers)
-                : uiText("includeElementsMsgNoSkip").replace("{count}", idsToAdd.length),
+            message: uiText("includeElementsMsg").replace("{count}", idsToAdd.length),
             confirmText: uiText("includeBtn"),
             cancelText: uiText("cancelBtn")
         });
@@ -3096,38 +3225,44 @@ export function setupObjectSidebar({
         setCatalogBusyState(true, `${uiText("addingLayers")} 0/${idsToAdd.length}`);
 
         let firstAddedId = null;
-        processInChunks(
-            idsToAdd,
-            (id) => {
-                if (getObjectLayerActive(id) && typeof onRequestDuplicateLayer === "function") {
-                    const duplicated = onRequestDuplicateLayer(id);
-                    if (!firstAddedId && duplicated) {
-                        firstAddedId = duplicated;
+        try {
+            await processInChunks(
+                idsToAdd,
+                (id) => {
+                    if (getObjectLayerActive(id) && typeof onRequestDuplicateLayer === "function") {
+                        const duplicated = onRequestDuplicateLayer(id);
+                        if (!firstAddedId && duplicated) {
+                            firstAddedId = duplicated;
+                        }
+                        return;
                     }
-                    return;
-                }
-                onToggleObjectLayer(id, true);
-                if (!firstAddedId) {
-                    firstAddedId = id;
-                }
-            },
-            (done, total) => setCatalogBusyState(true, `${uiText("addingLayers")} ${done}/${total}`)
-        ).then(() => {
-            selectedId = firstAddedId;
-            onSelectObject?.(selectedId);
-            selectedCatalogIds.clear();
-            catalogAnchorIndex = null;
-            layerFilterText = "";
-            searchInput.value = "";
+                    onToggleObjectLayer(id, true);
+                    if (!firstAddedId) {
+                        firstAddedId = id;
+                    }
+                },
+                (done, total) => setCatalogBusyState(true, `${uiText("addingLayers")} ${done}/${total}`, { publish: false })
+            );
+        } catch (error) {
             setCatalogBusyState(false);
-            renderList();
-            renderInfo();
-            renderCatalogList();
-            closeCatalogModal();
-            if (skippedCount > 0) {
-                showInfoPopup(uiText("layersAdded").replace("{count}", idsToAdd.length).replace("{skipped}", skippedCount).replace("{maxLayers}", maxLayers));
-            }
-        });
+            showErrorPopup(`No se pudieron añadir las capas: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+
+        selectedId = firstAddedId;
+        onSelectObject?.(selectedId);
+        selectedCatalogIds.clear();
+        catalogAnchorIndex = null;
+        layerFilterText = "";
+        searchInput.value = "";
+        setCatalogBusyState(false);
+        renderList();
+        renderInfo();
+        closeCatalogModal();
+    }
+
+    catalogAddSelectedBtn.addEventListener("click", () => {
+        void addSelectedCatalogLayers();
     });
 
     window.addEventListener("orbit:catalog-action", (event) => {
@@ -3135,21 +3270,24 @@ export function setupObjectSidebar({
         if (action.type === "close") { closeCatalogModal(); return; }
         if (action.type === "search") { applyCatalogFilters({ name: String(action.value || "") }); return; }
         if (action.type === "filter") { applyCatalogFilters({ orbitKind: String(action.orbitKind || "") }); return; }
-        if (action.type === "filters") { window.dispatchEvent(new CustomEvent("orbit:catalog-filters-open", { detail: { ...catalogFilterState } })); return; }
+        if (action.type === "filters") { window.dispatchEvent(new CustomEvent("orbit:catalog-filters-open", { detail: getCatalogDialogFilters() })); return; }
         if (action.type === "filters-apply") { applyCatalogFilters(action.filters || {}); return; }
         if (action.type === "page") { requestCatalogPage(action.page); return; }
-        if (action.type === "refresh") { catalogRefreshBtn.click(); return; }
+        if (action.type === "refresh") { void refreshCatalogFromCelestrak(); return; }
         if (action.type === "import" && action.file instanceof File) { importCatalogFile(action.file, { autoAddToView: false, announce: true }); return; }
         if (action.type === "select-all") { catalogSelectAllBtn.click(); return; }
-        if (action.type === "include") { catalogAddSelectedBtn.click(); return; }
+        if (action.type === "include") { void addSelectedCatalogLayers(); return; }
         if (action.type === "info" && action.id) { openTleInfo(action.id, "explain"); return; }
         if (action.type === "toggle" && action.id && !catalogBusy && !getObjectLayerActive(action.id)) {
-            const index = lastRenderedCatalogIds.indexOf(action.id);
+            const index = catalogIndexById.get(action.id) ?? -1;
             if (action.range && catalogAnchorIndex !== null && index >= 0) {
                 const from = Math.min(catalogAnchorIndex, index);
                 const to = Math.max(catalogAnchorIndex, index);
                 if (!action.multi) selectedCatalogIds.clear();
-                for (let i = from; i <= to; i += 1) selectedCatalogIds.add(lastRenderedCatalogIds[i]);
+                for (let i = from; i <= to; i += 1) {
+                    const rangeId = lastRenderedCatalogIds[i];
+                    if (!getObjectLayerActive(rangeId)) selectedCatalogIds.add(rangeId);
+                }
             } else if (action.multi) {
                 if (selectedCatalogIds.has(action.id)) selectedCatalogIds.delete(action.id); else selectedCatalogIds.add(action.id);
                 catalogAnchorIndex = index;
@@ -3157,12 +3295,13 @@ export function setupObjectSidebar({
                 if (selectedCatalogIds.has(action.id)) selectedCatalogIds.delete(action.id); else selectedCatalogIds.add(action.id);
                 catalogAnchorIndex = index;
             }
-            renderCatalogRows(lastRenderedCatalogIds, catalogRenderToken);
+            updateCatalogActionsState();
+            publishCatalogState();
         }
     });
 
     catalogRefreshBtn.addEventListener("click", () => {
-        refreshCatalogFromCelestrak();
+        void refreshCatalogFromCelestrak();
     });
 
     catalogSelectAllBtn.addEventListener("click", async () => {
@@ -3176,7 +3315,7 @@ export function setupObjectSidebar({
         try {
             filteredIds = await fetchAllFilteredCatalogIds((loaded, total) => {
                 const safeTotal = Math.max(total || 0, loaded || 0);
-                setCatalogBusyState(true, `Cargando candidatos... ${loaded}/${safeTotal}`);
+                setCatalogBusyState(true, `Cargando candidatos... ${loaded}/${safeTotal}`, { publish: false });
             });
         } catch (error) {
             setCatalogBusyState(false);
@@ -3205,14 +3344,18 @@ export function setupObjectSidebar({
 
         setCatalogBusyState(true, `Seleccionando... 0/${toSelect.length}`);
 
-        processInChunks(
-            toSelect,
-            (id) => selectedCatalogIds.add(id),
-            (done, total) => setCatalogBusyState(true, `Seleccionando... ${done}/${total}`)
-        ).then(() => {
+        try {
+            await processInChunks(
+                toSelect,
+                (id) => selectedCatalogIds.add(id),
+                (done, total) => setCatalogBusyState(true, `Seleccionando... ${done}/${total}`, { publish: false })
+            );
+        } catch (error) {
+            showErrorPopup(`No se pudo completar la selección: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
             setCatalogBusyState(false);
             renderCatalogList();
-        });
+        }
     });
 
     async function fetchAllFilteredCatalogIds(onProgress) {
@@ -3222,7 +3365,7 @@ export function setupObjectSidebar({
 
         const allIds = [];
         const uniqueIds = new Set();
-        const limit = CATALOG_PAGE_SIZE;
+        const limit = CATALOG_BULK_PAGE_SIZE;
         let offset = 0;
         let total = null;
 
@@ -3232,8 +3375,6 @@ export function setupObjectSidebar({
                 limit,
                 search: catalogFilterState.name,
                 orbitKind: catalogFilterState.orbitKind,
-                mission: catalogFilterState.mission,
-                sourceFormat: catalogFilterState.sourceFormat,
                 decayOnly: catalogFilterState.decayOnly
             });
 
@@ -3267,51 +3408,68 @@ export function setupObjectSidebar({
     }
 
     function processInChunks(items, processItem, onProgress) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             let index = 0;
             const total = items.length;
 
             const next = () => {
-                const end = Math.min(index + BULK_PROCESS_CHUNK, total);
-                while (index < end) {
-                    processItem(items[index]);
-                    index += 1;
+                try {
+                    const end = Math.min(index + BULK_PROCESS_CHUNK, total);
+                    while (index < end) {
+                        processItem(items[index]);
+                        index += 1;
+                    }
+
+                    onProgress?.(index, total);
+
+                    if (index < total) {
+                        requestAnimationFrame(next);
+                        return;
+                    }
+
+                    resolve();
+                } catch (error) {
+                    reject(error);
                 }
-
-                onProgress?.(index, total);
-
-                if (index < total) {
-                    requestAnimationFrame(next);
-                    return;
-                }
-
-                resolve();
             };
 
             requestAnimationFrame(next);
         });
     }
 
-    function setCatalogBusyState(isBusy, text = "") {
+    function setCatalogBusyState(isBusy, text = "", { publish = true } = {}) {
         catalogBusy = isBusy;
         catalogAddSelectedBtn.disabled = isBusy || selectedCatalogIds.size === 0;
         catalogSelectAllBtn.disabled = isBusy;
         catalogRefreshBtn.disabled = isBusy;
-        catalogImportBtn.disabled = isBusy;
+        addTleFromCatalogBtn.disabled = isBusy;
+        importSatelliteBtn.disabled = isBusy;
         catalogFiltersBtn.disabled = isBusy;
         catalogCloseBtn.disabled = isBusy;
         catalogSearchInput.disabled = isBusy;
-        catalogFilterNameInput.disabled = isBusy;
         catalogOrbitFilter.disabled = isBusy;
-        catalogMissionFilter.disabled = isBusy;
-        catalogSourceFormatFilter.disabled = isBusy;
         catalogDecayOnlyFilter.disabled = isBusy;
         catalogFilterClearBtn.disabled = isBusy;
         catalogProgress.textContent = text;
+        if (publish) {
+            publishCatalogState();
+        }
     }
 
     function getRenderableLayerIds() {
-        const directIds = getLayerIds();
+        const activeIdsFrom = (candidates) => {
+            const seen = new Set();
+            return (Array.isArray(candidates) ? candidates : []).reduce((ids, candidate) => {
+                const id = candidate === null || candidate === undefined ? "" : String(candidate).trim();
+                if (!id || seen.has(id) || !getObjectLayerActive(id)) {
+                    return ids;
+                }
+                seen.add(id);
+                ids.push(id);
+                return ids;
+            }, []);
+        };
+        const directIds = activeIdsFrom(getLayerIds());
         if (directIds.length > 1) {
             return directIds;
         }
@@ -3319,7 +3477,7 @@ export function setupObjectSidebar({
         // Fallback defensivo: reconstruir activos consultando catálogo + estado real.
         // Evita que el panel izquierdo se quede con 1 elemento por desincronización de caché.
         try {
-            const rebuilt = getCatalogIds().filter((id) => getObjectLayerActive(id));
+            const rebuilt = activeIdsFrom(getCatalogIds());
             if (rebuilt.length > directIds.length) {
                 return rebuilt;
             }
@@ -3339,8 +3497,9 @@ export function setupObjectSidebar({
                 pendingFolderAssignment = null;
             }
         }
-        // Destructive controls are only useful when there is something to remove.
-        removeAllLayersHeaderBtn.hidden = getLayerIds().length === 0;
+        // These actions only apply to actual rows in the layer tree. Empty
+        // folders and stale identifiers must not make them available.
+        syncLayerActionAvailability(ids);
         const activeFilterText = String(searchInput?.value || layerFilterText || "").trim();
         const tree = layerTree.snapshot(ids);
         const filteringLayers = activeFilterText.length > 0;
@@ -3392,14 +3551,8 @@ export function setupObjectSidebar({
             filtered.forEach((id) => addFolderWithParents(tree.layerParents[id]));
         }
 
-        listRoot.innerHTML = "";
-        const containers = new Map([[null, listRoot]]);
-        listRoot.addEventListener("dragover", (event) => event.preventDefault());
-        listRoot.addEventListener("drop", (event) => {
-            event.preventDefault();
-            const id = event.dataTransfer.getData("text/plain");
-            if (layerTree.move(id, null)) renderList();
-        });
+        const listFragment = document.createDocumentFragment();
+        const containers = new Map([[null, listFragment]]);
         const renderFolder = (folder, parentContainer) => {
             if (filteringLayers && !visibleFolderIds.has(folder.id)) return;
             const group = document.createElement("section");
@@ -3435,7 +3588,7 @@ export function setupObjectSidebar({
             group.appendChild(body); parentContainer.appendChild(group); containers.set(folder.id, body);
             tree.folders.filter((item) => item.parentId === folder.id).forEach((child) => renderFolder(child, body));
         };
-        tree.folders.filter((item) => !item.parentId).forEach((folder) => renderFolder(folder, listRoot));
+        tree.folders.filter((item) => !item.parentId).forEach((folder) => renderFolder(folder, listFragment));
         for (const id of filtered) {
             const rowEl = document.createElement("div");
             rowEl.className = `object-list-row${id === selectedId ? " active" : ""}`;
@@ -3475,10 +3628,7 @@ export function setupObjectSidebar({
                 item.appendChild(formatBadge);
             }
             item.addEventListener("click", () => {
-                selectedId = id;
-                onSelectObject?.(selectedId);
-                renderList();
-                renderInfo();
+                selectObject(id);
             });
             item.addEventListener("dragstart", (event) => {
                 event.stopPropagation();
@@ -3486,11 +3636,8 @@ export function setupObjectSidebar({
                 event.dataTransfer.effectAllowed = "move";
             });
             item.addEventListener("dblclick", () => {
-                selectedId = id;
-                onSelectObject?.(selectedId);
-                renderList();
-                renderInfo();
-                onFocusObject(selectedId);
+                selectObject(id);
+                onFocusObject(id);
             });
 
             const removeBtn = document.createElement("button");
@@ -3516,7 +3663,7 @@ export function setupObjectSidebar({
             eyeBtn.className = `object-visibility-btn${isVisible ? "" : " is-hidden"}`;
             eyeBtn.title = isVisible ? "Ocultar satelite y orbitas" : "Mostrar satelite y orbitas";
             eyeBtn.setAttribute("aria-label", eyeBtn.title);
-            eyeBtn.textContent = isVisible ? "👁" : "🙈";
+            eyeBtn.innerHTML = visibilityIconMarkup(isVisible);
             eyeBtn.addEventListener("click", (event) => {
                 event.stopPropagation();
                 const nextVisible = !getObjectVisibility(id);
@@ -3534,7 +3681,7 @@ export function setupObjectSidebar({
                 openContextMenu(id, event.clientX, event.clientY);
             });
 
-            (containers.get(tree.layerParents[id]) || listRoot).appendChild(rowEl);
+            (containers.get(tree.layerParents[id]) || listFragment).appendChild(rowEl);
         }
 
         // Última fila: acción "+" con aspecto de satélite que abre el catálogo.
@@ -3551,7 +3698,8 @@ export function setupObjectSidebar({
             openAddMenu(addItem);
         });
         addRow.appendChild(addItem);
-        listRoot.appendChild(addRow);
+        listFragment.appendChild(addRow);
+        listRoot.replaceChildren(listFragment);
 
         // Empty folders do not need a vertical guide; the guide is reserved
         // for folders that actually contain a layer or a subfolder.
@@ -3564,26 +3712,7 @@ export function setupObjectSidebar({
             renderInfo();
         }
 
-        // React owns the visible tree. The legacy list remains a hidden
-        // compatibility surface while the catalog is migrated incrementally.
-        listRoot.hidden = true;
-        window.dispatchEvent(new CustomEvent("orbit:layer-tree-state", {
-            detail: {
-                tree: filteringLayers ? { ...tree, folders: tree.folders.filter((folder) => visibleFolderIds.has(folder.id)) } : tree,
-                layers: filtered.map((id) => {
-                    const meta = getCatalogEntryMeta?.(id) || null;
-                    const layerType = String(getLayerType?.(id) || "").toUpperCase();
-                    return {
-                        id,
-                        name: String(getLayerDisplayName?.(id) || id),
-                        type: layerType === "GROUND_STATION" ? "GST" : (layerType === "POINT" ? "POINT" : "SAT"),
-                        format: meta?.sourceFormat ? String(meta.sourceFormat).toUpperCase() : "",
-                        visible: getObjectVisibility(id),
-                        selected: id === selectedId
-                    };
-                })
-            }
-        }));
+        listRoot.hidden = false;
         syncGlobalVisibilityFromLayers(ids);
     }
 
@@ -3596,70 +3725,35 @@ export function setupObjectSidebar({
         submitGroundStation();
     });
 
-    window.addEventListener("orbit:layer-tree-action", (event) => {
-        const action = event.detail || {};
-        if (action.type === "select" && action.id) {
-            selectedId = action.id;
-            onSelectObject?.(selectedId);
-            renderList(); renderInfo();
-        }
-        if (action.type === "focus" && action.id) {
-            selectedId = action.id;
-            onSelectObject?.(selectedId);
-            onFocusObject(selectedId);
-            renderList(); renderInfo();
-        }
-        if (action.type === "visibility" && action.id) {
-            onToggleObjectVisibility(action.id, action.visible === true);
-            renderList(); renderInfo();
-        }
-        if (action.type === "remove" && action.id) {
-            onToggleObjectLayer(action.id, false);
-            if (selectedId === action.id) selectedId = null;
-            renderList(); renderInfo(); renderCatalogList();
-        }
-        if (action.type === "toggle-folder" && action.id) {
-            layerTree.toggle(action.id);
-            renderList();
-        }
-        if (action.type === "create-folder") {
-            requestFolderName({ title: action.title || "Nueva carpeta", label: action.label || "Nombre de la carpeta" }).then((name) => {
-                if (name && layerTree.createFolder(name, action.parentId || null)) renderList();
-            });
-        }
-        if (action.type === "rename-folder" && action.id) {
-            requestFolderName({ title: "Renombrar carpeta", label: "Nombre de la carpeta", initialValue: action.name || "" }).then((name) => {
-                if (name && layerTree.renameFolder(action.id, name)) renderList();
-            });
-        }
-        if (action.type === "delete-folder" && action.id) {
-            const tree = layerTree.snapshot(getRenderableLayerIds());
-            const foldersToDelete = new Set([action.id]);
-            let foundNestedFolder = true;
-            while (foundNestedFolder) {
-                foundNestedFolder = false;
-                tree.folders.forEach((folder) => {
-                    if (foldersToDelete.has(folder.parentId) && !foldersToDelete.has(folder.id)) { foldersToDelete.add(folder.id); foundNestedFolder = true; }
-                });
-            }
-            const layerIds = Object.entries(tree.layerParents).filter(([, parentId]) => foldersToDelete.has(parentId)).map(([id]) => id);
-            askConfirmation({ title: "Eliminar carpeta", message: `Se eliminará '${action.name}' y ${layerIds.length} capas asociadas.`, confirmText: "Eliminar", cancelText: "Cancelar" }).then((ok) => {
-                if (!ok) return;
-                layerIds.forEach((id) => onToggleObjectLayer(id, false));
-                layerTree.removeFolder(action.id);
-                renderList(); renderInfo(); renderCatalogList();
-            });
-        }
-        if (action.type === "move" && action.id && layerTree.move(action.id, action.folderId || null)) renderList();
-        if (action.type === "context" && action.id) openContextMenu(action.id, action.x, action.y);
-        if (action.type === "add") document.getElementById("openCatalogBtn")?.click();
-    });
-
     function setGlobalVisibility(allVisible) {
         globalLayersVisible = Boolean(allVisible);
-        toggleAllVisibilityBtn.textContent = globalLayersVisible ? "👁" : "🙈";
+        if (!reactOwnsVisibilityToggle) {
+            toggleAllVisibilityBtn.innerHTML = visibilityIconMarkup(globalLayersVisible);
+        }
         toggleAllVisibilityBtn.title = globalLayersVisible ? "Ocultar todas las capas" : "Mostrar todas las capas";
         toggleAllVisibilityBtn.setAttribute("aria-label", toggleAllVisibilityBtn.title);
+        window.dispatchEvent(new CustomEvent("orbit:layers-visibility-state", { detail: globalLayersVisible }));
+    }
+
+    function syncLayerActionAvailability(layerIds = getLayerIds()) {
+        const state = deriveLayerActionsState(layerIds);
+
+        // Keep the legacy fallback usable too. In the React shell these nodes
+        // remain mounted and `hidden` keeps them out of both view and keyboard
+        // navigation without losing their legacy click bindings.
+        if (removeAllLayersHeaderBtn) {
+            removeAllLayersHeaderBtn.hidden = !state.hasActiveLayers;
+        }
+        if (toggleAllVisibilityBtn) {
+            toggleAllVisibilityBtn.hidden = !state.hasActiveLayers;
+        }
+
+        // `renderList` also acts as the runtime reconciliation loop. Publish
+        // each pass so a React listener mounted after the legacy runtime still
+        // receives the current state; React ignores identical state values.
+        emitLayerActionsState(layerIds);
+
+        return state;
     }
 
     function syncGlobalVisibilityFromLayers(layerIds) {
@@ -3673,16 +3767,14 @@ export function setupObjectSidebar({
         setGlobalVisibility(allVisible);
     }
 
-    function renderCatalogList() {
+    function renderCatalogList({ resetPage = false } = {}) {
         if (!catalogModal.classList.contains("open")) {
             return;
         }
 
-        if (!catalogRefreshBusy) {
-            setCatalogRefreshState({ visible: false, text: "", value: 0 });
+        if (resetPage) {
+            catalogCurrentPage = 1;
         }
-
-        catalogCurrentPage = 1;
         requestCatalogPage(catalogCurrentPage);
     }
 
@@ -3694,6 +3786,7 @@ export function setupObjectSidebar({
         catalogLoadingPage = true;
         catalogProgress.textContent = "Cargando resultados...";
         updateCatalogPaginationState();
+        publishCatalogState();
 
         loadCatalogPage(token, safePage);
     }
@@ -3712,8 +3805,6 @@ export function setupObjectSidebar({
                 limit: CATALOG_PAGE_SIZE,
                 search: catalogFilterState.name,
                 orbitKind: catalogFilterState.orbitKind,
-                mission: catalogFilterState.mission,
-                sourceFormat: catalogFilterState.sourceFormat,
                 decayOnly: catalogFilterState.decayOnly
             });
 
@@ -3727,20 +3818,19 @@ export function setupObjectSidebar({
             catalogServerTotal = total;
             catalogTotalPages = Math.max(1, Math.ceil(total / CATALOG_PAGE_SIZE));
             catalogCurrentPage = Math.min(Math.max(1, page), catalogTotalPages);
-            catalogOffset = offset + ids.length;
-            catalogHasMore = catalogCurrentPage < catalogTotalPages;
-
             renderCatalogRows(ids, token);
         } catch (error) {
             if (token === catalogQueryToken) {
                 showErrorPopup(`No se pudo cargar el catalogo paginado: ${error instanceof Error ? error.message : String(error)}`);
                 catalogProgress.textContent = "Error cargando resultados";
                 updateCatalogPaginationState();
+                publishCatalogState();
             }
         } finally {
             if (token === catalogQueryToken) {
                 catalogLoadingPage = false;
                 updateCatalogPaginationState();
+                publishCatalogState();
             }
         }
     }
@@ -3904,17 +3994,25 @@ export function setupObjectSidebar({
             catalogIndexById.set(lastRenderedCatalogIds[i], i);
         }
 
-        catalogListRoot.innerHTML = "";
-        catalogRowElements.clear();
+        // React owns the visible catalog. Keep this adapter-only fallback for
+        // legacy embeddings, but never build a second hidden 200-row list.
+        if (catalogModal.isConnected) {
+            catalogListRoot.innerHTML = "";
+            catalogRowElements.clear();
 
-        for (const id of lastRenderedCatalogIds) {
-            const rowEl = createCatalogRowElement(id, lastRenderedCatalogIds);
-            catalogListRoot.appendChild(rowEl);
+            for (const id of lastRenderedCatalogIds) {
+                const rowEl = createCatalogRowElement(id, lastRenderedCatalogIds);
+                catalogListRoot.appendChild(rowEl);
+            }
+
+            catalogListRoot.scrollTop = 0;
         }
-
-        catalogListRoot.scrollTop = 0;
         updateCatalogLoadedProgress();
         updateCatalogPaginationState();
+        publishCatalogState();
+    }
+
+    function publishCatalogState() {
         window.dispatchEvent(new CustomEvent("orbit:catalog-state", {
             detail: {
                 rows: lastRenderedCatalogIds.map((id) => {
@@ -3924,19 +4022,24 @@ export function setupObjectSidebar({
                         id,
                         active: getObjectLayerActive(id),
                         selected: selectedCatalogIds.has(id),
-                        orbit: meta?.orbitInfo?.kind && meta.orbitInfo.kind !== ORBIT_KIND.UNKNOWN ? meta.orbitInfo.label : "",
+                        orbit: meta?.orbitInfo?.kind && meta.orbitInfo.kind !== ORBIT_KIND.UNKNOWN ? orbitTagCode(meta.orbitInfo.kind) : "",
                         orbitKind: meta?.orbitInfo?.kind || ORBIT_KIND.UNKNOWN,
-                        format: entry?.sourceFormat ? String(entry.sourceFormat).toUpperCase() : ""
+                        format: entry?.sourceFormat ? String(entry.sourceFormat).toUpperCase() : "",
+                        tleAgeWarning: meta?.tleAgeWarning === true,
+                        tleFreshnessMessage: meta?.tleAgeWarning
+                            ? buildTleFreshnessMessage(meta.orbitInfo, meta.tleAgeDays)
+                            : ""
                     };
                 }),
-                selected: [...selectedCatalogIds],
+                selectedCount: selectedCatalogIds.size,
                 page: catalogCurrentPage,
                 totalPages: catalogTotalPages,
                 total: catalogServerTotal,
                 search: catalogFilterState.name,
-                filters: { ...catalogFilterState },
+                filters: getCatalogDialogFilters(),
                 busy: catalogBusy || catalogLoadingPage,
-                busyText: catalogProgress.textContent || ""
+                busyText: catalogProgress.textContent || "",
+                refresh: { ...catalogRefreshUiState }
             }
         }));
     }
@@ -3960,34 +4063,102 @@ export function setupObjectSidebar({
         catalogAddSelectedBtn.disabled = catalogBusy || selectedCatalogIds.size === 0;
     }
 
+    function buildObjectDetailPayload(id) {
+        const objectId = String(id || "").trim();
+        if (!objectId) {
+            return null;
+        }
+
+        const active = Boolean(getObjectLayerActive(objectId));
+        const telemetry = active ? getObjectTelemetry(objectId) : null;
+        const catalogMeta = getCatalogEntryMeta?.(objectId) || {};
+        const timeRange = getObjectTimeRange?.(objectId, telemetry) || null;
+        const oemDomainActive = Boolean(getLoadedOemTimeBounds?.());
+        const sourceFormat = String(telemetry?.source_format || catalogMeta.sourceFormat || "TLE").toUpperCase();
+        const tle = active && sourceFormat !== "OEM" ? getObjectTle?.(objectId) : null;
+        const summary = parseTleSummary(tle);
+        const orbitInfoFromTle = getOrbitInfoFromTleSummary(summary, objectId);
+        const useTelemetryFallback = !orbitInfoFromTle || orbitInfoFromTle.kind === ORBIT_KIND.UNKNOWN || sourceFormat === "OEM";
+        const orbitInfo = useTelemetryFallback
+            ? getOrbitInfoFromTelemetry(telemetry, objectId)
+            : orbitInfoFromTle;
+
+        return {
+            id: objectId,
+            telemetry,
+            timeRange,
+            orbitInfo,
+            summary,
+            catalogMeta,
+            sourceFormat,
+            oemDomainActive,
+            layerType: getLayerType?.(objectId) || "SATELLITE",
+            noradId: telemetry?.norad_id || telemetry?.norad || telemetry?.catalog_number || tle?.line1?.slice(2, 7).trim() || null,
+            active,
+            visible: getObjectVisibility(objectId)
+        };
+    }
+
+    function publishObjectDetail(payload) {
+        if (!payload?.id) {
+            return;
+        }
+
+        if (detailTargetId !== payload.id) {
+            detailTargetId = payload.id;
+            detailSelectionRevision += 1;
+        }
+        window.dispatchEvent(new CustomEvent("orbit:selected-object", {
+            detail: {
+                id: payload.id,
+                telemetry: payload.telemetry,
+                orbitInfo: payload.orbitInfo,
+                catalogMeta: payload.catalogMeta,
+                tleSummary: payload.summary,
+                sourceFormat: payload.sourceFormat,
+                layerType: payload.layerType,
+                noradId: payload.noradId,
+                active: payload.active,
+                visible: payload.visible,
+                timeRange: payload.timeRange,
+                selectionRevision: detailSelectionRevision
+            }
+        }));
+    }
+
+    function refreshDetailTarget() {
+        if (!detailTargetId) {
+            return;
+        }
+
+        try {
+            publishObjectDetail(buildObjectDetailPayload(detailTargetId));
+        } catch (error) {
+            console.warn("No se pudo actualizar el detalle del objeto:", error);
+        }
+    }
+
     function renderInfo() {
         try {
-            const telemetry = selectedId && getObjectLayerActive(selectedId)
-                ? getObjectTelemetry(selectedId)
-                : null;
-            const oemDomainActive = Boolean(getLoadedOemTimeBounds?.());
-            const sourceFormat = String(telemetry?.source_format || getCatalogEntryMeta?.(selectedId)?.sourceFormat || "TLE").toUpperCase();
-            const tle = selectedId && getObjectLayerActive(selectedId) && sourceFormat !== "OEM"
-                ? getObjectTle?.(selectedId)
-                : null;
-            const summary = parseTleSummary(tle);
-            const orbitInfoFromTle = getOrbitInfoFromTleSummary(summary, selectedId || "");
-            const useTelemetryFallback = !orbitInfoFromTle || orbitInfoFromTle.kind === ORBIT_KIND.UNKNOWN || sourceFormat === "OEM";
-            const orbitInfo = useTelemetryFallback
-                ? getOrbitInfoFromTelemetry(telemetry, selectedId || "")
-                : orbitInfoFromTle;
-            infoRoot.innerHTML = buildInfoText(telemetry, orbitInfo, summary, infoSectionOpenState, oemDomainActive);
-            window.dispatchEvent(new CustomEvent("orbit:selected-object", {
-                detail: selectedId ? {
-                    id: selectedId,
-                    telemetry,
-                    orbitInfo,
-                    sourceFormat,
-                    noradId: telemetry?.norad_id || telemetry?.norad || telemetry?.catalog_number || tle?.line1?.slice(2, 7).trim() || null,
-                    active: getObjectLayerActive(selectedId),
-                    visible: getObjectVisibility(selectedId)
-                } : null
-            }));
+            const payload = buildObjectDetailPayload(selectedId);
+            infoRoot.innerHTML = buildInfoText(
+                payload?.telemetry || null,
+                payload?.orbitInfo || null,
+                payload?.summary || null,
+                infoSectionOpenState,
+                payload?.oemDomainActive === true
+            );
+
+            // The React card persists until its own close control is used.
+            // Do not overwrite it with null merely because the legacy list lost
+            // focus; mutations can still refresh `detailTargetId` immediately.
+            if (payload) {
+                publishObjectDetail(payload);
+            } else {
+                // Continue the live card refresh after a click outside the
+                // legacy list has cleared `selectedId`.
+                refreshDetailTarget();
+            }
         } catch (error) {
             console.warn("No se pudo renderizar telemetria:", error);
             infoRoot.innerHTML = "<div class=\"object-info-empty\">No se pudo actualizar la telemetria. Reintenta seleccionando el satelite.</div>";
@@ -4004,6 +4175,8 @@ export function setupObjectSidebar({
         }
         layerFilterText = "";
         selectedId = id;
+        detailTargetId = id;
+        detailSelectionRevision += 1;
         onSelectObject?.(id);
         if (!useContainer && !sidebar.classList.contains("open")) {
             openSidebar();
@@ -4056,10 +4229,14 @@ export function setupObjectSidebar({
             }
             stopCatalogRefreshProgressTimer();
             infoRoot.removeEventListener("pointerdown", onInfoTogglePointerDown);
+            listRoot.removeEventListener("dragover", onListRootDragOver);
+            listRoot.removeEventListener("drop", onListRootDrop);
             document.removeEventListener("dragenter", onGlobalFileDragEnter, true);
             document.removeEventListener("dragleave", onGlobalFileDragLeave, true);
             document.removeEventListener("dragover", onGlobalFileDragOver, true);
             document.removeEventListener("drop", onGlobalFileDrop, true);
+            window.removeEventListener("orbit:selected-object-action", onSelectedObjectAction);
+            window.removeEventListener(OBJECT_STATE_CHANGED_EVENT, onObjectStateChanged);
             sidebar.remove();
             catalogModal.remove();
             catalogLoadingModal.remove();

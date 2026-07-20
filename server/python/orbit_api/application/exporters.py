@@ -5,6 +5,14 @@ import datetime
 from io import StringIO
 
 
+# SGP4Propagator converts TEME output into Orbit's Earth-fixed runtime frame
+# and returns metres / metres per second. CCSDS OEM data is expressed in km
+# and km/s, so OEM export must convert both values and declare the resulting
+# frame rather than leaking the propagator's input TEME frame.
+_RUNTIME_OEM_REF_FRAME = "ITRF"
+_METRES_PER_KILOMETRE = 1000.0
+
+
 def safe_filename(value: str, fallback: str = "satellite") -> str:
     raw = (value or fallback).strip()
     normalized = "".join(char if char.isalnum() or char in "-_" else "_" for char in raw)
@@ -90,13 +98,20 @@ def ephemeris_oem_text(
         f"COMMENT = SOURCE_FORMAT {source_format}",
         f"COMMENT = PROPAGATOR {propagator}",
         "META_START", f"OBJECT_NAME = {name}", f"OBJECT_ID = {name}", "CENTER_NAME = EARTH",
-        "REF_FRAME = TEME", "TIME_SYSTEM = UTC", f"START_TIME = {start_iso}", f"STOP_TIME = {end_iso}", "META_STOP",
+        f"REF_FRAME = {_RUNTIME_OEM_REF_FRAME}", "TIME_SYSTEM = UTC", f"START_TIME = {start_iso}", f"STOP_TIME = {end_iso}", "META_STOP",
+        "COMMENT = ORBIT_POSITION_UNIT = km",
+        "COMMENT = ORBIT_VELOCITY_UNIT = km/s",
     ]
     for point in points:
         position = point.get("position") or {}
         velocity = point.get("velocity") or {}
+        x = float(position.get("x", 0)) / _METRES_PER_KILOMETRE
+        y = float(position.get("y", 0)) / _METRES_PER_KILOMETRE
+        z = float(position.get("z", 0)) / _METRES_PER_KILOMETRE
+        vx = float(velocity.get("x", 0)) / _METRES_PER_KILOMETRE
+        vy = float(velocity.get("y", 0)) / _METRES_PER_KILOMETRE
+        vz = float(velocity.get("z", 0)) / _METRES_PER_KILOMETRE
         lines.append(
-            f"{point.get('time', '')} {position.get('x', 0)} {position.get('y', 0)} {position.get('z', 0)} "
-            f"{velocity.get('x', 0)} {velocity.get('y', 0)} {velocity.get('z', 0)}"
+            f"{point.get('time', '')} {x} {y} {z} {vx} {vy} {vz}"
         )
     return "\n".join(lines) + "\n"

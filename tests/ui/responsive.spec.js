@@ -10,10 +10,10 @@ const viewports = [
 
 const zoomLevels = [1, 0.9, 0.8, 0.75];
 const catalogControlSelectors = [
-    "#catalogModal .catalog-header-btn:nth-of-type(1)",
-    "#catalogModal .catalog-header-btn:nth-of-type(2)",
-    "#catalogModal .catalog-header-btn:nth-of-type(3)",
-    "#catalogModal .catalog-header-btn:nth-of-type(4)",
+    "[data-testid='catalog-import']",
+    "[data-testid='catalog-filters']",
+    "[data-testid='catalog-refresh']",
+    "[data-testid='catalog-select-all']",
     "#catalogModal button[aria-label='Cerrar']"
 ];
 let workspaceSequence = 0;
@@ -54,7 +54,6 @@ async function openCatalog(page, viewport, zoom = 1) {
     await ensureLayersPanelOpen(page);
     await expectApplicationShellLayout(page);
     await chooseLayerKind(page, "satellite");
-    await expect(page.locator("#catalogModal")).toHaveClass(/open/);
     await expect(page.locator("#catalogModal")).toBeVisible();
 }
 
@@ -217,7 +216,7 @@ async function expectApplicationShellLayout(page) {
 }
 
 async function expectCatalogLayout(page, zoom = 1) {
-    const layout = await page.locator(".catalog-modal-panel").evaluate((panel, selectors) => {
+    const layout = await page.locator("#catalogModal > section").evaluate((panel, selectors) => {
         const panelRect = panel.getBoundingClientRect();
         const controls = selectors.map((selector) => {
             const element = document.querySelector(selector);

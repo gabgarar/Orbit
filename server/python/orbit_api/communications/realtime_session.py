@@ -45,7 +45,14 @@ class RealtimeSession:
                         if propagator is None:
                             continue
                         x, y, z, vx, vy, vz = propagator.propagate()
-                        state.append({"satellite": name, "position": {"x": x, "y": y, "z": z}, "velocity": {"x": vx, "y": vy, "z": vz}})
+                        state.append({
+                            "satellite": name,
+                            "reference_frame": "ITRF",
+                            "position_units": "m",
+                            "velocity_units": "m/s",
+                            "position": {"x": x, "y": y, "z": z},
+                            "velocity": {"x": vx, "y": vy, "z": vz}
+                        })
                     await send_payload(self._websocket, {"type": "state", "data": state, "compressed": False}, self._compression_threshold)
                     next_state_at = now + config.get("websocket_state_interval_seconds", 1.0)
                     sent = True
