@@ -1,8 +1,9 @@
-"""Pure manual-orbit conversion and synthetic TLE generation helpers.
+"""Manual-orbit conversion, native engine selection, and SGP4 TLE helpers.
 
-The editor deliberately keeps this capability transient: the resulting TLE is
-only used to instantiate an SGP4 propagator for the current request and is
-never written to the catalogue.  Classical elements and Cartesian states are
+The editor deliberately keeps this capability transient. SGP4 receives a
+synthetic TLE for the current request only; the analytical two-body and
+numerical Cowell families use the canonical ECI definition directly. Nothing
+is written to the catalogue. Classical elements and Cartesian states are
 expressed in ECI kilometres / kilometres per second at the supplied epoch.
 """
 
@@ -10,10 +11,21 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 import math
 from typing import Any
 
-from orbit_api.domain.requests import ManualKeplerianInput, ManualOrbitRequest, ManualStateVectorInput
+from orbit_api.domain.requests import (
+    ManualKeplerianInput,
+    ManualOrbitRequest,
+    ManualPropagationOptions,
+    ManualStateVectorInput,
+    normalize_manual_orbit_propagator,
+)
+from orbit_api.orbits.propagators.cowell import CowellPropagator
+from orbit_api.orbits.propagators.j2 import J2Propagator
+from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
+from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
 
 
 EARTH_MU_KM3_S2 = 398600.4418
@@ -26,6 +38,105 @@ _ECCENTRICITY_TOLERANCE = 1e-10
 
 class ManualOrbitError(ValueError):
     """The supplied manual definition cannot represent a bounded orbit."""
+
+
+_MANUAL_PROPAGATOR_METADATA = {
+    "sgp4": {
+        "label": "SGP4",
+        "dynamics_reference_frame": "TEME",
+        "input_reference_frame": "ECI",
+        "ephemeris_reference_frame": "ITRF",
+        "uses_synthetic_tle": True,
+        "eci_samples_available": False,
+        "eci_samples_field": None,
+    },
+    "two-body": {
+        "label": "Two-body",
+        "dynamics_reference_frame": "ECI",
+        "input_reference_frame": "ECI",
+        "ephemeris_reference_frame": "ITRF",
+        "uses_synthetic_tle": False,
+        "eci_samples_available": True,
+        # Native samples live alongside their ITRF counterpart rather than in
+        # a second array, so timestamps cannot drift out of alignment.
+        "eci_samples_field": "ephemeris.points[].eci",
+    },
+    "j2": {
+        "label": "J2 (first-order secular)",
+        "dynamics_reference_frame": "ECI",
+        "input_reference_frame": "ECI",
+        "ephemeris_reference_frame": "ITRF",
+        "uses_synthetic_tle": False,
+        "eci_samples_available": True,
+        "eci_samples_field": "ephemeris.points[].eci",
+        # Kept only to reproduce the physics of saved projects that chose
+        # the pre-refactor J2 propagator. New designs select J2 as a Cowell
+        # force model instead of as a propagation-family option.
+        "legacy_propagator": True,
+        "force_terms": ["central", "j2"],
+        "force_model_id": "j2",
+        "integrator_id": "secular-analytic",
+        "integrator_label": "First-order secular analytical solution",
+        "atmospheric_drag_supported": False,
+    },
+    "j2-j3-j4": {
+        "label": "J2 + J3 + J4",
+        "dynamics_reference_frame": "ECI",
+        "input_reference_frame": "ECI",
+        "ephemeris_reference_frame": "ITRF",
+        "uses_synthetic_tle": False,
+        "eci_samples_available": True,
+        "eci_samples_field": "ephemeris.points[].eci",
+        # Kept only to reproduce the physics of saved projects that chose
+        # the pre-refactor fixed zonal-gravity preset. It may use an internal
+        # RK4 solver, but is not the configurable Cowell/RK4 route.
+        "legacy_propagator": True,
+        "force_terms": ["central", "j2", "j3", "j4"],
+        "applied_engine": "j2-j3-j4",
+        "force_model_id": "j2-j3-j4",
+        "gravity_model": "WGS-84 zonal gravity: central + J2 + J3 + J4",
+        "integrator_id": "rk4",
+        "integrator_label": "Runge-Kutta 4 (RK4, fixed maximum step 60 s)",
+        "atmospheric_drag_supported": False,
+        "inspector_requires_numerical_budget": True,
+    },
+    "cowell-rk4": {
+        "label": "Cowell numerical propagation",
+        "dynamics_reference_frame": "ECI",
+        "input_reference_frame": "ECI",
+        "ephemeris_reference_frame": "ITRF",
+        "uses_synthetic_tle": False,
+        "eci_samples_available": True,
+        "eci_samples_field": "ephemeris.points[].eci",
+        "applied_engine": "cowell-rk4",
+        # The numerical algorithm is independent from the force model. The
+        # contract exposes both so UI controls do not mislabel J2/J3/J4 as
+        # propagators in their own right.
+        "integrator_id": "rk4",
+        "integrator_label": "Runge-Kutta 4 (RK4, fixed maximum step 60 s)",
+        "force_model_configurable": True,
+        "force_terms_configurable": True,
+        "force_term_options": ["central", "j2", "j3", "j4", "drag"],
+        "required_force_terms": ["central"],
+        "atmospheric_drag_supported": True,
+        "inspector_requires_numerical_budget": True,
+    },
+}
+
+_COWELL_FORCE_TERM_LABELS = {
+    "central": "WGS-84 central gravity",
+    "j2": "J2",
+    "j3": "J3",
+    "j4": "J4",
+    "drag": "first-order atmospheric drag",
+}
+
+
+def _describe_cowell_force_terms(force_terms: tuple[str, ...]) -> str:
+    """Return a compact human label without hiding independently selected terms."""
+
+    labels = [_COWELL_FORCE_TERM_LABELS[term] for term in force_terms]
+    return " + ".join(labels)
 
 
 def _vector(x: float, y: float, z: float) -> tuple[float, float, float]:
@@ -280,6 +391,133 @@ def canonical_manual_orbit(payload: ManualOrbitRequest) -> tuple[str, dict[str, 
             raise ManualOrbitError("Faltan los elementos keplerianos")
         keplerian, state_vector = keplerian_to_state_vector(payload.keplerian)
     return source, keplerian, state_vector
+
+
+def manual_propagator_metadata(propagator_name: str) -> dict[str, Any]:
+    """Describe the input, dynamics, and renderer frames for one engine."""
+
+    canonical = normalize_manual_orbit_propagator(propagator_name)
+    return {"id": canonical, **_MANUAL_PROPAGATOR_METADATA[canonical]}
+
+
+def _manual_runtime_identity(
+    propagator_name: str,
+    epoch: datetime.datetime,
+    state_vector: dict[str, Any],
+    propagation_options: dict[str, Any],
+) -> str:
+    """Build a cache-safe identity for a transient native propagator.
+
+    A display name is deliberately excluded: the editor can reuse it when an
+    existing manual object is modified.  Including the canonical engine,
+    epoch, and ECI state prevents that edit from receiving an old ephemeris
+    from ``OrbitRuntime``'s cache.
+    """
+
+    utc_epoch = epoch.replace(tzinfo=datetime.UTC) if epoch.tzinfo is None else epoch.astimezone(datetime.UTC)
+    material = json.dumps(
+        {
+            "propagator": propagator_name,
+            "epoch": utc_epoch.isoformat(),
+            "state_vector": state_vector,
+            # Drag changes the trajectory even when the initial ECI state
+            # and display name remain the same.  It must therefore be part
+            # of the transient runtime/cache identity.
+            "propagation_options": propagation_options,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha1(material.encode("utf-8")).hexdigest()[:16]
+    return f"manual:{propagator_name}:{digest}"
+
+
+def build_manual_orbit_propagator(
+    propagator_name: str,
+    *,
+    name: str,
+    epoch: datetime.datetime,
+    keplerian: dict[str, float],
+    state_vector: dict[str, Any],
+    resolve_sgp4: Any,
+    propagation_options: dict[str, Any] | None = None,
+) -> tuple[str, Any, dict[str, Any] | None, dict[str, Any]]:
+    """Instantiate the selected manual propagation engine.
+
+    SGP4 remains a TLE-only engine and therefore retains the existing
+    synthetic-TLE path. Native analytical and numerical engines instead
+    consume the canonical ECI state/elements directly; converting those into
+    a TLE would introduce an avoidable model change before propagation begins.
+    """
+
+    canonical = normalize_manual_orbit_propagator(propagator_name)
+    try:
+        option_model = (
+            propagation_options
+            if isinstance(propagation_options, ManualPropagationOptions)
+            else ManualPropagationOptions.model_validate(propagation_options or {})
+        )
+        # Scope options at the engine boundary too. This protects direct
+        # application callers in addition to the HTTP/request validators.
+        options = option_model.canonical(propagator=canonical)
+    except ValueError as exc:
+        raise ManualOrbitError(str(exc)) from exc
+    force_terms = tuple(options["force_terms"])
+    atmospheric_drag = bool(options["atmospheric_drag"])
+    legacy_force_model_id = option_model.cowell_gravity_model if canonical == "cowell-rk4" else None
+    numerical_integrator = options.get("numerical_integrator")
+    metadata = manual_propagator_metadata(canonical)
+    if canonical == "sgp4":
+        if atmospheric_drag:
+            raise ManualOrbitError(
+                "SGP4 ya usa BSTAR en su TLE; no admite atmospheric_drag independiente"
+            )
+        tle = build_synthetic_tle(name, epoch, keplerian)
+        runtime_name, propagator = resolve_sgp4(None, tle["line1"], tle["line2"], canonical)
+        return runtime_name, propagator, tle, metadata
+
+    if atmospheric_drag and canonical != "cowell-rk4":
+        raise ManualOrbitError(
+            "atmospheric_drag is only available with the Cowell/RK4 propagator; "
+            "select cowell-rk4 and a force model"
+        )
+
+    try:
+        if canonical == "two-body":
+            propagator = TwoBodyPropagator(epoch, keplerian)
+        elif canonical == "j2":
+            propagator = J2Propagator(epoch, keplerian)
+        elif canonical == "j2-j3-j4":
+            propagator = J2J3J4Propagator(epoch, state_vector)
+        else:
+            # Cowell is the configurable numerical route. The current public
+            # integration algorithm is RK4, selected independently from the
+            # gravity/drag force model. It is the only native manual engine
+            # that accepts non-conservative drag.
+            propagator = CowellPropagator(
+                epoch,
+                state_vector,
+                force_terms=force_terms,
+                drag_coefficient=float(options["drag_coefficient"]),
+                area_m2=float(options["area_m2"]),
+                mass_kg=float(options["mass_kg"]),
+            )
+    except ValueError as exc:
+        raise ManualOrbitError(str(exc)) from exc
+    if canonical == "cowell-rk4":
+        metadata.update({
+            "integrator_id": numerical_integrator,
+            "force_terms": list(force_terms),
+            "gravity_terms": [term for term in force_terms if term != "drag"],
+            "force_model_id": legacy_force_model_id or "+".join(force_terms),
+            "gravity_model": _describe_cowell_force_terms(force_terms),
+            "atmospheric_drag": atmospheric_drag,
+            "atmospheric_drag_model": (
+                "First-order exponential neutral atmosphere co-rotating with Earth"
+                if atmospheric_drag else None
+            ),
+        })
+    return _manual_runtime_identity(canonical, epoch, state_vector, options), propagator, None, metadata
 
 
 def tle_checksum(line_without_checksum: str) -> int:

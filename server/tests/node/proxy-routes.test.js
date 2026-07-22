@@ -110,6 +110,34 @@ test("proxy exposes the transient manual-orbits endpoint", async () => {
     assert.equal(calls[0].options.body, JSON.stringify(payload));
 });
 
+test("proxy exposes the propagated orbit-parameters endpoint", async () => {
+    const calls = [];
+    const app = createProxyApp(async (path, options) => {
+        calls.push({ path, options });
+        return new Response("{\"samples\":[]}", { headers: { "content-type": "application/json" } });
+    });
+    const payload = {
+        source: { type: "catalog", satId: "ISS" },
+        startTime: "2026-07-20T12:00:00Z",
+        endTime: "2026-07-20T13:00:00Z",
+        samples: 25
+    };
+
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/orbit-parameters`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        assert.equal(response.status, 200);
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].path, "/orbit-parameters");
+    assert.equal(calls[0].options.method, "POST");
+    assert.equal(calls[0].options.body, JSON.stringify(payload));
+});
+
 test("proxy preserves upstream status and content type", async () => {
     const app = createProxyApp(async () => new Response("<html>docs</html>", {
         status: 207,

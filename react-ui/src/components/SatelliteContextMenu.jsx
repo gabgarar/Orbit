@@ -35,6 +35,13 @@ export default function SatelliteContextMenu() {
         >
             Opciones de visualización
         </button>
+        <button
+            className="!h-8 !rounded-lg !border !border-[#365a89] !bg-[#10233d] !px-3 !text-left !font-sans !text-xs !leading-none !font-bold !text-[#c5dcff] !cursor-pointer hover:!border-[#6091d1] hover:!bg-[#173455] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[#80a7ff]"
+            type="button"
+            onClick={() => selectAction("propagated-parameters")}
+        >
+            Parámetros propagados
+        </button>
         {menu.canEditManualOrbit === true && <button
             className="!h-8 !rounded-lg !border !border-[#3e68b0] !bg-[#162b4d] !px-3 !text-left !font-sans !text-xs !leading-none !font-bold !text-[#d7e7ff] !cursor-pointer hover:!border-[#6091e8] hover:!bg-[#203d68] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[#80a7ff]"
             type="button"

@@ -23,7 +23,9 @@ export default function LayerContextMenu() {
     if (!menu) return null;
 
     const select = (action) => {
-        window.dispatchEvent(new CustomEvent("orbit:layer-context-action", { detail: action }));
+        window.dispatchEvent(new CustomEvent("orbit:layer-context-action", {
+            detail: { action, id: menu.id, source: "layer" }
+        }));
         setMenu(null);
     };
     const actions = menu.groundStation
@@ -31,6 +33,7 @@ export default function LayerContextMenu() {
         : [
             ["rename", "Renombrar capa"],
             ...(menu.manualOrbit === true ? [["edit-manual", "Editar órbita manual"]] : []),
+            ["propagated-parameters", "Parámetros orbitales propagados"],
             ["explain", "Explicar parámetros orbitales"],
             ["viz", "Opciones de visualización"],
             ["ground", menu.groundTrackVisible ? "Ground Track Hide" : "Ground Track Show"],

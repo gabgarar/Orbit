@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { buildObjectDetails } from "../features/objectDetails/detailRows.js";
 import useSelectedObject from "../hooks/useSelectedObject.js";
+import { emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
 
 const standardTabs = [["overview", "OVERVIEW"], ["orbit", "ORBIT"], ["telemetry", "TELEMETRY"]];
 const toneClass = { "is-operational": "text-[#73e3a0]", "is-hidden": "text-[#d2a8ff]" };
@@ -19,12 +20,21 @@ function dispatchObjectAction(type, id) {
     window.dispatchEvent(new CustomEvent("orbit:selected-object-action", { detail: { type, id } }));
 }
 
+function openPropagatedParameters(id) {
+    if (!id) return;
+    emitPropagatedParametersOpen({ id, source: "details" });
+}
+
 function TuneGlyph() {
     return <svg className="size-3.5 shrink-0 fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:1.8]" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6" /></svg>;
 }
 
 function TleGlyph() {
     return <svg className="size-3.5 shrink-0 fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:1.8]" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3.5" width="16" height="17" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>;
+}
+
+function PropagationGlyph() {
+    return <svg className="size-3.5 shrink-0 fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:1.8]" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V4.5M4 19.5h16" /><path d="m6.5 15.5 4-4 3 2.25 4-6.25" /><circle cx="6.5" cy="15.5" r="1" /><circle cx="10.5" cy="11.5" r="1" /><circle cx="13.5" cy="13.75" r="1" /><circle cx="17.5" cy="7.5" r="1" /></svg>;
 }
 
 export default function ObjectDetailsPanel() {
@@ -82,9 +92,10 @@ export default function ObjectDetailsPanel() {
             {tabs.map(([key, label]) => <button className={`relative cursor-pointer border-0 bg-transparent px-0.5 pt-[9px] pb-[11px] text-[10px] leading-none font-bold ${tab === key ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1]"}`} type="button" key={key} role="tab" aria-selected={tab === key} aria-controls={`object-details-${key}`} onClick={() => setTab(key)}>{label}</button>)}
         </nav>
         <section id={`object-details-${tab}`} role="tabpanel"><DetailRows rows={details.rows[tab]} /></section>
-        {!isGroundStation && <footer className={`mt-auto grid ${isManualOrbit ? "grid-cols-1" : "grid-cols-2"} gap-2 border-t border-[#1c2c43] pt-3`}>
-            <button className="inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Configuración individual" onClick={() => dispatchObjectAction("visualization", detail.id)}><TuneGlyph />Configuración</button>
-            {!isManualOrbit && <button className="inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Ver parámetros TLE" onClick={() => dispatchObjectAction("tle", detail.id)}><TleGlyph />Parámetros TLE</button>}
+        {!isGroundStation && <footer className={`mt-auto grid ${isManualOrbit ? "grid-cols-2" : "grid-cols-3"} gap-2 border-t border-[#1c2c43] pt-3`}>
+            <button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Configuración individual" onClick={() => dispatchObjectAction("visualization", detail.id)}><TuneGlyph /><span className="truncate">Configuración</span></button>
+            <button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title="Ver parámetros orbitales propagados" disabled={detail.active !== true} onClick={() => openPropagatedParameters(detail.id)}><PropagationGlyph /><span className="truncate">Propagados</span></button>
+            {!isManualOrbit && <button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Ver parámetros TLE" onClick={() => dispatchObjectAction("tle", detail.id)}><TleGlyph /><span className="truncate">Parámetros TLE</span></button>}
         </footer>}
     </aside>;
 }

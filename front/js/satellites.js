@@ -62,6 +62,11 @@ const MANUAL_ORBIT_PREVIEW_MARKER_SIZE_PX = 10;
 // altitude without turning a long design range into an Earth-fixed rosette.
 const MANUAL_ORBIT_PREVIEW_ELLIPSE_SAMPLES = 721;
 const MANUAL_ORBIT_PREVIEW_GEOMETRY_INERTIAL = "inertial-osculating-ellipse";
+// Higher-order gravity models are not fixed osculating ellipses: their
+// secular precession is represented by native ECI samples from the API. The samples are still
+// rendered through one epoch transform, so the design view remains inertial
+// rather than becoming an Earth-fixed rosette.
+const MANUAL_ORBIT_PREVIEW_GEOMETRY_INERTIAL_EPHEMERIS = "inertial-eci-ephemeris";
 const MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS = "earth-fixed-ephemeris";
 const MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI = "eci";
 const MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECEF = "ecef";
@@ -240,10 +245,9 @@ let manualOrbitPreviewState = {
     epochMarkerEntity: null,
     groundTrackEntity: null,
     points: [],
-    // The orbit line may be shown as an epoch-anchored ECI ellipse, while a
-    // ground track must always come from the time-stamped Earth-fixed
-    // ephemeris. Keeping both avoids a misleading static projection in ECI.
-    groundTrackPoints: [],
+    // `points` always use the selected preview frame. The optional ground
+    // track intentionally projects those same points, so ECI and ECEF remain
+    // directly comparable while designing an orbit.
     epochPoint: null,
     epochTimeMs: null,
     startTimeMs: null,
@@ -881,32 +885,82 @@ function resolveCartesianPosition(positionLike) {
 }
 
 function toSurfaceGroundTrack(orbitPoints) {
-    if (!Array.isArray(orbitPoints)) {
+    if (!Array.isArray(orbitPoints)
+        || typeof Cesium === "undefined"
+        || !Cesium.Cartesian3
+        || typeof Cesium.Cartesian3.fromRadians !== "function"
+        || !Cesium.Cartographic
+        || typeof Cesium.Cartographic.fromCartesian !== "function") {
         return [];
     }
 
     const positions = [];
+    let previousLongitude = null;
+    let previousLatitude = null;
     for (const point of orbitPoints) {
-        if (!point) {
+        const x = Number(point?.x);
+        const y = Number(point?.y);
+        const z = Number(point?.z);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
             continue;
         }
 
-        const cart = new Cesium.Cartesian3(point.x, point.y, point.z);
-        const cartographic = Cesium.Cartographic.fromCartesian(cart);
-        if (!cartographic) {
-            continue;
-        }
+        try {
+            const cart = new Cesium.Cartesian3(x, y, z);
+            const cartographic = Cesium.Cartographic.fromCartesian(cart);
+            if (!cartographic) {
+                continue;
+            }
 
-        const lon = Number(cartographic.longitude);
-        const lat = Number(cartographic.latitude);
-        if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
-            continue;
-        }
+            const lon = Number(cartographic.longitude);
+            const lat = Number(cartographic.latitude);
+            if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+                continue;
+            }
 
-        positions.push(Cesium.Cartesian3.fromRadians(lon, lat, GROUND_TRACK_SURFACE_HEIGHT));
+            const surfacePosition = Cesium.Cartesian3.fromRadians(
+                lon,
+                lat,
+                GROUND_TRACK_SURFACE_HEIGHT
+            );
+            if (!surfacePosition
+                || !Number.isFinite(surfacePosition.x)
+                || !Number.isFinite(surfacePosition.y)
+                || !Number.isFinite(surfacePosition.z)) {
+                continue;
+            }
+
+            // A numerical pole/longitude wrap can emit the same surface
+            // position twice. Suppressing only identical angular samples
+            // prevents zero-length segments without dropping valid close
+            // samples from a high-resolution LEO track.
+            if (previousLongitude !== null && previousLatitude !== null) {
+                const rawLongitudeDelta = Math.abs(lon - previousLongitude);
+                const longitudeDelta = Math.min(rawLongitudeDelta, Math.abs((2 * Math.PI) - rawLongitudeDelta));
+                if (longitudeDelta < 1e-12 && Math.abs(lat - previousLatitude) < 1e-12) {
+                    continue;
+                }
+            }
+            positions.push(surfacePosition);
+            previousLongitude = lon;
+            previousLatitude = lat;
+        } catch {
+            // A malformed or non-projectable sample must not prevent the
+            // design preview from rendering its valid orbit geometry.
+        }
     }
 
     return positions;
+}
+
+function getSurfaceGroundTrackArcType() {
+    // A ground track is a path on the ellipsoid. ArcType.NONE draws the
+    // chord between two projected positions, which is especially noticeable
+    // at polar crossings and can look like the globe/camera is distorted.
+    // GEODESIC keeps every segment on the Earth's surface. The fallback keeps
+    // the renderer compatible with small Cesium test doubles and older builds.
+    const arcTypes = typeof Cesium !== "undefined" ? Cesium.ArcType : null;
+    return arcTypes?.GEODESIC ?? arcTypes?.NONE;
 }
 
 function computeFootprintAngularRadius(position) {
@@ -1119,7 +1173,7 @@ function startSmoothUpdate(viewer) {
             const outsideTrackWindow = useSimulationOrbit && isOutsideSimulationTrackWindow(state, simulationCtx?.date);
             applyOutOfTimeVisualState(id, state, outsideTrackWindow);
 
-            // A manual orbit is a local, sampled SGP4 track rather than a
+            // A manual orbit is a local, sampled propagated track rather than a
             // catalogue WebSocket subscription. Keep its marker moving in
             // real time from that ephemeris, while range simulation continues
             // to use the exact same samples below.
@@ -2556,6 +2610,35 @@ function parseManualEphemerisPoint(point) {
     return { timeMs, x: position.x, y: position.y, z: position.z, velocity };
 }
 
+function parseManualEciEphemerisPoint(point) {
+    const eci = point?.eci && typeof point.eci === "object" ? point.eci : point;
+    const timeValue = point?.time
+        || point?.timestamp
+        || point?.timeUtc
+        || point?.time_utc
+        || eci?.time
+        || eci?.timestamp
+        || eci?.timeUtc
+        || eci?.time_utc;
+    const timeMs = new Date(timeValue || "").getTime();
+    // Native manual propagators return ECI metres under `position_eci_m` when
+    // a wrapper is needed.  Accept the compact `{ time, x, y, z }` transport
+    // form too, which keeps this renderer forward-compatible with a streamed
+    // ECI ephemeris.
+    const position = finiteVector(
+        eci?.position_eci_m
+        || eci?.positionEciM
+        || eci?.position_eci
+        || eci?.positionEci
+        || eci?.position
+        || eci
+    );
+    if (!Number.isFinite(timeMs) || !position) {
+        return null;
+    }
+    return { timeMs, x: position.x, y: position.y, z: position.z };
+}
+
 function getManualOrbitEphemeris(payload = {}) {
     return payload?.ephemeris && typeof payload.ephemeris === "object"
         ? payload.ephemeris
@@ -2568,6 +2651,202 @@ function getManualOrbitEphemerisPoints(payload = {}) {
         .map(parseManualEphemerisPoint)
         .filter(Boolean)
         .sort((left, right) => left.timeMs - right.timeMs);
+}
+
+function getManualOrbitEciEphemerisPoints(payload = {}) {
+    const ephemeris = getManualOrbitEphemeris(payload);
+    const payloadPropagation = payload?.propagation && typeof payload.propagation === "object"
+        ? payload.propagation
+        : null;
+    const ephemerisPropagation = ephemeris?.propagation && typeof ephemeris.propagation === "object"
+        ? ephemeris.propagation
+        : null;
+    // The nested point contract is native to Orbit's runtime. The adjacent
+    // `eci_points` aliases keep the preview tolerant of older integrations
+    // which expose a separate ECI series beside propagation metadata.
+    const embeddedEciPoints = Array.isArray(ephemeris?.points)
+        ? ephemeris.points.filter((point) => point?.eci && typeof point.eci === "object")
+        : [];
+    const candidates = [
+        // This is the native runtime contract: every ITRF point carries its
+        // matching source ECI sample. Keeping time on the parent point avoids
+        // a second list that can drift out of alignment with the ephemeris.
+        embeddedEciPoints,
+        payload?.eci_points,
+        payload?.eciPoints,
+        ephemeris?.eci_points,
+        ephemeris?.eciPoints,
+        payloadPropagation?.eci_points,
+        payloadPropagation?.eciPoints,
+        ephemerisPropagation?.eci_points,
+        ephemerisPropagation?.eciPoints
+    ];
+
+    for (const candidate of candidates) {
+        if (!Array.isArray(candidate)) {
+            continue;
+        }
+        const points = candidate
+            .map(parseManualEciEphemerisPoint)
+            .filter(Boolean)
+            .sort((left, right) => left.timeMs - right.timeMs);
+        if (points.length >= 2) {
+            return points;
+        }
+    }
+    return [];
+}
+
+const MANUAL_ORBIT_PROPAGATOR_ALIASES = Object.freeze({
+    sgp4: "sgp4",
+    "two-body": "two-body",
+    two_body: "two-body",
+    twobody: "two-body",
+    kepler: "two-body",
+    keplerian: "two-body",
+    j2: "j2",
+    "j2-analytic": "j2",
+    j2_analytic: "j2",
+    "j2-secular": "j2",
+    j2_secular: "j2",
+    "j2-j3-j4": "j2-j3-j4",
+    j2_j3_j4: "j2-j3-j4",
+    j2j3j4: "j2-j3-j4",
+    "j2-j3-j4-secular": "j2-j3-j4",
+    "cowell-rk4": "cowell-rk4",
+    cowell_rk4: "cowell-rk4",
+    cowell: "cowell-rk4",
+    rk4: "cowell-rk4",
+    "sgp-4": "sgp4"
+});
+
+const MANUAL_ORBIT_NUMERICAL_INTEGRATOR_ALIASES = Object.freeze({
+    rk4: "rk4",
+    "rk-4": "rk4",
+    "runge-kutta-4": "rk4",
+    rungekutta4: "rk4"
+});
+
+const MANUAL_ORBIT_FORCE_TERM_ORDER = Object.freeze(["central", "j2", "j3", "j4", "drag"]);
+
+const MANUAL_ORBIT_FORCE_TERM_ALIASES = Object.freeze({
+    central: "central",
+    "central-gravity": "central",
+    "two-body": "central",
+    twobody: "central",
+    kepler: "central",
+    keplerian: "central",
+    j2: "j2",
+    j3: "j3",
+    j4: "j4",
+    drag: "drag",
+    "atmospheric-drag": "drag",
+    atmospheric: "drag"
+});
+
+function normalizeManualOrbitPropagator(value, fallback = "sgp4") {
+    const fallbackValue = String(fallback || "sgp4").trim().toLowerCase().replace(/[\s_+/]+/g, "-") || "sgp4";
+    const normalized = String(value || "").trim().toLowerCase().replace(/[\s_+/]+/g, "-");
+    if (!normalized) {
+        return MANUAL_ORBIT_PROPAGATOR_ALIASES[fallbackValue] || fallbackValue;
+    }
+    // Preserve an unknown value instead of silently changing a future
+    // propagator saved in a project. Known historical/editor aliases are
+    // always saved again as their canonical API identifier.
+    return MANUAL_ORBIT_PROPAGATOR_ALIASES[normalized] || normalized;
+}
+
+function normalizeManualOrbitNumericalIntegrator(value, fallback = "rk4") {
+    const fallbackValue = String(fallback || "rk4").trim().toLowerCase().replace(/[\s_+/]+/g, "-") || "rk4";
+    const normalized = String(value || "").trim().toLowerCase().replace(/[\s_+/]+/g, "-");
+    if (!normalized) {
+        return MANUAL_ORBIT_NUMERICAL_INTEGRATOR_ALIASES[fallbackValue] || fallbackValue;
+    }
+    // Keep unknown future methods intact when loading a project generated by
+    // a newer client. The execution service decides whether it is installed.
+    return MANUAL_ORBIT_NUMERICAL_INTEGRATOR_ALIASES[normalized] || normalized;
+}
+
+function manualOrbitForceTermValues(value) {
+    if (Array.isArray(value)) return value.flatMap((entry) => manualOrbitForceTermValues(entry));
+    if (value === undefined || value === null) return [];
+    if (typeof value !== "string") return [value];
+    const compact = value.trim().toLowerCase().replace(/[\s_+/]+/g, "-");
+    if (["j2-j3-j4", "j2j3j4"].includes(compact)) return ["j2", "j3", "j4"];
+    return value.split(/[,;+|]/g);
+}
+
+function normalizeManualOrbitForceTerms(value, fallback = ["central", "j2", "j3", "j4"]) {
+    const raw = value === undefined || value === null ? fallback : value;
+    const seen = new Set(["central"]);
+    for (const entry of manualOrbitForceTermValues(raw)) {
+        const normalized = String(entry ?? "").trim().toLowerCase().replace(/[\s_+/]+/g, "-");
+        if (!normalized) continue;
+        // Runtime metadata should retain an unknown future term rather than
+        // rewriting a project merely because this browser predates it.
+        seen.add(MANUAL_ORBIT_FORCE_TERM_ALIASES[normalized] || normalized);
+    }
+    const known = MANUAL_ORBIT_FORCE_TERM_ORDER.filter((term) => seen.has(term));
+    const future = [...seen].filter((term) => !MANUAL_ORBIT_FORCE_TERM_ORDER.includes(term));
+    return [...known, ...future];
+}
+
+function manualOrbitLegacyModelFromForceTerms(forceTerms) {
+    const terms = normalizeManualOrbitForceTerms(forceTerms).filter((term) => term !== "drag");
+    if (terms.some((term) => !MANUAL_ORBIT_FORCE_TERM_ORDER.includes(term))) {
+        return null;
+    }
+    if (terms.includes("j3") || terms.includes("j4")) {
+        return terms.includes("j2") && terms.includes("j3") && terms.includes("j4")
+            ? "j2-j3-j4"
+            : null;
+    }
+    if (terms.includes("j2")) return "j2";
+    return "two-body";
+}
+
+function manualOrbitForceTermsFromLegacyModel(value, fallback = "two-body") {
+    switch (normalizeManualOrbitPropagator(value, fallback)) {
+        case "two-body":
+            return ["central"];
+        case "j2":
+            return ["central", "j2"];
+        default:
+            return ["central", "j2", "j3", "j4"];
+    }
+}
+
+function readManualOrbitPropagator(payload = {}, ephemeris = getManualOrbitEphemeris(payload)) {
+    const payloadPropagation = payload?.propagation && typeof payload.propagation === "object"
+        ? payload.propagation
+        : null;
+    const ephemerisPropagation = ephemeris?.propagation && typeof ephemeris.propagation === "object"
+        ? ephemeris.propagation
+        : null;
+    const payloadMetadata = payload?.propagator_metadata || payload?.propagatorMetadata || null;
+    const ephemerisMetadata = ephemeris?.propagator_metadata || ephemeris?.propagatorMetadata || null;
+    const values = [
+        payload?.propagator,
+        payload?.propagator_id,
+        payload?.propagatorId,
+        payloadMetadata?.id,
+        payloadMetadata?.model_id,
+        payloadMetadata?.modelId,
+        payloadPropagation?.propagator,
+        ephemeris?.propagator,
+        ephemeris?.propagator_id,
+        ephemeris?.propagatorId,
+        ephemerisMetadata?.id,
+        ephemerisMetadata?.model_id,
+        ephemerisMetadata?.modelId,
+        ephemerisPropagation?.propagator
+    ];
+    for (const value of values) {
+        if (String(value || "").trim()) {
+            return normalizeManualOrbitPropagator(value);
+        }
+    }
+    return normalizeManualOrbitPropagator(null);
 }
 
 function normalizeManualOrbitPreviewReferenceFrame(value, fallback = MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI) {
@@ -2821,6 +3100,44 @@ function findNearestManualOrbitPoint(points, targetTimeMs) {
     ));
 }
 
+function buildEpochAnchoredEciEphemerisPreview(eciPoints, epochTimeMs) {
+    const epochGmstRad = gmstRadiansAtManualOrbitEpoch(epochTimeMs);
+    if (!Array.isArray(eciPoints) || eciPoints.length < 2 || !Number.isFinite(epochGmstRad)) {
+        return null;
+    }
+
+    // Cesium's globe uses an Earth-fixed scene. Rotate every native ECI sample
+    // with the *same* epoch angle so the trajectory stays in the requested
+    // inertial frame while preserving the model's genuine precession from the API.
+    const points = [];
+    for (const point of eciPoints) {
+        const position = inertialPositionToEpochFixed(point, epochGmstRad);
+        if (!finiteVector(position)) {
+            continue;
+        }
+        points.push({
+            timeMs: point.timeMs,
+            x: position.x,
+            y: position.y,
+            z: position.z
+        });
+    }
+    if (points.length < 2) {
+        return null;
+    }
+
+    const epochEciPoint = findNearestManualOrbitPoint(eciPoints, epochTimeMs) || eciPoints[0];
+    const epochPosition = inertialPositionToEpochFixed(epochEciPoint, epochGmstRad);
+    if (!finiteVector(epochPosition)) {
+        return null;
+    }
+    return {
+        points,
+        epochPoint: { timeMs: epochEciPoint.timeMs, ...epochPosition },
+        geometryMode: MANUAL_ORBIT_PREVIEW_GEOMETRY_INERTIAL_EPHEMERIS
+    };
+}
+
 function cloneManualOrbitValue(value) {
     if (Array.isArray(value)) {
         return value.map((item) => cloneManualOrbitValue(item));
@@ -2855,6 +3172,182 @@ function readManualOrbitGroundTrackEnabled(payload, fallback = true) {
     return fallback;
 }
 
+const DEFAULT_MANUAL_ORBIT_OBJECT_METADATA = Object.freeze({
+    objectType: "satellite",
+    missionType: "",
+    operator: "",
+    country: "",
+    launchDate: ""
+});
+
+const DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS = Object.freeze({
+    atmosphericDrag: false,
+    dragCoefficient: 2.2,
+    areaM2: 1,
+    massKg: 100,
+    forceTerms: Object.freeze(["central"]),
+    cowellGravityModel: "two-body",
+    numericalIntegrator: "rk4"
+});
+
+function manualOrbitRecord(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function manualOrbitNestedRecord(payload, camelKey, snakeKey) {
+    const source = manualOrbitRecord(payload);
+    if (source[camelKey] && typeof source[camelKey] === "object" && !Array.isArray(source[camelKey])) {
+        return source[camelKey];
+    }
+    if (source[snakeKey] && typeof source[snakeKey] === "object" && !Array.isArray(source[snakeKey])) {
+        return source[snakeKey];
+    }
+    return {};
+}
+
+function manualOrbitText(source, keys, fallback = "") {
+    const record = manualOrbitRecord(source);
+    for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(record, key)) {
+            return record[key] === undefined || record[key] === null ? "" : String(record[key]).trim();
+        }
+    }
+    return fallback;
+}
+
+function manualOrbitNumber(source, keys, fallback, { minimum = 0, strictlyPositive = false } = {}) {
+    const record = manualOrbitRecord(source);
+    for (const key of keys) {
+        if (!Object.prototype.hasOwnProperty.call(record, key)) {
+            continue;
+        }
+        const numeric = Number(record[key]);
+        if (Number.isFinite(numeric) && (strictlyPositive ? numeric > minimum : numeric >= minimum)) {
+            return numeric;
+        }
+        return fallback;
+    }
+    return fallback;
+}
+
+function manualOrbitBoolean(source, keys, fallback = false) {
+    const record = manualOrbitRecord(source);
+    for (const key of keys) {
+        if (!Object.prototype.hasOwnProperty.call(record, key)) {
+            continue;
+        }
+        const value = record[key];
+        if (typeof value === "boolean") return value;
+        if (typeof value === "number") return value !== 0;
+        if (typeof value === "string") {
+            const normalized = value.trim().toLowerCase();
+            if (["true", "1", "yes", "on"].includes(normalized)) return true;
+            if (["false", "0", "no", "off", ""].includes(normalized)) return false;
+        }
+    }
+    return fallback;
+}
+
+function manualOrbitValue(source, keys) {
+    const record = manualOrbitRecord(source);
+    for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(record, key)
+            && record[key] !== undefined
+            && record[key] !== null) {
+            return { found: true, value: record[key] };
+        }
+    }
+    return { found: false, value: undefined };
+}
+
+function manualOrbitHasLegacyPropagationOptionSignal(source) {
+    const record = manualOrbitRecord(source);
+    // Old Cowell records did not have forceTerms or a gravity-model field;
+    // seeing any drag setting or numerical-integrator choice is therefore the
+    // compatibility marker for the historical central + J2 + J3 + J4 default.
+    // An empty modern object is intentionally not treated as legacy.
+    return [
+        "atmosphericDrag", "atmospheric_drag",
+        "dragCoefficient", "drag_coefficient",
+        "areaM2", "area_m2",
+        "massKg", "mass_kg",
+        "numericalIntegrator", "numerical_integrator"
+    ].some((key) => Object.prototype.hasOwnProperty.call(record, key));
+}
+
+function manualOrbitForceTermsFromOptions(source, fallback = DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS) {
+    const suppliedTerms = manualOrbitValue(source, ["forceTerms", "force_terms", "gravityTerms", "gravity_terms"]);
+    if (suppliedTerms.found) {
+        // The new array contract is authoritative, including whether drag is
+        // active. Do not combine a stale atmospheric_drag alias with it.
+        return normalizeManualOrbitForceTerms(suppliedTerms.value);
+    }
+
+    const legacyModel = manualOrbitValue(source, ["cowellGravityModel", "cowell_gravity_model", "forceModel", "force_model"]);
+    const baseTerms = manualOrbitForceTermsFromLegacyModel(
+        legacyModel.found
+            ? legacyModel.value
+            : manualOrbitHasLegacyPropagationOptionSignal(source)
+                ? "j2-j3-j4"
+                : fallback.cowellGravityModel,
+        fallback.cowellGravityModel
+    );
+    const dragEnabled = manualOrbitBoolean(
+        source,
+        ["atmosphericDrag", "atmospheric_drag"],
+        fallback.atmosphericDrag
+    );
+    return normalizeManualOrbitForceTerms([...baseTerms, ...(dragEnabled ? ["drag"] : [])]);
+}
+
+function manualOrbitFixedEngineTerms(propagator) {
+    if (propagator === "two-body" || propagator === "sgp4") return ["central"];
+    if (propagator === "j2") return ["central", "j2"];
+    if (propagator === "j2-j3-j4") return ["central", "j2", "j3", "j4"];
+    return null;
+}
+
+function readManualOrbitObjectMetadata(payload, ephemeris) {
+    const source = {
+        ...manualOrbitNestedRecord(ephemeris, "objectMetadata", "object_metadata"),
+        ...manualOrbitNestedRecord(payload, "objectMetadata", "object_metadata")
+    };
+    return {
+        objectType: manualOrbitText(source, ["objectType", "object_type", "type"], DEFAULT_MANUAL_ORBIT_OBJECT_METADATA.objectType) || "satellite",
+        missionType: manualOrbitText(source, ["missionType", "mission_type", "mission"], DEFAULT_MANUAL_ORBIT_OBJECT_METADATA.missionType),
+        operator: manualOrbitText(source, ["operator", "operatorName", "operator_name"], DEFAULT_MANUAL_ORBIT_OBJECT_METADATA.operator),
+        country: manualOrbitText(source, ["country", "countryCode", "country_code", "operatorCountry", "operator_country"], DEFAULT_MANUAL_ORBIT_OBJECT_METADATA.country),
+        launchDate: manualOrbitText(source, ["launchDate", "launch_date"], DEFAULT_MANUAL_ORBIT_OBJECT_METADATA.launchDate)
+    };
+}
+
+function readManualOrbitPropagationOptions(payload, ephemeris, propagator) {
+    const source = {
+        ...manualOrbitNestedRecord(ephemeris, "propagationOptions", "propagation_options"),
+        ...manualOrbitNestedRecord(payload, "propagationOptions", "propagation_options")
+    };
+    let forceTerms = manualOrbitForceTermsFromOptions(source);
+    const fixedEngineTerms = manualOrbitFixedEngineTerms(propagator);
+    // A response can carry a remembered Cowell draft alongside another
+    // engine. Metadata must report only the forces that engine actually uses.
+    if (fixedEngineTerms) {
+        forceTerms = fixedEngineTerms;
+    }
+    forceTerms = normalizeManualOrbitForceTerms(forceTerms);
+    return {
+        atmosphericDrag: forceTerms.includes("drag"),
+        dragCoefficient: manualOrbitNumber(source, ["dragCoefficient", "drag_coefficient"], DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.dragCoefficient),
+        areaM2: manualOrbitNumber(source, ["areaM2", "area_m2"], DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.areaM2, { strictlyPositive: true }),
+        massKg: manualOrbitNumber(source, ["massKg", "mass_kg"], DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.massKg, { strictlyPositive: true }),
+        forceTerms,
+        cowellGravityModel: manualOrbitLegacyModelFromForceTerms(forceTerms),
+        numericalIntegrator: normalizeManualOrbitNumericalIntegrator(
+            manualOrbitText(source, ["numericalIntegrator", "numerical_integrator"], DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.numericalIntegrator),
+            DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.numericalIntegrator
+        )
+    };
+}
+
 function buildManualOrbitMetadata(payload, ephemeris, points) {
     const epochTimeMs = resolveManualOrbitEpochTimeMs(payload, ephemeris, points);
     const { startTimeMs, endTimeMs } = resolveManualOrbitRange(payload, ephemeris, points);
@@ -2862,9 +3355,10 @@ function buildManualOrbitMetadata(payload, ephemeris, points) {
         ? payload.propagation
         : {};
     const stepSeconds = Number(propagation.step_seconds ?? propagation.stepSeconds ?? payload?.step_seconds ?? payload?.stepSeconds);
+    const propagator = readManualOrbitPropagator(payload, ephemeris);
     return {
         definitionSource: normalizeManualOrbitDefinitionSource(payload?.definition_source || payload?.definitionSource),
-        propagator: String(payload?.propagator || "sgp4").trim().toLowerCase() || "sgp4",
+        propagator,
         epochUtc: toManualOrbitUtcString(epochTimeMs),
         startTime: toManualOrbitUtcString(startTimeMs),
         endTime: toManualOrbitUtcString(endTimeMs),
@@ -2875,17 +3369,25 @@ function buildManualOrbitMetadata(payload, ephemeris, points) {
         ),
         keplerian: cloneManualOrbitValue(payload?.keplerian || null),
         stateVector: cloneManualOrbitValue(payload?.state_vector || payload?.stateVector || null),
-        summary: cloneManualOrbitValue(payload?.orbit_summary || payload?.orbitSummary || null)
+        summary: cloneManualOrbitValue(payload?.orbit_summary || payload?.orbitSummary || null),
+        objectMetadata: readManualOrbitObjectMetadata(payload, ephemeris),
+        propagationOptions: readManualOrbitPropagationOptions(payload, ephemeris, propagator)
     };
 }
 
 function createManualOrbitCatalogMeta(id, track) {
+    const objectMetadata = manualOrbitRecord(track?.manualOrbit?.objectMetadata || track?.manualOrbit?.object_metadata);
     const metadata = createCatalogEntryMeta({
         name: track?.name || id,
         objectId: "MANUAL",
         sourceFormat: "MANUAL",
-        sourceOrigin: "USER"
+        sourceOrigin: "USER",
+        operator: objectMetadata.operator,
+        country: objectMetadata.country,
+        missionType: objectMetadata.missionType,
+        launchDate: objectMetadata.launchDate
     }, id);
+    metadata.objectType = manualOrbitText(objectMetadata, ["objectType", "object_type", "type"], "satellite") || "satellite";
     metadata.manualOrbit = cloneManualOrbitValue(track?.manualOrbit || null);
     return metadata;
 }
@@ -3020,10 +3522,10 @@ function renderManualOrbitPreviewEntities(viewer = currentViewer) {
     }
 
     if (preview.showGroundTrack) {
-        const groundTrackSource = preview.groundTrackPoints.length >= 2
-            ? preview.groundTrackPoints
-            : preview.points;
-        const groundTrackPositions = toSurfaceGroundTrack(groundTrackSource);
+        // Keep the projected line in the same frame as the orbit currently
+        // being inspected: the epoch-anchored ECI ellipse in ECI mode, or the
+        // raw propagated ITRF/ECEF ephemeris in ECEF mode.
+        const groundTrackPositions = toSurfaceGroundTrack(preview.points);
         if (groundTrackPositions.length >= 2) {
             const groundTrackColor = previewColor.withAlpha(0.72);
             if (!preview.groundTrackEntity) {
@@ -3033,13 +3535,15 @@ function renderManualOrbitPreviewEntities(viewer = currentViewer) {
                         positions: groundTrackPositions,
                         width: ORBIT_MIN_PIXEL_WIDTH,
                         material: createOrbitMaterial(groundTrackColor),
-                        arcType: Cesium.ArcType.NONE,
+                        arcType: getSurfaceGroundTrackArcType(),
                         clampToGround: false
                     }
                 });
             } else {
                 preview.groundTrackEntity.polyline.positions = groundTrackPositions;
                 preview.groundTrackEntity.polyline.material = createOrbitMaterial(groundTrackColor);
+                preview.groundTrackEntity.polyline.arcType = getSurfaceGroundTrackArcType();
+                preview.groundTrackEntity.polyline.clampToGround = false;
                 preview.groundTrackEntity.show = true;
             }
         } else if (preview.groundTrackEntity) {
@@ -3064,10 +3568,12 @@ function renderManualOrbitPreviewEntities(viewer = currentViewer) {
 
 /**
  * Render (or replace) the transient design preview returned by
- * `POST /api/manual-orbits`. In `eci` mode it renders one epoch-anchored
- * inertial ellipse; in `ecef` mode it renders the returned ITRF ephemeris.
+ * `POST /api/manual-orbits`. In `eci` mode it prefers native ECI samples for
+ * manual Two-body and gravity-model engines, otherwise it renders one epoch-anchored inertial
+ * ellipse; in `ecef` mode it renders the returned ITRF ephemeris.
  * It never creates a layer, a satellite state, or a telemetry source. Its
- * optional ground track is a dedicated transient entity. If Cesium is not
+ * optional ground track is a dedicated transient entity projected from that
+ * same selected geometry. If Cesium is not
  * ready yet, the valid preview is queued and will be rendered by
  * `initSatelliteReceiver` later.
  *
@@ -3080,12 +3586,26 @@ export function renderManualOrbitPreview(payload = {}, options = {}) {
     const ephemerisPoints = getManualOrbitEphemerisPoints(payload);
     const preliminaryEpochTimeMs = resolveManualOrbitEpochTimeMs(payload, ephemeris, ephemerisPoints);
     const previewReferenceFrame = normalizeManualOrbitPreviewReferenceFrame(options?.previewReferenceFrame);
-    const inertialPreview = previewReferenceFrame === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI
-        ? buildEpochAnchoredInertialPreview(payload, preliminaryEpochTimeMs)
+    const propagator = readManualOrbitPropagator(payload, ephemeris);
+    const nativeEciSamplesAvailable = ephemeris?.eci_samples_available === true
+        || ephemeris?.eciSamplesAvailable === true
+        || payload?.eci_samples_available === true
+        || payload?.eciSamplesAvailable === true;
+    const inertialNativePreview = previewReferenceFrame === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI
+        && (["two-body", "j2", "j2-j3-j4", "cowell-rk4"].includes(propagator) || nativeEciSamplesAvailable)
+        ? buildEpochAnchoredEciEphemerisPreview(
+            getManualOrbitEciEphemerisPoints(payload),
+            preliminaryEpochTimeMs
+        )
         : null;
-    // ECEF is deliberately the literal propagated ephemeris. In ECI mode a
-    // canonical ellipse is preferred, with that same ephemeris retained as a
-    // graceful fallback for incomplete legacy payloads.
+    const inertialPreview = previewReferenceFrame === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI
+        ? inertialNativePreview || buildEpochAnchoredInertialPreview(payload, preliminaryEpochTimeMs)
+        : null;
+    // ECEF is deliberately the literal propagated ITRF ephemeris. ECI uses a
+    // canonical ellipse for SGP4, but native Two-body/J2/J3/J4/Cowell samples are preferred
+    // whenever the API supplies them. This keeps a vector-authored Two-body
+    // state exact and makes higher-order secular precession visible. The geometric
+    // ellipse remains the backwards-compatible fallback for older responses.
     const points = previewReferenceFrame === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECEF
         ? ephemerisPoints
         : inertialPreview?.points || ephemerisPoints;
@@ -3097,7 +3617,6 @@ export function renderManualOrbitPreview(payload = {}, options = {}) {
     const { startTimeMs, endTimeMs } = resolveManualOrbitRange(payload, ephemeris, ephemerisPoints.length ? ephemerisPoints : points);
     const requestedColor = String(options?.color || MANUAL_ORBIT_PREVIEW_COLOR).trim();
     manualOrbitPreviewState.points = points;
-    manualOrbitPreviewState.groundTrackPoints = ephemerisPoints;
     manualOrbitPreviewState.epochPoint = inertialPreview?.epochPoint || null;
     manualOrbitPreviewState.epochTimeMs = epochTimeMs;
     manualOrbitPreviewState.startTimeMs = startTimeMs;
@@ -3105,9 +3624,8 @@ export function renderManualOrbitPreview(payload = {}, options = {}) {
     manualOrbitPreviewState.name = String(payload?.name || ephemeris?.satellite || "Manual Orbit preview").trim() || "Manual Orbit preview";
     manualOrbitPreviewState.visible = options?.visible !== false;
     manualOrbitPreviewState.previewReferenceFrame = previewReferenceFrame;
-    // The ground track is an opt-in design aid. It is rendered from the raw
-    // Earth-fixed samples even if the orbit line itself is being inspected in
-    // the ECI reference-frame view.
+    // The ground track is an opt-in design aid and follows the preview frame
+    // selected above instead of mixing ECI and ECEF geometry in one view.
     manualOrbitPreviewState.showGroundTrack = options?.showGroundTrack === true;
     manualOrbitPreviewState.color = requestedColor || MANUAL_ORBIT_PREVIEW_COLOR;
     manualOrbitPreviewState.geometryMode = inertialPreview?.geometryMode || MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS;
@@ -3126,8 +3644,8 @@ export function updateManualOrbitPreview(payload = {}, options = {}) {
 
 /**
  * Toggle the transient manual-design ground track without re-propagating the
- * orbit. The selected value is intentionally independent of the orbit line's
- * ECI/ECEF presentation and is also preserved by the editor for confirmation.
+ * orbit. It follows the orbit line's currently selected ECI/ECEF preview
+ * geometry and is also preserved by the editor for confirmation.
  */
 export function setManualOrbitPreviewGroundTrack(showGroundTrack, options = {}) {
     manualOrbitPreviewState.showGroundTrack = showGroundTrack === true;
@@ -3155,7 +3673,6 @@ export function clearManualOrbitPreview() {
         epochMarkerEntity: null,
         groundTrackEntity: null,
         points: [],
-        groundTrackPoints: [],
         epochPoint: null,
         epochTimeMs: null,
         startTimeMs: null,
@@ -3176,10 +3693,10 @@ export function getManualOrbitPreviewSnapshot() {
 }
 
 /**
- * Register a temporary, user-authored SGP4 ephemeris without adding it to the
- * catalogue or subscribing it to the catalogue WebSocket. The endpoint's
- * positions are already ITRF metres, which is the rendering contract used by
- * the normal runtime.
+ * Register a temporary, user-authored manual ephemeris without adding it to
+ * the catalogue or subscribing it to the catalogue WebSocket. The endpoint's
+ * confirmed positions are already ITRF metres, which is the rendering contract
+ * used by the normal runtime regardless of its source propagator.
  */
 export function importManualOrbitTrack(payload = {}) {
     if (!currentViewer) {
@@ -3292,7 +3809,7 @@ function buildManualOrbitProjectEntry(id, track) {
         id,
         name: String(track?.name || id),
         definitionSource: normalizeManualOrbitDefinitionSource(metadata.definitionSource || metadata.definition_source),
-        propagator: String(metadata.propagator || "sgp4").trim().toLowerCase() || "sgp4",
+        propagator: normalizeManualOrbitPropagator(metadata.propagator),
         epochUtc: metadata.epochUtc || metadata.epoch_utc || null,
         startTime: metadata.startTime || metadata.start_time || null,
         endTime: metadata.endTime || metadata.end_time || null,
@@ -3302,6 +3819,8 @@ function buildManualOrbitProjectEntry(id, track) {
         groundTrackEnabled: metadata.groundTrackEnabled !== false,
         keplerian: cloneManualOrbitValue(metadata.keplerian || null),
         stateVector: cloneManualOrbitValue(metadata.stateVector || metadata.state_vector || null),
+        objectMetadata: cloneManualOrbitValue(metadata.objectMetadata || metadata.object_metadata || DEFAULT_MANUAL_ORBIT_OBJECT_METADATA),
+        propagationOptions: cloneManualOrbitValue(metadata.propagationOptions || metadata.propagation_options || DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS),
         visual: {
             visible: !hiddenSatelliteIds.has(id),
             overrides: cloneManualOrbitValue(getSatelliteOverrides(id) || {})

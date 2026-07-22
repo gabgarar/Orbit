@@ -14,7 +14,85 @@ import {
 } from "./orbitalElements.js";
 
 export const DEFAULT_MANUAL_ORBIT_NAME = "Manual Orbit";
-export const DEFAULT_MANUAL_ORBIT_PROPAGATOR = "sgp4";
+// A manually designed trajectory has a physical ECI state at its epoch, so
+// two-body propagation is the honest default.  SGP4 remains available for
+// TLE-compatible scenarios, but is not silently imposed on new designs.
+export const DEFAULT_MANUAL_ORBIT_PROPAGATOR = "two-body";
+
+// These values describe the authored object and the propagation model, not
+// its instantaneous geometry.  Keeping them in the canonical editor state
+// means a manual orbit can be reopened without losing its administrative
+// identity or the physical assumptions used to generate it.
+export const DEFAULT_MANUAL_ORBIT_OBJECT_METADATA = Object.freeze({
+    objectType: "satellite",
+    missionType: "",
+    operator: "",
+    country: "",
+    launchDate: ""
+});
+
+export const DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS = Object.freeze({
+    atmosphericDrag: false,
+    dragCoefficient: 2.2,
+    areaM2: 1,
+    massKg: 100,
+    // `forceTerms` is the canonical force-model contract. The central term
+    // is mandatory; the remaining terms are independently selectable by the
+    // Cowell numerical engine. `cowellGravityModel` remains only as a
+    // derived compatibility projection for older saved projects/API clients.
+    forceTerms: Object.freeze(["central"]),
+    cowellGravityModel: "two-body",
+    // Keep the numerical method explicit instead of baking it into a force
+    // model. Today Cowell exposes RK4; this field makes later methods (for
+    // example RKF78) a compatible extension of the project/API contract.
+    numericalIntegrator: "rk4"
+});
+
+const MANUAL_ORBIT_PROPAGATOR_ALIASES = Object.freeze({
+    "two-body": "two-body",
+    two_body: "two-body",
+    twobody: "two-body",
+    kepler: "two-body",
+    keplerian: "two-body",
+    j2: "j2",
+    "j2-secular": "j2",
+    "j2-analytic": "j2",
+    "j2-j3-j4": "j2-j3-j4",
+    j2_j3_j4: "j2-j3-j4",
+    j2j3j4: "j2-j3-j4",
+    "j2-j3-j4-secular": "j2-j3-j4",
+    "cowell-rk4": "cowell-rk4",
+    cowell_rk4: "cowell-rk4",
+    cowell: "cowell-rk4",
+    rk4: "cowell-rk4",
+    sgp4: "sgp4",
+    "sgp-4": "sgp4"
+});
+
+const MANUAL_ORBIT_NUMERICAL_INTEGRATOR_ALIASES = Object.freeze({
+    rk4: "rk4",
+    "rk-4": "rk4",
+    runge_kutta_4: "rk4",
+    "runge-kutta-4": "rk4",
+    rungekutta4: "rk4"
+});
+
+const MANUAL_ORBIT_FORCE_TERM_ORDER = Object.freeze(["central", "j2", "j3", "j4", "drag"]);
+
+const MANUAL_ORBIT_FORCE_TERM_ALIASES = Object.freeze({
+    central: "central",
+    "central-gravity": "central",
+    "two-body": "central",
+    twobody: "central",
+    kepler: "central",
+    keplerian: "central",
+    j2: "j2",
+    j3: "j3",
+    j4: "j4",
+    drag: "drag",
+    "atmospheric-drag": "drag",
+    atmospheric: "drag"
+});
 
 export const DEFAULT_MANUAL_KEPLERIAN = Object.freeze({
     semiMajorAxisKm: 6878,
@@ -60,6 +138,24 @@ const DEFINITION_SOURCE_ALIASES = Object.freeze({
     state: "state-vector"
 });
 
+const OBJECT_METADATA_ALIASES = Object.freeze({
+    objectType: ["objectType", "object_type", "type"],
+    missionType: ["missionType", "mission_type", "mission"],
+    operator: ["operator", "operatorName", "operator_name"],
+    country: ["country", "countryCode", "country_code", "operatorCountry", "operator_country"],
+    launchDate: ["launchDate", "launch_date"]
+});
+
+const PROPAGATION_OPTIONS_ALIASES = Object.freeze({
+    atmosphericDrag: ["atmosphericDrag", "atmospheric_drag"],
+    dragCoefficient: ["dragCoefficient", "drag_coefficient"],
+    areaM2: ["areaM2", "area_m2"],
+    massKg: ["massKg", "mass_kg"],
+    forceTerms: ["forceTerms", "force_terms", "gravityTerms", "gravity_terms"],
+    cowellGravityModel: ["cowellGravityModel", "cowell_gravity_model", "forceModel", "force_model"],
+    numericalIntegrator: ["numericalIntegrator", "numerical_integrator"]
+});
+
 function isRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -82,6 +178,19 @@ function readAlias(source, aliases) {
     return { found: false, value: undefined };
 }
 
+// Object metadata intentionally permits an empty string: clearing an
+// operator or launch date must not revive an older value from the fallback
+// state. Geometry fields, by contrast, use `readAlias` and require a value.
+function readAliasIncludingEmpty(source, aliases) {
+    if (!isRecord(source)) return { found: false, value: undefined };
+    for (const key of aliases) {
+        if (hasOwn(source, key)) {
+            return { found: true, value: source[key] };
+        }
+    }
+    return { found: false, value: undefined };
+}
+
 function valueOrFallback(source, aliases, fallback) {
     const value = readAlias(source, aliases);
     return value.found ? value.value : fallback;
@@ -89,6 +198,285 @@ function valueOrFallback(source, aliases, fallback) {
 
 function safeObject(value) {
     return isRecord(value) ? value : {};
+}
+
+function nestedRecord(source, camelKey, snakeKey) {
+    const sourceRecord = safeObject(source);
+    if (isRecord(sourceRecord[camelKey])) return sourceRecord[camelKey];
+    if (isRecord(sourceRecord[snakeKey])) return sourceRecord[snakeKey];
+    return {};
+}
+
+function normalizedText(value, fallback = "", { fallbackWhenEmpty = false, maximumLength = 160 } = {}) {
+    const candidate = value === undefined || value === null ? "" : String(value).trim();
+    if (candidate.length > maximumLength) {
+        throw new OrbitalElementsValidationError(`Manual orbit metadata must not exceed ${maximumLength} characters.`);
+    }
+    return candidate || (fallbackWhenEmpty ? String(fallback || "").trim() : "");
+}
+
+function normalizeBoolean(value, fallback = false) {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (["true", "1", "yes", "on"].includes(normalized)) return true;
+        if (["false", "0", "no", "off", ""].includes(normalized)) return false;
+    }
+    return fallback === true;
+}
+
+function normalizePositiveNumber(value, fallback, label, { minimum = 0, strictlyPositive = false } = {}) {
+    const raw = value === undefined || value === null || value === "" ? fallback : value;
+    const numeric = Number(raw);
+    const valid = Number.isFinite(numeric)
+        && (strictlyPositive ? numeric > minimum : numeric >= minimum);
+    if (!valid) {
+        const comparison = strictlyPositive ? "greater than" : "at least";
+        throw new OrbitalElementsValidationError(`${label} must be ${comparison} ${minimum}.`);
+    }
+    return numeric;
+}
+
+function normalizeObjectMetadata(value, fallback = DEFAULT_MANUAL_ORBIT_OBJECT_METADATA) {
+    const source = safeObject(value);
+    const base = safeObject(fallback);
+    const read = (key) => {
+        const supplied = readAliasIncludingEmpty(source, OBJECT_METADATA_ALIASES[key]);
+        if (supplied.found) return supplied.value;
+        return readAliasIncludingEmpty(base, OBJECT_METADATA_ALIASES[key]).value;
+    };
+    return {
+        objectType: normalizedText(
+            read("objectType"),
+            DEFAULT_MANUAL_ORBIT_OBJECT_METADATA.objectType,
+            { fallbackWhenEmpty: true, maximumLength: 80 }
+        ),
+        missionType: normalizedText(read("missionType"), "", { maximumLength: 160 }),
+        operator: normalizedText(read("operator"), "", { maximumLength: 160 }),
+        country: normalizedText(read("country"), "", { maximumLength: 120 }),
+        launchDate: normalizedText(read("launchDate"), "", { maximumLength: 64 })
+    };
+}
+
+function optionAlias(source, key) {
+    const result = readAliasIncludingEmpty(source, PROPAGATION_OPTIONS_ALIASES[key]);
+    // `undefined`/`null` do not express a chosen force model. An explicit
+    // empty array, however, intentionally means central gravity only.
+    return result.found && result.value !== undefined && result.value !== null
+        ? result
+        : { found: false, value: undefined };
+}
+
+function forceTermInputValues(value) {
+    if (Array.isArray(value)) {
+        return value.flatMap((entry) => forceTermInputValues(entry));
+    }
+    if (value === undefined || value === null) return [];
+    if (typeof value === "string") {
+        const compact = value.trim().toLowerCase().replace(/[\s_+/]+/g, "-");
+        if (["j2-j3-j4", "j2j3j4"].includes(compact)) {
+            return ["j2", "j3", "j4"];
+        }
+        // Accept compact request forms such as `central + J2 + drag` without
+        // treating the legacy `forceModel` field as an array contract.
+        return value.split(/[,;+|]/g);
+    }
+    return [value];
+}
+
+function normalizeForceTerm(value) {
+    const candidate = String(value ?? "").trim().toLowerCase().replace(/[\s_+/]+/g, "-");
+    if (!candidate) return null;
+    if (candidate.length > 40 || !/^[a-z][a-z0-9-]*$/.test(candidate)) {
+        throw new OrbitalElementsValidationError("Force-term identifiers must be short lowercase names.");
+    }
+    return MANUAL_ORBIT_FORCE_TERM_ALIASES[candidate] || candidate;
+}
+
+/**
+ * Canonicalize independently selectable force terms. `central` is always
+ * present, known terms use a stable physical order, and unknown future terms
+ * are retained after known terms so a project is not silently rewritten by
+ * an older browser.
+ */
+export function normalizeManualOrbitForceTerms(value, fallback = DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.forceTerms) {
+    const raw = value === undefined || value === null ? fallback : value;
+    const supplied = forceTermInputValues(raw)
+        .map((entry) => normalizeForceTerm(entry))
+        .filter(Boolean);
+    const seen = new Set(["central", ...supplied]);
+    const known = MANUAL_ORBIT_FORCE_TERM_ORDER.filter((term) => seen.has(term));
+    const future = [...seen].filter((term) => !MANUAL_ORBIT_FORCE_TERM_ORDER.includes(term));
+    return [...known, ...future];
+}
+
+function forceTermsFromLegacyModel(value, fallback = DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.cowellGravityModel) {
+    switch (normalizeCowellGravityModel(value, fallback)) {
+        case "two-body":
+            return ["central"];
+        case "j2":
+            return ["central", "j2"];
+        default:
+            return ["central", "j2", "j3", "j4"];
+    }
+}
+
+function legacyModelFromForceTerms(forceTerms) {
+    const normalized = normalizeManualOrbitForceTerms(forceTerms).filter((term) => term !== "drag");
+    // The legacy field cannot represent arbitrary combinations. Project only
+    // exact historical presets; a nearest-match would silently advertise
+    // different physics than the explicit forceTerms actually describe.
+    if (normalized.some((term) => !MANUAL_ORBIT_FORCE_TERM_ORDER.includes(term))) {
+        return null;
+    }
+    if (normalized.includes("j3") || normalized.includes("j4")) {
+        return normalized.includes("j2") && normalized.includes("j3") && normalized.includes("j4")
+            ? "j2-j3-j4"
+            : null;
+    }
+    if (normalized.includes("j2")) return "j2";
+    return "two-body";
+}
+
+function hasLegacyPropagationOptionSignal(source) {
+    const record = safeObject(source);
+    // Before forceTerms existed, a Cowell configuration could contain only
+    // its drag settings or numerical-integrator choice. Those payloads
+    // historically defaulted to the full J2 + J3 + J4 gravity preset. A
+    // genuinely new, empty options object remains the central-gravity default.
+    return [
+        ...PROPAGATION_OPTIONS_ALIASES.atmosphericDrag,
+        ...PROPAGATION_OPTIONS_ALIASES.dragCoefficient,
+        ...PROPAGATION_OPTIONS_ALIASES.areaM2,
+        ...PROPAGATION_OPTIONS_ALIASES.massKg,
+        ...PROPAGATION_OPTIONS_ALIASES.numericalIntegrator
+    ].some((key) => hasOwn(record, key));
+}
+
+function resolveForceTerms(source, base) {
+    const suppliedTerms = optionAlias(source, "forceTerms");
+    if (suppliedTerms.found) {
+        // New forceTerms/gravityTerms are canonical and deliberately override
+        // every legacy gravity/drag flag found in the same payload.
+        return normalizeManualOrbitForceTerms(suppliedTerms.value);
+    }
+
+    const suppliedLegacyModel = optionAlias(source, "cowellGravityModel");
+    const fallbackTerms = optionAlias(base, "forceTerms");
+    const fallbackLegacyModel = optionAlias(base, "cowellGravityModel");
+    const suppliedDrag = optionAlias(source, "atmosphericDrag");
+    const fallbackDrag = optionAlias(base, "atmosphericDrag");
+
+    let gravityTerms;
+    if (suppliedLegacyModel.found) {
+        gravityTerms = forceTermsFromLegacyModel(suppliedLegacyModel.value);
+    } else if (hasLegacyPropagationOptionSignal(source)) {
+        gravityTerms = forceTermsFromLegacyModel("j2-j3-j4");
+    } else if (fallbackTerms.found) {
+        gravityTerms = normalizeManualOrbitForceTerms(fallbackTerms.value).filter((term) => term !== "drag");
+    } else if (fallbackLegacyModel.found) {
+        gravityTerms = forceTermsFromLegacyModel(fallbackLegacyModel.value);
+    } else {
+        gravityTerms = normalizeManualOrbitForceTerms(DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.forceTerms);
+    }
+
+    const inheritedDrag = fallbackTerms.found
+        ? normalizeManualOrbitForceTerms(fallbackTerms.value).includes("drag")
+        : normalizeBoolean(fallbackDrag.value, DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.atmosphericDrag);
+    const dragEnabled = suppliedDrag.found
+        ? normalizeBoolean(suppliedDrag.value, inheritedDrag)
+        : inheritedDrag;
+    return normalizeManualOrbitForceTerms([...gravityTerms, ...(dragEnabled ? ["drag"] : [])]);
+}
+
+function normalizePropagationOptions(value, fallback = DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS) {
+    const source = safeObject(value);
+    const base = safeObject(fallback);
+    const read = (key) => {
+        const supplied = optionAlias(source, key);
+        if (supplied.found) return supplied.value;
+        return optionAlias(base, key).value;
+    };
+    const forceTerms = resolveForceTerms(source, base);
+    return {
+        // These two fields are compatibility projections. New callers should
+        // use forceTerms, where membership of `drag` is the source of truth.
+        atmosphericDrag: forceTerms.includes("drag"),
+        dragCoefficient: normalizePositiveNumber(
+            read("dragCoefficient"),
+            DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.dragCoefficient,
+            "Drag coefficient",
+            { minimum: 0 }
+        ),
+        areaM2: normalizePositiveNumber(
+            read("areaM2"),
+            DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.areaM2,
+            "Reference area",
+            { minimum: 0, strictlyPositive: true }
+        ),
+        massKg: normalizePositiveNumber(
+            read("massKg"),
+            DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.massKg,
+            "Mass",
+            { minimum: 0, strictlyPositive: true }
+        ),
+        forceTerms,
+        cowellGravityModel: legacyModelFromForceTerms(forceTerms),
+        numericalIntegrator: normalizeManualOrbitNumericalIntegrator(
+            read("numericalIntegrator"),
+            DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.numericalIntegrator
+        )
+    };
+}
+
+function normalizeCowellGravityModel(value, fallback = "two-body") {
+    const candidate = normalizeManualOrbitPropagator(value, fallback);
+    return ["two-body", "j2", "j2-j3-j4"].includes(candidate)
+        ? candidate
+        : fallback;
+}
+
+function forceTermsForFixedEngine(propagator) {
+    if (propagator === "two-body" || propagator === "sgp4") return ["central"];
+    if (propagator === "j2") return ["central", "j2"];
+    if (propagator === "j2-j3-j4") return ["central", "j2", "j3", "j4"];
+    return null;
+}
+
+function scopePropagationOptionsToEngine(propagator, propagationOptions) {
+    let forceTerms = normalizeManualOrbitForceTerms(propagationOptions.forceTerms);
+    const fixedForceTerms = forceTermsForFixedEngine(propagator);
+    // The selected engine is physically authoritative. A two-body or SGP4
+    // object must not persist/echo J2/J3/J4 merely because those were left in
+    // a Cowell design draft; legacy public presets likewise retain their
+    // historical force composition exactly.
+    if (fixedForceTerms) {
+        forceTerms = fixedForceTerms;
+    }
+    forceTerms = normalizeManualOrbitForceTerms(forceTerms);
+    return {
+        ...propagationOptions,
+        forceTerms,
+        atmosphericDrag: forceTerms.includes("drag"),
+        cowellGravityModel: legacyModelFromForceTerms(forceTerms)
+    };
+}
+
+/**
+ * Normalize a numerical-integration method independently from a force
+ * model. Unknown values remain serializable so saved projects can survive a
+ * client deployed before a future integrator is added to its selector; the
+ * backend remains authoritative about availability at execution time.
+ */
+export function normalizeManualOrbitNumericalIntegrator(value, fallback = "rk4") {
+    const raw = hasValue(value) ? value : (hasValue(fallback) ? fallback : "rk4");
+    const candidate = String(raw).trim().toLowerCase().replace(/[\s_+/]+/g, "-");
+    if (!candidate) return "rk4";
+    if (candidate.length > 40) {
+        throw new OrbitalElementsValidationError("Numerical integrator name must not exceed 40 characters.");
+    }
+    return MANUAL_ORBIT_NUMERICAL_INTEGRATOR_ALIASES[candidate] || candidate;
 }
 
 function unwrapPayload(payload) {
@@ -126,13 +514,25 @@ function normalizeEpochUtc(value, fallback) {
     return date.toISOString();
 }
 
-function normalizePropagator(value, fallback = DEFAULT_MANUAL_ORBIT_PROPAGATOR) {
-    const candidate = hasValue(value) ? String(value).trim().toLowerCase() : String(fallback || DEFAULT_MANUAL_ORBIT_PROPAGATOR).trim().toLowerCase();
+/**
+ * Normalize the currently supported aliases without closing the persisted
+ * project format to future propagators.  The backend remains authoritative
+ * for whether a named model is available at run time.
+ */
+export function normalizeManualOrbitPropagator(value, fallback = DEFAULT_MANUAL_ORBIT_PROPAGATOR) {
+    const raw = hasValue(value)
+        ? value
+        : (hasValue(fallback) ? fallback : DEFAULT_MANUAL_ORBIT_PROPAGATOR);
+    const candidate = String(raw).trim().toLowerCase().replace(/[\s_+/]+/g, "-");
     if (!candidate) return DEFAULT_MANUAL_ORBIT_PROPAGATOR;
     if (candidate.length > 40) {
         throw new OrbitalElementsValidationError("Propagator name must not exceed 40 characters.");
     }
-    return candidate;
+    return MANUAL_ORBIT_PROPAGATOR_ALIASES[candidate] || candidate;
+}
+
+function normalizePropagator(value, fallback = DEFAULT_MANUAL_ORBIT_PROPAGATOR) {
+    return normalizeManualOrbitPropagator(value, fallback);
 }
 
 function normalizeDefinitionSource(value) {
@@ -258,10 +658,24 @@ function canonicalStateVector(value) {
 function metadataFor(payload, fallback) {
     const source = unwrapPayload(payload);
     const base = safeObject(fallback);
+    const propagator = normalizePropagator(valueOrFallback(source, ["propagator"], base.propagator), base.propagator);
+    const rawPropagationOptions = nestedRecord(source, "propagationOptions", "propagation_options");
+    const propagationOptions = scopePropagationOptionsToEngine(
+        propagator,
+        normalizePropagationOptions(
+            rawPropagationOptions,
+        base.propagationOptions ?? base.propagation_options ?? DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS
+        )
+    );
     return {
         name: normalizeName(valueOrFallback(source, ["name"], base.name)),
         epochUtc: normalizeEpochUtc(valueOrFallback(source, ["epochUtc", "epoch_utc", "epoch"], base.epochUtc), base.epochUtc),
-        propagator: normalizePropagator(valueOrFallback(source, ["propagator"], base.propagator), base.propagator)
+        propagator,
+        objectMetadata: normalizeObjectMetadata(
+            nestedRecord(source, "objectMetadata", "object_metadata"),
+            base.objectMetadata ?? base.object_metadata ?? DEFAULT_MANUAL_ORBIT_OBJECT_METADATA
+        ),
+        propagationOptions
     };
 }
 
@@ -312,10 +726,24 @@ function sourceInstruction(payload, explicitSource) {
 
 function buildDefaultMetadata(options = {}) {
     const now = options.now ?? options.epochUtc ?? options.epoch ?? new Date();
+    const propagator = normalizePropagator(options.propagator, DEFAULT_MANUAL_ORBIT_PROPAGATOR);
+    const rawPropagationOptions = nestedRecord(options, "propagationOptions", "propagation_options");
+    const propagationOptions = scopePropagationOptionsToEngine(
+        propagator,
+        normalizePropagationOptions(
+            rawPropagationOptions,
+        DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS
+        )
+    );
     return {
         name: normalizeName(options.name, DEFAULT_MANUAL_ORBIT_NAME),
         epochUtc: normalizeEpochUtc(options.epochUtc ?? options.epoch ?? now, now),
-        propagator: normalizePropagator(options.propagator, DEFAULT_MANUAL_ORBIT_PROPAGATOR)
+        propagator,
+        objectMetadata: normalizeObjectMetadata(
+            nestedRecord(options, "objectMetadata", "object_metadata"),
+            DEFAULT_MANUAL_ORBIT_OBJECT_METADATA
+        ),
+        propagationOptions
     };
 }
 
@@ -333,6 +761,8 @@ function canonicalizeCurrent(current) {
         name: current.name,
         epochUtc: current.epochUtc ?? current.epoch_utc ?? current.epoch,
         propagator: current.propagator,
+        objectMetadata: current.objectMetadata ?? current.object_metadata,
+        propagationOptions: current.propagationOptions ?? current.propagation_options,
         now: current.epochUtc ?? current.epoch_utc ?? current.epoch
     };
     const fallback = createDefaultManualOrbitState(metadataOptions);
@@ -416,6 +846,41 @@ function apiStateVector(value) {
     };
 }
 
+function apiObjectMetadata(value) {
+    return {
+        object_type: value.objectType,
+        mission_type: value.missionType,
+        operator: value.operator,
+        country: value.country,
+        launch_date: value.launchDate
+    };
+}
+
+function apiPropagationOptions(value, propagator) {
+    const result = {
+        // Canonical model contract. An exact historical gravity alias is
+        // added below only when one exists; custom compositions must not be
+        // rounded to a different legacy model.
+        force_terms: [...value.forceTerms],
+        atmospheric_drag: value.atmosphericDrag,
+        drag_coefficient: value.dragCoefficient,
+        area_m2: value.areaM2,
+        mass_kg: value.massKg
+    };
+    // RK4 is an implementation detail of Cowell. Fixed analytical/legacy
+    // engines must not advertise a numerical integrator merely because an
+    // older project retained that editor field. Keep unknown future engines
+    // untouched so a newer project's contract is not destroyed by this UI.
+    const fixedEngineTerms = forceTermsForFixedEngine(normalizePropagator(propagator));
+    if (!fixedEngineTerms) {
+        result.numerical_integrator = value.numericalIntegrator;
+        if (value.cowellGravityModel) {
+            result.cowell_gravity_model = value.cowellGravityModel;
+        }
+    }
+    return result;
+}
+
 function appendApiOption(result, options, optionKey, apiKey) {
     if (!hasValue(options?.[optionKey])) return;
     result[apiKey] = options[optionKey] instanceof Date
@@ -437,7 +902,9 @@ export function toManualOrbitApiPayload(state, options = {}) {
         propagator: canonical.propagator,
         definition_source: source,
         keplerian: apiKeplerian(canonical.keplerian),
-        state_vector: apiStateVector(canonical.stateVector)
+        state_vector: apiStateVector(canonical.stateVector),
+        object_metadata: apiObjectMetadata(canonical.objectMetadata),
+        propagation_options: apiPropagationOptions(canonical.propagationOptions, canonical.propagator)
     };
     appendApiOption(result, options, "startTime", "start_time");
     appendApiOption(result, options, "endTime", "end_time");

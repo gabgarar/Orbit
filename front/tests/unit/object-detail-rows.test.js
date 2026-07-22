@@ -130,6 +130,19 @@ test("a confirmed manual orbit exposes only its authored definition in Manual Pa
             manualOrbit: {
                 definitionSource: "keplerian",
                 propagator: "sgp4",
+                objectMetadata: {
+                    objectType: "satellite",
+                    missionType: "Earth observation",
+                    operator: "Orbit Agency",
+                    country: "ES",
+                    launchDate: "2026-07-01T00:00:00.000Z"
+                },
+                propagationOptions: {
+                    atmosphericDrag: true,
+                    dragCoefficient: 2.2,
+                    areaM2: 1.5,
+                    massKg: 120
+                },
                 epochUtc: "2026-07-20T10:00:00.000Z",
                 startTime: "2026-07-20T10:00:00.000Z",
                 endTime: "2026-07-20T16:00:00.000Z",
@@ -155,12 +168,70 @@ test("a confirmed manual orbit exposes only its authored definition in Manual Pa
         }
     });
     const manual = Object.fromEntries(details.rows.manual);
+    const overview = Object.fromEntries(details.rows.overview);
 
     assert.equal(manual.Definition, "keplerian");
-    assert.equal(manual.Propagator, "sgp4");
+    assert.equal(manual["Propagation engine"], "SGP4 / TLE propagation");
+    // SGP4 has its own TLE/BSTAR model; stale manual drag fields must not be
+    // presented as active Cowell physics.
+    assert.equal("Atmospheric drag" in manual, false);
+    assert.equal("Drag coefficient" in manual, false);
+    assert.equal("Reference area" in manual, false);
+    assert.equal("Mass" in manual, false);
     assert.equal(manual["Ground track"], "On");
     assert.equal(manual.Perigee, "431.100 km");
     assert.equal(manual.Apogee, "568.700 km");
     assert.equal(manual.Period, "94.600 min");
     assert.equal(manual["Arg. periapsis"], "70.0000 deg");
+    assert.equal(overview["Object type"], "satellite");
+    assert.equal(overview["Misión"], "Earth observation");
+    assert.equal(overview["Operador / agencia"], "Orbit Agency");
+    assert.equal(overview["País"], "ES");
+});
+
+test("manual Cowell details expose an independent, composable set of force terms", () => {
+    const details = buildObjectDetails({
+        id: "manual:cowell",
+        sourceFormat: "MANUAL",
+        telemetry: { id: "Cowell demo", geo: {} },
+        catalogMeta: {
+            manualOrbit: {
+                propagator: "cowell-rk4",
+                propagationOptions: {
+                    numericalIntegrator: "rk4",
+                    // The modern set is authoritative: J4 can be enabled
+                    // independently of J3 and drag is a force term too.
+                    forceTerms: ["central", "j2", "j4", "drag"],
+                    atmosphericDrag: false
+                }
+            }
+        }
+    });
+
+    const manual = Object.fromEntries(details.rows.manual);
+    assert.equal(manual["Propagation engine"], "Cowell numerical propagation");
+    assert.equal(manual["Numerical integrator"], "RK4");
+    assert.equal(manual["Force terms"], "Central gravity + J2 + J4 + Atmospheric drag");
+    assert.equal(manual["Atmospheric drag"], "On");
+});
+
+test("legacy Cowell drag-only records retain their historical zonal force interpretation", () => {
+    const details = buildObjectDetails({
+        id: "manual:legacy-cowell",
+        sourceFormat: "MANUAL",
+        telemetry: { id: "Legacy Cowell", geo: {} },
+        catalogMeta: {
+            manualOrbit: {
+                propagator: "cowell-rk4",
+                propagationOptions: { atmosphericDrag: true }
+            }
+        }
+    });
+
+    const manual = Object.fromEntries(details.rows.manual);
+    assert.equal(
+        manual["Force terms"],
+        "Central gravity + J2 + J3 + J4 + Atmospheric drag"
+    );
+    assert.equal(manual["Atmospheric drag"], "On");
 });

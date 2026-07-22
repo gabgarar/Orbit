@@ -44,7 +44,19 @@ class OrbitRuntime:
         """Convert a datetime to an aware UTC value."""
         return value.replace(tzinfo=datetime.UTC) if value.tzinfo is None else value.astimezone(datetime.UTC)
 
-    def serialize_state(self, name: str, moment: datetime.datetime, x, y, z, vx, vy, vz, include_velocity=True) -> dict:
+    def serialize_state(
+        self,
+        name: str,
+        moment: datetime.datetime,
+        x,
+        y,
+        z,
+        vx,
+        vy,
+        vz,
+        include_velocity=True,
+        eci_state_km: tuple[float, float, float, float, float, float] | None = None,
+    ) -> dict:
         # Propagators expose Orbit's Earth-fixed runtime contract in metres.
         # Keep it explicit in HTTP ephemerides so an OEM/consumer cannot infer
         # the original SGP4 TEME frame from the source model.
@@ -58,6 +70,29 @@ class OrbitRuntime:
         }
         if include_velocity:
             payload["velocity"] = {"x": vx, "y": vy, "z": vz}
+        # Native manual engines can expose their source ECI samples in
+        # addition to the renderer's ITRF positions.  That lets an ECI design
+        # preview render a J2-precessing path instead of reconstructing a
+        # static two-body ellipse from its initial elements.
+        if eci_state_km is not None:
+            eci_x, eci_y, eci_z, eci_vx, eci_vy, eci_vz = eci_state_km
+            eci_payload = {
+                "reference_frame": "ECI",
+                "position_units": "m",
+                "velocity_units": "m/s",
+                "position": {
+                    "x": eci_x * 1000.0,
+                    "y": eci_y * 1000.0,
+                    "z": eci_z * 1000.0,
+                },
+            }
+            if include_velocity:
+                eci_payload["velocity"] = {
+                    "x": eci_vx * 1000.0,
+                    "y": eci_vy * 1000.0,
+                    "z": eci_vz * 1000.0,
+                }
+            payload["eci"] = eci_payload
         return payload
 
     def get_state_snapshot(self) -> tuple[list, dict, dict]:
@@ -108,15 +143,43 @@ class OrbitRuntime:
         cached = self._ephemeris_cache.get(cache_key)
         if cached is not None:
             return cached
+        native_eci_provider = getattr(prop, "propagate_eci_datetime", None)
+        eci_samples_available = callable(native_eci_provider)
+
+        def sample(moment: datetime.datetime) -> dict:
+            propagation_moment = moment.replace(tzinfo=None)
+            x, y, z, vx, vy, vz = prop.propagate_datetime(propagation_moment)
+            eci_state = native_eci_provider(propagation_moment) if eci_samples_available else None
+            return self.serialize_state(
+                name,
+                moment,
+                x,
+                y,
+                z,
+                vx,
+                vy,
+                vz,
+                include_velocity,
+                eci_state,
+            )
+
         points, cursor = [], start_utc
         while cursor <= end_utc:
-            x, y, z, vx, vy, vz = prop.propagate_datetime(cursor.replace(tzinfo=None))
-            points.append(self.serialize_state(name, cursor, x, y, z, vx, vy, vz, include_velocity))
+            points.append(sample(cursor))
             cursor += datetime.timedelta(seconds=step)
         if points and points[-1]["time"] != end_utc.isoformat():
-            x, y, z, vx, vy, vz = prop.propagate_datetime(end_utc.replace(tzinfo=None))
-            points.append(self.serialize_state(name, end_utc, x, y, z, vx, vy, vz, include_velocity))
-        payload = {"satellite": name, "start_time": start_utc.isoformat(), "end_time": end_utc.isoformat(), "step_seconds": step, "points": points, "count": len(points), "cached": False}
+            points.append(sample(end_utc))
+        payload = {
+            "satellite": name,
+            "reference_frame": "ITRF",
+            "eci_samples_available": eci_samples_available,
+            "start_time": start_utc.isoformat(),
+            "end_time": end_utc.isoformat(),
+            "step_seconds": step,
+            "points": points,
+            "count": len(points),
+            "cached": False,
+        }
         self._ephemeris_cache.set(cache_key, payload)
         return payload
 

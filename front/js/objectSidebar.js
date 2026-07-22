@@ -2398,9 +2398,10 @@ export function setupObjectSidebar({
             : "SATELLITE";
         const isGroundStation = layerType === "GROUND_STATION";
         const isManualOrbit = !isGroundStation && canEditManualOrbit(satelliteId) === true;
-        // Keep the extra manual-orbit action inside the viewport instead of
-        // letting the last menu entry slip under the simulation dock.
-        const menuHeight = isManualOrbit ? 286 : 248;
+        // Keep the orbital-analysis and optional manual-edit actions inside
+        // the viewport instead of letting the last entry slip under the
+        // simulation dock.
+        const menuHeight = isGroundStation ? 94 : (isManualOrbit ? 324 : 286);
         const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
         const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
 
@@ -2426,6 +2427,7 @@ export function setupObjectSidebar({
             detail: {
                 left,
                 top,
+                id: satelliteId,
                 groundStation: isGroundStation,
                 groundTrackVisible: getGroundTrackVisible?.(satelliteId) === true,
                 // Only local authored manual orbits get an edit action. The
@@ -2954,13 +2956,36 @@ export function setupObjectSidebar({
     });
 
     window.addEventListener("orbit:layer-context-action", (event) => {
-        if (event.detail === "edit-manual") {
-            if (!contextTargetId || canEditManualOrbit(contextTargetId) !== true) {
+        // React supplies an explicit layer id so the action remains correct
+        // even if another event closes or reopens the legacy context menu
+        // before this handler runs. Keep the string spelling for fallback
+        // legacy embeddings.
+        const detail = event.detail;
+        const action = typeof detail === "string" ? detail : String(detail?.action || "").trim();
+        const targetId = String((typeof detail === "object" && detail?.id) || contextTargetId || "").trim();
+        if (action === "edit-manual") {
+            if (!targetId || canEditManualOrbit(targetId) !== true) {
                 return;
             }
-            const id = contextTargetId;
             closeContextMenu();
-            onRequestEditManualOrbit?.(id);
+            onRequestEditManualOrbit?.(targetId);
+            return;
+        }
+        if (action === "propagated-parameters") {
+            if (
+                !targetId
+                || getObjectLayerActive(targetId) !== true
+                || String(getLayerType?.(targetId) || "SATELLITE").toUpperCase() === "GROUND_STATION"
+            ) {
+                return;
+            }
+            // Keep the right-click target as the workspace selection before
+            // opening the inspector, exactly as the regular layer click does.
+            selectObject(targetId);
+            closeContextMenu();
+            window.dispatchEvent(new CustomEvent("orbit:propagated-parameters-open", {
+                detail: { id: targetId, source: String(detail?.source || "layer") }
+            }));
             return;
         }
         const actionButtons = {
@@ -2972,7 +2997,7 @@ export function setupObjectSidebar({
             export: contextExportBtn,
             rename: contextRenameBtn
         };
-        actionButtons[event.detail]?.click();
+        actionButtons[action]?.click();
     });
 
     // React owns the selected-object card; this sidebar remains the adapter for

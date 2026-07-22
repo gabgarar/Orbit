@@ -64,3 +64,7 @@ export function CameraIcon() {
 export function ManualOrbitIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="9" ry="4.7" transform="rotate(-32 12 12)" /><circle cx="16.9" cy="6.2" r="1.75" /><path d="M4 18.5h5M6.5 16v5" /></svg>;
 }
+
+export function PropagatedParametersIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V4.5M4 19.5h16" /><path d="m6.5 15.5 4-4 3 2.25 4-6.25" /><circle cx="6.5" cy="15.5" r="1" /><circle cx="10.5" cy="11.5" r="1" /><circle cx="13.5" cy="13.75" r="1" /><circle cx="17.5" cy="7.5" r="1" /></svg>;
+}

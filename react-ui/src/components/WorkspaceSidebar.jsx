@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { CalendarIcon, EyeIcon, EyeOffIcon, ManualOrbitIcon, PlusIcon, SatelliteIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons.jsx";
+import { CalendarIcon, EyeIcon, EyeOffIcon, ManualOrbitIcon, PlusIcon, PropagatedParametersIcon, SatelliteIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons.jsx";
 import CameraControls from "../features/camera/CameraControls.jsx";
 import { getLayerActionsState, LAYER_ACTIONS_STATE_EVENT } from "../../../front/js/runtime/layerActionsState.js";
+import { emitPropagatedParametersClose, emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
 
 function publishLayersPanelState(open) {
     window.dispatchEvent(new CustomEvent("orbit:layers-panel-state", { detail: { open } }));
@@ -47,6 +48,8 @@ export default function WorkspaceSidebar() {
     const [hasActiveLayers, setHasActiveLayers] = useState(() => getLayerActionsState().hasActiveLayers);
     const [manualOrbitOpen, setManualOrbitOpen] = useState(false);
     const [designMode, setDesignMode] = useState(false);
+    const [selectedInspectableLayer, setSelectedInspectableLayer] = useState(null);
+    const [propagatedParametersOpen, setPropagatedParametersOpen] = useState(false);
     useEffect(() => {
         const onProjectTitle = (event) => setProjectName(String(event.detail || "MY PROJECT").toUpperCase());
         window.addEventListener("orbit:project-title", onProjectTitle);
@@ -95,6 +98,24 @@ export default function WorkspaceSidebar() {
         return () => window.removeEventListener("orbit:manual-orbit-design-state", onDesignMode);
     }, []);
     useEffect(() => {
+        const onSelection = (event) => {
+            const detail = event.detail || {};
+            const id = String(detail.id || "").trim();
+            const isOrbitalLayer = String(detail.layerType || "SATELLITE").toUpperCase() !== "GROUND_STATION";
+            setSelectedInspectableLayer(detail.active === true && isOrbitalLayer && id ? { id } : null);
+        };
+        window.addEventListener("orbit:selected-layer-state", onSelection);
+        window.dispatchEvent(new Event("orbit:selected-layer-state-request"));
+        return () => window.removeEventListener("orbit:selected-layer-state", onSelection);
+    }, []);
+    useEffect(() => {
+        const onPanelState = (event) => {
+            if (typeof event.detail?.open === "boolean") setPropagatedParametersOpen(event.detail.open);
+        };
+        window.addEventListener("orbit:propagated-parameters-panel-state", onPanelState);
+        return () => window.removeEventListener("orbit:propagated-parameters-panel-state", onPanelState);
+    }, []);
+    useEffect(() => {
         if (designMode) setSearchMenuOpen(false);
     }, [designMode]);
     const togglePanel = () => {
@@ -103,6 +124,18 @@ export default function WorkspaceSidebar() {
         publishLayersPanelState(next);
     };
     const visibilityTitle = allLayersVisible ? "Ocultar todas las capas" : "Mostrar todas las capas";
+    const propagatedParametersAvailable = Boolean(selectedInspectableLayer?.id);
+    const propagatedParametersTitle = propagatedParametersAvailable
+        ? (propagatedParametersOpen ? "Ocultar parÃ¡metros orbitales propagados" : "Ver parÃ¡metros orbitales propagados")
+        : "Selecciona una capa orbital activa para ver sus parÃ¡metros propagados";
+    const togglePropagatedParameters = () => {
+        if (!propagatedParametersAvailable) return;
+        if (propagatedParametersOpen) {
+            emitPropagatedParametersClose({ source: "sidebar" });
+            return;
+        }
+        emitPropagatedParametersOpen({ id: selectedInspectableLayer.id, source: "sidebar" });
+    };
     const toggleSearchOption = (option) => {
         setSearchOptions((current) => {
             const next = { ...current, [option]: !current[option] };
@@ -114,6 +147,7 @@ export default function WorkspaceSidebar() {
         <aside id="leftSidebar" aria-label="Paneles del visor">
             <button id="leftSatellitesBtn" className={`sidebar-btn${openPanel ? " active" : ""}`} type="button" title="Capas y satelites" aria-label="Capas y satelites" onClick={togglePanel}><SatelliteIcon /></button>
             <button id="leftManualOrbitBtn" className={`sidebar-btn${manualOrbitOpen ? " active" : ""}`} type="button" title={"Crear \u00f3rbita manual"} aria-label={"Crear \u00f3rbita manual"} aria-expanded={manualOrbitOpen} onClick={() => window.dispatchEvent(new CustomEvent("orbit:manual-orbit-toggle", { detail: { open: !manualOrbitOpen } }))}><ManualOrbitIcon /></button>
+            <button id="leftPropagatedParametersBtn" className={`sidebar-btn${propagatedParametersOpen ? " active" : ""} disabled:!cursor-not-allowed disabled:!opacity-40`} type="button" title={propagatedParametersTitle} aria-label={propagatedParametersTitle} aria-expanded={propagatedParametersOpen} disabled={!propagatedParametersAvailable} onClick={togglePropagatedParameters}><PropagatedParametersIcon /></button>
             <div className="sidebar-spacer" />
             <CameraControls />
         </aside>

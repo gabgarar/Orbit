@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from orbit_api.application.manual_orbits import (
     EARTH_EQUATORIAL_RADIUS_KM,
     ManualOrbitError,
-    build_synthetic_tle,
+    build_manual_orbit_propagator,
     canonical_manual_orbit,
 )
 from orbit_api.domain.requests import ManualOrbitRequest
@@ -25,8 +25,12 @@ def _display_ephemeris(name: str, ephemeris: dict) -> dict:
     return {
         **ephemeris,
         "satellite": name,
-        # build_ephemeris caches by its synthetic TLE identity.  Do not mutate
-        # that cache when an editor chooses a friendly display name.
+        # Every runtime point is Earth-fixed. Native manual engines also
+        # carry ECI samples per point, but this remains the renderer's primary
+        # position frame and matches catalogue/SGP4 ephemerides.
+        "reference_frame": ephemeris.get("reference_frame", "ITRF"),
+        # build_ephemeris caches by a model-specific runtime identity.  Do not
+        # mutate that cache when an editor chooses a friendly display name.
         "points": [{**point, "satellite": name} for point in ephemeris.get("points", [])],
     }
 
@@ -74,6 +78,8 @@ def _propagation_metadata(
     end_time: datetime.datetime,
     range_source: str,
     ephemeris: dict,
+    propagator_metadata: dict,
+    propagation_options: dict,
 ) -> dict:
     """Expose the resolved range instead of requiring clients to infer it."""
 
@@ -86,56 +92,132 @@ def _propagation_metadata(
         "step_seconds": ephemeris.get("step_seconds"),
         "points_count": ephemeris.get("count", len(ephemeris.get("points", []))),
         "range_source": range_source,
+        # The selected public family can be analytical or numerical Cowell.
+        # Cowell exposes its force model and numerical integrator separately
+        # in ``propagator_metadata`` so UIs never present J2/J3/J4 as peer
+        # propagators for new manual designs.
+        "propagator": propagator_metadata.get("id"),
+        "applied_engine": propagator_metadata.get("applied_engine", "analytical"),
+        "atmospheric_drag": bool(propagation_options.get("atmospheric_drag", False)),
     }
 
 
+def _camel_object_metadata(metadata: dict) -> dict:
+    return {
+        "objectType": metadata.get("object_type"),
+        "missionType": metadata.get("mission_type"),
+        "operator": metadata.get("operator"),
+        "country": metadata.get("country"),
+        "launchDate": metadata.get("launch_date"),
+    }
+
+
+def _camel_propagation_options(options: dict) -> dict:
+    result = {
+        "atmosphericDrag": bool(options.get("atmospheric_drag", False)),
+        # The explicit list is authoritative. The older scalar aliases below
+        # are derived only when the selected term combination has an exact
+        # historical gravity-preset equivalent.
+        "forceTerms": list(options.get("force_terms") or []),
+    }
+    # Fixed engines have no configurable Cowell integrator or drag
+    # parameters. Omit those keys rather than serialising ambiguous nulls.
+    for snake_case, camel_case in (
+        ("numerical_integrator", "numericalIntegrator"),
+        ("drag_coefficient", "dragCoefficient"),
+        ("area_m2", "areaM2"),
+        ("mass_kg", "massKg"),
+    ):
+        if snake_case in options:
+            result[camel_case] = options[snake_case]
+    legacy_gravity_model = options.get("cowell_gravity_model")
+    if legacy_gravity_model is not None:
+        # Generic spelling for new clients; retain the Cowell-prefixed alias
+        # for projects built before force-model/integrator separation.
+        result["cowellGravityModel"] = legacy_gravity_model
+        result["forceModel"] = legacy_gravity_model
+    return result
+
+
 def create_manual_orbits_router(resolve_propagator: Callable, build_ephemeris: Callable, ensure_utc: Callable) -> APIRouter:
-    """Build the HTTP adapter for non-persisted SGP4 manual orbits."""
+    """Build the HTTP adapter for transient manual orbit engines."""
 
     router = APIRouter(tags=["manual-orbits"])
 
     @router.post("/manual-orbits")
     def create_manual_orbit(payload: ManualOrbitRequest) -> dict:
+        # Scope the canonical form to the selected engine. A saved two-body
+        # or SGP4 object may still carry old Cowell controls, but the response
+        # must expose only the forces that engine actually applies.
+        propagation_options = payload.propagation_options.canonical(
+            propagator=payload.propagator
+        )
+        object_metadata = payload.object_metadata.canonical()
         try:
             definition_source, keplerian, state_vector = canonical_manual_orbit(payload)
-            tle = build_synthetic_tle(payload.name, payload.epoch, keplerian)
-        except ManualOrbitError as exc:
+            runtime_name, propagator, tle, propagator_metadata = build_manual_orbit_propagator(
+                payload.propagator,
+                name=payload.name,
+                epoch=payload.epoch,
+                keplerian=keplerian,
+                state_vector=state_vector,
+                resolve_sgp4=resolve_propagator,
+                propagation_options=propagation_options,
+            )
+        except (ManualOrbitError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-        # The registry remains the single place where an installed propagator
-        # is selected.  Today it exposes SGP4; future engines can be added to
-        # that registry without changing this transport route.
-        runtime_name, propagator = resolve_propagator(
-            None,
-            tle["line1"],
-            tle["line2"],
-            payload.propagator,
-        )
         start_time, end_time, range_source = _resolve_propagation_range(payload, ensure_utc)
 
-        ephemeris = build_ephemeris(
-            runtime_name,
-            propagator,
-            start_time,
-            end_time,
-            payload.step_seconds,
-            payload.include_velocity,
-        )
+        try:
+            ephemeris = build_ephemeris(
+                runtime_name,
+                propagator,
+                start_time,
+                end_time,
+                payload.step_seconds,
+                payload.include_velocity,
+            )
+        except HTTPException:
+            raise
+        except (ManualOrbitError, ValueError) as exc:
+            # A very low manual orbit can legitimately intersect the Earth
+            # over a long drag-enabled interval.  Surface that as a user
+            # correction rather than a generic server failure.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         response_ephemeris = _display_ephemeris(payload.name, ephemeris)
         epoch_utc = ensure_utc(payload.epoch).isoformat()
         return {
             "name": payload.name,
-            "propagator": payload.propagator,
+            # Return the canonical engine ID even when an accepted legacy
+            # alias (for example ``kepler``) reached the route.
+            "propagator": propagator_metadata["id"],
+            "propagator_metadata": propagator_metadata,
+            "reference_frame": response_ephemeris["reference_frame"],
             "epoch": epoch_utc,
             # Camel-case is kept here because the transient frontend track
             # object already exposes this exact metadata field.
             "epochUtc": epoch_utc,
             "definition_source": definition_source,
+            # Snake-case is the stable HTTP/project representation.  The
+            # camel-case duplicate is supplied only as a direct adapter for
+            # the React manual-design form and can be removed when it owns a
+            # typed API client.
+            "object_metadata": object_metadata,
+            "objectMetadata": _camel_object_metadata(object_metadata),
+            "propagation_options": propagation_options,
+            "propagationOptions": _camel_propagation_options(propagation_options),
             "tle": tle,
             "keplerian": keplerian,
             "state_vector": state_vector,
             "orbit_summary": _orbit_summary(keplerian),
-            "propagation": _propagation_metadata(start_time, end_time, range_source, response_ephemeris),
+            "propagation": _propagation_metadata(
+                start_time,
+                end_time,
+                range_source,
+                response_ephemeris,
+                propagator_metadata,
+                propagation_options,
+            ),
             "ephemeris": response_ephemeris,
         }
 

@@ -72,7 +72,14 @@ import { bindProjectLifecycleEvents } from "./js/runtime/projectEventBridge.js";
 import { markOrbitRuntimeFailed } from "./js/runtime/runtimeStatus.js";
 import { emitObjectStateChanged } from "./js/runtime/objectDetailsEvents.js";
 import {
+    emitPropagatedParametersContext,
+    emitPropagatedParametersOpen,
+    PROPAGATED_PARAMETERS_OPEN_EVENT
+} from "./js/runtime/propagatedParametersEvents.js";
+import {
     createDefaultManualOrbitState,
+    normalizeManualOrbitForceTerms,
+    normalizeManualOrbitPropagator,
     normalizeManualOrbitState,
     synchronizeManualOrbitState,
     toManualOrbitApiPayload
@@ -238,6 +245,20 @@ let manualOrbitCreateInFlight = false;
 let manualOrbitCreateRequestId = 0;
 let manualOrbitCreateAbortController = null;
 let manualOrbitBridgeBound = false;
+let propagatedParametersBridgeBound = false;
+let propagatedParametersInspectorBound = false;
+let propagatedParametersAbortController = null;
+let propagatedParametersRequestId = 0;
+let propagatedParametersRefreshTimer = null;
+let propagatedParametersLastContext = null;
+const propagatedParametersInspectorState = {
+    open: false,
+    status: "idle",
+    target: null,
+    range: null,
+    result: null,
+    error: ""
+};
 let manualOrbitDesignSession = null;
 let manualOrbitPreviewTimer = null;
 let manualOrbitPreviewAbortController = null;
@@ -257,6 +278,11 @@ function requestProjectActionDialog(mode) {
 const SIMULATION_SPEED_VALUES = [1, 10, 100, 1000];
 const SIMULATION_TIMELINE_STEPS = 10000;
 const SIMULATION_LONG_RANGE_WARNING_HOURS = 24 * 7;
+const PROPAGATED_PARAMETERS_DEFAULT_HOURS = 24;
+const PROPAGATED_PARAMETERS_MIN_SAMPLES = 25;
+const PROPAGATED_PARAMETERS_MAX_SAMPLES = 121;
+const PROPAGATED_PARAMETERS_MANUAL_REFRESH_DEBOUNCE_MS = 280;
+const PROPAGATED_PARAMETERS_MAX_RANGE_HOURS = 365 * 24;
 
 const simulationState = {
     ...createSimulationState(),
@@ -2184,10 +2210,27 @@ function ensureLeftSidebar() {
     return sidebar;
 }
 
+function publishSelectedLayerState() {
+    const layerId = selectedSatelliteId;
+    window.dispatchEvent(new CustomEvent("orbit:selected-layer-state", {
+        detail: {
+            id: layerId,
+            active: Boolean(layerId && isCompositeLayerActive(layerId)),
+            layerType: layerId && isGroundStationLayerId(layerId) ? "GROUND_STATION" : "SATELLITE"
+        }
+    }));
+}
+
 function setCurrentSelectedSatellite(id) {
     selectedSatelliteId = id ? String(id) : null;
     updateSelectedEpochInfo();
+    publishSelectedLayerState();
 }
+
+// React can mount after an object was selected by the imperative runtime.
+// Let new controls request the current selection instead of waiting for the
+// next click, which keeps selection-dependent toolbar actions reliable.
+window.addEventListener("orbit:selected-layer-state-request", publishSelectedLayerState);
 
 function resolveSupportedRecordingMimeType(preferredOutputFormat = "webm") {
     if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
@@ -2262,7 +2305,7 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
 
     const viewportPadding = 10;
     const estimatedWidth = 230;
-    const estimatedHeight = canEditManualOrbit ? 82 : 44;
+    const estimatedHeight = canEditManualOrbit ? 160 : 122;
     const maxLeft = Math.max(viewportPadding, window.innerWidth - estimatedWidth - viewportPadding);
     const maxTop = Math.max(viewportPadding, window.innerHeight - estimatedHeight - viewportPadding);
     const safeLeft = Math.min(Math.max(viewportPadding, x), maxLeft);
@@ -2291,6 +2334,21 @@ window.addEventListener("orbit:satellite-context-action", (event) => {
         // `editManualOrbitFromWorkspace` repeats the registry check, so a
         // synthetic DOM event cannot grant catalogue objects edit access.
         editManualOrbitFromWorkspace(sourceId);
+    } else if (action.type === "propagated-parameters") {
+        const layerId = String(action.id || "").trim();
+        if (!layerId || !isCompositeLayerActive(layerId) || isGroundStationLayerId(layerId)) {
+            return;
+        }
+        // A globe context action is a selection action too. Keep Details,
+        // the left-toolbar button and the inspector on the same target.
+        objectSidebar?.selectObject?.(layerId);
+        setCurrentSelectedSatellite(layerId);
+        setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(layerId));
+        const entity = getCompositeLayerEntity(layerId);
+        if (entity) {
+            viewer.selectedEntity = entity;
+        }
+        emitPropagatedParametersOpen({ id: layerId, source: "globe" });
     }
 });
 
@@ -2853,6 +2911,8 @@ function editManualOrbitFromWorkspace(satelliteId) {
             name: record.name,
             epochUtc: record.epochUtc,
             propagator: record.propagator,
+            objectMetadata: manualOrbitRecordValue(record, "objectMetadata", "object_metadata"),
+            propagationOptions: manualOrbitRecordValue(record, "propagationOptions", "propagation_options"),
             definitionSource,
             keplerian: record.keplerian,
             stateVector: record.stateVector
@@ -3015,6 +3075,12 @@ function enterManualOrbitDesignMode() {
     legacyInfoButton?.classList.remove("active");
     setCurrentSelectedSatellite(null);
     setSelectedOrbitSatelliteId(null);
+    // Design mode must always start from the neutral Earth view. Releasing a
+    // tracked satellite alone leaves Cesium at the previous close-follow
+    // camera position, which can make the newly enabled ground track look as
+    // though it moved the viewport. This is intentionally done only when the
+    // design session opens, never while its preview settings are toggled.
+    resetCameraView();
     publishManualOrbitDesignState(true);
     try {
         applyManualOrbitDesignTimeWindow();
@@ -3118,6 +3184,54 @@ function normalizeManualOrbitDefinitionSource(value, fallback = "keplerian") {
     return fallback;
 }
 
+function getManualOrbitNumericalIntegratorLabel(value) {
+    const normalized = String(value || "rk4").trim().toLowerCase().replace(/[\s_+/]+/g, "-");
+    switch (normalized) {
+        case "rk4":
+        case "rk-4":
+        case "runge-kutta-4":
+        case "rungekutta4":
+            return "RK4";
+        default:
+            return String(value || "numerical method").trim() || "numerical method";
+    }
+}
+
+function getManualOrbitForceTermsLabel(propagationOptions = {}) {
+    const configured = propagationOptions?.forceTerms ?? propagationOptions?.force_terms
+        ?? propagationOptions?.gravityTerms ?? propagationOptions?.gravity_terms;
+    const fallback = propagationOptions?.atmosphericDrag === true || propagationOptions?.atmospheric_drag === true
+        ? ["central", "drag"]
+        : ["central"];
+    const labels = {
+        central: "central gravity",
+        j2: "J2",
+        j3: "J3",
+        j4: "J4",
+        drag: "atmospheric drag"
+    };
+    return normalizeManualOrbitForceTerms(configured, fallback)
+        .map((term) => labels[term] || term)
+        .join(" + ");
+}
+
+function getManualOrbitPropagatorLabel(value, propagationOptions = {}) {
+    switch (normalizeManualOrbitPropagator(value)) {
+        case "two-body":
+            return "Kepler analytical / central gravity";
+        case "j2":
+            return "Legacy J2 force preset";
+        case "j2-j3-j4":
+            return "Legacy J2 + J3 + J4 force preset";
+        case "cowell-rk4":
+            return `Cowell numerical / ${getManualOrbitNumericalIntegratorLabel(propagationOptions?.numericalIntegrator ?? propagationOptions?.numerical_integrator)} · forces: ${getManualOrbitForceTermsLabel(propagationOptions)}`;
+        case "sgp4":
+            return "SGP4 (TLE)";
+        default:
+            return String(value || "propagador").trim() || "propagador";
+    }
+}
+
 function getManualOrbitTargetAngularStepDegrees(perigeeAltitudeKm) {
     if (perigeeAltitudeKm <= 2_000) return 0.42;
     if (perigeeAltitudeKm <= 20_000) return 0.65;
@@ -3166,7 +3280,7 @@ function getManualOrbitPropagationWindow() {
         const angularStep = getManualOrbitTargetAngularStepDegrees(perigeeAltitudeKm);
         const requestedSamples = Math.ceil((horizonSeconds / periodSeconds) * (360 / angularStep)) + 1;
         // Match the normal runtime's per-object cap. Each sample remains a
-        // true SGP4 propagation; only the number of samples is bounded.
+        // true model propagation; only the number of samples is bounded.
         const samples = Math.max(2, Math.min(7_200, requestedSamples));
         stepSeconds = Math.max(1, horizonSeconds / Math.max(1, samples - 1));
     }
@@ -3219,6 +3333,8 @@ function normalizePersistedManualOrbitRecord(record) {
         name: record.name,
         epochUtc: manualOrbitRecordValue(record, "epochUtc", "epoch_utc") ?? record.epoch,
         propagator: record.propagator,
+        objectMetadata: manualOrbitRecordValue(record, "objectMetadata", "object_metadata"),
+        propagationOptions: manualOrbitRecordValue(record, "propagationOptions", "propagation_options"),
         definitionSource: source,
         keplerian: record.keplerian,
         stateVector: manualOrbitRecordValue(record, "stateVector", "state_vector")
@@ -3295,7 +3411,15 @@ async function restoreManualOrbitsFromProject(records = []) {
             const imported = importManualOrbitTrack({
                 ...responsePayload,
                 projectId: persisted.id,
-                groundTrackEnabled: persisted.groundTrackEnabled
+                groundTrackEnabled: persisted.groundTrackEnabled,
+                // Older API deployments may not echo these authored values.
+                // Keep the project definition authoritative during restore so
+                // a reopen never erases object or drag-model settings.
+                name: persisted.state.name,
+                propagator: persisted.state.propagator,
+                definition_source: persisted.source,
+                objectMetadata: persisted.state.objectMetadata,
+                propagationOptions: persisted.state.propagationOptions
             });
             const propagationHours = Math.max(
                 1 / 3600,
@@ -3353,7 +3477,8 @@ async function requestManualOrbitPreview() {
         renderManualOrbitPreview(responsePayload, {
             viewer,
             // This is a live design aid and is preserved for the confirmed
-            // object as well. It uses the raw ITRF samples even in ECI view.
+            // object as well. Its projection follows the selected ECI/ECEF
+            // preview frame, so the design view never mixes both geometries.
             showGroundTrack: getManualOrbitDesignSettings().groundTrackPreview === true,
             color: "#65b7ff",
             previewReferenceFrame: getManualOrbitDesignSettings().previewReferenceFrame
@@ -3410,6 +3535,19 @@ function extractManualOrbitError(error, fallback = "No se pudo crear la orbita m
     return fallback;
 }
 
+function isManualOrbitMetadataOnlySource(source) {
+    const normalized = String(source || "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+    return [
+        "name",
+        "metadata",
+        "object-metadata",
+        "objectmetadata",
+        "object-details",
+        "general",
+        "general-info"
+    ].includes(normalized);
+}
+
 function synchronizeManualOrbitEditor(payload, source, { publish = true } = {}) {
     try {
         const resolvedSource = normalizeManualOrbitDefinitionSource(source, "");
@@ -3418,11 +3556,12 @@ function synchronizeManualOrbitEditor(payload, source, { publish = true } = {}) 
         if (resolvedSource) {
             manualOrbitDefinitionSource = resolvedSource;
         }
-        // Renaming is metadata-only: do not re-propagate thousands of samples
-        // for every keystroke while the rest of the preview is unchanged.
-        // Naming is metadata-only. A ground-track toggle changes only the
+        // Object identity changes are metadata-only: do not re-propagate
+        // thousands of samples for every keystroke while the geometry is
+        // unchanged. Drag/model options deliberately remain refresh triggers.
+        // A ground-track toggle changes only the
         // existing preview entities, so update it immediately without a new
-        // SGP4 request. The exact same preference remains available on
+        // propagation request. The exact same preference remains available on
         // confirmation below.
         if (manualOrbitDesignSession?.active && source === "ground-track") {
             setManualOrbitPreviewGroundTrack(
@@ -3430,7 +3569,9 @@ function synchronizeManualOrbitEditor(payload, source, { publish = true } = {}) 
                 { viewer }
             );
         }
-        const shouldRefreshPreview = source !== "name" && source !== "preview" && source !== "ground-track";
+        const shouldRefreshPreview = !isManualOrbitMetadataOnlySource(source)
+            && source !== "preview"
+            && source !== "ground-track";
         if (manualOrbitDesignSession?.active && shouldRefreshPreview) {
             try {
                 applyManualOrbitDesignTimeWindow();
@@ -3493,7 +3634,11 @@ async function createManualOrbitFromEditor(payload = {}) {
     manualOrbitCreateAbortController = controller;
     manualOrbitCreateInFlight = true;
     stopManualOrbitPreviewRequest();
-    publishManualOrbitStatus("busy", "Generando efemerides SGP4...");
+    const propagatorLabel = getManualOrbitPropagatorLabel(
+        manualOrbitEditorState?.propagator,
+        manualOrbitEditorState?.propagationOptions
+    );
+    publishManualOrbitStatus("busy", `Generando efemerides ${propagatorLabel}...`);
     try {
         const windowRange = getManualOrbitPropagationWindow();
         const requestPayload = buildManualOrbitRequestPayload(windowRange);
@@ -3528,7 +3673,18 @@ async function createManualOrbitFromEditor(payload = {}) {
         manualOrbitDefinitionSource = responseSource;
 
         const groundTrackEnabled = getManualOrbitDesignSettings().groundTrackPreview === true;
-        const committedPayload = { ...responsePayload, groundTrackEnabled };
+        const committedPayload = {
+            ...responsePayload,
+            // Do not depend on an API echo for the locally authored parts of
+            // a manual orbit. The canonical state has already merged either
+            // response spelling (camel/snake) with the current editor state.
+            name: manualOrbitEditorState.name,
+            propagator: manualOrbitEditorState.propagator,
+            definition_source: manualOrbitDefinitionSource,
+            objectMetadata: manualOrbitEditorState.objectMetadata,
+            propagationOptions: manualOrbitEditorState.propagationOptions,
+            groundTrackEnabled
+        };
         // The preview owns separate Cesium entities; remove those before the
         // confirmed local layer is created to avoid a doubled trajectory.
         clearManualOrbitPreview();
@@ -3567,8 +3723,8 @@ async function createManualOrbitFromEditor(payload = {}) {
         publishManualOrbitStatus(
             "success",
             editingTargetAtRequest
-                ? `Orbita manual '${imported.name}' actualizada con SGP4.`
-                : `Orbita manual '${imported.name}' creada con SGP4.`
+                ? `Orbita manual '${imported.name}' actualizada con ${getManualOrbitPropagatorLabel(manualOrbitEditorState?.propagator, manualOrbitEditorState?.propagationOptions)}.`
+                : `Orbita manual '${imported.name}' creada con ${getManualOrbitPropagatorLabel(manualOrbitEditorState?.propagator, manualOrbitEditorState?.propagationOptions)}.`
         );
     } catch (error) {
         if (error?.name === "AbortError" || createRequestId !== manualOrbitCreateRequestId) {
@@ -3636,6 +3792,682 @@ function setupManualOrbitEditorBridge() {
     });
     window.addEventListener("orbit:manual-orbit-edit", (event) => {
         editManualOrbitFromWorkspace(event.detail?.id);
+    });
+}
+
+function propagatedParametersIso(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+// Entry-point bridge only. The inspector owns presentation and the follow-up
+// request; the runtime's responsibility here is to turn UI targets into a
+// stable layer/manual-design context without duplicating panel state or fetch
+// policy in every caller.
+function buildPropagatedParametersContext(detail = {}) {
+    const source = String(detail.source || "layer").trim() || "layer";
+    if (source === "manual-design") {
+        const manualOrbit = detail.manualOrbit && typeof detail.manualOrbit === "object"
+            ? detail.manualOrbit
+            : null;
+        if (!manualOrbit) {
+            return null;
+        }
+        const startTime = propagatedParametersIso(detail.startTime || manualOrbit.epochStartUtc || manualOrbit.epochUtc);
+        const endTime = propagatedParametersIso(detail.endTime || manualOrbit.epochEndUtc);
+        if (!startTime || !endTime || Date.parse(endTime) <= Date.parse(startTime)) {
+            return null;
+        }
+        // The editor keeps both representations in sync. Preserve which one
+        // the user is actively authoring, otherwise the inspector could
+        // silently fall back to Keplerian values after a State vector edit.
+        const inspectorManualOrbit = {
+            ...manualOrbit,
+            definitionSource: manualOrbit.definitionSource
+                ?? manualOrbit.definition_source
+                ?? manualOrbitDefinitionSource
+        };
+        return {
+            id: null,
+            source,
+            kind: "manual-design",
+            name: String(inspectorManualOrbit.name || "Manual Orbit").trim() || "Manual Orbit",
+            active: true,
+            manualOrbit: inspectorManualOrbit,
+            startTime,
+            endTime,
+            timeRange: {
+                mode: "manual-design",
+                startDate: startTime,
+                endDate: endTime
+            },
+            referenceFrame: String(inspectorManualOrbit.previewReferenceFrame || "eci").toUpperCase(),
+            propagator: inspectorManualOrbit.propagator || null
+        };
+    }
+
+    const id = String(detail.id || "").trim();
+    if (!id || !isCompositeLayerActive(id) || isGroundStationLayerId(id)) {
+        return null;
+    }
+
+    const sourceId = getSatelliteSourceIdFromLayerId(id);
+    const telemetry = getCompositeLayerTelemetry(id);
+    const timeRange = getObjectTimeRange(id, telemetry);
+    const manualOrbit = getManualOrbitProjectEntry(sourceId) || null;
+    return {
+        id,
+        source,
+        kind: "layer",
+        sourceId,
+        name: getLayerDisplayName(id),
+        active: true,
+        telemetry,
+        catalogMeta: getCompositeLayerMeta(id),
+        manualOrbit,
+        startTime: propagatedParametersIso(detail.startTime || timeRange?.startDate),
+        endTime: propagatedParametersIso(detail.endTime || timeRange?.endDate),
+        timeRange,
+        simulation: getSimulationTelemetryContext(),
+        referenceFrame: "ECEF",
+        propagator: manualOrbit?.propagator || telemetry?.propagator || null
+    };
+}
+
+function publishPropagatedParametersInspectorState(patch = {}) {
+    Object.assign(propagatedParametersInspectorState, patch);
+    window.dispatchEvent(new CustomEvent("orbit:propagated-parameters-state", {
+        detail: { ...propagatedParametersInspectorState }
+    }));
+}
+
+function stopPropagatedParametersRequest() {
+    propagatedParametersRequestId += 1;
+    if (propagatedParametersAbortController) {
+        propagatedParametersAbortController.abort();
+        propagatedParametersAbortController = null;
+    }
+}
+
+function closePropagatedParametersInspector() {
+    if (propagatedParametersRefreshTimer) {
+        clearTimeout(propagatedParametersRefreshTimer);
+        propagatedParametersRefreshTimer = null;
+    }
+    stopPropagatedParametersRequest();
+    propagatedParametersLastContext = null;
+    publishPropagatedParametersInspectorState({
+        open: false,
+        status: "idle",
+        target: null,
+        range: null,
+        result: null,
+        error: ""
+    });
+}
+
+function propagatedParametersDate(value) {
+    const date = value instanceof Date ? new Date(value.getTime()) : new Date(value || "");
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function normalizePropagatedParametersRange(value = {}) {
+    const range = value && typeof value === "object" ? value : {};
+    const start = propagatedParametersDate(
+        range.startTime
+        ?? range.start_time
+        ?? range.startUtc
+        ?? range.start_utc
+        ?? range.startDate
+        ?? range.start_date
+        ?? range.start
+        ?? range.from
+    );
+    const end = propagatedParametersDate(
+        range.endTime
+        ?? range.end_time
+        ?? range.endUtc
+        ?? range.end_utc
+        ?? range.endDate
+        ?? range.end_date
+        ?? range.end
+        ?? range.to
+    );
+    if (!start || !end || end.getTime() <= start.getTime()) {
+        throw new Error("La fecha final debe ser posterior a la fecha inicial.");
+    }
+
+    const hours = (end.getTime() - start.getTime()) / 3_600_000;
+    if (!Number.isFinite(hours) || hours > PROPAGATED_PARAMETERS_MAX_RANGE_HOURS) {
+        throw new Error(`El intervalo no puede superar ${PROPAGATED_PARAMETERS_MAX_RANGE_HOURS / 24} dias.`);
+    }
+    return {
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        hours
+    };
+}
+
+function getPropagatedParametersRangeOverride(context) {
+    if (!context?.rangeOverride || typeof context.rangeOverride !== "object") {
+        return null;
+    }
+    return normalizePropagatedParametersRange(context.rangeOverride);
+}
+
+function withPropagatedParametersRangeOverride(context, range, mode = "custom") {
+    const normalizedRange = normalizePropagatedParametersRange(range);
+    return {
+        ...context,
+        rangeOverride: {
+            startTime: normalizedRange.startTime,
+            endTime: normalizedRange.endTime,
+            mode
+        },
+        // Keep the context summary coherent for the React Information tab.
+        // `rangeOverride` remains the explicit marker that this is a user
+        // selection rather than the runtime's default realtime horizon.
+        startTime: normalizedRange.startTime,
+        endTime: normalizedRange.endTime,
+        timeRange: {
+            ...(context?.timeRange || {}),
+            mode,
+            startDate: normalizedRange.startTime,
+            endDate: normalizedRange.endTime
+        }
+    };
+}
+
+function withPropagatedParametersSimulationRange(context) {
+    const range = normalizePropagatedParametersRange({
+        startTime: simulationState.startDate,
+        endTime: simulationState.endDate
+    });
+    return {
+        ...context,
+        rangeOverride: null,
+        startTime: range.startTime,
+        endTime: range.endTime,
+        timeRange: {
+            ...(context?.timeRange || {}),
+            mode: "simulated",
+            startDate: range.startTime,
+            endDate: range.endTime
+        },
+        simulation: getSimulationTelemetryContext()
+    };
+}
+
+function propagatedParametersRangeFromEventDetail(detail) {
+    const payload = detail && typeof detail === "object" ? detail : {};
+    const range = payload.range && typeof payload.range === "object"
+        ? payload.range
+        : payload;
+    return normalizePropagatedParametersRange(range);
+}
+
+function propagatedParametersRangeError(error, fallback = "El intervalo de propagacion no es valido.") {
+    // A rejected edit supersedes any in-flight propagation. Without this the
+    // old response could arrive later and make the invalid dates appear valid.
+    stopPropagatedParametersRequest();
+    publishPropagatedParametersInspectorState({
+        status: "error",
+        error: extractManualOrbitError(error, fallback)
+    });
+}
+
+function resolvePropagatedParametersRange(context) {
+    // A user-edited interval belongs to the inspector request, not implicitly
+    // to the global clock.  It has priority for both a realtime and a range
+    // workspace and survives Refresh through `propagatedParametersLastContext`.
+    const rangeOverride = getPropagatedParametersRangeOverride(context);
+    if (rangeOverride) {
+        return {
+            mode: context?.kind === "manual-design" ? "manual-design-override" : "custom",
+            ...rangeOverride
+        };
+    }
+
+    if (context?.kind === "manual-design") {
+        const start = propagatedParametersDate(context.startTime || context.timeRange?.startDate || context.manualOrbit?.epochStartUtc || context.manualOrbit?.epochUtc);
+        const end = propagatedParametersDate(context.endTime || context.timeRange?.endDate || context.manualOrbit?.epochEndUtc);
+        if (!start || !end || end.getTime() <= start.getTime()) {
+            throw new Error("Define un intervalo de epochs válido antes de inspeccionar la órbita manual.");
+        }
+        const hours = (end.getTime() - start.getTime()) / 3_600_000;
+        if (hours > PROPAGATED_PARAMETERS_MAX_RANGE_HOURS) {
+            throw new Error(`El intervalo no puede superar ${PROPAGATED_PARAMETERS_MAX_RANGE_HOURS / 24} dias.`);
+        }
+        return {
+            mode: "manual-design",
+            startTime: start.toISOString(),
+            endTime: end.toISOString(),
+            hours
+        };
+    }
+
+    if (simulationState.mode === SIMULATION_MODE_RANGE) {
+        const start = propagatedParametersDate(simulationState.startDate);
+        const end = propagatedParametersDate(simulationState.endDate);
+        if (!start || !end || end.getTime() <= start.getTime()) {
+            throw new Error("El intervalo de simulación no es válido.");
+        }
+        const hours = (end.getTime() - start.getTime()) / 3_600_000;
+        if (hours > PROPAGATED_PARAMETERS_MAX_RANGE_HOURS) {
+            throw new Error(`El intervalo no puede superar ${PROPAGATED_PARAMETERS_MAX_RANGE_HOURS / 24} dias.`);
+        }
+        return {
+            mode: "simulated",
+            startTime: start.toISOString(),
+            endTime: end.toISOString(),
+            hours
+        };
+    }
+
+    // Realtime inspection is deliberately independent of the object's
+    // original/import range: it starts now and moves into the configured
+    // future horizon, exactly like the realtime future-orbit view.
+    const start = getDisplayedSimulationDate();
+    const sourceId = String(context?.sourceId || getSatelliteSourceIdFromLayerId(context?.id || "") || "").trim();
+    const visualization = sourceId ? getSatelliteVisualizationConfig(sourceId) : null;
+    const requestedHours = Number(
+        context?.telemetry?.propagation_future_hours
+        ?? visualization?.effective?.propagation_hours
+        ?? runtimeSystemConfig?.propagation_hours
+    );
+    const hours = Number.isFinite(requestedHours) && requestedHours > 0
+        ? Math.min(requestedHours, PROPAGATED_PARAMETERS_MAX_RANGE_HOURS)
+        : PROPAGATED_PARAMETERS_DEFAULT_HOURS;
+    const end = new Date(start.getTime() + (hours * 3_600_000));
+    return {
+        mode: "realtime",
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        hours
+    };
+}
+
+function getPropagatedParametersSampleCount(range) {
+    const hours = Number(range?.hours);
+    if (!Number.isFinite(hours) || hours <= 0) {
+        return 2;
+    }
+    // Dense enough to reveal secular drift and drag without turning a long
+    // design window into an expensive renderer-style ephemeris request.
+    const requested = hours <= 48
+        ? Math.round(hours * 4) + 1 // 15-minute cadence for short windows
+        : Math.round(hours) + 1; // one-hour cadence for longer windows
+    return Math.max(
+        PROPAGATED_PARAMETERS_MIN_SAMPLES,
+        Math.min(PROPAGATED_PARAMETERS_MAX_SAMPLES, requested)
+    );
+}
+
+function buildPropagatedParametersTarget(context) {
+    const isManual = context?.kind === "manual-design" || Boolean(context?.manualOrbit);
+    const id = String(context?.id || context?.sourceId || (isManual ? "manual-design" : "")).trim();
+    const name = String(context?.name || context?.manualOrbit?.name || id || "Selected orbit").trim();
+    return {
+        id,
+        name: name || "Selected orbit",
+        source: isManual ? "manual" : "catalog",
+        propagator: context?.manualOrbit?.propagator || context?.propagator || (isManual ? "two-body" : "sgp4"),
+        referenceFrame: context?.referenceFrame || null
+    };
+}
+
+function buildPropagatedParametersManualSource(context) {
+    const manualOrbit = context?.manualOrbit;
+    if (!manualOrbit || typeof manualOrbit !== "object") {
+        throw new Error("La definición de la órbita manual ya no está disponible.");
+    }
+    const source = normalizeManualOrbitDefinitionSource(
+        manualOrbit.definitionSource
+        ?? manualOrbit.definition_source
+        ?? (context?.kind === "manual-design" ? manualOrbitDefinitionSource : "keplerian"),
+        "keplerian"
+    );
+    return {
+        type: "manual",
+        // The serialiser preserves the complete ECI state, propagator and
+        // ballistic drag settings while excluding this inspector's own range.
+        manualOrbit: toManualOrbitApiPayload(manualOrbit, { source })
+    };
+}
+
+async function buildPropagatedParametersRequest(context, range) {
+    const isManual = context?.kind === "manual-design" || Boolean(context?.manualOrbit);
+    let source;
+    if (isManual) {
+        source = buildPropagatedParametersManualSource(context);
+    } else {
+        const sourceFormat = String(context?.catalogMeta?.sourceFormat || context?.catalogMeta?.source_format || "TLE").toUpperCase();
+        if (sourceFormat === "OEM") {
+            throw new Error("Las efemérides OEM aún no se pueden repropagar como elementos osculantes.");
+        }
+        const satId = String(context?.sourceId || getSatelliteSourceIdFromLayerId(context?.id || "") || "").trim();
+        if (!satId) {
+            throw new Error("Selecciona una capa orbital de catálogo válida.");
+        }
+        // The runtime normally has active catalogue propagators by ID. An
+        // explicit TLE is also accepted by the inspector and keeps layers
+        // imported in the browser/project usable before that runtime cache
+        // has caught up with a catalogue reload.
+        const tle = getSatelliteTle(satId) || await getSatelliteTleAsync(satId);
+        const line1 = String(tle?.line1 || "").trim();
+        const line2 = String(tle?.line2 || "").trim();
+        source = line1 && line2
+            ? { type: "catalog", line1, line2 }
+            : { type: "catalog", satId };
+    }
+    return {
+        source,
+        startTime: range.startTime,
+        endTime: range.endTime,
+        samples: getPropagatedParametersSampleCount(range)
+    };
+}
+
+function currentManualDesignParametersContext(context) {
+    const range = getManualOrbitDesignWindow();
+    const settings = getManualOrbitDesignSettings();
+    return {
+        ...context,
+        kind: "manual-design",
+        source: "manual-design",
+        name: String(manualOrbitEditorState?.name || context?.name || "Manual Orbit").trim() || "Manual Orbit",
+        manualOrbit: {
+            ...manualOrbitEditorState,
+            epochUtc: manualOrbitEditorState?.epochUtc || range.startTime.toISOString(),
+            epochStartUtc: range.startTime.toISOString(),
+            epochEndUtc: range.endTime.toISOString(),
+            definitionSource: manualOrbitDefinitionSource,
+            previewReferenceFrame: settings.previewReferenceFrame
+        },
+        startTime: range.startTime.toISOString(),
+        endTime: range.endTime.toISOString(),
+        timeRange: {
+            mode: "manual-design",
+            startDate: range.startTime.toISOString(),
+            endDate: range.endTime.toISOString()
+        },
+        referenceFrame: String(settings.previewReferenceFrame || "eci").toUpperCase(),
+        propagator: manualOrbitEditorState?.propagator || context?.propagator || null
+    };
+}
+
+async function requestPropagatedParameters(context) {
+    // Invalidate an earlier request before *any* preparation. Otherwise an
+    // invalid next context (for example OEM) would leave the old request
+    // alive and allow its late response to overwrite the new error state.
+    stopPropagatedParametersRequest();
+    const requestId = ++propagatedParametersRequestId;
+    const target = buildPropagatedParametersTarget(context);
+    let range;
+    try {
+        range = resolvePropagatedParametersRange(context);
+    } catch (error) {
+        if (requestId !== propagatedParametersRequestId) {
+            return;
+        }
+        propagatedParametersLastContext = context;
+        publishPropagatedParametersInspectorState({
+            open: true,
+            status: "error",
+            target,
+            range: null,
+            result: null,
+            error: extractManualOrbitError(error, "No se pudieron preparar los parámetros propagados.")
+        });
+        return;
+    }
+
+    propagatedParametersLastContext = context;
+    const controller = new AbortController();
+    propagatedParametersAbortController = controller;
+    publishPropagatedParametersInspectorState({
+        open: true,
+        status: "propagating",
+        target,
+        range,
+        result: null,
+        error: ""
+    });
+
+    try {
+        const requestPayload = await buildPropagatedParametersRequest(context, range);
+        if (requestId !== propagatedParametersRequestId || propagatedParametersInspectorState.open !== true) {
+            return;
+        }
+        const response = await fetch("/api/orbit-parameters", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify(requestPayload),
+            signal: controller.signal
+        });
+        const responsePayload = await response.json().catch(() => null);
+        if (!response.ok) {
+            throw responsePayload || new Error(`HTTP ${response.status}`);
+        }
+        if (requestId !== propagatedParametersRequestId || propagatedParametersInspectorState.open !== true) {
+            return;
+        }
+        const resolvedRange = {
+            ...range,
+            startTime: responsePayload?.start_time || responsePayload?.startTime || range.startTime,
+            endTime: responsePayload?.end_time || responsePayload?.endTime || range.endTime,
+            referenceFrame: responsePayload?.reference_frame || responsePayload?.referenceFrame || null
+        };
+        publishPropagatedParametersInspectorState({
+            status: "ready",
+            target,
+            range: resolvedRange,
+            result: responsePayload,
+            error: ""
+        });
+        window.dispatchEvent(new CustomEvent("orbit:propagated-parameters-result", {
+            detail: { status: "ready", target, range: resolvedRange, result: responsePayload }
+        }));
+    } catch (error) {
+        if (error?.name === "AbortError" || requestId !== propagatedParametersRequestId) {
+            return;
+        }
+        publishPropagatedParametersInspectorState({
+            status: "error",
+            target,
+            range,
+            result: null,
+            error: extractManualOrbitError(error, "No se pudieron propagar los parámetros orbitales.")
+        });
+    } finally {
+        if (propagatedParametersAbortController === controller) {
+            propagatedParametersAbortController = null;
+        }
+    }
+}
+
+function setupPropagatedParametersEntryBridge() {
+    if (propagatedParametersBridgeBound) {
+        return;
+    }
+    propagatedParametersBridgeBound = true;
+
+    window.addEventListener(PROPAGATED_PARAMETERS_OPEN_EVENT, (event) => {
+        const context = buildPropagatedParametersContext(event.detail || {});
+        if (!context) {
+            return;
+        }
+        emitPropagatedParametersContext(context);
+    });
+}
+
+function setupPropagatedParametersInspector() {
+    if (propagatedParametersInspectorBound) {
+        return;
+    }
+    propagatedParametersInspectorBound = true;
+
+    window.addEventListener("orbit:propagated-parameters-context", (event) => {
+        const context = event.detail && typeof event.detail === "object" ? event.detail : null;
+        if (!context) {
+            return;
+        }
+        void requestPropagatedParameters(context);
+    });
+    window.addEventListener("orbit:propagated-parameters-refresh", () => {
+        if (propagatedParametersLastContext) {
+            void requestPropagatedParameters(propagatedParametersLastContext);
+        }
+    });
+    window.addEventListener("orbit:propagated-parameters-range-change", (event) => {
+        const context = propagatedParametersLastContext;
+        if (!context) {
+            return;
+        }
+        try {
+            const range = propagatedParametersRangeFromEventDetail(event.detail);
+            const nextContext = withPropagatedParametersRangeOverride(
+                context,
+                range,
+                context.kind === "manual-design" ? "manual-design-override" : "custom"
+            );
+            void requestPropagatedParameters(nextContext);
+        } catch (error) {
+            propagatedParametersRangeError(error);
+        }
+    });
+    window.addEventListener("orbit:propagated-parameters-apply-simulation", (event) => {
+        const context = propagatedParametersLastContext;
+        if (!context) {
+            return;
+        }
+
+        let requestedRange;
+        try {
+            requestedRange = propagatedParametersRangeFromEventDetail(event.detail);
+        } catch (error) {
+            propagatedParametersRangeError(error);
+            return;
+        }
+
+        if (context.kind === "manual-design") {
+            // The manual-design session already owns the global clock and
+            // keeps it aligned to the editor epochs. Applying an arbitrary
+            // inspector interval globally would make the preview and its
+            // epoch fields disagree, so it is deliberately a local override
+            // until the user changes the design window itself.
+            const nextContext = withPropagatedParametersRangeOverride(
+                context,
+                requestedRange,
+                "manual-design-override"
+            );
+            void requestPropagatedParameters(nextContext);
+            return;
+        }
+
+        // This command intentionally applies immediately: the dates were
+        // already explicitly entered in the inspector, and the same runtime
+        // path updates Cesium, the timeline and telemetry context together.
+        if (!applySimulationRange(
+            new Date(requestedRange.startTime),
+            new Date(requestedRange.endTime)
+        )) {
+            propagatedParametersRangeError(new Error("No se pudo aplicar el intervalo de simulacion."));
+            return;
+        }
+        setSimulationMode(SIMULATION_MODE_RANGE);
+        simulationState.currentDate = new Date(simulationState.startDate);
+        simulationState.isPlaying = false;
+        simulationState.playing = false;
+        simulationState.rewind = false;
+        simulationState.lastTickTimestamp = Date.now();
+        applySimulationDateToViewer(simulationState.currentDate);
+        refreshSimulationControlsUi();
+        updateTopToolbarTime();
+
+        try {
+            // Drop the local override after it becomes the shared range, so a
+            // later Refresh follows any normal simulation timeline changes.
+            void requestPropagatedParameters(withPropagatedParametersSimulationRange(context));
+        } catch (error) {
+            propagatedParametersRangeError(error);
+        }
+    });
+    window.addEventListener("orbit:propagated-parameters-close", () => {
+        closePropagatedParametersInspector();
+    });
+    window.addEventListener("orbit:propagated-parameters-cancel", () => {
+        closePropagatedParametersInspector();
+    });
+    window.addEventListener("orbit:selected-layer-state", (event) => {
+        if (propagatedParametersInspectorState.open !== true || propagatedParametersLastContext?.kind === "manual-design") {
+            return;
+        }
+        const detail = event.detail || {};
+        const id = String(detail.id || "").trim();
+        const isOrbital = detail.active === true && String(detail.layerType || "SATELLITE").toUpperCase() !== "GROUND_STATION";
+        if (!isOrbital || !id) {
+            closePropagatedParametersInspector();
+            return;
+        }
+        if (id !== propagatedParametersLastContext?.id) {
+            emitPropagatedParametersOpen({ id, source: "selection" });
+        }
+    });
+    window.addEventListener("orbit:object-state-changed", (event) => {
+        if (propagatedParametersInspectorState.open !== true || propagatedParametersLastContext?.kind === "manual-design") {
+            return;
+        }
+        const context = propagatedParametersLastContext;
+        const targetId = String(context?.id || "").trim();
+        if (!targetId) {
+            return;
+        }
+        const change = event.detail || {};
+        const changedLayerId = String(change.layerId || "").trim();
+        const changedSourceId = String(change.sourceId || changedLayerId).trim();
+        const targetSourceId = String(context?.sourceId || getSatelliteSourceIdFromLayerId(targetId) || "").trim();
+        const affectsTarget = change.scope === "all-satellites"
+            || changedLayerId === targetId
+            || (targetSourceId && changedSourceId === targetSourceId);
+        if (!affectsTarget || isCompositeLayerActive(targetId)) {
+            return;
+        }
+        if (selectedSatelliteId === targetId || getSatelliteSourceIdFromLayerId(selectedSatelliteId || "") === targetSourceId) {
+            setCurrentSelectedSatellite(null);
+            setSelectedOrbitSatelliteId(null);
+            viewer.selectedEntity = undefined;
+        }
+        closePropagatedParametersInspector();
+    });
+    window.addEventListener("orbit:manual-orbit-change", (event) => {
+        if (propagatedParametersInspectorState.open !== true || propagatedParametersLastContext?.kind !== "manual-design") {
+            return;
+        }
+        const source = String(event.detail?.source || "").trim().toLowerCase();
+        if (isManualOrbitMetadataOnlySource(source) || source === "ground-track" || source === "preview-reference-frame") {
+            return;
+        }
+        if (propagatedParametersRefreshTimer) {
+            clearTimeout(propagatedParametersRefreshTimer);
+        }
+        propagatedParametersRefreshTimer = setTimeout(() => {
+            propagatedParametersRefreshTimer = null;
+            try {
+                void requestPropagatedParameters(currentManualDesignParametersContext(propagatedParametersLastContext));
+            } catch (error) {
+                publishPropagatedParametersInspectorState({
+                    status: "error",
+                    result: null,
+                    error: extractManualOrbitError(error, "El intervalo de diseño no es válido.")
+                });
+            }
+        }, PROPAGATED_PARAMETERS_MANUAL_REFRESH_DEBOUNCE_MS);
+    });
+    window.addEventListener("orbit:manual-orbit-design-state", (event) => {
+        if (event.detail?.active !== true && propagatedParametersLastContext?.kind === "manual-design") {
+            closePropagatedParametersInspector();
+        }
     });
 }
 
@@ -3880,6 +4712,8 @@ function setupManualOrbitEditorBridge() {
     });
 
     setupManualOrbitEditorBridge();
+    setupPropagatedParametersEntryBridge();
+    setupPropagatedParametersInspector();
 
     // A welcome action submitted while the catalogue is loading is queued by
     // React. Bind and publish `ready` only after the sidebar can restore the
