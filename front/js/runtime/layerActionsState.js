@@ -1,3 +1,5 @@
+import { isEarthLayer } from "../features/layers/layerPresentation.js";
+
 export const LAYER_ACTIONS_STATE_EVENT = "orbit:layer-actions-state";
 
 const EMPTY_LAYER_ACTIONS_STATE = Object.freeze({
@@ -30,7 +32,12 @@ function getValidLayerIds(layerIds) {
  * at least one active layer exists.
  */
 export function deriveLayerActionsState(layerIds) {
-    const activeLayerCount = getValidLayerIds(layerIds).length;
+    // Earth is the permanent reference body, not a user-managed mission
+    // layer. It must not make destructive/global layer controls appear in an
+    // otherwise empty project.
+    const activeLayerCount = getValidLayerIds(layerIds)
+        .filter((id) => !isEarthLayer("", id))
+        .length;
     return {
         activeLayerCount,
         hasActiveLayers: activeLayerCount > 0

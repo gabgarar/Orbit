@@ -1,10 +1,26 @@
-/** Coordinates satellite, duplicate and ground-station layers behind one UI-facing API. */
-export function createCompositeLayerManager({ satellites, groundStations, duplicates, names, getSatelliteSourceId }) {
-    const getName = (id) => names.get(id) || groundStations.get(id)?.name || String(id || "");
-    const getIds = () => [...satellites.getActiveIds(), ...duplicates.keys(), ...groundStations.keys()];
-    const isActive = (id) => groundStations.has(id) || duplicates.has(id) || satellites.isActive(id);
-    const getVisibility = (id) => groundStations.has(id) ? groundStations.get(id).visible === true : satellites.isVisible(getSatelliteSourceId(id));
+/** Coordinates satellite, duplicate, ground-station and celestial layers behind one UI-facing API. */
+export function createCompositeLayerManager({ satellites, groundStations, duplicates, names, getSatelliteSourceId, celestialBodies = null }) {
+    const isCelestial = (id) => celestialBodies?.has?.(id) === true;
+    const getName = (id) => names.get(id)
+        || groundStations.get(id)?.name
+        || celestialBodies?.getName?.(id)
+        || String(id || "");
+    const getIds = () => [
+        ...satellites.getActiveIds(),
+        ...duplicates.keys(),
+        ...groundStations.keys(),
+        ...(celestialBodies?.getIds?.() || [])
+    ];
+    const isActive = (id) => isCelestial(id) || groundStations.has(id) || duplicates.has(id) || satellites.isActive(id);
+    const getVisibility = (id) => {
+        if (isCelestial(id)) return celestialBodies.getVisibility(id);
+        return groundStations.has(id) ? groundStations.get(id).visible === true : satellites.isVisible(getSatelliteSourceId(id));
+    };
     const setVisibility = (id, visible) => {
+        if (isCelestial(id)) {
+            celestialBodies.setVisibility(id, visible);
+            return;
+        }
         if (groundStations.has(id)) {
             const station = groundStations.get(id);
             station.visible = visible === true;

@@ -501,6 +501,43 @@ test("La bienvenida crea un proyecto y entrega el control al visor", async ({ pa
     await expect(page.locator("[data-project-title]").first()).toHaveText(new RegExp(`^${projectName}$`, "i"));
 });
 
+test("La bienvenida queda centrada y Generate orbit abre el diseñador con sus vectores", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#projectWelcome")).toBeVisible({ timeout: 15_000 });
+    await waitForOrbitRuntimeReady(page);
+
+    const welcomeCenter = await page.locator("#projectWelcome > div").last().evaluate((dialog) => {
+        const rect = dialog.getBoundingClientRect();
+        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2), width: window.innerWidth, height: window.innerHeight };
+    });
+    expect(Math.abs(welcomeCenter.x - (welcomeCenter.width / 2)), "Welcome dialog must be horizontally centred").toBeLessThanOrEqual(2);
+    expect(Math.abs(welcomeCenter.y - (welcomeCenter.height / 2)), "Welcome dialog must be vertically centred").toBeLessThanOrEqual(2);
+
+    await openWorkspace(page);
+    await ensureLayersPanelOpen(page);
+    await openLayerAddMenu(page);
+    const addMenu = page.locator("#layerAddMenu");
+    await addMenu.getByRole("button", { name: /Add layer/ }).hover();
+    await addMenu.getByRole("button", { name: /Add satellite/ }).hover();
+    const generateOrbit = page.locator("#generateOrbitBtn");
+    await expect(generateOrbit).toBeVisible();
+    // The legacy add-menu can be rebuilt while pointer hover moves through
+    // its nested flyouts. Invoke the visible current control in page context
+    // so this test verifies the command rather than a stale locator handle.
+    await page.evaluate(() => document.querySelector("#generateOrbitBtn")?.click());
+
+    const designer = page.locator("#manualOrbitPanel");
+    await expect(designer).toBeVisible();
+    const vectors = designer.getByRole("button", { name: "Ver ejes y vectores", exact: true });
+    await expect(vectors).toBeVisible();
+    await page.evaluate(() => Array.from(document.querySelectorAll("#manualOrbitPanel button"))
+        .find((button) => button.textContent?.trim() === "Ver ejes y vectores")?.click());
+    await expect.poll(() => page.evaluate(() => Array.from(document.querySelectorAll("#manualOrbitPanel button"))
+        .some((button) => button.textContent?.trim() === "Ocultar ejes y vectores"))).toBe(true);
+    await expect(page.locator("#leftPropagatedParametersBtn")).toBeEnabled();
+});
+
 test("El visor no carga Cesium ni pako desde proveedores externos", async ({ page }, testInfo) => {
     const orbitOrigin = applicationOrigin(testInfo);
     const blockedExternalResources = [];

@@ -30,6 +30,7 @@ export function normalizeSystemConfig(rawSystem = {}) {
         sky_atmosphere: rendering.sky_atmosphere ?? rawSystem.sky_atmosphere,
         globe_lighting: rendering.globe_lighting ?? rawSystem.globe_lighting,
         stars_enabled: rendering.stars_enabled ?? rawSystem.stars_enabled,
+        earth_basemap: rendering.earth_basemap ?? rawSystem.earth_basemap,
 
         recording_quality: recording.quality ?? rawSystem.recording_quality,
         recording_output_format: recording.output_format ?? rawSystem.recording_output_format,
@@ -76,7 +77,8 @@ export function toSectionedSystemConfig(rawSystem = {}) {
             background_color: flat.background_color ?? "#03070d",
             sky_atmosphere: flat.sky_atmosphere ?? false,
             globe_lighting: flat.globe_lighting ?? true,
-            stars_enabled: flat.stars_enabled ?? false
+            stars_enabled: flat.stars_enabled ?? false,
+            earth_basemap: flat.earth_basemap ?? "natural-earth"
         },
         recording: {
             quality: flat.recording_quality ?? "medium",

@@ -1,4 +1,5 @@
-import { createLayerTree } from "./features/layers/layerTree.js";
+import { createLayerTree, getVisibleLayerFolderIds } from "./features/layers/layerTree.js";
+import { getBodyGroupPresentation, getLayerPresentation, isBodyLayer, isEarthLayer } from "./features/layers/layerPresentation.js";
 import { OBJECT_STATE_CHANGED_EVENT } from "./runtime/objectDetailsEvents.js";
 import { deriveLayerActionsState, emitLayerActionsState } from "./runtime/layerActionsState.js";
 import { deriveTleOrbitalMetrics } from "./features/objectDetails/tleMetrics.js";
@@ -401,7 +402,7 @@ function getOrbitInfoFromTleSummary(tleSummary, satelliteId = "") {
     };
 }
 
-function getOrbitInfoFromTelemetry(telemetry, satelliteId = "") {
+export function getOrbitInfoFromTelemetry(telemetry) {
     const altitudeKmRaw = Number(telemetry?.geo?.altitude_m);
     const altitudeKm = Number.isFinite(altitudeKmRaw) ? altitudeKmRaw / 1000 : null;
     let kind = ORBIT_KIND.UNKNOWN;
@@ -415,15 +416,13 @@ function getOrbitInfoFromTelemetry(telemetry, satelliteId = "") {
 
     const recommendation = getOrbitRecommendation(kind);
     const veryLowOverride = Number.isFinite(altitudeKm) && altitudeKm < 300;
-    const mission = inferMissionInfo(satelliteId);
 
     return {
         kind,
         label: recommendation.label,
         altitudeKm,
         recommendedWindow: veryLowOverride ? "< 24 horas" : recommendation.recommendedWindow,
-        recommendedMaxDays: veryLowOverride ? 1 : recommendation.recommendedMaxDays,
-        mission
+        recommendedMaxDays: veryLowOverride ? 1 : recommendation.recommendedMaxDays
     };
 }
 
@@ -810,6 +809,7 @@ export function setupObjectSidebar({
     onToggleGroundTrack,
     getGroundTrackVisible,
     onRequestAddSatellite,
+    onRequestAddCelestialBody,
     onRequestCreateGroundStation,
     onRequestUpdateGroundStation,
     onRequestToggleGroundStationHeatMap,
@@ -884,6 +884,10 @@ export function setupObjectSidebar({
     let catalogLoadingPage = false;
     // Project ownership will provide persistence later; UI grouping is session-only.
     const layerTree = createLayerTree(null);
+    // Bodies are a permanent workspace group rather than user folders, but
+    // behave like one in the explorer: it can be collapsed without changing
+    // the actual renderer state of the Earth, Moon or Sun.
+    let bodiesExpanded = true;
     let globalFileDragDepth = 0;
     const catalogIndexById = new Map();
     const catalogMetaCache = new Map();
@@ -1357,6 +1361,14 @@ export function setupObjectSidebar({
                 <div class="folder-add-submenu">
                     <button class="catalog-context-action" id="addTleFromCatalogBtn" type="button">Add TLE from catalog</button>
                     <button class="catalog-context-action" id="importSatelliteBtn" type="button">Import satellite</button>
+                    <button class="catalog-context-action" id="generateOrbitBtn" type="button">Generate orbit</button>
+                </div>
+            </div>
+            <div class="folder-add-menu">
+                <button class="catalog-context-action" type="button">Add body <span>›</span></button>
+                <div class="folder-add-submenu">
+                    <button class="catalog-context-action" id="addMoonBtn" type="button">Add Moon</button>
+                    <button class="catalog-context-action" id="addSunBtn" type="button">Add Sun</button>
                 </div>
             </div>
             <button class="catalog-context-action" id="addGroundStationBtn" type="button">Ground station</button>
@@ -1632,6 +1644,9 @@ export function setupObjectSidebar({
     const contextRemoveLayerBtn = contextMenu.querySelector("#contextRemoveLayerBtn");
 
     const addTleFromCatalogBtn = addMenu.querySelector("#addTleFromCatalogBtn");
+    const generateOrbitBtn = addMenu.querySelector("#generateOrbitBtn");
+    const addMoonBtn = addMenu.querySelector("#addMoonBtn");
+    const addSunBtn = addMenu.querySelector("#addSunBtn");
     const importSatelliteBtn = addMenu.querySelector("#importSatelliteBtn");
     const importSatelliteFileInput = addMenu.querySelector("#importSatelliteFileInput");
     const addFolderBtn = addMenu.querySelector("#addFolderBtn");
@@ -2397,25 +2412,27 @@ export function setupObjectSidebar({
             ? String(getLayerType(satelliteId) || "SATELLITE").toUpperCase()
             : "SATELLITE";
         const isGroundStation = layerType === "GROUND_STATION";
-        const isManualOrbit = !isGroundStation && canEditManualOrbit(satelliteId) === true;
+        const isCelestialBody = isBodyLayer(layerType, satelliteId);
+        const isEarth = isEarthLayer(layerType, satelliteId);
+        const isManualOrbit = !isGroundStation && !isCelestialBody && canEditManualOrbit(satelliteId) === true;
         // Keep the orbital-analysis and optional manual-edit actions inside
         // the viewport instead of letting the last entry slip under the
         // simulation dock.
-        const menuHeight = isGroundStation ? 94 : (isManualOrbit ? 324 : 286);
+        const menuHeight = isEarth ? 122 : (isCelestialBody ? 130 : (isGroundStation ? 126 : (isManualOrbit ? 358 : 320)));
         const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
         const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
 
-        contextExplainBtn.hidden = isGroundStation;
-        contextExportBtn.hidden = isGroundStation;
+        contextExplainBtn.hidden = isGroundStation || isCelestialBody;
+        contextExportBtn.hidden = isGroundStation || isCelestialBody;
         contextUpdateStationBtn.hidden = !isGroundStation;
         contextToggleHeatMapBtn.hidden = true;
-        contextVizBtn.hidden = isGroundStation;
-        contextGroundTrackBtn.hidden = isGroundStation;
-        if (!isGroundStation) {
+        contextVizBtn.hidden = isGroundStation || isCelestialBody;
+        contextGroundTrackBtn.hidden = isGroundStation || isCelestialBody;
+        if (!isGroundStation && !isCelestialBody) {
             contextGroundTrackBtn.textContent = getGroundTrackVisible?.(satelliteId) ? "Ground Track Hide" : "Ground Track Show";
         }
-        contextRenameBtn.hidden = isGroundStation;
-        contextRemoveLayerBtn.hidden = false;
+        contextRenameBtn.hidden = isGroundStation || isEarth;
+        contextRemoveLayerBtn.hidden = isEarth;
 
         if (isGroundStation && typeof getGroundStationParams === "function") {
             const params = getGroundStationParams(satelliteId) || {};
@@ -2429,6 +2446,8 @@ export function setupObjectSidebar({
                 top,
                 id: satelliteId,
                 groundStation: isGroundStation,
+                layerType,
+                earth: isEarth,
                 groundTrackVisible: getGroundTrackVisible?.(satelliteId) === true,
                 // Only local authored manual orbits get an edit action. The
                 // callback is supplied by the runtime and resolves duplicate
@@ -2544,7 +2563,20 @@ export function setupObjectSidebar({
     }
 
     addTleFromCatalogBtn?.addEventListener("click", openCatalogSatelliteFlow);
+    generateOrbitBtn?.addEventListener("click", () => {
+        closeAddMenu();
+        window.dispatchEvent(new Event("orbit:manual-orbit-open"));
+    });
     importSatelliteBtn?.addEventListener("click", () => requestSatelliteImport());
+    const requestCelestialBody = (kind) => {
+        closeAddMenu();
+        const layerId = onRequestAddCelestialBody?.(kind);
+        if (layerId) {
+            renderList();
+        }
+    };
+    addMoonBtn?.addEventListener("click", () => requestCelestialBody("moon"));
+    addSunBtn?.addEventListener("click", () => requestCelestialBody("sun"));
 
     addGroundStationBtn?.addEventListener("click", () => {
         openGroundStationModal();
@@ -2563,7 +2595,9 @@ export function setupObjectSidebar({
 
     removeAllLayersHeaderBtn.addEventListener("click", async (event) => {
         event.stopPropagation();
-        const total = getLayerIds().length;
+        // The Earth reference body is permanent and intentionally omitted
+        // from the destructive-action count and confirmation copy.
+        const total = deriveLayerActionsState(getLayerIds()).activeLayerCount;
         if (!total) {
             return;
         }
@@ -2963,6 +2997,18 @@ export function setupObjectSidebar({
         const detail = event.detail;
         const action = typeof detail === "string" ? detail : String(detail?.action || "").trim();
         const targetId = String((typeof detail === "object" && detail?.id) || contextTargetId || "").trim();
+        if (action === "center-view") {
+            if (!targetId || getObjectLayerActive(targetId) !== true) {
+                return;
+            }
+            // Selecting before focusing keeps the scene, the active layer and
+            // the object panel in agreement for satellites, stations and
+            // celestial bodies alike.
+            selectObject(targetId);
+            closeContextMenu();
+            onFocusObject?.(targetId);
+            return;
+        }
         if (action === "edit-manual") {
             if (!targetId || canEditManualOrbit(targetId) !== true) {
                 return;
@@ -2972,10 +3018,12 @@ export function setupObjectSidebar({
             return;
         }
         if (action === "propagated-parameters") {
+            const targetLayerType = String(getLayerType?.(targetId) || "SATELLITE").toUpperCase();
             if (
                 !targetId
                 || getObjectLayerActive(targetId) !== true
-                || String(getLayerType?.(targetId) || "SATELLITE").toUpperCase() === "GROUND_STATION"
+                || targetLayerType === "GROUND_STATION"
+                || isBodyLayer(targetLayerType, targetId)
             ) {
                 return;
             }
@@ -3006,6 +3054,9 @@ export function setupObjectSidebar({
         const action = event.detail || {};
         const id = String(action.id || "").trim();
         if (!id || !getObjectLayerActive(id)) {
+            return;
+        }
+        if (isBodyLayer(getLayerType?.(id), id)) {
             return;
         }
         if (action.type === "visualization") {
@@ -3565,6 +3616,9 @@ export function setupObjectSidebar({
                 return false;
             }
         };
+        const getLayerTypeForId = (id) => typeof getLayerType === "function"
+            ? String(getLayerType(id) || "").toUpperCase()
+            : "";
         const matchingFolderIds = new Set(tree.folders
             .filter((folder) => matchLayerSearch(folder.name))
             .map((folder) => folder.id));
@@ -3585,23 +3639,27 @@ export function setupObjectSidebar({
                 || matchLayerSearch(id)
                 || folderMatchesOrContainsMatch(tree.layerParents[id]);
         });
-        const visibleFolderIds = new Set();
-        const addFolderWithParents = (folderId) => {
-            let currentId = folderId;
-            while (currentId) {
-                visibleFolderIds.add(currentId);
-                currentId = tree.folders.find((folder) => folder.id === currentId)?.parentId || null;
-            }
-        };
-        if (filteringLayers) {
-            matchingFolderIds.forEach(addFolderWithParents);
-            filtered.forEach((id) => addFolderWithParents(tree.layerParents[id]));
-        }
+        // Celestial bodies live in their own non-nestable section at the
+        // bottom of the explorer.  This keeps the mission hierarchy focused
+        // on operational layers while preserving every row interaction.
+        const projectLayerIds = filtered.filter((id) => !isBodyLayer(getLayerTypeForId(id), id));
+        const bodyLayerIds = filtered.filter((id) => isBodyLayer(getLayerTypeForId(id), id));
+        // A folder is useful before it contains a layer: it is where a user
+        // intends to import or drag the next object. Keep every saved folder
+        // in the normal tree; an active search still narrows it to matching
+        // branches only.
+        const visibleFolderIds = getVisibleLayerFolderIds({
+            folders: tree.folders,
+            layerParents: tree.layerParents,
+            layerIds: projectLayerIds,
+            filtering: filteringLayers,
+            matchingFolderIds: [...matchingFolderIds]
+        });
 
         const listFragment = document.createDocumentFragment();
         const containers = new Map([[null, listFragment]]);
         const renderFolder = (folder, parentContainer) => {
-            if (filteringLayers && !visibleFolderIds.has(folder.id)) return;
+            if (!visibleFolderIds.has(folder.id)) return;
             const group = document.createElement("section");
             group.className = "layer-tree-folder";
             const header = document.createElement("button");
@@ -3636,58 +3694,66 @@ export function setupObjectSidebar({
             tree.folders.filter((item) => item.parentId === folder.id).forEach((child) => renderFolder(child, body));
         };
         tree.folders.filter((item) => !item.parentId).forEach((folder) => renderFolder(folder, listFragment));
-        for (const id of filtered) {
+        const createLayerRow = (id) => {
+            const layerType = getLayerTypeForId(id);
+            const presentation = getLayerPresentation(layerType, id);
+            const isPermanentEarth = isEarthLayer(layerType, id);
             const rowEl = document.createElement("div");
-            rowEl.className = `object-list-row${id === selectedId ? " active" : ""}`;
-            rowEl.draggable = true;
-            rowEl.addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", id));
+            rowEl.className = `object-list-row${id === selectedId ? " active" : ""}${isPermanentEarth ? " is-permanent" : ""}`;
+            rowEl.dataset.layerId = id;
+            rowEl.dataset.layerType = layerType;
+            rowEl.draggable = !presentation.isBody;
+            if (!presentation.isBody) {
+                rowEl.addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", id));
+            }
 
             const item = document.createElement("button");
             item.type = "button";
-            item.draggable = true;
+            item.draggable = !presentation.isBody;
             item.className = `object-list-item${id === selectedId ? " active" : ""}`;
-            item.textContent = "";
             const displayName = typeof getLayerDisplayName === "function"
                 ? String(getLayerDisplayName(id) || id)
                 : String(id || "");
-            item.appendChild(document.createTextNode(displayName));
-
-            const layerType = typeof getLayerType === "function"
-                ? String(getLayerType(id) || "").toUpperCase()
-                : "";
-
-            if (layerType) {
-                const typeBadge = document.createElement("span");
-                typeBadge.className = "catalog-format-badge";
-                typeBadge.textContent = layerType === "GROUND_STATION" ? "GST" : (layerType === "POINT" ? "POINT" : "SAT");
-                typeBadge.title = `Tipo: ${typeBadge.textContent}`;
-                item.appendChild(document.createTextNode(" "));
-                item.appendChild(typeBadge);
-            }
+            item.title = `${presentation.label}: ${displayName}`;
+            item.setAttribute("aria-label", `${presentation.label}: ${displayName}`);
+            const typeIcon = document.createElement("span");
+            typeIcon.className = `layer-type-icon is-${presentation.key}`;
+            typeIcon.title = presentation.label;
+            typeIcon.setAttribute("aria-hidden", "true");
+            typeIcon.innerHTML = presentation.icon;
+            const name = document.createElement("span");
+            name.className = "layer-display-name";
+            name.textContent = displayName;
+            item.append(typeIcon, name);
 
             const listEntryMeta = getCatalogEntryMeta?.(id) || null;
-            if (listEntryMeta?.sourceFormat) {
+            // Bodies already have an explicit semantic icon. "CELESTIAL" is
+            // internal source metadata, not useful workspace vocabulary.
+            if (!presentation.isBody && listEntryMeta?.sourceFormat) {
                 const formatBadge = document.createElement("span");
                 formatBadge.className = "catalog-format-badge";
                 formatBadge.textContent = String(listEntryMeta.sourceFormat || "TLE").toUpperCase();
                 formatBadge.title = `Formato: ${formatBadge.textContent}`;
-                item.appendChild(document.createTextNode(" "));
                 item.appendChild(formatBadge);
             }
             item.addEventListener("click", () => {
                 selectObject(id);
             });
-            item.addEventListener("dragstart", (event) => {
-                event.stopPropagation();
-                event.dataTransfer.setData("text/plain", id);
-                event.dataTransfer.effectAllowed = "move";
-            });
+            if (!presentation.isBody) {
+                item.addEventListener("dragstart", (event) => {
+                    event.stopPropagation();
+                    event.dataTransfer.setData("text/plain", id);
+                    event.dataTransfer.effectAllowed = "move";
+                });
+            }
             item.addEventListener("dblclick", () => {
                 selectObject(id);
                 onFocusObject(id);
             });
 
-            const removeBtn = document.createElement("button");
+            let removeBtn = null;
+            if (!isPermanentEarth) {
+            removeBtn = document.createElement("button");
             removeBtn.type = "button";
             removeBtn.className = "object-remove-layer-btn";
             removeBtn.title = "Quitar capa";
@@ -3703,12 +3769,13 @@ export function setupObjectSidebar({
                 renderInfo();
                 renderCatalogList();
             });
+            }
 
             const isVisible = getObjectVisibility(id);
             const eyeBtn = document.createElement("button");
             eyeBtn.type = "button";
             eyeBtn.className = `object-visibility-btn${isVisible ? "" : " is-hidden"}`;
-            eyeBtn.title = isVisible ? "Ocultar satelite y orbitas" : "Mostrar satelite y orbitas";
+            eyeBtn.title = isVisible ? "Ocultar capa" : "Mostrar capa";
             eyeBtn.setAttribute("aria-label", eyeBtn.title);
             eyeBtn.innerHTML = visibilityIconMarkup(isVisible);
             eyeBtn.addEventListener("click", (event) => {
@@ -3720,7 +3787,7 @@ export function setupObjectSidebar({
             });
 
             rowEl.appendChild(item);
-            rowEl.appendChild(removeBtn);
+            if (removeBtn) rowEl.appendChild(removeBtn);
             rowEl.appendChild(eyeBtn);
 
             rowEl.addEventListener("contextmenu", (event) => {
@@ -3728,7 +3795,10 @@ export function setupObjectSidebar({
                 openContextMenu(id, event.clientX, event.clientY);
             });
 
-            (containers.get(tree.layerParents[id]) || listFragment).appendChild(rowEl);
+            return rowEl;
+        };
+        for (const id of projectLayerIds) {
+            (containers.get(tree.layerParents[id]) || listFragment).appendChild(createLayerRow(id));
         }
 
         // Última fila: acción "+" con aspecto de satélite que abre el catálogo.
@@ -3746,6 +3816,46 @@ export function setupObjectSidebar({
         });
         addRow.appendChild(addItem);
         listFragment.appendChild(addRow);
+        if (bodyLayerIds.length) {
+            const expanded = filteringLayers || bodiesExpanded;
+            const bodySection = document.createElement("section");
+            bodySection.className = `layer-tree-body-section${expanded ? " is-expanded" : ""}`;
+            bodySection.setAttribute("aria-label", "Bodies");
+            const bodyHeading = document.createElement("button");
+            bodyHeading.type = "button";
+            bodyHeading.className = "layer-tree-body-section-header";
+            bodyHeading.setAttribute("aria-expanded", expanded ? "true" : "false");
+
+            const bodyChevron = document.createElement("span");
+            bodyChevron.className = "layer-tree-chevron";
+            bodyChevron.setAttribute("aria-hidden", "true");
+            bodyChevron.textContent = expanded ? "▾" : "▸";
+
+            const bodyHeadingIcon = document.createElement("span");
+            bodyHeadingIcon.className = "layer-type-icon is-bodies";
+            bodyHeadingIcon.setAttribute("aria-hidden", "true");
+            bodyHeadingIcon.innerHTML = getBodyGroupPresentation().icon;
+
+            const bodyHeadingText = document.createElement("span");
+            bodyHeadingText.textContent = "BODIES";
+            const bodyCount = document.createElement("span");
+            bodyCount.className = "layer-tree-body-count";
+            bodyCount.textContent = String(bodyLayerIds.length);
+
+            const bodyRows = document.createElement("div");
+            bodyRows.className = "layer-tree-body-section-rows";
+            bodyRows.hidden = !expanded;
+            bodyLayerIds.forEach((id) => bodyRows.appendChild(createLayerRow(id)));
+            bodyRows.classList.toggle("is-empty", bodyRows.children.length === 0);
+
+            bodyHeading.addEventListener("click", () => {
+                bodiesExpanded = !bodiesExpanded;
+                renderList();
+            });
+            bodyHeading.append(bodyChevron, bodyHeadingIcon, bodyHeadingText, bodyCount);
+            bodySection.append(bodyHeading, bodyRows);
+            listFragment.appendChild(bodySection);
+        }
         listRoot.replaceChildren(listFragment);
 
         // Empty folders do not need a vertical guide; the guide is reserved
@@ -4127,7 +4237,7 @@ export function setupObjectSidebar({
         const orbitInfoFromTle = getOrbitInfoFromTleSummary(summary, objectId);
         const useTelemetryFallback = !orbitInfoFromTle || orbitInfoFromTle.kind === ORBIT_KIND.UNKNOWN || sourceFormat === "OEM";
         const orbitInfo = useTelemetryFallback
-            ? getOrbitInfoFromTelemetry(telemetry, objectId)
+            ? getOrbitInfoFromTelemetry(telemetry)
             : orbitInfoFromTle;
 
         return {

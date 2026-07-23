@@ -38,7 +38,7 @@ export default function TopToolbar({ hasNotifications, onToggleNotifications, on
         className="!fixed !top-0 !right-0 !left-0 !z-[10100] !flex !h-[max(64px,calc(76px*var(--orbit-ui-scale)))] !min-w-0 !items-center !gap-[clamp(14px,1.5vw,22px)] !border-b !border-[rgba(80,116,180,.22)] !bg-[linear-gradient(90deg,#02060e_0%,#070d19_56%,#02060d_100%)] !px-[clamp(14px,2vw,28px)] !shadow-[0_5px_20px_rgba(0,0,0,.3)] max-[1100px]:!gap-[14px] max-[1100px]:!px-[14px] max-[820px]:!h-14 max-[820px]:!gap-2.5 max-[820px]:!px-2.5 max-[620px]:!gap-1.5 max-[620px]:!px-1.5"
     >
         <a className="toolbar-brand !inline-flex !shrink-0 !items-center !gap-[clamp(6px,1vw,13px)] !mr-[clamp(8px,2vw,28px)] !font-[system-ui,sans-serif] !text-[clamp(16px,1.7vw,28px)] !leading-[1.05] !font-bold !tracking-[clamp(3px,.45vw,7px)] !text-[#3e6bff] !no-underline max-[620px]:!mr-0 max-[620px]:!gap-0" href="#" aria-label="Orbit">
-            <img className="!block !h-[max(43px,calc(60px*var(--orbit-ui-scale)))] !w-[max(43px,calc(60px*var(--orbit-ui-scale)))] !object-contain max-[620px]:!hidden" src="/assets/icon/favicon.png" alt="" />
+            <img className="!block !h-[max(32px,calc(36px*var(--orbit-ui-scale)))] !w-[max(32px,calc(36px*var(--orbit-ui-scale)))] !object-contain max-[620px]:!hidden" src="/assets/icon/favicon.svg" alt="" />
             <span>ORBIT</span>
         </a>
         <nav className="toolbar-nav !flex !min-w-0 !self-stretch !items-center !gap-[clamp(12px,1.5vw,23px)] max-[620px]:!flex-none max-[620px]:!gap-0" aria-label="Navegacion principal">

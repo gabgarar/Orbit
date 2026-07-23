@@ -683,6 +683,7 @@ export default function ManualOrbitPanel() {
     const [definitionTab, setDefinitionTab] = useState("keplerian");
     const [form, setForm] = useState(createDefaultForm);
     const [status, setStatus] = useState(null);
+    const [vectorsVisible, setVectorsVisible] = useState(false);
     // The runtime owns the replacement target.  Keeping only its id in the
     // UI lets the same form distinguish a new authored orbit from an edit
     // without ever making catalogue objects editable in React.
@@ -707,13 +708,18 @@ export default function ManualOrbitPanel() {
             if (event.detail && typeof event.detail === "object") setForm((current) => mergeIncomingForm(current, event.detail));
             setActiveTab("overview");
             setStatus(null);
+            setVectorsVisible(false);
             setPanelOpen(true);
         };
         const onClose = () => {
+            window.dispatchEvent(new CustomEvent("orbit:manual-orbit-vectors-action", { detail: { visible: false } }));
+            setVectorsVisible(false);
             setEditingManualOrbitId(null);
             setPanelOpen(false);
         };
         const onCancel = () => {
+            window.dispatchEvent(new CustomEvent("orbit:manual-orbit-vectors-action", { detail: { visible: false } }));
+            setVectorsVisible(false);
             setEditingManualOrbitId(null);
             setPanelOpen(false);
         };
@@ -921,6 +927,25 @@ export default function ManualOrbitPanel() {
             endTime: end.toISOString()
         });
     };
+    const togglePreviewVectors = () => {
+        const visible = !vectorsVisible;
+        setVectorsVisible(visible);
+        window.dispatchEvent(new CustomEvent("orbit:manual-orbit-vectors-action", {
+            detail: { visible, manualOrbit: payloadFor(form) }
+        }));
+    };
+
+    useEffect(() => {
+        window.addEventListener("orbit:manual-orbit-propagated-parameters-request", openPropagatedParameters);
+        return () => window.removeEventListener("orbit:manual-orbit-propagated-parameters-request", openPropagatedParameters);
+    }, [form]);
+
+    useEffect(() => {
+        if (!vectorsVisible) return;
+        window.dispatchEvent(new CustomEvent("orbit:manual-orbit-vectors-action", {
+            detail: { visible: true, manualOrbit: payloadFor(form) }
+        }));
+    }, [form, vectorsVisible]);
 
     if (!open) return null;
 
@@ -965,7 +990,7 @@ export default function ManualOrbitPanel() {
             <button className="inline-flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[7px] border border-[#294361] bg-[#0c192b] p-0 text-[18px] leading-none text-[#bdcbe0] hover:border-[#5075a6] hover:bg-[#14243d] hover:text-[#f4f8ff]" type="button" aria-label={"Cerrar creador de \u00f3rbita manual"} onClick={() => requestClose("close")}>&times;</button>
         </header>
 
-        <div className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-3 pb-4 [scrollbar-color:#355179_transparent] [scrollbar-gutter:stable] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#355179]">
+        <div className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-3 pb-5 [scrollbar-color:#355179_transparent] [scrollbar-gutter:stable] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#355179]">
             <nav className="relative z-[1] grid grid-cols-3 border-b border-[#1c2c43]" aria-label="Manual orbit sections" role="tablist">
                 <button className={`relative cursor-pointer border-0 bg-transparent px-0.5 pt-2.5 pb-3 text-[10px] leading-none font-bold ${activeTab === "overview" ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1] hover:text-[#cbd8ec]"}`} type="button" role="tab" aria-selected={activeTab === "overview"} aria-controls="manual-orbit-overview" onClick={() => setActiveTab("overview")}>OVERVIEW</button>
                 <button className={`relative cursor-pointer border-0 bg-transparent px-0.5 pt-2.5 pb-3 text-[10px] leading-none font-bold ${activeTab === "orbit" ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1] hover:text-[#cbd8ec]"}`} type="button" role="tab" aria-selected={activeTab === "orbit"} aria-controls="manual-orbit-orbit" onClick={() => setActiveTab("orbit")}>ORBIT</button>
@@ -1157,9 +1182,14 @@ export default function ManualOrbitPanel() {
             <button className="mt-3 w-full cursor-pointer rounded-lg border border-[#39445a] bg-[#111a29] px-3 py-2 text-[10px] leading-none font-bold text-[#b7c5da] hover:border-[#637c9f] hover:bg-[#17253a] hover:text-[#ecf3ff]" type="button" onClick={reset}>Reset values</button>
         </div>
 
-        <footer className="grid shrink-0 grid-cols-2 gap-2 border-t border-[#1e3049] bg-[rgba(6,14,25,.72)] px-4 py-3">
-            <button className="min-h-[34px] cursor-pointer rounded-lg border border-[#3c3145] bg-[#1b1320] px-3 text-[11px] leading-none font-bold text-[#e1b5c1] hover:border-[#885166] hover:bg-[#2a1721] hover:text-[#ffe2e9]" type="button" onClick={() => requestClose("cancel")}>Cancel</button>
-            <button className="min-h-[34px] cursor-pointer rounded-lg border border-[#476dce] bg-[#3657dc] px-3 text-[11px] leading-none font-bold text-white shadow-[0_6px_16px_rgba(41,76,220,.3)] hover:border-[#6e91ff] hover:bg-[#4668ee] disabled:cursor-wait disabled:opacity-55" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before updating this orbit." : undefined} disabled={status?.kind === "busy" || !epochRangeValid || selectedPropagator.unavailable} onClick={() => dispatch("orbit:manual-orbit-create", payloadFor(form))}>{status?.kind === "busy" ? (isEditingManualOrbit ? "Updating..." : "Creating...") : (isEditingManualOrbit ? "Actualizar \u00f3rbita" : "Crear \u00f3rbita")}</button>
-        </footer>
+        <div className="min-h-0 shrink-0 border-t border-[#1e3049] bg-[rgba(6,14,25,.84)] shadow-[0_-8px_18px_rgba(0,0,0,.14)]">
+            <div className="px-4 pt-3 pb-2">
+                <button className="inline-flex min-h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#416b9e] bg-[#10253f] px-3 py-2 text-[10px] leading-none font-bold text-[#cbe2ff] hover:border-[#6699d3] hover:bg-[#173758]" type="button" onClick={togglePreviewVectors}>{vectorsVisible ? "Ocultar ejes y vectores" : "Ver ejes y vectores"}</button>
+            </div>
+            <footer className="grid grid-cols-2 gap-2 border-t border-[#1b2c43] px-4 pt-2 pb-3">
+                <button className="min-h-[34px] cursor-pointer rounded-lg border border-[#3c3145] bg-[#1b1320] px-3 text-[11px] leading-none font-bold text-[#e1b5c1] hover:border-[#885166] hover:bg-[#2a1721] hover:text-[#ffe2e9]" type="button" onClick={() => requestClose("cancel")}>Cancel</button>
+                <button className="min-h-[34px] cursor-pointer rounded-lg border border-[#476dce] bg-[#3657dc] px-3 text-[11px] leading-none font-bold text-white shadow-[0_6px_16px_rgba(41,76,220,.3)] hover:border-[#6e91ff] hover:bg-[#4668ee] disabled:cursor-wait disabled:opacity-55" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before updating this orbit." : undefined} disabled={status?.kind === "busy" || !epochRangeValid || selectedPropagator.unavailable} onClick={() => dispatch("orbit:manual-orbit-create", payloadFor(form))}>{status?.kind === "busy" ? (isEditingManualOrbit ? "Updating..." : "Creating...") : (isEditingManualOrbit ? "Actualizar \u00f3rbita" : "Crear \u00f3rbita")}</button>
+            </footer>
+        </div>
     </aside>;
 }

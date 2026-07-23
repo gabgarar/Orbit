@@ -105,3 +105,57 @@ test("project lifecycle serializes manual orbits separately and restores them wi
         globalThis.document = previousDocument;
     }
 });
+
+test("project lifecycle persists native celestial body layers without persisting an ephemeris sample", async () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const events = new EventTarget();
+    globalThis.window = events;
+    globalThis.document = { querySelectorAll: () => [] };
+    try {
+        let projectName = null;
+        let bodies = [{ kind: "moon", visible: false }, { kind: "sun", visible: true }];
+        const restored = [];
+        let cleared = 0;
+        const lifecycle = createProjectLifecycle({
+            getProjectName: () => projectName,
+            setProjectName: (value) => { projectName = value; },
+            getProjectFileHandle: () => null,
+            setProjectFileHandle: () => {},
+            getActiveSatelliteIds: () => [],
+            setAllSatelliteLayersActive: () => {},
+            setSatelliteLayerActive: () => {},
+            getGroundStationLayers: () => new Map(),
+            removeGroundStationLayer: () => {},
+            clearDuplicateLayers: () => {},
+            getLayerNameOverrides: () => new Map(),
+            clearSatelliteVisualizationConfigs: () => {},
+            getObjectSidebar: () => ({ getProjectTree: () => ({ folders: [], layerParents: {} }), setProjectTree: () => {}, renderList: () => {} }),
+            getManualOrbitEntries: () => [],
+            restoreManualOrbits: async () => ({ restored: [], failed: [] }),
+            getCelestialBodies: () => bodies,
+            clearCelestialBodies: () => { cleared += 1; bodies = []; },
+            restoreCelestialBodies: (entries) => { restored.push(...entries); bodies = entries; },
+            getSimulationState: () => ({ mode: "realtime", startDate: new Date(), endDate: new Date() }),
+            applySimulationRange: () => {},
+            showConfirm: async () => true,
+            showAlert: () => {},
+            getAlertTitle: () => "Orbit"
+        });
+
+        const saved = lifecycle.buildDocument();
+        assert.deepEqual(saved.celestialBodies, [{ kind: "moon", visible: false }, { kind: "sun", visible: true }]);
+
+        // Simulate a blank workspace before opening the saved document so no
+        // confirmation branch obscures the restore contract.
+        projectName = null;
+        bodies = [];
+        const file = { name: "bodies.json", text: async () => JSON.stringify(saved) };
+        assert.equal(await lifecycle.loadFile(file), true);
+        assert.equal(cleared, 1);
+        assert.deepEqual(restored, saved.celestialBodies);
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+    }
+});

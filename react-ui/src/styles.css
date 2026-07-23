@@ -91,22 +91,41 @@ body.with-toolbars #cesiumContainer {
     letter-spacing: 0.07em;
 }
 
+/* Keep the panel header deliberately quiet. Global layer actions belong to
+   the project row, where they describe the tree they affect. */
+#leftSatellitesPanel > .orbit-layers-panel-header { order: 0; }
+#leftSatellitesPanel > [role="search"] { order: 1; }
+#leftSatellitesPanel > .orbit-project-header { order: 2; flex-shrink: 0; }
+#leftSatellitesPanel > #leftSatellitesPanelContent { order: 3; }
+#leftSatellitesPanel > #projectTimeFooter { order: 4; }
+#leftSatellitesPanel .orbit-project-title { max-width: 100%; }
+#leftSatellitesPanel .orbit-project-actions { align-self: center; }
+
 #leftSatellitesPanel #leftSatellitesPanelContent { padding: 0 10px 10px 14px; }
-#leftSatellitesPanel .object-sidebar-body-compact { padding: 0; gap: 8px; }
+#leftSatellitesPanel .object-sidebar-body-compact { padding: 0; gap: 6px; }
 #leftSatellitesPanel .object-sidebar-body-compact #objectList { padding-right: 5px; }
-#leftSatellitesPanel .layer-tree-folder-header { min-height: 35px; padding: 0 6px; color: #edf3ff; font-size: 13px; }
+#leftSatellitesPanel .layer-tree-folder-header { min-height: 31px; padding: 0 5px; color: #edf3ff; font-size: 12px; }
 #leftSatellitesPanel .layer-tree-chevron { width: 9px; font-size: 9px; }
-#leftSatellitesPanel .layer-tree-icon { display: inline-grid; width: 21px; height: 21px; place-items: center; color: #f0c96a; }
-#leftSatellitesPanel .layer-tree-icon svg { width: 20px; height: 20px; fill: rgba(240, 201, 106, 0.12); stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+#leftSatellitesPanel .layer-tree-icon { display: inline-grid; width: 18px; height: 18px; place-items: center; color: #f0c96a; }
+#leftSatellitesPanel .layer-tree-icon svg { width: 17px; height: 17px; fill: rgba(240, 201, 106, 0.12); stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
 #leftSatellitesPanel .layer-tree-folder-body { margin-left: 16px; padding-left: 16px; border-left: 0; }
 #leftSatellitesPanel .layer-tree-folder-body:not([hidden]):not(.is-empty) { border-left: 1px solid #31455f; }
-#leftSatellitesPanel .object-sidebar-body-compact .object-list-row { min-height: 33px; border: 0; border-radius: 6px; background: transparent; }
-#leftSatellitesPanel .object-sidebar-body-compact .object-list-item { padding: 7px 8px; color: #dfe9fa; font-size: 12px; font-weight: 600; }
+#leftSatellitesPanel .object-sidebar-body-compact .object-list-row { min-height: 30px; border: 0; border-radius: 6px; background: transparent; }
+#leftSatellitesPanel .object-sidebar-body-compact .object-list-item { padding: 5px 7px; color: #dfe9fa; font-size: 11px; font-weight: 600; line-height: 1.2; }
 #leftSatellitesPanel .object-sidebar-body-compact .object-list-row:hover { border-color: transparent; background: #101d31; }
-#leftSatellitesPanel .object-sidebar-body-compact .object-visibility-btn { padding: 6px 7px; color: #c8d6ed; font-size: 15px; opacity: 0.9; }
-#leftSatellitesPanel .object-sidebar-body-compact .object-remove-layer-btn { padding: 6px 7px; font-size: 11px; }
-#leftSatellitesPanel .object-sidebar-body-compact .object-list-row-add { min-height: 40px; border-color: #3454d0; border-radius: 8px; background: rgba(46, 74, 200, 0.1); }
-#leftSatellitesPanel .object-sidebar-body-compact .object-list-add-item { min-height: 40px; color: #aebfff; font-size: 12px; }
+#leftSatellitesPanel .object-sidebar-body-compact .object-visibility-btn { padding: 5px 6px; color: #c8d6ed; font-size: 13px; opacity: 0.9; }
+#leftSatellitesPanel .object-sidebar-body-compact .object-remove-layer-btn { padding: 5px 6px; font-size: 10px; }
+#leftSatellitesPanel .object-sidebar-body-compact .object-list-row-add { min-height: 34px; border-color: #3454d0; border-radius: 7px; background: rgba(46, 74, 200, 0.1); }
+#leftSatellitesPanel .object-sidebar-body-compact .object-list-add-item { min-height: 34px; color: #aebfff; font-size: 11px; }
+#leftSatellitesPanel .object-sidebar-body-compact .layer-type-icon { width: 16px; height: 16px; border-radius: 5px; }
+#leftSatellitesPanel .object-sidebar-body-compact .layer-type-icon svg { width: 12px; height: 12px; }
+#leftSatellitesPanel .layer-type-icon.is-bodies { color: #b9a7ff; }
+#leftSatellitesPanel .layer-tree-body-section { margin-top: 7px; padding-top: 7px; }
+#leftSatellitesPanel .layer-tree-body-section-header { min-height: 26px; padding: 0 5px; border: 0; background: transparent; color: #c7d2e7; font-size: 10px; cursor: pointer; }
+#leftSatellitesPanel .layer-tree-body-section-header:hover { background: #101d31; }
+#leftSatellitesPanel .layer-tree-body-section-header:focus-visible { outline: 2px solid #5278db; outline-offset: -2px; }
+#leftSatellitesPanel .layer-tree-body-section-rows { min-height: 4px; margin-left: 16px; padding-left: 16px; border-left: 0; }
+#leftSatellitesPanel .layer-tree-body-section-rows:not([hidden]):not(.is-empty) { border-left: 1px solid #31455f; }
 
 /* Every layer item branches off the vertical tree guide. */
 #leftSatellitesPanel .layer-tree-folder-body > .object-list-row,
@@ -115,6 +134,58 @@ body.with-toolbars #cesiumContainer {
 #leftSatellitesPanel .layer-tree-folder-body > .layer-tree-folder::before { content: ""; position: absolute; z-index: 1; left: -17px; width: 17px; height: 1px; background: #2d4562; }
 #leftSatellitesPanel .layer-tree-folder-body > .layer-tree-folder::before { top: 17px; }
 #leftSatellitesPanel .layer-tree-folder-body > .object-list-row::before { top: 50%; }
+#leftSatellitesPanel .layer-tree-body-section-rows > .object-list-row { position: relative; }
+#leftSatellitesPanel .layer-tree-body-section-rows > .object-list-row::before { content: ""; position: absolute; z-index: 1; top: 50%; left: -17px; width: 17px; height: 1px; background: #2d4562; }
+
+/* Settings deliberately shares the right-side object-details composition.
+   The legacy stylesheet still supplies IDs for an old centred modal, therefore
+   these ID rules are kept here (after that stylesheet) to make the React
+   drawer authoritative without changing the runtime config event contract. */
+#configModal {
+    display: block;
+    padding: 0;
+    background: transparent;
+    pointer-events: none;
+}
+
+#configModal.open { display: block; }
+
+#configPanel {
+    position: fixed;
+    top: 86px;
+    right: 14px;
+    bottom: 132px;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    width: min(344px, calc(100vw - 28px));
+    min-height: 300px;
+    max-height: none;
+    overflow: hidden;
+    padding: 0;
+    border: 1px solid rgba(65, 99, 147, 0.58);
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(12, 25, 42, 0.985), rgba(5, 14, 25, 0.985));
+    color: #dbe7fa;
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.46), inset 0 1px rgba(255, 255, 255, 0.045);
+    pointer-events: auto;
+}
+
+#configPanelHeader {
+    display: block;
+    margin: 0;
+    cursor: default;
+    user-select: auto;
+}
+
+@media (max-width: 760px) {
+    #configPanel {
+        top: 80px;
+        right: 10px;
+        bottom: 74px;
+        width: min(350px, calc(100vw - 20px));
+    }
+}
 
 @media (max-width: 620px) {
     #leftSatellitesPanel { top: 64px !important; left: 8px; bottom: 8px; border-radius: 12px; }

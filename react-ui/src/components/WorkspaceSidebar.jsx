@@ -14,7 +14,7 @@ function ProjectTimeFooter() {
     useEffect(() => {
         const onTimeContext = (event) => {
             const nextDate = new Date(event.detail?.date || Date.now());
-            setContext({ date: Number.isNaN(nextDate.getTime()) ? new Date() : nextDate, mode: event.detail?.mode || "realtime", oemDomainActive: event.detail?.oemDomainActive === true });
+            setContext({ date: Number.isNaN(nextDate.getTime()) ? new Date() : nextDate, mode: event.detail?.mode || "realtime", isPlaying: event.detail?.isPlaying !== false, oemDomainActive: event.detail?.oemDomainActive === true });
         };
         window.addEventListener("orbit:time-context", onTimeContext);
         return () => window.removeEventListener("orbit:time-context", onTimeContext);
@@ -25,6 +25,7 @@ function ProjectTimeFooter() {
         return () => window.removeEventListener("orbit:manual-orbit-design-state", onDesignMode);
     }, []);
     const isRealtime = context.mode === "realtime";
+    const isRealtimePaused = isRealtime && context.isPlaying === false;
     // The design panel owns its two explicit epochs. Keeping the project
     // clock visible here would make the isolated scene look like realtime is
     // still active, and it consumes useful space in the Layers panel.
@@ -35,7 +36,7 @@ function ProjectTimeFooter() {
             <small className="text-[11px] leading-none font-semibold text-[#aab8cf]">{context.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</small>
             <strong className="text-[16px] leading-none font-medium tracking-[.02em] text-[#f2f6ff]">{context.date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })} UTC</strong>
         </div>
-        <span className="inline-flex items-center gap-[7px] whitespace-nowrap text-[11px] leading-none font-semibold text-[#bed0e8]"><i className={`size-[7px] rounded-full ${isRealtime ? "bg-[#46d481] shadow-[0_0_8px_rgba(70,212,129,.65)]" : "bg-[#f0ae45] shadow-[0_0_8px_rgba(240,174,69,.65)]"}`} />{isRealtime ? "Real time" : `Simulated (${context.oemDomainActive ? "OEM" : "Manual range"})`}</span>
+        <span className="inline-flex items-center gap-[7px] whitespace-nowrap text-[11px] leading-none font-semibold text-[#bed0e8]" aria-live="polite"><i className={`size-[7px] rounded-full ${isRealtimePaused ? "bg-[#f0ae45] shadow-[0_0_8px_rgba(240,174,69,.65)]" : (isRealtime ? "bg-[#46d481] shadow-[0_0_8px_rgba(70,212,129,.65)]" : "bg-[#f0ae45] shadow-[0_0_8px_rgba(240,174,69,.65)]")}`} />{isRealtimePaused ? "Paused" : (isRealtime ? "Real time" : `Simulated (${context.oemDomainActive ? "OEM" : "Manual range"})`)}</span>
     </footer>;
 }
 
@@ -101,7 +102,7 @@ export default function WorkspaceSidebar() {
         const onSelection = (event) => {
             const detail = event.detail || {};
             const id = String(detail.id || "").trim();
-            const isOrbitalLayer = String(detail.layerType || "SATELLITE").toUpperCase() !== "GROUND_STATION";
+            const isOrbitalLayer = String(detail.layerType || "SATELLITE").toUpperCase() === "SATELLITE";
             setSelectedInspectableLayer(detail.active === true && isOrbitalLayer && id ? { id } : null);
         };
         window.addEventListener("orbit:selected-layer-state", onSelection);
@@ -124,12 +125,18 @@ export default function WorkspaceSidebar() {
         publishLayersPanelState(next);
     };
     const visibilityTitle = allLayersVisible ? "Ocultar todas las capas" : "Mostrar todas las capas";
-    const propagatedParametersAvailable = Boolean(selectedInspectableLayer?.id);
+    // The manual designer is a valid orbital target even though it does not
+    // appear in the layer tree while it is being authored.
+    const propagatedParametersAvailable = designMode || Boolean(selectedInspectableLayer?.id);
     const propagatedParametersTitle = propagatedParametersAvailable
         ? (propagatedParametersOpen ? "Ocultar parÃ¡metros orbitales propagados" : "Ver parÃ¡metros orbitales propagados")
         : "Selecciona una capa orbital activa para ver sus parÃ¡metros propagados";
     const togglePropagatedParameters = () => {
         if (!propagatedParametersAvailable) return;
+        if (designMode) {
+            window.dispatchEvent(new Event("orbit:manual-orbit-propagated-parameters-request"));
+            return;
+        }
         if (propagatedParametersOpen) {
             emitPropagatedParametersClose({ source: "sidebar" });
             return;
@@ -154,7 +161,10 @@ export default function WorkspaceSidebar() {
         <aside id="leftSatellitesPanel" className={`sidebar-panel${openPanel ? " open" : ""}`}>
             <div className="sidebar-panel-header orbit-layers-panel-header after:!hidden max-[620px]:!min-h-[62px] max-[620px]:!p-[14px]">
                 <div className="orbit-layers-heading">LAYERS</div>
-                <div className="sidebar-panel-actions !gap-[6px]">
+            </div>
+            <div className="orbit-project-header mx-[14px] mb-2 flex min-h-[41px] items-center justify-between gap-2 border-t border-[#172334] pt-[7px]">
+                <div className="orbit-project-title min-w-0 -translate-y-px truncate font-[system-ui,sans-serif] text-[11px] leading-none font-bold tracking-[.1em] text-[#c3d0e5]" data-project-title title={projectName}>{projectName}</div>
+                <div className="sidebar-panel-actions orbit-project-actions shrink-0 !gap-[6px]">
                     <button className="object-global-eye-btn inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#17263c] !bg-[#0c1522] !text-[#c9d6ec] hover:!border-[#4168a3] hover:!bg-[#14243d] hover:!text-[#edf4ff] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="toggleAllVisibilityBtn" data-react-visibility-toggle="true" type="button" title={designMode ? "Las capas se restaurarán al salir del diseño orbital" : visibilityTitle} aria-label={visibilityTitle} aria-pressed={allLayersVisible} disabled={designMode} hidden={!hasActiveLayers}>
                         {allLayersVisible ? <EyeIcon /> : <EyeOffIcon />}
                     </button>
@@ -174,7 +184,6 @@ export default function WorkspaceSidebar() {
                     </div>}
                 </div>
             </div>
-            <div className="border-t border-[#172334] pt-[11px] mx-[14px] mb-2 font-[system-ui,sans-serif] text-[10px] leading-none font-bold tracking-[.1em] text-[#b8c5da]" data-project-title>{projectName}</div>
             <div id="leftSatellitesPanelContent" className={`sidebar-panel-content${designMode ? " pointer-events-none select-none opacity-50" : ""}`} aria-disabled={designMode} />
             <ProjectTimeFooter />
             <div className="sidebar-panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Redimensionar panel de capas" />

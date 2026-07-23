@@ -4,68 +4,94 @@ import { sections, tabs, titles } from "../features/config/configSchema.js";
 import useConfigPanelState from "../hooks/useConfigPanelState.js";
 
 const classNames = (...classes) => classes.filter(Boolean).join(" ");
-const headerButtonClass = "h-[calc(34px*var(--orbit-ui-scale))] cursor-pointer rounded-[calc(9px*var(--orbit-ui-scale))] px-[calc(10px*var(--orbit-ui-scale))] font-sans text-[length:calc(11px*var(--orbit-ui-scale))] leading-none font-bold";
 const statusColors = {
-    idle: "text-[var(--orbit-text-success)]",
-    saved: "text-[var(--orbit-text-success)]",
-    saving: "text-[var(--orbit-text-warning)]",
-    error: "text-[var(--orbit-text-error)]"
+    idle: "bg-[#2b7a55]",
+    saved: "bg-[#62d690]",
+    saving: "bg-[#f2bd58]",
+    error: "bg-[#ee6e7d]"
 };
 
+function SettingsGlyph() {
+    return <svg className="size-3.5 fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:1.8]" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6M16 14v6" /></svg>;
+}
+
+function statusText(status) {
+    if (status?.message) return status.message;
+    if (status?.state === "saving") return "Guardando cambios";
+    if (status?.state === "error") return "No se pudieron guardar los cambios";
+    return "Estado sincronizado";
+}
+
+/**
+ * Runtime settings use the same right-side, persistent-card language as the
+ * selected-object details. The runtime still owns validation and persistence;
+ * this component only dispatches its existing config events.
+ */
 export default function ConfigPanel() {
     const [tab, setTab] = useState("orbital");
     const { open, setOpen, config, setConfig, status } = useConfigPanelState();
-    const change = (section, key, value) => { setConfig((current) => ({ ...current, [section]: { ...current[section], [key]: value } })); window.dispatchEvent(new CustomEvent("orbit:config-panel-action", { detail: { type: "change", section, key, value } })); };
+    const change = (section, key, value) => {
+        setConfig((current) => ({ ...current, [section]: { ...current[section], [key]: value } }));
+        window.dispatchEvent(new CustomEvent("orbit:config-panel-action", { detail: { type: "change", section, key, value } }));
+    };
     const action = (type) => window.dispatchEvent(new CustomEvent("orbit:config-panel-action", { detail: { type } }));
     const activeSections = tabs.find(([id]) => id === tab)?.[2] || [];
+
     if (!open) return null;
 
-    return <div
-        id="configModal"
-        className="open fixed inset-0 z-[10160] flex box-border items-center justify-center bg-[var(--orbit-bg-overlay)] p-4"
-        onMouseDown={(event) => event.target === event.currentTarget && setOpen(false)}
-    >
-        <section
+    return <div id="configModal" className="open pointer-events-none fixed inset-0 z-[10160]">
+        <aside
             id="configPanel"
-            className="w-[min(calc(860px*var(--orbit-ui-scale)),96vw)] max-h-[88vh] overflow-auto rounded-[calc(12px*var(--orbit-ui-scale))] border border-[var(--orbit-border-primary)] bg-[var(--orbit-bg-secondary)] p-[calc(14px*var(--orbit-ui-scale))] text-[var(--orbit-text-primary)] shadow-[0_20px_60px_rgba(0,0,0,.4)] [scrollbar-color:var(--orbit-scrollbar-thumb)_var(--orbit-bg-primary)] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:rounded-lg [&::-webkit-scrollbar-track]:bg-[var(--orbit-bg-primary)] [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:border-2 [&::-webkit-scrollbar-thumb]:border-[var(--orbit-bg-secondary)] [&::-webkit-scrollbar-thumb]:bg-[linear-gradient(180deg,var(--orbit-scrollbar-thumb)_0%,var(--orbit-scrollbar-thumb-end)_100%)]"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Configuración"
+            className="pointer-events-auto fixed top-[86px] right-[14px] bottom-[132px] z-[1] flex min-h-[300px] w-[min(344px,calc(100vw-28px))] flex-col overflow-hidden rounded-[10px] border border-[rgba(65,99,147,.58)] bg-[linear-gradient(145deg,rgba(12,25,42,.985),rgba(5,14,25,.985))] font-[system-ui] text-[#dbe7fa] shadow-[0_22px_60px_rgba(0,0,0,.46),inset_0_1px_rgba(255,255,255,.045)] max-[760px]:top-20 max-[760px]:right-2.5 max-[760px]:bottom-[74px] max-[760px]:w-[min(350px,calc(100vw-20px))]"
+            aria-label="Ajustes de la aplicación"
         >
-            <header id="configPanelHeader" className="mb-2 flex cursor-move items-center justify-between select-none">
-                <h3 className="m-0 font-sans text-[length:calc(16px*var(--orbit-ui-scale))] font-bold">Configuración en tiempo real</h3>
-                <div className="inline-flex items-center gap-2">
-                    <button className={classNames(headerButtonClass, "border border-[var(--orbit-border-success)] bg-[var(--orbit-bg-success-soft)] text-[var(--orbit-text-success)] hover:bg-[var(--orbit-bg-success-soft-hover)]")} type="button" onClick={() => action("apply-global")}>Aplicar globalmente</button>
-                    <button className={classNames(headerButtonClass, "border border-[var(--orbit-border-danger)] bg-[var(--orbit-bg-danger-soft)] text-[var(--orbit-text-danger-soft)] hover:bg-[var(--orbit-bg-danger-soft-hover)]")} type="button" onClick={() => action("reset")}>Restaurar valores</button>
-                    <button className="inline-flex size-[calc(34px*var(--orbit-ui-scale))] cursor-pointer items-center justify-center rounded-full border border-[var(--orbit-border-accent)] bg-[var(--orbit-bg-tertiary)] p-0 font-sans text-[length:calc(16px*var(--orbit-ui-scale))] leading-none font-bold text-[var(--orbit-text-primary)] hover:bg-[var(--orbit-bg-hover)]" type="button" onClick={() => setOpen(false)} aria-label="Cerrar">&#215;</button>
+            <header id="configPanelHeader" className="relative shrink-0 border-b border-[#1c2c43] px-4 pt-4">
+                <button className="absolute top-[14px] right-[15px] cursor-pointer border-0 bg-transparent p-0 text-2xl leading-none text-[#b7c6dc] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5c83ff]" type="button" onClick={() => setOpen(false)} aria-label="Cerrar">&times;</button>
+                <div className="max-w-[calc(100%_-_32px)]">
+                    <div className="flex items-center gap-2">
+                        <h2 className="m-0 text-[17px] leading-[1.2] font-medium text-[#f1f6ff]">AJUSTES</h2>
+                        <span className="inline-flex items-center gap-1 rounded-[5px] bg-[rgba(68,118,255,.16)] px-1.5 py-1 text-[9px] leading-none font-bold tracking-[.06em] text-[#a9c4ff]"><SettingsGlyph />TIEMPO REAL</span>
+                    </div>
+                    <p className="mt-1.5 mb-0 text-[11px] leading-[1.4] text-[#8fa1ba]">Los cambios se aplican al instante y se guardan automáticamente.</p>
+                    <div className="mt-2.5 mb-3 flex items-center gap-1.5 text-[10px] leading-none font-semibold tracking-[.015em] text-[#aebed5]" aria-live="polite">
+                        <span className={classNames("size-1.5 shrink-0 rounded-full", statusColors[status?.state] || statusColors.idle)} />
+                        <span className="truncate">{statusText(status)}</span>
+                    </div>
                 </div>
+
+                <nav className="-mx-1 grid grid-cols-4" aria-label="Secciones de ajustes" role="tablist">
+                    {tabs.map(([id, label]) => <button
+                        className={classNames(
+                            "relative min-h-[38px] cursor-pointer border-0 bg-transparent px-1 pt-2 pb-2.5 text-[9px] leading-[1.05] font-bold tracking-[.025em] text-[#8d9bb1] hover:text-[#cddcf2] focus-visible:z-[1] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#5c83ff]",
+                            tab === id && "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']"
+                        )}
+                        type="button"
+                        key={id}
+                        role="tab"
+                        aria-selected={tab === id}
+                        aria-controls={`config-panel-${id}`}
+                        onClick={() => setTab(id)}
+                    >
+                        {String(label).toUpperCase()}
+                    </button>)}
+                </nav>
             </header>
 
-            <p id="configHint" className="mx-0.5 mt-[6px] mb-1 font-sans text-[length:calc(12px*var(--orbit-ui-scale))] text-[var(--orbit-text-muted)]">Los cambios se aplican al instante y se guardan automáticamente.</p>
-            <p id="configSaveStatus" className={classNames("mx-0.5 mt-0 mb-2.5 font-sans text-[length:calc(11px*var(--orbit-ui-scale))] font-semibold tracking-[.01em]", status.state, statusColors[status.state] || "text-[var(--orbit-text-success)]")}>{status.message}</p>
-
-            <nav className="mx-0.5 mb-2.5 flex flex-wrap gap-2" aria-label="Secciones de configuración">
-                {tabs.map(([id, label]) => <button
-                    className={classNames(
-                        "h-[calc(30px*var(--orbit-ui-scale))] cursor-pointer rounded-full border border-[var(--orbit-border-primary)] bg-[var(--orbit-bg-tertiary)] px-[calc(12px*var(--orbit-ui-scale))] font-sans text-[length:calc(11px*var(--orbit-ui-scale))] leading-none font-bold tracking-[.02em] text-[var(--orbit-text-secondary)] hover:bg-[var(--orbit-bg-hover)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--orbit-border-focus)]",
-                        tab === id && "active border-[var(--orbit-border-focus)] bg-[var(--orbit-bg-accent-soft)] text-[var(--orbit-text-primary)]"
-                    )}
-                    type="button"
-                    key={id}
-                    onClick={() => setTab(id)}
-                >
-                    {label}
-                </button>)}
-            </nav>
-
-            <div className="grid">
-                {activeSections.map((section) => <section className="my-[10px] mb-4 rounded-[10px] border border-[var(--orbit-border-primary)] bg-[var(--orbit-bg-elevated)] p-[10px]" key={section}>
-                    <h4 className="mt-0 mr-0 mb-[10px] ml-0 font-sans text-[length:calc(13px*var(--orbit-ui-scale))] font-bold tracking-[.04em] text-[var(--orbit-text-accent)] uppercase">{titles[section]}</h4>
-                    <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2.5">
-                        {sections[section].map((field) => <ConfigField key={field} section={section} field={field} value={config[section]?.[field]} onChange={change} />)}
-                    </div>
-                </section>)}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [scrollbar-color:#304461_#08111e] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-[#08111e] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#304461]">
+                <div id={`config-panel-${tab}`} role="tabpanel" className="grid gap-3">
+                    {activeSections.map((section) => <section className="rounded-[8px] border border-[#203653] bg-[rgba(11,24,41,.78)] p-2.5 shadow-[inset_0_1px_rgba(255,255,255,.025)]" key={section}>
+                        <h3 className="mt-0 mr-0 mb-2.5 ml-0 text-[10px] leading-none font-bold tracking-[.055em] text-[#a9c4ff] uppercase">{titles[section]}</h3>
+                        <div className="grid grid-cols-1 gap-2.5">
+                            {sections[section].map((field) => <ConfigField key={field} section={section} field={field} value={config[section]?.[field]} onChange={change} />)}
+                        </div>
+                    </section>)}
+                </div>
             </div>
-        </section>
+
+            <footer className="grid shrink-0 grid-cols-2 gap-2 border-t border-[#1c2c43] px-4 py-3">
+                <button className="min-h-9 min-w-0 cursor-pointer rounded-[7px] border border-[rgba(139,78,105,.56)] bg-[rgba(59,24,40,.42)] px-2 py-2 text-[10px] leading-none font-bold text-[#f0c2d5] hover:border-[rgba(204,111,153,.76)] hover:bg-[rgba(85,35,58,.52)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#e980a7]" type="button" onClick={() => action("reset")}>Restaurar</button>
+                <button className="min-h-9 min-w-0 cursor-pointer rounded-[7px] border border-[#3552d4] bg-[#4057dc] px-2 py-2 text-[10px] leading-none font-bold text-white shadow-[0_7px_16px_rgba(58,84,220,.26)] hover:bg-[#5067e9] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#8da7ff]" type="button" onClick={() => action("apply-global")}>Aplicar globalmente</button>
+            </footer>
+        </aside>
     </div>;
 }

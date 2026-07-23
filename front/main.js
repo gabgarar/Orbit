@@ -24,6 +24,7 @@ import {
     setSatelliteVisualizationConfig,
     clearSatelliteVisualizationConfig,
     clearAllSatelliteVisualizationConfigs,
+    setSatelliteVectorVisualization,
     setSimulationTimelineProvider,
     importOemEphemerisTrack,
     importManualOrbitTrack,
@@ -31,6 +32,7 @@ import {
     getManualOrbitProjectEntries,
     getManualOrbitProjectEntry,
     renderManualOrbitPreview,
+    setManualOrbitPreviewVectorVisualization,
     setManualOrbitPreviewGroundTrack,
     clearManualOrbitPreview,
     hasLoadedOemEphemerisTracks,
@@ -62,8 +64,14 @@ import { clamp, getDateAtTimelineRatio, getRangeHours, getTimelineRatio } from "
 import { createWelcomeScene } from "./js/rendering/welcomeScene.js";
 import { createTychoSkyDome } from "./js/rendering/tychoSkyDome.js";
 import { createNightImageryLayer } from "./js/rendering/nightImageryLayer.js";
+import { createEarthBasemapManager } from "./js/rendering/earthBasemap.js";
 import { applyAntialiasMode } from "./js/rendering/antialiasing.js";
 import { applyStarsConfig } from "./js/rendering/stars.js";
+import {
+    createCelestialBodyLayerManager,
+    isCelestialBodyLayerId,
+    isEarthLayerId
+} from "./js/rendering/celestialLayers.js";
 import { createCatalogSearch, getCatalogNoradId } from "./js/services/catalogSearch.js";
 import { createSatelliteSourceIdResolver, isGroundStationLayerId, isSatelliteDuplicateLayerId } from "./js/features/layers/layerIds.js";
 import { createCompositeLayerManager } from "./js/features/layers/compositeLayerManager.js";
@@ -71,6 +79,12 @@ import { createAdaptiveDisplayController } from "./js/runtime/adaptiveDisplayCon
 import { bindProjectLifecycleEvents } from "./js/runtime/projectEventBridge.js";
 import { markOrbitRuntimeFailed } from "./js/runtime/runtimeStatus.js";
 import { emitObjectStateChanged } from "./js/runtime/objectDetailsEvents.js";
+import {
+    centerViewOnEarth,
+    centerViewOnEntity,
+    getCelestialMaximumZoomDistance,
+    getSafeCelestialFocusRange
+} from "./js/runtime/centerView.js";
 import {
     emitPropagatedParametersContext,
     emitPropagatedParametersOpen,
@@ -88,7 +102,7 @@ import {
 const logger = getLogger("main");
 logger.info("Iniciando Cesium...");
 
-logger.info("Creando SingleTileImageryProvider para assets/earth3km.jpg...");
+logger.info("Preparando las capas base locales de la Tierra...");
 
 const initialBootConfig = await loadSystemConfig({
     onError: (error) => logger.error("Could not load system_config.json:", error)
@@ -116,20 +130,13 @@ const nightProvider = new Cesium.SingleTileImageryProvider({
     rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90)
 });
 
-const earth2kmTilesProvider = new Cesium.UrlTemplateImageryProvider({
-    url: "assets/earth2km_tiles/{z}/{x}/{y}.jpg",
-    minimumLevel: 0,
-    maximumLevel: 6,
-    tilingScheme: new Cesium.WebMercatorTilingScheme(),
-    rectangle: Cesium.Rectangle.fromDegrees(-180, -85.05112878, 180, 85.05112878),
-    credit: "earth2km local tiles"
-});
-
-
 logger.info("Creando Cesium Viewer...");
 
 const viewer = new Cesium.Viewer("cesiumContainer", {
-    baseLayerPicker: true,
+    // Orbit owns the imagery catalogue so it can keep the night-light
+    // overlay above every base map and avoid Cesium-ion/Bing defaults.
+    baseLayerPicker: false,
+    baseLayer: false,
     geocoder: false,
     infoBox: false,
     selectionIndicator: true,
@@ -183,6 +190,7 @@ let persistConfigTimeoutId = null;
 let lastPersistedSystemConfigSerialized = "";
 let runtimeConfigPanelApi = null;
 let cameraNavigationMode = "centered";
+const DEFAULT_CAMERA_MAXIMUM_ZOOM_DISTANCE_METERS = 900_000_000;
 let sessionRecorder = null;
 let sessionRecordingStream = null;
 let sessionRecordingChunks = [];
@@ -194,7 +202,6 @@ let runtimeRecordingConfig = {
 };
 let satelliteContextMenuTargetId = null;
 let timeHudTimer = null;
-let earth2kmTilesAvailable = false;
 const welcomeScene = createWelcomeScene({ viewer, Cesium, updateGlobeLighting: updateAdaptiveGlobeLighting });
 const setupWelcomeCesiumScene = welcomeScene.setup;
 const teardownWelcomeCesiumScene = welcomeScene.teardown;
@@ -205,6 +212,53 @@ const nightImageryLayer = createNightImageryLayer({
     alpha: NIGHT_IMAGERY_ALPHA,
     brightness: NIGHT_IMAGERY_BRIGHTNESS,
     onAttached: updateAdaptiveGlobeLighting
+});
+function publishEarthBasemapState(state) {
+    const detail = {
+        id: "body:earth",
+        ...state
+    };
+    window.dispatchEvent(new CustomEvent("orbit:earth-basemap-state", { detail }));
+    return detail;
+}
+const earthBasemapManager = createEarthBasemapManager({
+    viewer,
+    Cesium,
+    nightImageryLayer,
+    logger,
+    offlineMode: offlineModeEnabledAtBoot,
+    onStateChange: publishEarthBasemapState
+});
+
+function publishEarthBasemapChoices() {
+    const state = earthBasemapManager.getState();
+    window.dispatchEvent(new CustomEvent("orbit:earth-basemap-choices", {
+        detail: {
+            id: "body:earth",
+            ...state
+        }
+    }));
+    return state;
+}
+
+window.addEventListener("orbit:earth-basemap-request", (event) => {
+    const detail = event.detail || {};
+    const targetId = String(detail.id || "body:earth").trim().toLowerCase();
+    if (targetId && targetId !== "body:earth") return;
+
+    const requestedBasemapId = String(detail.basemapId || "").trim();
+    if (!requestedBasemapId) {
+        publishEarthBasemapChoices();
+        return;
+    }
+
+    const state = earthBasemapManager.apply(requestedBasemapId);
+    const selectedBasemapId = state.selectedId;
+    if (updatePersistedSystemConfig && runtimeSystemConfig?.earth_basemap !== selectedBasemapId) {
+        updatePersistedSystemConfig("rendering", { earth_basemap: selectedBasemapId });
+    } else {
+        publishEarthBasemapChoices();
+    }
 });
 const adaptiveDisplay = createAdaptiveDisplayController({
     viewer,
@@ -234,6 +288,9 @@ let topSearchInitialized = false;
 const groundStationLayers = new Map();
 const satelliteDuplicateLayers = new Map();
 const layerDisplayNameOverrides = new Map();
+// Native Cesium Sun/Moon visuals are exposed as ordinary workspace layers.
+// The manager owns their real ephemerides and transparent focus anchors.
+const celestialBodyLayers = createCelestialBodyLayerManager({ viewer, Cesium, logger });
 let groundStationSequence = 1;
 let stationHeatMapTimer = null;
 let currentProjectFileHandle = null;
@@ -297,6 +354,10 @@ const simulationController = createSimulationController({
     state: simulationState,
     onDateChange: applySimulationDateToViewer
 });
+// The controller below owns every change to currentTime. Leave Cesium's
+// autonomous clock disabled so it cannot drift between controller ticks or
+// move the scene while Real time is paused.
+syncViewerClockPlayback();
 
 const projectLifecycle = createProjectLifecycle({
     getProjectName: () => currentProjectName,
@@ -308,6 +369,9 @@ const projectLifecycle = createProjectLifecycle({
     setSatelliteLayerActive,
     getGroundStationLayers: () => groundStationLayers,
     removeGroundStationLayer,
+    getCelestialBodies: () => celestialBodyLayers.getSnapshot(),
+    restoreCelestialBodies: (entries) => celestialBodyLayers.restore(entries),
+    clearCelestialBodies: () => celestialBodyLayers.clear(),
     clearDuplicateLayers: () => satelliteDuplicateLayers.clear(),
     getLayerNameOverrides: () => layerDisplayNameOverrides,
     clearSatelliteVisualizationConfigs: clearAllSatelliteVisualizationConfigs,
@@ -609,7 +673,7 @@ function openLeftSatellitesPanel() {
 }
 
 function getDisplayedSimulationDate() {
-    if (simulationState.mode === SIMULATION_MODE_REALTIME) {
+    if (simulationState.mode === SIMULATION_MODE_REALTIME && simulationState.isPlaying !== false) {
         return new Date();
     }
     const date = simulationState.currentDate instanceof Date ? simulationState.currentDate : new Date(simulationState.currentDate);
@@ -674,7 +738,7 @@ function getObjectTimeRange(layerId, telemetry) {
         };
     }
 
-    const sourceId = isGroundStationLayerId(layerId)
+    const sourceId = isGroundStationLayerId(layerId) || isCelestialBodyLayerId(layerId)
         ? ""
         : getSatelliteSourceIdFromLayerId(layerId);
     const configuredHours = sourceId
@@ -710,8 +774,45 @@ function applySimulationDateToViewer(date) {
     viewer.clock.currentTime = Cesium.JulianDate.fromDate(date);
 }
 
+function syncViewerClockPlayback() {
+    if (!viewer?.clock) return;
+    // Cesium also advances its own clock between our controller ticks. Orbit
+    // keeps a single source of truth in simulationController, which makes a
+    // paused Real time date deterministic and avoids double progression.
+    viewer.clock.shouldAnimate = false;
+}
+
+function pauseRealtimeClock() {
+    if (simulationState.mode !== SIMULATION_MODE_REALTIME) return false;
+    const frozenAt = simulationState.isPlaying === false
+        ? getDisplayedSimulationDate()
+        : new Date();
+    simulationState.currentDate = new Date(frozenAt);
+    simulationState.isPlaying = false;
+    simulationState.playing = false;
+    simulationState.rewind = false;
+    simulationState.lastTickTimestamp = Date.now();
+    applySimulationDateToViewer(simulationState.currentDate);
+    syncViewerClockPlayback();
+    return true;
+}
+
+function resumeRealtimeClock() {
+    if (simulationState.mode !== SIMULATION_MODE_REALTIME) return false;
+    // Realtime deliberately resumes at the current wall-clock instant rather
+    // than integrating the duration for which it was paused.
+    simulationState.currentDate = new Date();
+    simulationState.isPlaying = true;
+    simulationState.playing = true;
+    simulationState.rewind = false;
+    simulationState.lastTickTimestamp = Date.now();
+    applySimulationDateToViewer(simulationState.currentDate);
+    syncViewerClockPlayback();
+    return true;
+}
+
 async function resolveSatelliteEpochDate(satelliteId) {
-    if (isGroundStationLayerId(satelliteId)) {
+    if (isGroundStationLayerId(satelliteId) || isCelestialBodyLayerId(satelliteId)) {
         return null;
     }
     const satId = getSatelliteSourceIdFromLayerId(String(satelliteId || "").trim());
@@ -797,6 +898,7 @@ function renderTopSearchSuggestions() {
 
 const getSatelliteSourceIdFromLayerId = createSatelliteSourceIdResolver(satelliteDuplicateLayers);
 const compositeLayers = createCompositeLayerManager({
+    celestialBodies: celestialBodyLayers,
     groundStations: groundStationLayers,
     duplicates: satelliteDuplicateLayers,
     names: layerDisplayNameOverrides,
@@ -811,14 +913,85 @@ const compositeLayers = createCompositeLayerManager({
 });
 
 function getLayerDisplayName(layerId) {
+    // Project files from an older/runtime-customized session may contain a
+    // stale name override. Earth is the immutable reference body and keeps a
+    // stable label across projects.
+    if (isEarthLayerId(layerId)) {
+        return celestialBodyLayers.getName(layerId);
+    }
     return compositeLayers.getName(layerId);
 }
 
 function getLayerType(layerId) {
+    if (isEarthLayerId(layerId)) {
+        return "EARTH";
+    }
+    if (isCelestialBodyLayerId(layerId)) {
+        return "CELESTIAL_BODY";
+    }
     if (isGroundStationLayerId(layerId)) {
         return "GROUND_STATION";
     }
     return "SATELLITE";
+}
+
+function isSatelliteLayer(layerId) {
+    return String(getLayerType(layerId) || "SATELLITE").toUpperCase() === "SATELLITE";
+}
+
+function syncSelectedOrbitLayer(layerId) {
+    setSelectedOrbitSatelliteId(
+        isSatelliteLayer(layerId)
+            ? getSatelliteSourceIdFromLayerId(layerId)
+            : null
+    );
+}
+
+function getCartesianMagnitude(value) {
+    if (!value) {
+        return 0;
+    }
+    if (typeof Cesium?.Cartesian3?.magnitude === "function") {
+        return Cesium.Cartesian3.magnitude(value);
+    }
+    return Math.hypot(Number(value.x) || 0, Number(value.y) || 0, Number(value.z) || 0);
+}
+
+function getCelestialFocusMetrics(layerId) {
+    if (!isCelestialBodyLayerId(layerId)) {
+        return null;
+    }
+
+    const definition = celestialBodyLayers.getDefinition(layerId);
+    // The Moon is a textured inspection target rather than a point target:
+    // frame it farther away than the generic celestial default so the full
+    // disc and its surface remain legible without an overly magnified view.
+    const focusRangeMultiplier = definition?.kind === "moon" ? 4.25 : undefined;
+    const focusRangeMeters = getSafeCelestialFocusRange(
+        definition?.radiusMeters,
+        focusRangeMultiplier
+    );
+    if (!focusRangeMeters) {
+        return null;
+    }
+
+    const earthCenterDistanceMeters = getCartesianMagnitude(celestialBodyLayers.getPosition(layerId));
+    return {
+        focusRangeMeters,
+        maximumZoomDistanceMeters: getCelestialMaximumZoomDistance({
+            focusRangeMeters,
+            earthCenterDistanceMeters,
+            fallbackMeters: DEFAULT_CAMERA_MAXIMUM_ZOOM_DISTANCE_METERS
+        })
+    };
+}
+
+function getCameraMaximumZoomDistance() {
+    const trackedMetrics = getCelestialFocusMetrics(viewer?.trackedEntity?.id);
+    return Math.max(
+        DEFAULT_CAMERA_MAXIMUM_ZOOM_DISTANCE_METERS,
+        Number(trackedMetrics?.maximumZoomDistanceMeters) || 0
+    );
 }
 
 function computeStationElevationDeg(stationCartesian, satCartesian) {
@@ -869,7 +1042,7 @@ const groundStationHeatMaps = createGroundStationHeatMapManager({
 const groundStationTelemetryService = createGroundStationTelemetryService({
     getLayerName: getLayerDisplayName,
     getSatelliteStates: () => getCompositeLayerIds()
-        .filter((layerId) => !isGroundStationLayerId(layerId))
+        .filter((layerId) => !isGroundStationLayerId(layerId) && !isCelestialBodyLayerId(layerId))
         .map((layerId) => {
             const id = getSatelliteSourceIdFromLayerId(layerId);
             return { id, geo: getSatelliteTelemetry(id)?.geo };
@@ -895,6 +1068,15 @@ function getCompositeLayerIds() {
 }
 
 function getCompositeLayerMeta(layerId) {
+    if (isCelestialBodyLayerId(layerId)) {
+        const definition = celestialBodyLayers.getDefinition(layerId);
+        return {
+            sourceFormat: "CELESTIAL",
+            sourceOrigin: "CESIUM",
+            celestialBody: definition?.kind || null,
+            bodyRadiusMeters: definition?.radiusMeters || null
+        };
+    }
     if (isGroundStationLayerId(layerId)) {
         return { sourceFormat: "GROUND_STATION", sourceOrigin: "USER" };
     }
@@ -907,6 +1089,13 @@ function getCompositeLayerVisibility(layerId) {
 }
 
 function setCompositeLayerVisibility(layerId, visible) {
+    if (isCelestialBodyLayerId(layerId)) {
+        const changed = celestialBodyLayers.setVisibility(layerId, visible);
+        if (changed) {
+            emitObjectStateChanged({ layerId, sourceId: layerId, reason: "visibility" });
+        }
+        return;
+    }
     if (isGroundStationLayerId(layerId)) {
         const station = groundStationLayers.get(layerId);
         if (!station) {
@@ -944,6 +1133,32 @@ function removeGroundStationLayer(layerId) {
 
 function setCompositeLayerActive(layerId, active) {
     const isActive = active === true;
+    // Earth is the workspace's permanent reference body. A remove-all or
+    // stale UI action must not erase its anchor/selection contract; visibility
+    // remains controllable through the regular eye control instead.
+    if (isEarthLayerId(layerId)) {
+        return isActive && celestialBodyLayers.has(layerId);
+    }
+    if (isCelestialBodyLayerId(layerId)) {
+        if (!isActive) {
+            const entity = celestialBodyLayers.getEntity(layerId);
+            if (viewer.trackedEntity === entity) {
+                viewer.trackedEntity = undefined;
+            }
+            if (viewer.selectedEntity === entity) {
+                viewer.selectedEntity = undefined;
+            }
+            const removed = celestialBodyLayers.remove(layerId);
+            if (removed) {
+                layerDisplayNameOverrides.delete(layerId);
+                emitObjectStateChanged({ layerId, sourceId: layerId, reason: "activation" });
+            }
+            return removed;
+        }
+        // Re-adding a body is always explicit through Add body; retain this
+        // branch as a safe idempotent activation path for generic callers.
+        return Boolean(celestialBodyLayers.add(layerId));
+    }
     if (isGroundStationLayerId(layerId)) {
         if (!isActive) {
             removeGroundStationLayer(layerId);
@@ -981,11 +1196,15 @@ function duplicateSatelliteLayer(sourceId) {
 function renameLayer(layerId, nextName) {
     const id = String(layerId || "").trim();
     const name = String(nextName || "").trim();
-    if (!id || !name) {
+    if (!id || !name || isEarthLayerId(id)) {
         return false;
     }
 
     layerDisplayNameOverrides.set(id, name);
+    if (isCelestialBodyLayerId(id)) {
+        emitObjectStateChanged({ layerId: id, sourceId: id, reason: "rename" });
+        return true;
+    }
     const satelliteEntity = getSatelliteEntity(getSatelliteSourceIdFromLayerId(id));
     if (satelliteEntity?.label) {
         satelliteEntity.label.text = name;
@@ -1364,6 +1583,10 @@ function getSimulationTelemetryContext() {
 }
 
 function getCompositeLayerTelemetry(layerId) {
+    if (isCelestialBodyLayerId(layerId)) {
+        const telemetry = celestialBodyLayers.getTelemetry(layerId);
+        return telemetry ? { ...telemetry, id: getLayerDisplayName(layerId), simulation: getSimulationTelemetryContext() } : null;
+    }
     if (isGroundStationLayerId(layerId)) {
         const telemetry = buildGroundStationTelemetry(layerId);
         return telemetry ? { ...telemetry, simulation: getSimulationTelemetryContext() } : null;
@@ -1383,6 +1606,9 @@ function getCompositeLayerTelemetry(layerId) {
 }
 
 function getCompositeLayerEntity(layerId) {
+    if (isCelestialBodyLayerId(layerId)) {
+        return celestialBodyLayers.getEntity(layerId);
+    }
     if (isGroundStationLayerId(layerId)) {
         return groundStationLayers.get(layerId)?.entity || null;
     }
@@ -1578,6 +1804,7 @@ function updateSimulationTimelineUi() {
         detail: {
             mode: simulationState.mode,
             isPlaying: simulationState.isPlaying,
+            isPaused: simulationState.isPlaying === false,
             speed: simulationState.speed,
             oemDomainActive: hasLoadedOemEphemerisTracks(),
             currentDate: getDisplayedSimulationDate().toISOString(),
@@ -1619,7 +1846,7 @@ function updateTelemetryTimeContext() {
     subtitle.classList.toggle("is-simulated", isRangeMode);
     subtitle.lastChild.textContent = isRangeMode
         ? " SIMULACIÓN EN RANGO"
-        : " DATOS EN TIEMPO REAL";
+        : (simulationState.isPlaying === false ? " REAL TIME PAUSED" : " DATOS EN TIEMPO REAL");
 }
 
 function setSimulationMode(mode) {
@@ -1646,6 +1873,7 @@ function setSimulationMode(mode) {
 
     if (normalized === SIMULATION_MODE_REALTIME) {
         simulationState.isPlaying = true;
+        simulationState.playing = true;
         simulationState.rewind = false;
         simulationState.speed = 1;
         simulationState.currentDate = new Date();
@@ -1666,10 +1894,12 @@ function setSimulationMode(mode) {
         if (!(simulationState.currentDate instanceof Date) || Number.isNaN(simulationState.currentDate.getTime())) {
             simulationState.currentDate = new Date(simulationState.startDate);
         }
+        simulationState.playing = simulationState.isPlaying === true;
     }
 
     simulationState.lastTickTimestamp = Date.now();
     applySimulationDateToViewer(getDisplayedSimulationDate());
+    syncViewerClockPlayback();
     updateTopToolbarTime();
     refreshSimulationControlsUi();
 }
@@ -1707,6 +1937,7 @@ function applySimulationRange(startDate, endDate) {
         simulationState.mode = SIMULATION_MODE_RANGE;
     }
     applySimulationDateToViewer(simulationState.currentDate);
+    syncViewerClockPlayback();
     refreshSimulationControlsUi();
     updateTopToolbarTime();
     return true;
@@ -1724,15 +1955,31 @@ window.addEventListener("orbit:simulation-action", async (event) => {
     if (type === "mode") {
         setSimulationMode(value);
     } else if (type === "play-toggle") {
-        simulationState.isPlaying = !simulationState.isPlaying;
-        simulationState.rewind = false;
-        simulationState.lastTickTimestamp = Date.now();
+        if (simulationState.mode === SIMULATION_MODE_REALTIME) {
+            if (simulationState.isPlaying === false) {
+                resumeRealtimeClock();
+            } else {
+                pauseRealtimeClock();
+            }
+        } else {
+            simulationState.isPlaying = !simulationState.isPlaying;
+            simulationState.playing = simulationState.isPlaying;
+            simulationState.rewind = false;
+            simulationState.lastTickTimestamp = Date.now();
+            syncViewerClockPlayback();
+        }
         refreshSimulationControlsUi();
         updateTopToolbarTime();
     } else if (type === "pause") {
-        simulationState.isPlaying = false;
-        simulationState.rewind = false;
-        simulationState.lastTickTimestamp = Date.now();
+        if (simulationState.mode === SIMULATION_MODE_REALTIME) {
+            pauseRealtimeClock();
+        } else {
+            simulationState.isPlaying = false;
+            simulationState.playing = false;
+            simulationState.rewind = false;
+            simulationState.lastTickTimestamp = Date.now();
+            syncViewerClockPlayback();
+        }
         refreshSimulationControlsUi();
         updateTopToolbarTime();
     } else if (type === "rewind") {
@@ -1740,9 +1987,11 @@ window.addEventListener("orbit:simulation-action", async (event) => {
             ? new Date(simulationState.startDate)
             : new Date();
         simulationState.isPlaying = false;
+        simulationState.playing = false;
         simulationState.rewind = false;
         simulationState.lastTickTimestamp = Date.now();
         applySimulationDateToViewer(simulationState.currentDate);
+        syncViewerClockPlayback();
         refreshSimulationControlsUi();
         updateTopToolbarTime();
     } else if (type === "speed") {
@@ -1754,10 +2003,12 @@ window.addEventListener("orbit:simulation-action", async (event) => {
         const ratio = clamp(Number(value) / SIMULATION_TIMELINE_STEPS, 0, 1);
         simulationState.currentDate = getDateFromTimelineRatio(ratio);
         simulationState.isPlaying = false;
+        simulationState.playing = false;
         if (simulationState.mode === SIMULATION_MODE_REALTIME) {
             simulationState.mode = SIMULATION_MODE_RANGE;
         }
         applySimulationDateToViewer(simulationState.currentDate);
+        syncViewerClockPlayback();
         refreshSimulationControlsUi();
         updateTopToolbarTime();
     } else if (type === "range") {
@@ -1776,7 +2027,11 @@ window.addEventListener("orbit:simulation-action", async (event) => {
 
 function updateTimeHudWidget() {
     window.dispatchEvent(new CustomEvent("orbit:time-hud-state", {
-        detail: { value: new Date().toISOString() }
+        detail: {
+            value: getDisplayedSimulationDate().toISOString(),
+            mode: simulationState.mode,
+            isPaused: simulationState.isPlaying === false
+        }
     }));
 }
 
@@ -1894,7 +2149,7 @@ function ensureTopToolbar() {
     const toolbar = document.createElement("div");
     toolbar.id = "topToolbar";
     toolbar.innerHTML = `
-        <div class="toolbar-brand"><img src="assets/icon/favicon.png" alt="Orbit"></div>
+        <div class="toolbar-brand"><img src="assets/icon/favicon.svg" alt="Orbit"></div>
         <div class="toolbar-file-menu"><button id="topFileBtn" class="toolbar-btn" type="button">File</button><div class="toolbar-file-dropdown"><button id="projectNewBtn" type="button">New project</button><button id="projectOpenBtn" type="button">Open project</button><button id="projectSaveBtn" type="button">Save project</button><button id="projectExportBtn" type="button">Export project</button></div></div>
         <button id="topConfigBtn" class="toolbar-btn" type="button" title="Configuración">
             <span>⚙</span>
@@ -1929,7 +2184,7 @@ function ensureTopToolbar() {
 
     toolbar.innerHTML = `
         <a class="toolbar-brand" href="#" aria-label="Orbit">
-            <img src="assets/icon/favicon.png" alt="">
+            <img src="assets/icon/favicon.svg" alt="">
             <span>ORBIT</span>
         </a>
         <nav class="toolbar-nav" aria-label="Navegación principal">
@@ -2057,7 +2312,7 @@ function updateTopToolbarTime() {
     if (timeInfo) {
         const current = getDisplayedSimulationDate();
         const speedLabel = simulationState.mode === SIMULATION_MODE_REALTIME
-            ? ""
+            ? (simulationState.isPlaying === false ? " · Paused" : "")
             : ` · x${simulationState.speed}${simulationState.isPlaying ? "" : " (pausa)"}`;
         timeInfo.textContent = `${formatTimeHudDate(current)} · ${getSimulationModeLabel()}${speedLabel}`;
     }
@@ -2067,6 +2322,8 @@ function updateTopToolbarTime() {
         detail: {
             date: getDisplayedSimulationDate().toISOString(),
             mode: simulationState.mode,
+            isPlaying: simulationState.isPlaying,
+            isPaused: simulationState.isPlaying === false,
             oemDomainActive: hasLoadedOemEphemerisTracks()
         }
     }));
@@ -2216,7 +2473,7 @@ function publishSelectedLayerState() {
         detail: {
             id: layerId,
             active: Boolean(layerId && isCompositeLayerActive(layerId)),
-            layerType: layerId && isGroundStationLayerId(layerId) ? "GROUND_STATION" : "SATELLITE"
+            layerType: layerId ? getLayerType(layerId) : "SATELLITE"
         }
     }));
 }
@@ -2298,6 +2555,9 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
     satelliteContextMenuTargetId = satelliteId;
 
     const sourceId = getSatelliteSourceIdFromLayerId(String(satelliteId || "").trim());
+    const layerType = String(getLayerType(satelliteId) || "SATELLITE").toUpperCase();
+    const isCelestialBody = layerType === "CELESTIAL_BODY" || layerType === "EARTH";
+    const isGroundStation = layerType === "GROUND_STATION";
     // The manual registry, not the generic catalog metadata, is the
     // authorization boundary for editing. A catalogue TLE can have a very
     // similar set of Keplerian values but must never gain this action.
@@ -2305,7 +2565,7 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
 
     const viewportPadding = 10;
     const estimatedWidth = 230;
-    const estimatedHeight = canEditManualOrbit ? 160 : 122;
+    const estimatedHeight = isCelestialBody ? 54 : (isGroundStation ? 92 : (canEditManualOrbit ? 198 : 160));
     const maxLeft = Math.max(viewportPadding, window.innerWidth - estimatedWidth - viewportPadding);
     const maxTop = Math.max(viewportPadding, window.innerHeight - estimatedHeight - viewportPadding);
     const safeLeft = Math.min(Math.max(viewportPadding, x), maxLeft);
@@ -2315,6 +2575,7 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
         detail: {
             id: satelliteId,
             sourceId,
+            layerType,
             canEditManualOrbit,
             left: safeLeft,
             top: safeTop
@@ -2324,6 +2585,23 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
 
 window.addEventListener("orbit:satellite-context-action", (event) => {
     const action = event.detail || {};
+    const layerId = String(action.id || "").trim();
+    if (action.type === "center-view") {
+        if (!layerId || !isCompositeLayerActive(layerId)) {
+            return;
+        }
+        // The globe menu can be invoked for any focusable layer, including a
+        // future Sun/Moon entity that has no satellite telemetry.
+        objectSidebar?.selectObject?.(layerId);
+        centerViewOnObject(layerId);
+        return;
+    }
+    if (action.type === "station") {
+        if (layerId && String(getLayerType(layerId) || "").toUpperCase() === "GROUND_STATION") {
+            objectSidebar?.openGroundStationEditor?.(layerId);
+        }
+        return;
+    }
     const sourceId = getSatelliteSourceIdFromLayerId(String(action.sourceId || action.id || "").trim());
     if (!sourceId) {
         return;
@@ -2336,7 +2614,7 @@ window.addEventListener("orbit:satellite-context-action", (event) => {
         editManualOrbitFromWorkspace(sourceId);
     } else if (action.type === "propagated-parameters") {
         const layerId = String(action.id || "").trim();
-        if (!layerId || !isCompositeLayerActive(layerId) || isGroundStationLayerId(layerId)) {
+        if (!layerId || !isCompositeLayerActive(layerId) || isGroundStationLayerId(layerId) || isCelestialBodyLayerId(layerId)) {
             return;
         }
         // A globe context action is a selection action too. Keep Details,
@@ -2370,8 +2648,25 @@ function openSatelliteVisualizationModal(satelliteId) {
     const hidePropagation = isOem || oemDomainActive;
 
     const effective = config.effective;
-    window.dispatchEvent(new CustomEvent("orbit:satellite-viz-open", { detail: { id: satelliteId, values: { ...effective }, hidePropagation } }));
+    window.dispatchEvent(new CustomEvent("orbit:satellite-viz-open", { detail: { id: satelliteId, values: { ...effective }, hidePropagation, vectorsVisible: satelliteVectorVisibility.has(satelliteId) } }));
 }
+
+const satelliteVectorVisibility = new Set();
+window.addEventListener("orbit:satellite-vectors-action", (event) => {
+    const id = String(event.detail?.id || "").trim();
+    if (!id) return;
+    const visible = event.detail?.visible === true;
+    const manual = getManualOrbitProjectEntry(id);
+    const forceTerms = manual?.propagationOptions?.forceTerms || manual?.forceTerms || ["central"];
+    setSatelliteVectorVisualization(id, visible, Array.isArray(forceTerms) ? forceTerms : ["central"]);
+    if (visible) satelliteVectorVisibility.add(id);
+    else satelliteVectorVisibility.delete(id);
+});
+
+window.addEventListener("orbit:manual-orbit-vectors-action", (event) => {
+    const detail = event.detail || {};
+    setManualOrbitPreviewVectorVisualization(detail.visible === true, detail.manualOrbit || {});
+});
 
 window.addEventListener("orbit:satellite-viz-action", (event) => {
     const action = event.detail || {};
@@ -2567,7 +2862,7 @@ function applyCameraNavigationMode(mode, options = {}) {
         }
         controller.enableCollisionDetection = false;
         controller.minimumZoomDistance = 1.0;
-        controller.maximumZoomDistance = 900000000.0;
+        controller.maximumZoomDistance = getCameraMaximumZoomDistance();
         controller.constrainedAxis = undefined;
         controller.lookEventTypes = [Cesium.CameraEventType.LEFT_DRAG];
         controller.rotateEventTypes = [Cesium.CameraEventType.RIGHT_DRAG];
@@ -2580,7 +2875,7 @@ function applyCameraNavigationMode(mode, options = {}) {
         freeCameraKeyboardControls.disable();
         controller.enableCollisionDetection = true;
         controller.minimumZoomDistance = 1000.0;
-        controller.maximumZoomDistance = 900000000.0;
+        controller.maximumZoomDistance = getCameraMaximumZoomDistance();
         controller.lookEventTypes = [{ eventType: Cesium.CameraEventType.LEFT_DRAG, modifier: Cesium.KeyboardEventModifier.SHIFT }];
         controller.rotateEventTypes = [Cesium.CameraEventType.LEFT_DRAG];
         controller.tiltEventTypes = [Cesium.CameraEventType.MIDDLE_DRAG];
@@ -2653,22 +2948,8 @@ function applyEarthDayNightBlend(systemConfig) {
     nightImageryLayer.configure(blendEnabled);
 }
 
-function applyEarthBaseLayers() {
-    // Let Cesium create/select its base first, then attach night lights above it.
-    if (!nightImageryLayer.isAttached()) nightImageryLayer.attachDeferred();
-    return;
-    try {
-        viewer.scene.imageryLayers.removeAll();
-        viewer.scene.imageryLayers.addImageryProvider(localProvider);
-
-        nightImageryLayer = viewer.scene.imageryLayers.addImageryProvider(nightProvider);
-        nightImageryLayer.dayAlpha = 0.0;
-        nightImageryLayer.nightAlpha = NIGHT_IMAGERY_ALPHA;
-        nightImageryLayer.brightness = NIGHT_IMAGERY_BRIGHTNESS;
-        logger.info("Capas de tierra cargadas (earth3km + noche)");
-    } catch (e) {
-        logger.error("No se pudo añadir capa base/local tiles:", e);
-    }
+function applyEarthBaseLayers(systemConfig = runtimeSystemConfig || {}) {
+    return earthBasemapManager.apply(systemConfig.earth_basemap);
 }
 
 function applySystemRuntimeConfig(systemConfigRaw) {
@@ -2704,11 +2985,16 @@ function applySystemRuntimeConfig(systemConfigRaw) {
     }
 
     applyStarsConfig({ viewer, Cesium, skyDome: tychoSkyDome, systemConfig, logger });
+    // The star field is only a background. Reassert the independent body
+    // layer state after replacing/removing its primitive so Moon/Sun retain
+    // their custom surfaces (or their native fallback while a texture loads).
+    celestialBodyLayers.syncNativeBodyVisibility();
     applyAntialiasMode({ viewer, systemConfig, logger });
     viewer.scene.skyAtmosphere.show = systemConfig.sky_atmosphere !== false;
     globeLightingEnabledByConfig = systemConfig.globe_lighting !== false;
     updateAdaptiveGlobeLighting();
     applyEarthDayNightBlend(systemConfig);
+    applyEarthBaseLayers(systemConfig);
 }
 
 window.addEventListener("resize", () => {
@@ -2716,23 +3002,19 @@ window.addEventListener("resize", () => {
 });
 
 fetch("assets/earth2km_tiles/0/0/0.jpg", { cache: "no-cache" }).then((resp) => {
-    earth2kmTilesAvailable = resp.ok;
-    applyEarthBaseLayers();
+    earthBasemapManager.setLocalEarth2kmAvailable(resp.ok);
 }).catch(() => {
-    earth2kmTilesAvailable = false;
-    applyEarthBaseLayers();
+    earthBasemapManager.setLocalEarth2kmAvailable(false);
 });
 
 logger.info("Cesium Viewer creado exitosamente.");
 
 viewer.scene.imageryLayers.layerAdded.addEventListener((layer) => {
-    logger.debug("Capa añadida:", layer);
-
-    layer.imageryProvider.errorEvent.addEventListener((err) => {
-        logger.error("ERROR cargando earth8.jpg:", err);
+    const provider = layer?.imageryProvider;
+    if (!provider?.errorEvent?.addEventListener) return;
+    provider.errorEvent.addEventListener((error) => {
+        logger.warn("Error cargando una capa de imagen de la Tierra.", error);
     });
-
-    logger.debug("Intentando cargar earth8.jpg...");
 });
 
 viewer.scene.skyAtmosphere.show = true;
@@ -2741,25 +3023,6 @@ viewer.scene.backgroundColor = Cesium.Color.BLACK;
 viewer.scene.globe.depthTestAgainstTerrain = true;
 
 applyCameraNavigationMode("centered", { keepTrackedEntity: true });
-
-const activeLayer = viewer.scene.imageryLayers.get(0);
-if (activeLayer && activeLayer.imageryProvider) {
-    const prov = activeLayer.imageryProvider;
-    const infoUrl = prov.url || prov._url || (prov._imageryLayer && prov._imageryLayer.url) || "unknown";
-    logger.debug("Proveedor activo:", prov.constructor && prov.constructor.name, infoUrl);
-} else {
-    logger.warn("No hay proveedor activo detectado en imageryLayers[0]");
-}
-
-const baseLayer = viewer.scene.imageryLayers.get(0);
-if (baseLayer) {
-    baseLayer.brightness = 1.1;
-    baseLayer.contrast = 1.05;
-    baseLayer.gamma = 1.0;
-    logger.info("Ajustes de brillo/contraste aplicados.");
-} else {
-    logger.warn("No se encontró ninguna capa base para ajustar.");
-}
 
 viewer.camera.flyTo({
     destination: Cesium.Cartesian3.fromDegrees(0.0, 20.0, 20000000.0),
@@ -2813,6 +3076,96 @@ function publishManualOrbitState(extra = {}) {
             ...extra
         }
     }));
+}
+
+function centerViewOnObject(layerId) {
+    const id = String(layerId || "").trim();
+    if (!id || !isCompositeLayerActive(id)) {
+        return false;
+    }
+
+    const entity = getCompositeLayerEntity(id);
+    if (!entity) {
+        return false;
+    }
+
+    if (cameraNavigationMode === "free") {
+        applyCameraNavigationMode("centered", { keepTrackedEntity: true });
+    }
+
+    const layerType = String(getLayerType(id) || "SATELLITE").toUpperCase();
+    // Earth is our reference frame, not a distant external body. Preserve the
+    // normal Cesium Home framing while retaining the Earth layer selection.
+    if (layerType === "EARTH") {
+        return centerViewOnEarth({ viewer, entity, logger, duration: 0.8 });
+    }
+
+    const focus = () => {
+        let flyToOptions = { offset: new Cesium.HeadingPitchRange(0, -0.35, 180000) };
+        let focusBoundingSphere = null;
+        if (layerType === "CELESTIAL_BODY") {
+            const metrics = getCelestialFocusMetrics(id);
+            const definition = celestialBodyLayers.getDefinition(id);
+            const bodyPosition = celestialBodyLayers.getPosition(id);
+            // Never delegate a body flight to an invisible Entity's optional
+            // graphics bounds. The renderer and the camera share this exact
+            // physical sphere, so the focus is deterministic.
+            if (!metrics || !definition || !bodyPosition || typeof Cesium?.BoundingSphere !== "function") {
+                logger.warn("No se pudo determinar un foco físico para el cuerpo celeste.", id);
+                return false;
+            }
+
+            const controller = viewer?.scene?.screenSpaceCameraController;
+            if (controller) {
+                controller.maximumZoomDistance = Math.max(
+                    Number(controller.maximumZoomDistance) || DEFAULT_CAMERA_MAXIMUM_ZOOM_DISTANCE_METERS,
+                    metrics.maximumZoomDistanceMeters
+                );
+            }
+
+            const range = metrics.focusRangeMeters;
+            // `viewFrom` is also consumed after the initial flight by Cesium's
+            // tracked entity camera. Its magnitude remains outside the body.
+            entity.viewFrom = new Cesium.Cartesian3(0, -range, range * 0.24);
+            flyToOptions = {
+                offset: new Cesium.HeadingPitchRange(0, -0.35, range)
+            };
+            focusBoundingSphere = new Cesium.BoundingSphere(
+                Cesium.Cartesian3.clone(bodyPosition),
+                definition.radiusMeters
+            );
+        }
+
+        return centerViewOnEntity({
+            viewer,
+            entity,
+            logger,
+            duration: 0.8,
+            flyToOptions,
+            focusBoundingSphere
+        });
+    };
+
+    // Cesium's physical ellipsoid primitives intentionally render only in
+    // 3D. A body focus is therefore also an explicit request to enter the
+    // physical scene rather than leaving a selected-but-invisible layer in
+    // 2D or Columbus View.
+    if (
+        layerType === "CELESTIAL_BODY"
+        && viewer?.scene?.mode !== Cesium.SceneMode.SCENE3D
+        && typeof viewer?.scene?.morphTo3D === "function"
+        && viewer?.scene?.morphComplete
+    ) {
+        const finishMorph = () => {
+            viewer.scene.morphComplete.removeEventListener(finishMorph);
+            focus();
+        };
+        viewer.scene.morphComplete.addEventListener(finishMorph);
+        viewer.scene.morphTo3D(0.35);
+        return true;
+    }
+
+    return focus();
 }
 
 function publishManualOrbitStatus(kind, message) {
@@ -3847,7 +4200,7 @@ function buildPropagatedParametersContext(detail = {}) {
     }
 
     const id = String(detail.id || "").trim();
-    if (!id || !isCompositeLayerActive(id) || isGroundStationLayerId(id)) {
+    if (!id || !isCompositeLayerActive(id) || isGroundStationLayerId(id) || isCelestialBodyLayerId(id)) {
         return null;
     }
 
@@ -4405,7 +4758,7 @@ function setupPropagatedParametersInspector() {
         }
         const detail = event.detail || {};
         const id = String(detail.id || "").trim();
-        const isOrbital = detail.active === true && String(detail.layerType || "SATELLITE").toUpperCase() !== "GROUND_STATION";
+        const isOrbital = detail.active === true && String(detail.layerType || "SATELLITE").toUpperCase() === "SATELLITE";
         if (!isOrbital || !id) {
             closePropagatedParametersInspector();
             return;
@@ -4480,6 +4833,7 @@ function setupPropagatedParametersInspector() {
         system: toSectionedSystemConfig(config?.system || {})
     };
     currentRuntimeDataConfig = currentConfig?.data || { satellites_catalog_file: "catalog.json", offline_mode: false };
+    earthBasemapManager.setOfflineMode(currentRuntimeDataConfig.offline_mode === true);
     lastPersistedSystemConfigSerialized = JSON.stringify(currentConfig.system || {});
     updatePersistedSystemConfig = (sectionName, patch) => {
         if (!sectionName || !patch || typeof patch !== "object") {
@@ -4583,6 +4937,9 @@ function setupPropagatedParametersInspector() {
             for (const stationId of [...groundStationLayers.keys()]) {
                 removeGroundStationLayer(stationId);
             }
+            for (const bodyId of [...celestialBodyLayers.getIds()]) {
+                setCompositeLayerActive(bodyId, false);
+            }
             satelliteDuplicateLayers.clear();
             layerDisplayNameOverrides.clear();
             objectSidebar?.clearProjectTree?.();
@@ -4592,11 +4949,17 @@ function setupPropagatedParametersInspector() {
             for (const stationId of groundStationLayers.keys()) {
                 setCompositeLayerVisibility(stationId, true);
             }
+            for (const bodyId of celestialBodyLayers.getIds()) {
+                setCompositeLayerVisibility(bodyId, true);
+            }
         },
         onHideAllObjects: () => {
             setAllSatellitesVisible(false);
             for (const stationId of groundStationLayers.keys()) {
                 setCompositeLayerVisibility(stationId, false);
+            }
+            for (const bodyId of celestialBodyLayers.getIds()) {
+                setCompositeLayerVisibility(bodyId, false);
             }
         },
         onFocusObject: (id) => {
@@ -4605,12 +4968,8 @@ function setupPropagatedParametersInspector() {
                 return;
             }
             setCurrentSelectedSatellite(id);
-            if (!isGroundStationLayerId(id)) {
-                setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(id));
-            } else {
-                setSelectedOrbitSatelliteId(null);
-            }
-            focusSatellite(entity);
+            syncSelectedOrbitLayer(id);
+            centerViewOnObject(id);
         },
         onSelectObject: (id) => {
             const entity = getCompositeLayerEntity(id);
@@ -4618,15 +4977,14 @@ function setupPropagatedParametersInspector() {
                 return;
             }
             setCurrentSelectedSatellite(id);
-            if (!isGroundStationLayerId(id)) {
-                setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(id));
-            } else {
-                setSelectedOrbitSatelliteId(null);
-            }
+            syncSelectedOrbitLayer(id);
             viewer.selectedEntity = entity;
         },
         onOpenVisualizationOptions: (id) => {
             if (!id) {
+                return;
+            }
+            if (isCelestialBodyLayerId(id)) {
                 return;
             }
             if (isGroundStationLayerId(id)) {
@@ -4655,6 +5013,16 @@ function setupPropagatedParametersInspector() {
             setSatelliteVisualizationConfig(sourceId, { orbit_ground_track_show: !current });
         },
         onRequestAddSatellite: () => openLeftSatellitesPanel(),
+        onRequestAddCelestialBody: (kind) => {
+            const layerId = celestialBodyLayers.add(kind);
+            if (!layerId) {
+                return null;
+            }
+            openLeftSatellitesPanel();
+            objectSidebar?.renderList?.();
+            emitObjectStateChanged({ layerId, sourceId: layerId, reason: "activation" });
+            return layerId;
+        },
         onRequestCreateGroundStation: (payload) => {
             const id = createGroundStationLayer(payload);
             if (!id) {
@@ -4666,7 +5034,7 @@ function setupPropagatedParametersInspector() {
         onRequestUpdateGroundStation: (id, payload) => updateGroundStationLayer(id, payload),
         onRequestToggleGroundStationHeatMap: (id, enabled) => toggleGroundStationHeatMap(id, enabled),
         onRequestDuplicateLayer: (id) => {
-            if (isGroundStationLayerId(id)) {
+            if (isGroundStationLayerId(id) || isCelestialBodyLayerId(id)) {
                 return null;
             }
             const sourceId = getSatelliteSourceIdFromLayerId(id);
@@ -4678,11 +5046,13 @@ function setupPropagatedParametersInspector() {
         onRequestRenameLayer: (id, newName) => renameLayer(id, newName),
         getLayerDisplayName: (id) => getLayerDisplayName(id),
         getLayerType: (id) => getLayerType(id),
-        getObjectSourceId: (id) => isGroundStationLayerId(id) ? String(id || "") : getSatelliteSourceIdFromLayerId(id),
+        getObjectSourceId: (id) => (isGroundStationLayerId(id) || isCelestialBodyLayerId(id))
+            ? String(id || "")
+            : getSatelliteSourceIdFromLayerId(id),
         getGroundStationParams: (id) => getGroundStationParams(id),
         isCatalogReady: () => isCatalogLoaded(),
-        getObjectTle: (id) => getSatelliteTle(getSatelliteSourceIdFromLayerId(id)),
-        getObjectTleAsync: (id) => getSatelliteTleAsync(getSatelliteSourceIdFromLayerId(id)),
+        getObjectTle: (id) => isCelestialBodyLayerId(id) ? null : getSatelliteTle(getSatelliteSourceIdFromLayerId(id)),
+        getObjectTleAsync: (id) => isCelestialBodyLayerId(id) ? Promise.resolve(null) : getSatelliteTleAsync(getSatelliteSourceIdFromLayerId(id)),
         getCatalogEntryMeta: (id) => getCompositeLayerMeta(id),
         onRefreshCatalog: () => refreshSatelliteCatalog(catalogUrl),
         getLoadedOemTimeBounds: () => getLoadedOemEphemerisTimeBounds(),
@@ -4783,11 +5153,7 @@ function setupPropagatedParametersInspector() {
             const entity = getCompositeLayerEntity(pickedId);
             if (entity) {
                 setCurrentSelectedSatellite(pickedId);
-                if (!isGroundStationLayerId(pickedId)) {
-                    setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(pickedId));
-                } else {
-                    setSelectedOrbitSatelliteId(null);
-                }
+                syncSelectedOrbitLayer(pickedId);
                 viewer.selectedEntity = entity;
             }
             return;
@@ -4816,16 +5182,14 @@ function setupPropagatedParametersInspector() {
         }
 
         setCurrentSelectedSatellite(pickedId);
-        if (!isGroundStationLayerId(pickedId)) {
-            setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(pickedId));
-        } else {
-            setSelectedOrbitSatelliteId(null);
-        }
+        syncSelectedOrbitLayer(pickedId);
         viewer.selectedEntity = entity;
         if (isGroundStationLayerId(pickedId)) {
             focusSatellite(entity);
-        } else {
+        } else if (isSatelliteLayer(pickedId)) {
             firstPersonSatellite(entity);
+        } else {
+            centerViewOnObject(pickedId);
         }
     }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
@@ -4844,17 +5208,7 @@ function setupPropagatedParametersInspector() {
 
         objectSidebar.selectObject(pickedId);
         setCurrentSelectedSatellite(pickedId);
-        if (!isGroundStationLayerId(pickedId)) {
-            setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(pickedId));
-        } else {
-            setSelectedOrbitSatelliteId(null);
-        }
-
-        if (isGroundStationLayerId(pickedId)) {
-            hideSatelliteContextMenu();
-            objectSidebar?.openGroundStationEditor?.(pickedId);
-            return;
-        }
+        syncSelectedOrbitLayer(pickedId);
 
         const canvasRect = viewer.scene.canvas.getBoundingClientRect();
         const x = canvasRect.left + movement.position.x;
@@ -4887,16 +5241,7 @@ function setupPropagatedParametersInspector() {
 
             objectSidebar.selectObject(pickedId);
             setCurrentSelectedSatellite(pickedId);
-            if (!isGroundStationLayerId(pickedId)) {
-                setSelectedOrbitSatelliteId(getSatelliteSourceIdFromLayerId(pickedId));
-            } else {
-                setSelectedOrbitSatelliteId(null);
-            }
-            if (isGroundStationLayerId(pickedId)) {
-                hideSatelliteContextMenu();
-                objectSidebar?.openGroundStationEditor?.(pickedId);
-                return;
-            }
+            syncSelectedOrbitLayer(pickedId);
             showSatelliteContextMenuAt(pickedId, event.clientX, event.clientY);
         });
     }

@@ -1,4 +1,5 @@
 import express from "express";
+import path from "node:path";
 import { sanitizeSystemConfigPayload } from "./config/payload.js";
 import { registerCatalogRoutes } from "./routes/catalog.js";
 import { registerCatalogExportRoutes } from "./routes/catalog-exports.js";
@@ -29,6 +30,14 @@ export function createOrbitApp({ runtime, config, catalog, importer, refresher, 
     registerCatalogExportRoutes(app, { catalog });
     registerPythonProxyRoutes(app, pythonClient);
 
+    // Body textures are source assets rather than Vite bundle chunks.  Mount
+    // them explicitly before the generated frontend so Cesium receives the
+    // exact offline URL used by its material uniforms, even when the React
+    // build also owns an `/assets` directory for hashed JavaScript/CSS files.
+    app.use("/assets", express.static(path.join(runtime.frontDir, "assets"), {
+        index: false,
+        fallthrough: true
+    }));
     app.use(express.static(runtime.reactDistDir));
     app.use(express.static(runtime.frontDir));
     app.use("/config", express.static(runtime.configDir));

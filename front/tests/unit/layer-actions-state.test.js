@@ -23,6 +23,17 @@ test("layer actions are unavailable until a layer is active", () => {
     });
 });
 
+test("the permanent Earth body does not enable global remove or visibility actions", () => {
+    assert.deepEqual(deriveLayerActionsState(["body:earth"]), {
+        activeLayerCount: 0,
+        hasActiveLayers: false
+    });
+    assert.deepEqual(deriveLayerActionsState(["body:earth", "SAT-1"]), {
+        activeLayerCount: 1,
+        hasActiveLayers: true
+    });
+});
+
 test("layer action availability is published for the React shell", () => {
     const originalWindow = globalThis.window;
     const originalCustomEvent = globalThis.CustomEvent;

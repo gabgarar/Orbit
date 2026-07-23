@@ -18,5 +18,8 @@ build
 front/dist/
 react-ui/dist/
 react-ui/.runtime-vendor/
+# The source TIFF is retained locally for re-export only; the runtime uses
+# the known-good low-resolution lunar texture stored alongside the basemaps.
+front/assets/basemap/Moon_color_16bit_srgb_4k.tif
 tests/artifacts
 server/ui-artifacts/

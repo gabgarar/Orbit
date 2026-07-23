@@ -235,3 +235,54 @@ test("legacy Cowell drag-only records retain their historical zonal force interp
     );
     assert.equal(manual["Atmospheric drag"], "On");
 });
+
+test("celestial layers expose only native ephemeris fields, never TLE or propagation controls", () => {
+    const details = buildObjectDetails({
+        id: "body:moon",
+        layerType: "CELESTIAL_BODY",
+        sourceFormat: "CELESTIAL",
+        visible: true,
+        telemetry: {
+            id: "Moon",
+            source_format: "CELESTIAL",
+            celestial_body: "moon",
+            body_radius_m: 1_737_400,
+            earth_center_distance_m: 384_400_000,
+            position_ecef_m: { x: 1000, y: 2000, z: 3000 },
+            position_frame: "ITRF / ECEF",
+            runtime_state: "ACTIVE",
+            simulation: { current_time: "2026-07-22T10:00:00.000Z", mode: "simulated", time_scale: 10 }
+        }
+    });
+
+    const overview = Object.fromEntries(details.rows.overview);
+    const orbit = Object.fromEntries(details.rows.orbit);
+    assert.equal(overview["Object type"], "Cuerpo de referencia");
+    assert.equal(overview.Source, "Modelo de referencia");
+    assert.equal(overview["Physical radius"], "1737400 m");
+    assert.equal(orbit["Reference frame"], "ITRF / ECEF");
+    assert.equal("Estado TLE" in overview, false);
+    assert.deepEqual(details.rows.manual, []);
+});
+
+test("the permanent Earth layer is also treated as a physical body, never a TLE object", () => {
+    const details = buildObjectDetails({
+        id: "body:earth",
+        layerType: "EARTH",
+        visible: true,
+        telemetry: {
+            id: "Earth",
+            celestial_body: "earth",
+            body_radius_m: 6_378_137,
+            earth_center_distance_m: 0,
+            position_ecef_m: { x: 0, y: 0, z: 0 },
+            position_frame: "ITRF / ECEF"
+        }
+    });
+
+    const overview = Object.fromEntries(details.rows.overview);
+    assert.equal(details.noradId, "-");
+    assert.equal(overview.Body, "Earth");
+    assert.equal("Estado TLE" in overview, false);
+    assert.deepEqual(details.rows.manual, []);
+});

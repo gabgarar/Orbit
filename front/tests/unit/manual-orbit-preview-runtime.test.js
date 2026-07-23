@@ -6,6 +6,7 @@ import {
     getManualOrbitPreviewSnapshot,
     hideManualOrbitPreview,
     renderManualOrbitPreview,
+    setManualOrbitPreviewVectorVisualization,
     setManualOrbitPreviewGroundTrack,
     updateManualOrbitPreview
 } from "../../js/satellites.js";
@@ -133,6 +134,135 @@ test("manual orbit preview owns and cleans up only its dedicated Cesium entities
         } else {
             globalThis.Cesium = previousCesium;
         }
+    }
+});
+
+test("manual design vectors render as labelled arrow overlays for the active force model", () => {
+    const previousCesium = globalThis.Cesium;
+    const makeColor = (value) => ({ value, withAlpha: (alpha) => makeColor(`${value}:${alpha}`) });
+    const initialClockTime = { id: "simulation-start" };
+    const laterClockTime = { id: "simulation-later" };
+    const sunTimes = [];
+    const moonTimes = [];
+    const transformedTimes = [];
+    class Cartesian3 {
+        constructor(x = 0, y = 0, z = 0) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+
+        static magnitude(value) { return Math.hypot(value.x, value.y, value.z); }
+        static divideByScalar(value, scalar, result) { result.x = value.x / scalar; result.y = value.y / scalar; result.z = value.z / scalar; return result; }
+        static multiplyByScalar(value, scalar, result) { result.x = value.x * scalar; result.y = value.y * scalar; result.z = value.z * scalar; return result; }
+        static add(left, right, result) { result.x = left.x + right.x; result.y = left.y + right.y; result.z = left.z + right.z; return result; }
+        static negate(value, result) { result.x = -value.x; result.y = -value.y; result.z = -value.z; return result; }
+        static normalize(value, result) { return this.divideByScalar(value, this.magnitude(value) || 1, result); }
+        static cross(left, right, result) {
+            result.x = (left.y * right.z) - (left.z * right.y);
+            result.y = (left.z * right.x) - (left.x * right.z);
+            result.z = (left.x * right.y) - (left.y * right.x);
+            return result;
+        }
+    }
+    class Matrix3 {
+        static fromQuaternion() { return new Matrix3(); }
+        static getColumn(_matrix, index, result) {
+            result.x = index === 0 ? 1 : 0;
+            result.y = index === 1 ? 1 : 0;
+            result.z = index === 2 ? 1 : 0;
+            return result;
+        }
+        static multiplyByVector(_matrix, vector, result) {
+            result.x = vector.x + 100;
+            result.y = vector.y + 200;
+            result.z = vector.z + 300;
+            return result;
+        }
+    }
+    class CallbackProperty {
+        constructor(callback) { this.callback = callback; }
+    }
+    class PolylineArrowMaterialProperty {
+        constructor(color) { this.color = color; }
+    }
+    const added = [];
+    const removed = [];
+    globalThis.Cesium = {
+        Cartesian3,
+        Cartesian2: class Cartesian2 { constructor(x, y) { this.x = x; this.y = y; } },
+        Matrix3,
+        Quaternion: { IDENTITY: {}, fromRotationMatrix: () => ({}) },
+        CallbackProperty,
+        PolylineArrowMaterialProperty,
+        ArcType: { NONE: "none" },
+        Color: { WHITE: makeColor("white"), BLACK: makeColor("black"), fromCssColorString: (value) => makeColor(value) },
+        JulianDate: {
+            now: () => {
+                throw new Error("Celestial arrows must use viewer.clock.currentTime");
+            }
+        },
+        Simon1994PlanetaryPositions: {
+            computeSunPositionInEarthInertialFrame(time, result) {
+                sunTimes.push(time);
+                result.x = 149_000_000_000;
+                result.y = 1_000;
+                result.z = 2_000;
+                return result;
+            },
+            computeMoonPositionInEarthInertialFrame(time, result) {
+                moonTimes.push(time);
+                result.x = 384_000_000;
+                result.y = 2_000;
+                result.z = 3_000;
+                return result;
+            }
+        },
+        Transforms: {
+            computeIcrfToFixedMatrix(time) {
+                transformedTimes.push(time);
+                return {};
+            }
+        },
+        PolylineGlowMaterialProperty: class PolylineGlowMaterialProperty { constructor(options) { Object.assign(this, options); } }
+    };
+    const viewer = {
+        clock: { currentTime: initialClockTime },
+        entities: {
+            add(entity) { added.push(entity); return entity; },
+            remove(entity) { removed.push(entity); return true; }
+        }
+    };
+
+    try {
+        clearManualOrbitPreview();
+        renderManualOrbitPreview(previewPayload, { viewer });
+        setManualOrbitPreviewVectorVisualization(true, {
+            stateVector: { velocityEciKmS: { x: 0, y: 7.5, z: 0 } },
+            propagationOptions: { forceTerms: ["central", "drag"] }
+        });
+
+        const vectors = added.filter((entity) => String(entity.id).startsWith("__manual-orbit-preview__-vectors-"));
+        assert.deepEqual(vectors.map((entity) => entity.label.text), ["X", "Y", "Z", "v", "Sol", "Luna", "F CENTRAL", "F DRAG"]);
+        assert.ok(vectors.every((entity) => entity.polyline.material instanceof PolylineArrowMaterialProperty));
+        assert.ok(vectors.every((entity) => entity.label.font === "10px sans-serif"));
+
+        const sunArrow = vectors.find((entity) => entity.label.text === "Sol");
+        const moonArrow = vectors.find((entity) => entity.label.text === "Luna");
+        sunArrow.polyline.positions.callback();
+        moonArrow.polyline.positions.callback();
+        viewer.clock.currentTime = laterClockTime;
+        sunArrow.polyline.positions.callback();
+        assert.deepEqual(sunTimes, [initialClockTime, laterClockTime]);
+        assert.deepEqual(moonTimes, [initialClockTime]);
+        assert.deepEqual(transformedTimes, [initialClockTime, initialClockTime, laterClockTime]);
+
+        setManualOrbitPreviewVectorVisualization(false);
+        assert.equal(removed.filter((entity) => String(entity.id).startsWith("__manual-orbit-preview__-vectors-")).length, 8);
+    } finally {
+        clearManualOrbitPreview();
+        if (previousCesium === undefined) delete globalThis.Cesium;
+        else globalThis.Cesium = previousCesium;
     }
 });
 

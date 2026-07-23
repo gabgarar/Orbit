@@ -2,6 +2,7 @@ import { SatelliteWebSocket } from "./SatelliteWebSocket.js";
 import { getLogger } from "./logger.js";
 import { emitObjectStateChanged } from "./runtime/objectDetailsEvents.js";
 import { buildUniformSampleTimes, sampleTrackKinematics } from "./runtime/trackKinematics.js";
+import { layoutVectorLabelOffsets } from "./runtime/vectorLabelLayout.js";
 
 const logger = getLogger("satellites");
 
@@ -70,6 +71,7 @@ const MANUAL_ORBIT_PREVIEW_GEOMETRY_INERTIAL_EPHEMERIS = "inertial-eci-ephemeris
 const MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS = "earth-fixed-ephemeris";
 const MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI = "eci";
 const MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECEF = "ecef";
+const satelliteVectorEntities = new Map();
 const SECONDS_PER_DAY = 86400;
 const MILLISECONDS_PER_DAY = SECONDS_PER_DAY * 1000;
 const JULIAN_DATE_AT_UNIX_EPOCH = 2440587.5;
@@ -257,7 +259,11 @@ let manualOrbitPreviewState = {
     showGroundTrack: false,
     color: MANUAL_ORBIT_PREVIEW_COLOR,
     previewReferenceFrame: MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI,
-    geometryMode: MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS
+    geometryMode: MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS,
+    vectorEntities: [],
+    vectorVisible: false,
+    vectorForceTerms: ["central"],
+    vectorVelocity: null
 };
 
 function isLocalEphemerisTrack(id) {
@@ -2333,6 +2339,242 @@ export function clearAllSatelliteVisualizationConfigs() {
     setOrbitConfig({});
 }
 
+function vectorPosition(state) {
+    const position = state?.renderPosition || state?.targetPosition;
+    return position && Number.isFinite(position.x) ? position : null;
+}
+
+function normalizedDirection(vector, fallback) {
+    const candidate = vector && Number.isFinite(vector.x) ? new Cesium.Cartesian3(vector.x, vector.y, vector.z) : fallback;
+    const magnitude = Cesium.Cartesian3.magnitude(candidate);
+    return magnitude > 0 ? Cesium.Cartesian3.divideByScalar(candidate, magnitude, new Cesium.Cartesian3()) : new Cesium.Cartesian3(1, 0, 0);
+}
+
+function vectorArrowMaterial(color) {
+    return Cesium.PolylineArrowMaterialProperty
+        ? new Cesium.PolylineArrowMaterialProperty(color)
+        : color;
+}
+
+function vectorEndpoint(origin, direction) {
+    const length = Math.max(30000, Cesium.Cartesian3.magnitude(origin) * .075);
+    return Cesium.Cartesian3.add(
+        origin,
+        Cesium.Cartesian3.multiplyByScalar(normalizedDirection(direction, new Cesium.Cartesian3(1, 0, 0)), length, new Cesium.Cartesian3()),
+        new Cesium.Cartesian3()
+    );
+}
+
+function vectorLabelCanvasPosition(viewer, position) {
+    const scene = viewer?.scene;
+    if (!scene || !position) return null;
+    try {
+        const projected = typeof Cesium.SceneTransforms?.wgs84ToWindowCoordinates === "function"
+            ? Cesium.SceneTransforms.wgs84ToWindowCoordinates(scene, position)
+            : typeof scene.cartesianToCanvasCoordinates === "function"
+                ? scene.cartesianToCanvasCoordinates(position)
+                : null;
+        const x = Number(projected?.x);
+        const y = Number(projected?.y);
+        return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+    } catch {
+        // An endpoint can temporarily be outside the current frustum while a
+        // camera transition is running.  Cesium will hide it; retain the
+        // ordinary label offset until it has a canvas position again.
+        return null;
+    }
+}
+
+function vectorLabelViewport(viewer) {
+    const canvas = viewer?.scene?.canvas || viewer?.canvas;
+    const width = Number(canvas?.clientWidth || canvas?.width);
+    const height = Number(canvas?.clientHeight || canvas?.height);
+    return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 ? { width, height } : null;
+}
+
+function createVectorLabelOffsetResolver(viewer, specs, getSource, getPosition) {
+    let signature = "";
+    let offsets = specs.map(() => ({ x: 0, y: -7 }));
+
+    return (index, result) => {
+        const source = getSource();
+        const origin = getPosition(source);
+        const viewport = vectorLabelViewport(viewer);
+        const entries = origin
+            ? specs.map(([label, _color, getDirection]) => {
+                const position = vectorEndpoint(origin, getDirection(source));
+                const projected = vectorLabelCanvasPosition(viewer, position);
+                return { label, x: projected?.x, y: projected?.y };
+            })
+            : specs.map(([label]) => ({ label, x: Number.NaN, y: Number.NaN }));
+        // Round sub-pixel motion so all label callbacks in a Cesium frame share
+        // one layout, while camera movement still reflows nearby arrow labels.
+        const nextSignature = `${viewport?.width || 0}x${viewport?.height || 0}:${entries.map((entry) => (
+            Number.isFinite(entry.x) && Number.isFinite(entry.y)
+                ? `${Math.round(entry.x * 2) / 2},${Math.round(entry.y * 2) / 2}`
+                : "-"
+        )).join(";")}`;
+        if (nextSignature !== signature) {
+            offsets = layoutVectorLabelOffsets(entries, viewport);
+            signature = nextSignature;
+        }
+        const offset = offsets[index] || { x: 0, y: -7 };
+        if (result && typeof result === "object") {
+            result.x = offset.x;
+            result.y = offset.y;
+            return result;
+        }
+        return new Cesium.Cartesian2(offset.x, offset.y);
+    };
+}
+
+function attitudeAxis(directionSource, axis) {
+    return (source) => Cesium.Matrix3.getColumn(
+        Cesium.Matrix3.fromQuaternion(directionSource(source) || Cesium.Quaternion.IDENTITY),
+        axis,
+        new Cesium.Cartesian3()
+    );
+}
+
+function earthFixedCelestialPosition(inertialPosition, time) {
+    if (!inertialPosition || !time || typeof Cesium.Matrix3?.multiplyByVector !== "function") {
+        return null;
+    }
+
+    const transforms = Cesium.Transforms;
+    if (!transforms) {
+        return null;
+    }
+
+    // Simon1994 returns Earth-centred inertial coordinates, whereas Cesium
+    // entities in this application are rendered in the Earth-fixed frame.
+    // Prefer the exact ICRF transform for the viewer's clock instant. Cesium
+    // can briefly return `undefined` while its XYS data is loading, so retain
+    // its synchronous TEME/pseudo-fixed transform as a visually stable bridge
+    // instead of mixing an inertial vector into an Earth-fixed scene.
+    const transform = typeof transforms.computeIcrfToFixedMatrix === "function"
+        ? transforms.computeIcrfToFixedMatrix(time)
+        : null;
+    const fallbackTransform = !transform && typeof transforms.computeTemeToPseudoFixedMatrix === "function"
+        ? transforms.computeTemeToPseudoFixedMatrix(time)
+        : null;
+    const matrix = transform || fallbackTransform;
+    if (!matrix) {
+        return null;
+    }
+
+    return Cesium.Matrix3.multiplyByVector(matrix, inertialPosition, new Cesium.Cartesian3());
+}
+
+function illuminationDirection(kind, viewer, getPosition) {
+    return (source) => {
+        const method = kind === "sun"
+            ? Cesium.Simon1994PlanetaryPositions?.computeSunPositionInEarthInertialFrame
+            : Cesium.Simon1994PlanetaryPositions?.computeMoonPositionInEarthInertialFrame;
+        // Do not use JulianDate.now()/Date.now() here. In range simulation the
+        // lighting vectors must stay at the exact same instant as Cesium's
+        // globe, satellite and clock. CallbackProperty reevaluates this on
+        // every render, so changing the timeline updates the directions too.
+        const time = viewer?.clock?.currentTime;
+        if (typeof method === "function" && time) {
+            const inertialPosition = method(time, new Cesium.Cartesian3());
+            const position = earthFixedCelestialPosition(inertialPosition, time);
+            if (position && Cesium.Cartesian3.magnitude(position) > 0) {
+                const origin = getPosition(source);
+                // Point from the satellite, not from the Earth's centre. The
+                // distinction is especially visible for the Moon.
+                return origin
+                    ? { x: position.x - origin.x, y: position.y - origin.y, z: position.z - origin.z }
+                    : position;
+            }
+        }
+        return kind === "sun" ? { x: 1, y: .15, z: .08 } : { x: -.35, y: .8, z: .25 };
+    };
+}
+
+function forceDirection(term, getPosition, getVelocity) {
+    return (source) => {
+        const position = getPosition(source);
+        if (!position) return null;
+        if (String(term).toLowerCase() === "drag") {
+            const velocity = getVelocity(source);
+            return velocity ? Cesium.Cartesian3.negate(new Cesium.Cartesian3(velocity.x, velocity.y, velocity.z), new Cesium.Cartesian3()) : null;
+        }
+        // The radial direction is the dominant component of the selected
+        // gravity terms at this scale. It keeps the displayed force vector
+        // meaningful without pretending that the overlay encodes magnitude.
+        return Cesium.Cartesian3.negate(position, new Cesium.Cartesian3());
+    };
+}
+
+function createVectorEntities(viewer, idPrefix, getSource, getPosition, getOrientation, getVelocity, forceTerms = []) {
+    const specs = [
+        ["X", "#ff5d62", attitudeAxis(getOrientation, 0)],
+        ["Y", "#61df81", attitudeAxis(getOrientation, 1)],
+        ["Z", "#58a6ff", attitudeAxis(getOrientation, 2)],
+        ["v", "#ffd166", getVelocity],
+        ["Sol", "#ffae42", illuminationDirection("sun", viewer, getPosition)],
+        ["Luna", "#d9ddff", illuminationDirection("moon", viewer, getPosition)],
+        ...forceTerms.map((term) => [`F ${String(term).toUpperCase()}`, "#f177c0", forceDirection(term, getPosition, getVelocity)])
+    ];
+    const labelOffset = createVectorLabelOffsetResolver(viewer, specs, getSource, getPosition);
+    return specs.map(([label, color, getDirection], index) => {
+        const colorValue = Cesium.Color.fromCssColorString(color);
+        const endpoint = () => {
+            const source = getSource();
+            const origin = getPosition(source);
+            return origin ? vectorEndpoint(origin, getDirection(source)) : undefined;
+        };
+        return viewer.entities.add({
+            id: `${idPrefix}-${index}`,
+            name: label,
+            polyline: {
+                positions: new Cesium.CallbackProperty(() => {
+                    const source = getSource();
+                    const origin = getPosition(source);
+                    const end = origin ? vectorEndpoint(origin, getDirection(source)) : null;
+                    return end ? [origin, end] : [];
+                }, false),
+                width: 2.5,
+                material: vectorArrowMaterial(colorValue),
+                arcType: Cesium.ArcType.NONE,
+                clampToGround: false
+            },
+            position: new Cesium.CallbackProperty(endpoint, false),
+            label: {
+                text: label,
+                font: "10px sans-serif",
+                fillColor: colorValue,
+                pixelOffset: new Cesium.CallbackProperty((_time, result) => labelOffset(index, result), false),
+                showBackground: true,
+                backgroundColor: Cesium.Color.BLACK.withAlpha(.6),
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            }
+        });
+    });
+}
+
+/** Draws arrowed attitude axes, kinematics, illumination and active force directions. */
+export function setSatelliteVectorVisualization(id, visible, forceTerms = ["central"]) {
+    const satId = String(id || "").trim();
+    const existing = satelliteVectorEntities.get(satId);
+    if (!visible || !satId || !currentViewer) {
+        existing?.forEach((entity) => currentViewer?.entities.remove(entity));
+        satelliteVectorEntities.delete(satId);
+        return;
+    }
+    if (existing || !satelliteState[satId]) return;
+    satelliteVectorEntities.set(satId, createVectorEntities(
+        currentViewer,
+        `${satId}-vectors`,
+        () => satelliteState[satId],
+        vectorPosition,
+        (state) => state?.lastOrientation,
+        (state) => state?.lastVelocity,
+        forceTerms
+    ));
+}
+
 function normalizeOemUnit(value, kind) {
     const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "");
     if (kind === "position") {
@@ -3426,7 +3668,7 @@ function removeManualOrbitPreviewEntities() {
     const preview = manualOrbitPreviewState;
     const viewer = preview.viewer;
     if (viewer?.entities && typeof viewer.entities.remove === "function") {
-        for (const entity of [preview.pathEntity, preview.epochMarkerEntity, preview.groundTrackEntity]) {
+        for (const entity of [preview.pathEntity, preview.epochMarkerEntity, preview.groundTrackEntity, ...(preview.vectorEntities || [])]) {
             if (!entity) {
                 continue;
             }
@@ -3441,14 +3683,66 @@ function removeManualOrbitPreviewEntities() {
     preview.pathEntity = null;
     preview.epochMarkerEntity = null;
     preview.groundTrackEntity = null;
+    preview.vectorEntities = [];
     preview.viewer = null;
+}
+
+function manualPreviewPosition(preview) {
+    const point = preview?.epochPoint
+        || findNearestManualOrbitPoint(preview?.points || [], preview?.epochTimeMs)
+        || preview?.points?.[0];
+    return point && Number.isFinite(point.x) ? new Cesium.Cartesian3(point.x, point.y, point.z) : null;
+}
+
+function renderManualOrbitPreviewVectors(preview, viewer) {
+    if (!preview.vectorVisible || !viewer?.entities) return;
+    if (preview.vectorEntities?.length) return;
+    const origin = manualPreviewPosition(preview);
+    if (!origin) return;
+    const previewVelocity = preview.vectorVelocity || { x: 0, y: 1, z: 0 };
+    const orientation = calculateOrientation(origin, previewVelocity);
+    preview.vectorEntities = createVectorEntities(
+        viewer,
+        `${MANUAL_ORBIT_PREVIEW_ID}-vectors`,
+        () => manualOrbitPreviewState,
+        manualPreviewPosition,
+        () => orientation,
+        (state) => state?.vectorVelocity || previewVelocity,
+        preview.vectorForceTerms || ["central"]
+    );
+}
+
+/** Toggle arrowed axes and vectors for the current manual-orbit design preview. */
+export function setManualOrbitPreviewVectorVisualization(visible, manualOrbit = {}) {
+    const preview = manualOrbitPreviewState;
+    const forceTerms = manualOrbit?.propagationOptions?.forceTerms || manualOrbit?.forceTerms || preview.vectorForceTerms || ["central"];
+    const stateVector = manualOrbit?.stateVector || manualOrbit?.state_vector || {};
+    const velocity = stateVector.velocityEciKmS || stateVector.velocity_eci_km_s || stateVector.velocity || stateVector;
+    const x = Number(velocity?.x ?? velocity?.velocityXKmS);
+    const y = Number(velocity?.y ?? velocity?.velocityYKmS);
+    const z = Number(velocity?.z ?? velocity?.velocityZKmS);
+    preview.vectorVisible = visible === true;
+    preview.vectorForceTerms = Array.isArray(forceTerms) && forceTerms.length ? forceTerms : ["central"];
+    preview.vectorVelocity = [x, y, z].every(Number.isFinite) ? { x: x * 1000, y: y * 1000, z: z * 1000 } : null;
+    if (!preview.vectorVisible) {
+        preview.vectorEntities?.forEach((entity) => preview.viewer?.entities?.remove(entity));
+        preview.vectorEntities = [];
+        return manualOrbitPreviewSnapshot();
+    }
+    // Inputs can change while design mode is open. Rebuild this small overlay
+    // so arrows always reflect the current epoch state vector and force set.
+    preview.vectorEntities?.forEach((entity) => preview.viewer?.entities?.remove(entity));
+    preview.vectorEntities = [];
+    renderManualOrbitPreviewVectors(preview, preview.viewer || currentViewer);
+    return manualOrbitPreviewSnapshot();
 }
 
 function hideManualOrbitPreviewEntities() {
     for (const entity of [
         manualOrbitPreviewState.pathEntity,
         manualOrbitPreviewState.epochMarkerEntity,
-        manualOrbitPreviewState.groundTrackEntity
+        manualOrbitPreviewState.groundTrackEntity,
+        ...(manualOrbitPreviewState.vectorEntities || [])
     ]) {
         if (entity) {
             entity.show = false;
@@ -3562,6 +3856,8 @@ function renderManualOrbitPreviewEntities(viewer = currentViewer) {
         }
         preview.groundTrackEntity = null;
     }
+
+    renderManualOrbitPreviewVectors(preview, viewer);
 
     return manualOrbitPreviewSnapshot();
 }
@@ -3682,7 +3978,11 @@ export function clearManualOrbitPreview() {
         showGroundTrack: false,
         color: MANUAL_ORBIT_PREVIEW_COLOR,
         previewReferenceFrame: MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI,
-        geometryMode: MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS
+        geometryMode: MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS,
+        vectorEntities: [],
+        vectorVisible: false,
+        vectorForceTerms: ["central"],
+        vectorVelocity: null
     };
     return manualOrbitPreviewSnapshot();
 }

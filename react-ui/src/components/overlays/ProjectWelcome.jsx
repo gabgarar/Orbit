@@ -5,14 +5,14 @@ export default function ProjectWelcome({ onAction, runtimeStatus }) {
 
     return <section
         id="projectWelcome"
-        className="react-project-welcome !fixed !inset-0 !z-[10500] !grid !place-items-center !overflow-hidden !bg-[#020811] !p-5 !pr-[clamp(60px,9vw,156px)] max-[850px]:!pr-5"
+        className="react-project-welcome !fixed !inset-0 !z-[10500] !grid !place-items-center !overflow-hidden !bg-[#020811] !p-5"
         aria-label="Bienvenida de Orbit"
     >
         <img className="absolute inset-0 h-full w-full object-cover" src="/assets/fonts/fondo.png" alt="" aria-hidden="true" />
         <div className="absolute inset-0 bg-gradient-to-r from-[#020811]/[.06] to-[#020811]/[.22]" aria-hidden="true" />
-        <div className="relative z-10 w-[min(510px,calc(100vw-40px))] -translate-x-[clamp(90px,8vw,180px)] rounded-[30px] border border-[#71a9e694] bg-[linear-gradient(135deg,rgba(9,40,77,.91),rgba(3,13,27,.88))] px-[42px] pt-[54px] pb-11 text-center shadow-[0_32px_90px_rgba(0,0,0,.58)] max-[850px]:translate-x-0 max-[520px]:px-6 max-[520px]:pt-9">
-            <div className="mx-auto h-28 w-[136px] bg-[url('/assets/icon/favicon.png')] bg-center bg-[length:160%] bg-no-repeat saturate-[1.15] drop-shadow-[0_0_22px_rgba(23,155,255,.5)]" aria-hidden="true" />
-            <div className="mt-[30px] font-sans text-[19px] leading-none font-extrabold tracking-[12px] text-[#2888ff]">O R B I T</div>
+        <div className="relative z-10 w-[min(510px,calc(100vw-40px))] rounded-[30px] border border-[#71a9e694] bg-[linear-gradient(135deg,rgba(9,40,77,.91),rgba(3,13,27,.88))] px-[42px] pt-[54px] pb-11 text-center shadow-[0_32px_90px_rgba(0,0,0,.58)] max-[520px]:px-6 max-[520px]:pt-9">
+            <div className="mx-auto h-[76px] w-[100px] bg-[url('/assets/icon/favicon.svg')] bg-center bg-[length:96%] bg-no-repeat saturate-[1.15] drop-shadow-[0_0_18px_rgba(23,155,255,.5)]" aria-hidden="true" />
+            <div className="mt-[30px] font-sans text-[19px] leading-none font-extrabold tracking-[10px] text-[#2888ff]">O R B I T</div>
             <h1 className="!mt-[30px] !mb-[18px] !font-sans !text-[clamp(34px,3vw,48px)] !leading-[1.1] !font-semibold !text-white">Welcome to Orbit</h1>
             <div className="mx-auto mb-[27px] h-[3px] w-16 rounded-lg bg-[#168fff] shadow-[0_0_14px_rgba(22,143,255,.6)]" />
             <p className="!m-0 !font-sans !text-xl !leading-[1.55] !font-normal !text-[#b9c9df]">Create a project to start modelling your space operations, or open an existing one.</p>

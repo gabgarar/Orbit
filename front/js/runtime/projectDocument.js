@@ -28,7 +28,25 @@ function normalizeManualOrbits(value) {
         .map((entry) => cloneProjectValue(entry));
 }
 
-export function buildProjectDocument({ name, satellites, layerNames, layerTree, groundStations, simulation, manualOrbits }) {
+function normalizeCelestialBodies(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    const validKinds = new Set(["sun", "moon"]);
+    const seen = new Set();
+    return value.reduce((items, entry) => {
+        const rawKind = typeof entry === "string" ? entry : entry?.kind || entry?.id;
+        const kind = String(rawKind || "").trim().toLowerCase().replace(/^body:/, "");
+        if (!validKinds.has(kind) || seen.has(kind)) {
+            return items;
+        }
+        seen.add(kind);
+        items.push({ kind, visible: entry?.visible !== false });
+        return items;
+    }, []);
+}
+
+export function buildProjectDocument({ name, satellites, layerNames, layerTree, groundStations, simulation, manualOrbits, celestialBodies }) {
     return {
         format: PROJECT_FORMAT,
         version: PROJECT_VERSION,
@@ -38,6 +56,9 @@ export function buildProjectDocument({ name, satellites, layerNames, layerTree, 
         // Optional in documents produced before manual-orbit design existed.
         // It is kept in the v1 contract so older projects remain readable.
         manualOrbits: normalizeManualOrbits(manualOrbits),
+        // Positions are calculated again by Cesium from the current scene
+        // clock; project data only preserves the active body layers.
+        celestialBodies: normalizeCelestialBodies(celestialBodies),
         layerNames: layerNames && typeof layerNames === "object" ? layerNames : {},
         layerTree: layerTree && typeof layerTree === "object" ? layerTree : { folders: [], layerParents: {} },
         groundStations: Array.isArray(groundStations) ? groundStations : [],

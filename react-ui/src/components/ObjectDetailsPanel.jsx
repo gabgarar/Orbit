@@ -78,6 +78,8 @@ export default function ObjectDetailsPanel() {
 
     const details = buildObjectDetails(detail);
     const isGroundStation = String(detail.layerType || "").toUpperCase() === "GROUND_STATION";
+    const isCelestialBody = ["CELESTIAL_BODY", "EARTH"].includes(String(detail.layerType || "").toUpperCase())
+        || String(detail.id || "").toLowerCase() === "body:earth";
     const isManualOrbit = String(detail.sourceFormat || "").toUpperCase() === "MANUAL";
     const tabs = isManualOrbit ? [...standardTabs, ["manual", "MANUAL PARAMS"]] : standardTabs;
 
@@ -86,13 +88,13 @@ export default function ObjectDetailsPanel() {
         <h2 className="mb-[9px] max-w-[calc(100%_-_30px)] overflow-hidden text-ellipsis whitespace-nowrap text-[17px] leading-[1.2] font-medium text-[#f1f6ff]">{details.title}</h2>
         <div className="flex items-center gap-2.5 border-b border-[#1c2c43] pb-[17px] text-[11px] leading-none font-semibold tracking-[.03em] text-[#8fa1ba]">
             <span className={`inline-flex rounded-[5px] px-2 py-1.5 text-[10px] leading-none font-bold ${details.visible ? "bg-[rgba(39,169,95,.19)] text-[#73e3a0]" : "bg-[rgba(133,75,193,.24)] text-[#d2a8ff]"}`}>{details.visible ? "ACTIVE" : "HIDDEN"}</span>
-            <span>NORAD {details.noradId}</span>
+            <span>{isCelestialBody ? "CUERPO DE REFERENCIA" : `NORAD ${details.noradId}`}</span>
         </div>
         <nav className={`relative z-[1] my-[11px] mb-[13px] grid ${isManualOrbit ? "grid-cols-4" : "grid-cols-3"} border-b border-[#1c2c43]`} aria-label="Secciones de detalle" role="tablist">
             {tabs.map(([key, label]) => <button className={`relative cursor-pointer border-0 bg-transparent px-0.5 pt-[9px] pb-[11px] text-[10px] leading-none font-bold ${tab === key ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1]"}`} type="button" key={key} role="tab" aria-selected={tab === key} aria-controls={`object-details-${key}`} onClick={() => setTab(key)}>{label}</button>)}
         </nav>
         <section id={`object-details-${tab}`} role="tabpanel"><DetailRows rows={details.rows[tab]} /></section>
-        {!isGroundStation && <footer className={`mt-auto grid ${isManualOrbit ? "grid-cols-2" : "grid-cols-3"} gap-2 border-t border-[#1c2c43] pt-3`}>
+        {!isGroundStation && !isCelestialBody && <footer className={`mt-auto grid ${isManualOrbit ? "grid-cols-2" : "grid-cols-3"} gap-2 border-t border-[#1c2c43] pt-3`}>
             <button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Configuración individual" onClick={() => dispatchObjectAction("visualization", detail.id)}><TuneGlyph /><span className="truncate">Configuración</span></button>
             <button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title="Ver parámetros orbitales propagados" disabled={detail.active !== true} onClick={() => openPropagatedParameters(detail.id)}><PropagationGlyph /><span className="truncate">Propagados</span></button>
             {!isManualOrbit && <button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Ver parámetros TLE" onClick={() => dispatchObjectAction("tle", detail.id)}><TleGlyph /><span className="truncate">Parámetros TLE</span></button>}

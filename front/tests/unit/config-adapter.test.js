@@ -64,3 +64,17 @@ test("retired orbit width modes are ignored while preserving the fixed visual wi
     assert.equal("width_mode" in sectioned.orbit, false);
     assert.equal(sectioned.orbit.future_line_width, 2.5);
 });
+
+test("Earth basemap selection is preserved as rendering configuration", () => {
+    const normalized = normalizeSystemConfig({
+        rendering: { earth_basemap: "openstreetmap" }
+    });
+    const defaults = toSectionedSystemConfig({});
+    const sectioned = toSectionedSystemConfig({
+        rendering: { earth_basemap: "esri-world-imagery" }
+    });
+
+    assert.equal(normalized.earth_basemap, "openstreetmap");
+    assert.equal(defaults.rendering.earth_basemap, "natural-earth");
+    assert.equal(sectioned.rendering.earth_basemap, "esri-world-imagery");
+});

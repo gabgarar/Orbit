@@ -1,4 +1,54 @@
 /** Persisted, presentation-only hierarchy for active Orbit layers. */
+
+/**
+ * Work out which user folders belong in the explorer for the current view.
+ *
+ * Empty folders are intentional workspace structure: users create them before
+ * importing or dragging layers into them.  Hiding them made a newly-created
+ * folder appear to fail.  During a search we keep the tree focused by showing
+ * only matching folders, their ancestors and the parents of matching layers.
+ */
+export function getVisibleLayerFolderIds({
+    folders = [],
+    layerParents = {},
+    layerIds = [],
+    filtering = false,
+    matchingFolderIds = []
+} = {}) {
+    const normalizedFolders = Array.isArray(folders) ? folders : [];
+    const folderIds = new Set(normalizedFolders
+        .map((folder) => String(folder?.id || "").trim())
+        .filter(Boolean));
+
+    // Outside search mode the complete saved hierarchy is useful, including
+    // empty folders that act as drop targets for future layers.
+    if (!filtering) {
+        return folderIds;
+    }
+
+    const parentById = new Map(normalizedFolders.map((folder) => [
+        String(folder?.id || "").trim(),
+        String(folder?.parentId || "").trim() || null
+    ]));
+    const visible = new Set();
+    const addFolderAndParents = (rawId) => {
+        let currentId = String(rawId || "").trim();
+        const traversed = new Set();
+        while (currentId && folderIds.has(currentId) && !traversed.has(currentId)) {
+            visible.add(currentId);
+            traversed.add(currentId);
+            currentId = parentById.get(currentId) || "";
+        }
+    };
+
+    (Array.isArray(layerIds) ? layerIds : []).forEach((layerId) => {
+        addFolderAndParents(layerParents?.[layerId]);
+    });
+    (Array.isArray(matchingFolderIds) ? matchingFolderIds : []).forEach(addFolderAndParents);
+
+    return visible;
+}
+
 export function createLayerTree(storage = globalThis.localStorage, key = "orbit.layerTree.v1") {
     let state = read(storage, key);
     const save = () => storage?.setItem?.(key, JSON.stringify(state));

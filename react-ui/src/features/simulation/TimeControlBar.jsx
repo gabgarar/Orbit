@@ -40,6 +40,7 @@ export default function TimeControlBar() {
     }, []);
 
     const isRealtime = simulation.mode === "realtime";
+    const realtimePaused = isRealtime && simulation.isPlaying === false;
     const marks = buildTimelineMarks(simulation.startDate, simulation.endDate);
     const progress = Math.max(0, Math.min(100, ((simulation.timelineStep || 0) / (simulation.timelineSteps || 1000)) * 100));
     const markerPositionClass = progress <= 3
@@ -80,6 +81,22 @@ export default function TimeControlBar() {
                         <button className={classNames(buttonClass, "w-full text-left", !isRealtime && activeButtonClass)} type="button" role="menuitem" onClick={() => { sendAction("mode", "range"); setModeMenuOpen(false); }}>Simulated</button>
                     </div>}
                 </div>
+
+                {isRealtime && <button
+                    className={classNames(
+                        buttonClass,
+                        "inline-flex min-w-[76px] items-center justify-center gap-1.5",
+                        realtimePaused && "!border-[#b8823d] !bg-[#2d2114] !text-[#ffe0a5] hover:!border-[#d8a658] hover:!bg-[#392916] hover:!text-[#ffebc6]"
+                    )}
+                    type="button"
+                    title={realtimePaused ? "Resume real time" : "Pause real time"}
+                    aria-label={realtimePaused ? "Resume real time" : "Pause real time"}
+                    aria-pressed={realtimePaused}
+                    onClick={() => sendAction("play-toggle")}
+                >
+                    <span aria-hidden="true">{realtimePaused ? "\u25B6" : "\u23F8"}</span>
+                    <span>{realtimePaused ? "Paused" : "Pause"}</span>
+                </button>}
 
                 <button
                     className={classNames(

@@ -165,6 +165,9 @@ export function buildObjectDetails(detail) {
     const timeRange = detail.timeRange || {};
     const catalogMeta = detail.catalogMeta || {}; const tleSummary = detail.tleSummary || detail.summary || {};
     const visible = detail.visible !== false; const sourceFormat = String(detail.sourceFormat || telemetry.source_format || "").toUpperCase(); const oem = sourceFormat === "OEM";
+    const celestial = sourceFormat === "CELESTIAL"
+        || ["CELESTIAL_BODY", "EARTH"].includes(String(detail.layerType || "").toUpperCase())
+        || String(detail.id || "").toLowerCase() === "body:earth";
     const manual = sourceFormat === "MANUAL";
     const noradId = detail.noradId || telemetry.norad_id || telemetry.norad || telemetry.catalog_number;
     const manualOrbit = catalogMeta.manualOrbit || catalogMeta.manual_orbit || telemetry.manual_orbit || {};
@@ -235,6 +238,38 @@ export function buildObjectDetails(detail) {
             ] : [])
         ]
         : [];
+    if (celestial) {
+        const body = value(telemetry.celestial_body || catalogMeta.celestialBody, "Cuerpo");
+        const state = visible ? "Visible" : "Hidden";
+        return {
+            title,
+            noradId: "-",
+            visible,
+            rows: {
+                overview: [
+                    ["Name", title],
+                    ["Object type", "Cuerpo de referencia"],
+                    ["Body", body.replace(/^./, (letter) => letter.toUpperCase())],
+                    ["Source", "Modelo de referencia"],
+                    ["Status", state, visible ? "is-operational" : "is-hidden"],
+                    ["Physical radius", numberWithUnit(telemetry.body_radius_m || catalogMeta.bodyRadiusMeters, "m", 0)]
+                ],
+                orbit: [
+                    ["Reference frame", value(telemetry.position_frame)],
+                    ["Earth center distance", convertedNumberWithUnit(telemetry.earth_center_distance_m, 1000, "km", 1)],
+                    ["Position ECEF", vectorWithUnit(telemetry.position_ecef_m, "km", 1, 1000)],
+                    ["Clock instant", simulationFrame(telemetry.simulation?.current_time || telemetry.timestamp_ms)]
+                ],
+                telemetry: [
+                    ["Scene state", value(telemetry.runtime_state)],
+                    ["Simulation frame", simulationFrame(telemetry.simulation?.current_time || telemetry.timestamp_ms)],
+                    ["Simulation mode", simulationMode(telemetry.simulation?.mode)],
+                    ["Time scale", hasNumber(telemetry.simulation?.time_scale) ? `${number(telemetry.simulation.time_scale, 0)}Ã—` : "-"]
+                ],
+                manual: []
+            }
+        };
+    }
     return { title, noradId: value(noradId), visible, rows: {
         overview: [["Nombre", title], ["Object type", manual ? manualObjectType : "-"], ["Misión", mission], ["Operador / agencia", operator], ["País", country], ["Source", source], ["Fuente TLE", sourceOrigin], ["Status", status, statusTone], ["Orbit type", value(orbit.label)], ["Altitude", numberWithUnit(generalAltitudeKm, "km")], ["NORAD", value(noradId)], ["Object ID", objectId], ["Fecha de lanzamiento", launchDate], ["Vehículo lanzador", launchVehicle], ["Sitio de lanzamiento", launchSite], ["Estado TLE", oem ? "-" : tleStatus(ageHours, orbit)], ["Edad TLE", oem ? "-" : numberWithUnit(ageHours, "h")], ["Última actualización", lastUpdated], ["Fecha inicio", utcDate(timeRange.startDate)], ["Fecha fin", utcDate(timeRange.endDate)], ["Rango OEM", oemRange(timeRange)]],
         // Orbit holds instantaneous geographic/reference-frame state. TLE

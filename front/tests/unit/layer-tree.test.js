@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createLayerTree } from "../../js/features/layers/layerTree.js";
+import { createLayerTree, getVisibleLayerFolderIds } from "../../js/features/layers/layerTree.js";
 
 function memoryStorage() { const data = new Map(); return { getItem: (key) => data.get(key) || null, setItem: (key, value) => data.set(key, value) }; }
 
@@ -42,4 +42,35 @@ test("layer tree restores exported hierarchy and can clear it", () => {
     assert.equal(tree.snapshot([]).folders.find((folder) => folder.id === "leo").parentId, "missions");
     tree.clear();
     assert.deepEqual(tree.snapshot(["ISS"]), { folders: [], layerParents: { ISS: null } });
+});
+
+test("empty folders remain visible outside search so they can receive future layers", () => {
+    const folders = [
+        { id: "missions", name: "Missions", parentId: null, expanded: true },
+        { id: "future", name: "Future launch", parentId: "missions", expanded: true }
+    ];
+
+    assert.deepEqual(
+        [...getVisibleLayerFolderIds({ folders, layerParents: {}, layerIds: [], filtering: false })].sort(),
+        ["future", "missions"]
+    );
+});
+
+test("folder search keeps a matching empty folder and its parent, not unrelated branches", () => {
+    const folders = [
+        { id: "missions", name: "Missions", parentId: null, expanded: true },
+        { id: "future", name: "Future launch", parentId: "missions", expanded: true },
+        { id: "archive", name: "Archive", parentId: null, expanded: true }
+    ];
+
+    assert.deepEqual(
+        [...getVisibleLayerFolderIds({
+            folders,
+            layerParents: {},
+            layerIds: [],
+            filtering: true,
+            matchingFolderIds: ["future"]
+        })].sort(),
+        ["future", "missions"]
+    );
 });

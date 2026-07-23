@@ -59,7 +59,7 @@ export default function SatelliteInfoDialog() {
                 <h3 id="tleInfoTitle" className="!m-0 !min-w-0 !pr-2 !font-sans !text-[15px] !font-bold">{dialog.title}</h3>
                 <button className="!size-[30px] !cursor-pointer !rounded-full !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-tertiary)] !text-[var(--orbit-text-primary)]" type="button" aria-label="Close" onClick={() => setDialog(initialDialog)}>×</button>
             </header>
-            <div className={`tle-info-content ${scrollClass}`} tabIndex={0} aria-label="Contenido de los parametros TLE" dangerouslySetInnerHTML={{ __html: dialog.html }} />
+            <div className={`tle-info-content ${scrollClass} !overscroll-contain`} tabIndex={0} aria-label="Contenido de los parametros TLE" dangerouslySetInnerHTML={{ __html: dialog.html }} />
         </section>
     </div>;
 }

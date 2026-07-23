@@ -30,3 +30,7 @@ dist/
 build/
 server/ui-artifacts/
 tests/artifacts/
+
+# Local high-bit-depth source imagery. Commit the browser-ready lossless PNG
+# (`front/assets/basemap/moon_color_4k_lossless.png`) instead of the TIFF.
+/front/assets/basemap/Moon_color_16bit_srgb_4k.tif

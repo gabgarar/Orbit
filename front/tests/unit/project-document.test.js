@@ -13,7 +13,8 @@ test("project document normalizes optional data into a stable export contract", 
         name: "  Mission Alpha  ",
         satellites: ["ISS"],
         layerNames: { ISS: "Station" },
-        manualOrbits: [manualOrbit]
+        manualOrbits: [manualOrbit],
+        celestialBodies: [{ kind: "earth", visible: false }, { kind: "moon", visible: false }, "sun", { kind: "moon", visible: true }, { kind: "invalid" }]
     });
     assert.equal(document.format, PROJECT_FORMAT);
     assert.equal(document.version, PROJECT_VERSION);
@@ -22,6 +23,7 @@ test("project document normalizes optional data into a stable export contract", 
     assert.deepEqual(document.manualOrbits, [manualOrbit]);
     assert.notEqual(document.manualOrbits[0], manualOrbit);
     assert.notEqual(document.manualOrbits[0].visual, manualOrbit.visual);
+    assert.deepEqual(document.celestialBodies, [{ kind: "moon", visible: false }, { kind: "sun", visible: true }]);
     assert.deepEqual(document.layerTree, { folders: [], layerParents: {} });
     assert.equal(isProjectDocument(document), true);
 });

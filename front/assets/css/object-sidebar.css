@@ -228,6 +228,53 @@ body.with-toolbars #objectSidebar.collapsed {
     color: var(--orbit-text-primary);
 }
 
+/* Layer types are expressed through compact, named icons rather than text
+   badges. The button retains the full accessible name and tooltip. */
+.object-list-item:not(.object-list-add-item) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.layer-display-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.layer-type-icon {
+    display: inline-grid;
+    flex: 0 0 auto;
+    width: 17px;
+    height: 17px;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+    border-radius: 5px;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.layer-type-icon svg {
+    width: 13px;
+    height: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.layer-type-icon.is-satellite { color: #86a9ff; }
+.layer-type-icon.is-ground-station { color: #74d8c9; }
+.layer-type-icon.is-moon { color: #c4d0e6; }
+.layer-type-icon.is-sun { color: #ffc766; }
+.layer-type-icon.is-earth { color: #5fb6ff; }
+.layer-type-icon.is-bodies { color: #b9a7ff; }
+.layer-type-icon.is-point { color: #d895ff; }
+.layer-type-icon.is-layer { color: #9bb1cf; }
+
+.object-list-row.is-permanent { grid-template-columns: minmax(0, 1fr) auto; }
+
 .object-visibility-btn {
     border: 0;
     background: transparent;
@@ -557,6 +604,21 @@ body.with-toolbars #objectSidebar.collapsed {
 .tle-info-content {
     display: grid;
     gap: 10px;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--orbit-scrollbar-thumb) transparent;
+}
+
+.tle-info-content::-webkit-scrollbar { width: 10px; }
+.tle-info-content::-webkit-scrollbar-track { background: transparent; }
+.tle-info-content::-webkit-scrollbar-thumb {
+    border: 2px solid var(--orbit-bg-secondary);
+    border-radius: 999px;
+    background: linear-gradient(180deg, var(--orbit-scrollbar-thumb), var(--orbit-scrollbar-thumb-end));
+    background-clip: padding-box;
 }
 
 .tle-info-title {
@@ -867,6 +929,7 @@ body.with-toolbars #objectSidebar.collapsed {
 
 .catalog-format-badge {
     display: inline-flex;
+    flex: 0 0 auto;
     align-items: center;
     justify-content: center;
     min-width: 32px;
@@ -1734,6 +1797,70 @@ body.with-toolbars #objectSidebar.collapsed {
 .layer-tree-folder-body .object-list-row { margin-left: 0; }
 .layer-tree-folder-body .object-list-row .object-list-item { border: 0 !important; border-radius: 0 !important; background: transparent !important; }
 .layer-tree-folder-body .object-list-row.active .object-list-item, .layer-tree-folder-body .object-list-row .object-list-item.active { background: var(--orbit-bg-active) !important; }
+
+.layer-tree-body-section {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--orbit-border-primary) 80%, transparent);
+}
+
+.layer-tree-body-section-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    padding: 0 6px;
+    border: 0;
+    background: transparent;
+    color: var(--orbit-text-secondary);
+    text-align: left;
+    font: 700 10px/1 sans-serif;
+    letter-spacing: .11em;
+    cursor: pointer;
+}
+.layer-tree-body-section-header:hover { background: var(--orbit-bg-hover); }
+.layer-tree-body-section-header:focus-visible { outline: 2px solid var(--orbit-border-focus); outline-offset: -2px; }
+
+.layer-tree-body-section-header .layer-type-icon {
+    width: 15px;
+    height: 15px;
+    border-radius: 4px;
+}
+
+.layer-tree-body-section-header .layer-type-icon svg {
+    width: 11px;
+    height: 11px;
+}
+
+.layer-tree-body-count {
+    margin-left: auto;
+    color: var(--orbit-text-tertiary);
+    font-size: 9px;
+    letter-spacing: 0;
+}
+
+.layer-tree-body-section-rows {
+    display: grid;
+    min-height: 4px;
+    margin-left: 16px;
+    padding-left: 16px;
+    border-left: 1px solid transparent;
+}
+.layer-tree-body-section-rows:not([hidden]):not(.is-empty) {
+    border-left-color: color-mix(in srgb, var(--orbit-border-primary) 62%, transparent);
+}
+.layer-tree-body-section-rows > .object-list-row { position: relative; }
+.layer-tree-body-section-rows > .object-list-row::before {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    top: 50%;
+    left: -17px;
+    width: 17px;
+    height: 1px;
+    background: color-mix(in srgb, var(--orbit-border-primary) 70%, transparent);
+}
 
 /* Root layers use the same compact explorer-row language as folder children. */
 #objectList > .object-list-row:not(.object-list-row-add) { margin: 0; min-height: 27px; border: 0; border-radius: 0; background: transparent; }

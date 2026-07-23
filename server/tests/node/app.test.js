@@ -51,6 +51,19 @@ test("health endpoint reflects Python backend readiness", async () => {
     });
 });
 
+test("the known-good low-resolution Moon texture is served locally through the explicit assets route", async () => {
+    const app = createOrbitApp(dependencies(async () => true));
+
+    await withApp(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/assets/basemap/moon_color_low.jpg`);
+        assert.equal(response.status, 200);
+        assert.match(response.headers.get("content-type") || "", /^image\/jpeg\b/i);
+        const image = Buffer.from(await response.arrayBuffer());
+        assert.equal(image.length > 10_000, true);
+        assert.deepEqual([...image.subarray(0, 3)], [255, 216, 255]);
+    });
+});
+
 test("invalid JSON payloads use the API error contract without mutating configuration", async () => {
     let readCalls = 0;
     let saveCalls = 0;

@@ -28,7 +28,8 @@ const CONFIG_SCHEMA = {
         { key: "background_color", label: "Background Color", type: "color" },
         { key: "sky_atmosphere", label: "Sky Atmosphere", type: "checkbox" },
         { key: "globe_lighting", label: "Globe Lighting", type: "checkbox" },
-        { key: "stars_enabled", label: "Stars Enabled", type: "checkbox" }
+        { key: "stars_enabled", label: "Stars Enabled", type: "checkbox" },
+        { key: "earth_basemap", label: "Earth Basemap", type: "select", options: ["natural-earth", "earth2km-local", "openstreetmap", "esri-world-imagery"] }
     ],
     recording: [
         { key: "quality", label: "Recording Quality", type: "select", options: ["low", "medium", "high"] },
@@ -83,6 +84,7 @@ const FIELD_HELP = {
     "rendering.sky_atmosphere": "Muestra atmosfera del cielo.",
     "rendering.globe_lighting": "Activa iluminacion del globo por sol.",
     "rendering.stars_enabled": "Muestra el fondo de estrellas.",
+    "rendering.earth_basemap": "Mapa base de la Tierra. Natural Earth funciona sin red; Earth 2 km requiere teselas locales y los mapas externos requieren conexion.",
 
     "recording.quality": "Calidad de video de grabacion: low (24 FPS, ligero), medium (30 FPS, equilibrado), high (hasta 60 FPS, mas fluido).",
     "recording.output_format": "Formato de salida preferido. Si no es compatible con el navegador, se usa webm automaticamente.",

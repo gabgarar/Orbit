@@ -59,7 +59,12 @@ export default function SatelliteVisualizationDialog() {
                 </label>)}
             </div>
 
-            <footer id="satelliteVizActions" className="mt-3 flex justify-between gap-2">
+            <footer id="satelliteVizActions" className="mt-3 flex flex-wrap justify-between gap-2">
+                <button className="h-[calc(34px*var(--orbit-ui-scale))] cursor-pointer rounded-[9px] border border-[#416b9e] bg-[#10253f] px-3 font-sans text-[length:calc(12px*var(--orbit-ui-scale))] leading-none font-bold text-[#cbe2ff] hover:bg-[#173758]" type="button" onClick={() => {
+                    const visible = data.vectorsVisible !== true;
+                    setData((current) => ({ ...current, vectorsVisible: visible }));
+                    window.dispatchEvent(new CustomEvent("orbit:satellite-vectors-action", { detail: { id: data.id, visible } }));
+                }}>{data.vectorsVisible ? "Ocultar ejes y vectores" : "Ver ejes y vectores"}</button>
                 <button className="h-[calc(34px*var(--orbit-ui-scale))] cursor-pointer rounded-[9px] border border-[var(--orbit-border-primary)] bg-[var(--orbit-bg-tertiary)] px-3 font-sans text-[length:calc(12px*var(--orbit-ui-scale))] leading-none font-bold text-[var(--orbit-text-primary)]" type="button" onClick={() => window.dispatchEvent(new CustomEvent("orbit:satellite-viz-action", { detail: { type: "reset", id: data.id } }))}>Restablecer</button>
                 <button className="h-[calc(34px*var(--orbit-ui-scale))] cursor-pointer rounded-[9px] border border-[var(--orbit-border-success)] bg-[var(--orbit-bg-success-soft)] px-3 font-sans text-[length:calc(12px*var(--orbit-ui-scale))] leading-none font-bold text-[var(--orbit-text-primary)] hover:bg-[var(--orbit-bg-success-soft-hover)]" type="button" onClick={() => window.dispatchEvent(new CustomEvent("orbit:satellite-viz-action", { detail: { type: "apply", id: data.id, patch: data.values } }))}>Aplicar</button>
             </footer>

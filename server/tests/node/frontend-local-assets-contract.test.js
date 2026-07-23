@@ -56,7 +56,16 @@ test("frontend packages and serves Cesium and pako locally", async () => {
     assert.match(vendorScript, /Unable to download pinned runtime package/);
     assert.match(dockerfile, /npm run build --prefix react-ui/);
     assert.match(dockerfile, /apt-get install -y --no-install-recommends python3 python3-venv tar/);
+    assert.match(dockerfile, /COPY front\/ \.\/front\//);
     assert.match(dockerignore, /^react-ui\/\.runtime-vendor\/?$/m);
+    assert.doesNotMatch(
+        dockerignore,
+        /^front\/assets\/basemap\/moon_color_low\.jpg\/?$/m,
+        "the known-good Moon texture must remain in Docker's build context"
+    );
+
+    const lunarTexture = await fs.stat(path.join(projectRoot, "front", "assets", "basemap", "moon_color_low.jpg"));
+    assert.equal(lunarTexture.size > 10_000, true, "the packaged Moon texture must not be an empty placeholder");
 
     const packageConfig = JSON.parse(packageFile);
     assert.equal(packageConfig.orbitRuntimeDependencies.cesium, "1.143.0");

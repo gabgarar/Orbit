@@ -8,7 +8,8 @@ export function createProjectLifecycle(deps) {
         getGroundStationLayers, removeGroundStationLayer, clearDuplicateLayers,
         getLayerNameOverrides, clearSatelliteVisualizationConfigs, getObjectSidebar,
         getSimulationState, applySimulationRange, showConfirm, showAlert, getAlertTitle,
-        getManualOrbitEntries = () => [], restoreManualOrbits = async () => ({ restored: [], failed: [] })
+        getManualOrbitEntries = () => [], restoreManualOrbits = async () => ({ restored: [], failed: [] }),
+        getCelestialBodies = () => [], restoreCelestialBodies = () => [], clearCelestialBodies = () => {}
     } = deps;
 
     const buildDocument = () => {
@@ -27,6 +28,7 @@ export function createProjectLifecycle(deps) {
                 return !manualIds.has(normalizedId) && !normalizedId.startsWith("manual:");
             }),
             manualOrbits,
+            celestialBodies: getCelestialBodies(),
             layerNames: Object.fromEntries(getLayerNameOverrides()),
             layerTree: getObjectSidebar()?.getProjectTree?.(),
             groundStations: [...getGroundStationLayers().values()].map(({ entity, coverageEntity, ...station }) => station),
@@ -40,12 +42,16 @@ export function createProjectLifecycle(deps) {
         window.dispatchEvent(new CustomEvent("orbit:project-title", { detail: title }));
     };
 
-    const hasOpenProject = () => Boolean(getProjectName()) || getActiveSatelliteIds().length > 0 || getGroundStationLayers().size > 0 || (getObjectSidebar()?.getProjectTree?.().folders.length || 0) > 0;
+    const hasOpenProject = () => Boolean(getProjectName())
+        || getActiveSatelliteIds().length > 0
+        || getGroundStationLayers().size > 0
+        || getCelestialBodies().length > 0
+        || (getObjectSidebar()?.getProjectTree?.().folders.length || 0) > 0;
 
     const clearContents = () => {
         setAllSatelliteLayersActive(false);
         for (const stationId of [...getGroundStationLayers().keys()]) removeGroundStationLayer(stationId);
-        clearDuplicateLayers(); getLayerNameOverrides().clear(); clearSatelliteVisualizationConfigs();
+        clearCelestialBodies(); clearDuplicateLayers(); getLayerNameOverrides().clear(); clearSatelliteVisualizationConfigs();
         getObjectSidebar()?.clearProjectTree?.(); setProjectFileHandle(null); setProjectName(null);
     };
 
@@ -103,6 +109,7 @@ export function createProjectLifecycle(deps) {
             setSatelliteLayerActive(normalizedId, true);
         }
         if (project.simulation?.startDate && project.simulation?.endDate) applySimulationRange(new Date(project.simulation.startDate), new Date(project.simulation.endDate));
+        restoreCelestialBodies(project.celestialBodies);
         try {
             const restoration = await restoreManualOrbits(manualOrbits);
             if (Array.isArray(restoration?.failed) && restoration.failed.length) {

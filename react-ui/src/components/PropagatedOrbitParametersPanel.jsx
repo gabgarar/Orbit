@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { downloadChartPng } from "../../../front/js/runtime/chartPngExport.js";
 
 /*
  * Floating propagated-orbit inspector.
@@ -653,6 +654,7 @@ function OrbitParameterChart({ samples, option }) {
         setTooltip(null);
         setViewDomain({ ...baseDomain });
     };
+    const exportPng = () => downloadChartPng(svgRef.current, option.id);
     const handleWheel = (event) => {
         const pointer = pointFromClient(event.clientX, event.clientY);
         if (!isInPlot(pointer)) return;
@@ -717,6 +719,7 @@ function OrbitParameterChart({ samples, option }) {
             <span className="min-w-0 truncate text-[10px] font-semibold text-[#d8e7fc]">{option.label}{option.unit ? <small className="ml-1.5 font-medium text-[#91a8c8]">({option.unit})</small> : null}</span>
             <div className="flex shrink-0 items-center gap-2">
                 <span className="hidden text-[9px] font-medium text-[#7189aa] lg:inline">Wheel: zoom · Drag: pan</span>
+                <button className="inline-flex h-6 cursor-pointer items-center gap-1 rounded-[5px] border border-[#31506f] bg-[#0e2037] px-2 text-[9px] font-bold text-[#a9c7ed] hover:border-[#5684ba] hover:bg-[#173554] hover:text-white" type="button" onClick={exportPng} title="Export chart as PNG" aria-label="Exportar gráfica como PNG"><ExportGlyph />Export PNG</button>
                 <button className="h-6 cursor-pointer rounded-[5px] border border-[#31506f] bg-[#0e2037] px-2 text-[9px] font-bold text-[#a9c7ed] hover:border-[#5684ba] hover:bg-[#173554] hover:text-white disabled:cursor-default disabled:opacity-45" type="button" disabled={!zoomed} onClick={resetView} title="Reset chart zoom and pan">Reset view</button>
                 <span className="text-[9px] font-medium text-[#7f95b6]">{points.length.toLocaleString("en-US")} samples</span>
             </div>
