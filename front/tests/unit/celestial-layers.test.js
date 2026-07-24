@@ -201,11 +201,11 @@ test("Moon/Sun positions are calculated from the exact Cesium clock and body lay
     const moon = manager.getEntity(moonId);
     const moonSurface = manager.getSurfacePrimitive(moonId);
     assert.equal(viewer.scene.moon.show, false);
-    assert.equal(moonSurface.material.type, "EmissionMap");
+    assert.equal(moonSurface.material.type, "OrbitLunarSolarSurface");
     assert.equal(moonSurface.material.uniforms.image, MOON_TEXTURE_URL);
-    // EmissionMap keeps the packaged lunar map visible independently of the
-    // face currently illuminated by the Sun.
-    assert.equal(moonSurface.onlySunLighting, false);
+    // The physical Moon now uses the real solar direction, while retaining a
+    // tiny material floor for the otherwise unlit face.
+    assert.equal(moonSurface.onlySunLighting, true);
     assert.equal(moonSurface.id, moon);
     viewer.trackedEntity = moon;
     viewer.selectedEntity = moon;

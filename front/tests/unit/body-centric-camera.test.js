@@ -145,3 +145,35 @@ test("ignores stale flights and restores the ordinary Earth frame on deactivatio
     assert.equal(controller.getFocusedBodyId(), null);
     assert.equal(calls.at(-1)[0], Cesium.Matrix4.IDENTITY);
 });
+
+test("keeps the previous frame untouched when a pooled satellite has no live position", () => {
+    const Cesium = createCesiumStub();
+    const { viewer, calls } = createViewer(Cesium);
+    const controller = createBodyCentricCameraController({
+        viewer,
+        Cesium,
+        getBodyPosition: () => null
+    });
+
+    assert.equal(controller.beginFocus("ISS (ZARYA)"), null);
+    assert.equal(controller.getFocusedBodyId(), null);
+    assert.equal(calls.length, 0);
+});
+
+test("clears a pending local focus when a pooled satellite vanishes during its flight", () => {
+    const Cesium = createCesiumStub();
+    const { viewer, calls } = createViewer(Cesium);
+    let position = new Cesium.Cartesian3(6_800_000, 0, 0);
+    const controller = createBodyCentricCameraController({
+        viewer,
+        Cesium,
+        getBodyPosition: () => position
+    });
+
+    const ticket = controller.beginFocus("ISS (ZARYA)");
+    position = null;
+
+    assert.equal(controller.activateAfterFlight(ticket), false);
+    assert.equal(controller.getFocusedBodyId(), null);
+    assert.equal(calls.length, 0);
+});

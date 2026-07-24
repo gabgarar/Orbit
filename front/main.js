@@ -292,13 +292,14 @@ const layerDisplayNameOverrides = new Map();
 // Native Cesium Sun/Moon visuals are exposed as ordinary workspace layers.
 // The manager owns their real ephemerides and transparent focus anchors.
 const celestialBodyLayers = createCelestialBodyLayerManager({ viewer, Cesium, logger });
-// The Moon uses a translation-only local camera frame after its initial
-// flight. This keeps the regular Earth-style drag/zoom controller around the
-// lunar centre without installing Cesium's EntityView tracking camera.
+// Moon and ordinary satellite focus use a translation-only local frame after
+// their initial flight. This keeps the regular Earth-style drag/zoom
+// controller around the selected target without EntityView's dynamic
+// orientation taking over the camera.
 const bodyCentricCamera = createBodyCentricCameraController({
     viewer,
     Cesium,
-    getBodyPosition: (id, time, result) => celestialBodyLayers.getPosition(id, time, result)
+    getBodyPosition: (id, time, result) => getLocalCameraTargetPosition(id, time, result)
 });
 let groundStationSequence = 1;
 let stationHeatMapTimer = null;
@@ -951,6 +952,43 @@ function isSatelliteLayer(layerId) {
     return String(getLayerType(layerId) || "SATELLITE").toUpperCase() === "SATELLITE";
 }
 
+/**
+ * Resolves the moving centre used by the local focus camera. Celestial bodies
+ * already expose ephemerides through their manager; satellites are pooled
+ * Cesium entities, so confirm the pool record still belongs to the requested
+ * satellite before reading its dynamic position property.
+ */
+function getLocalCameraTargetPosition(layerId, time, result) {
+    const id = String(layerId || "").trim();
+    if (!id) {
+        return null;
+    }
+    if (isCelestialBodyLayerId(id)) {
+        return celestialBodyLayers.getPosition(id, time, result);
+    }
+    if (!isSatelliteLayer(id)) {
+        return null;
+    }
+
+    const sourceId = getSatelliteSourceIdFromLayerId(id);
+    const entity = getSatelliteEntity(sourceId);
+    if (!entity || entity.satelliteId !== sourceId) {
+        return null;
+    }
+    const position = entity.position;
+    if (typeof position?.getValue === "function") {
+        return position.getValue(time, result) || null;
+    }
+    if (position && typeof Cesium?.Cartesian3?.clone === "function") {
+        return Cesium.Cartesian3.clone(position, result);
+    }
+    return position && Number.isFinite(Number(position.x))
+        && Number.isFinite(Number(position.y))
+        && Number.isFinite(Number(position.z))
+        ? position
+        : null;
+}
+
 function syncSelectedOrbitLayer(layerId) {
     setSelectedOrbitSatelliteId(
         isSatelliteLayer(layerId)
@@ -1105,6 +1143,9 @@ function getCompositeLayerVisibility(layerId) {
 
 function setCompositeLayerVisibility(layerId, visible) {
     if (isCelestialBodyLayerId(layerId)) {
+        if (visible !== true) {
+            deactivateLocalCameraForLayer(layerId);
+        }
         const changed = celestialBodyLayers.setVisibility(layerId, visible);
         if (changed) {
             emitObjectStateChanged({ layerId, sourceId: layerId, reason: "visibility" });
@@ -1126,11 +1167,40 @@ function setCompositeLayerVisibility(layerId, visible) {
         emitObjectStateChanged({ layerId, sourceId: layerId, reason: "visibility" });
         return;
     }
+    if (visible !== true) {
+        // A duplicate controls the source entity's visibility too, so source
+        // matching is intentional for this path.
+        deactivateLocalCameraForLayer(layerId, { matchSatelliteSource: true });
+    }
     compositeLayers.setVisibility(layerId, visible);
 }
 
 function isCompositeLayerActive(layerId) {
     return compositeLayers.isActive(layerId);
+}
+
+// The local camera stores either a source satellite id (direct globe/search
+// focus) or a workspace layer id (tree/context focus). Before a pooled
+// satellite disappears, clear either form of that focus so its last local
+// transform cannot survive without a live target. A duplicate removal is a
+// special case: it must not cancel a focus on its still-active source layer.
+function deactivateLocalCameraForLayer(layerId, { matchSatelliteSource = false } = {}) {
+    const focusedId = bodyCentricCamera.getFocusedBodyId();
+    if (!focusedId) {
+        return false;
+    }
+    if (focusedId === layerId) {
+        bodyCentricCamera.deactivate();
+        return true;
+    }
+    if (!matchSatelliteSource || !isSatelliteLayer(focusedId) || !isSatelliteLayer(layerId)) {
+        return false;
+    }
+    if (getSatelliteSourceIdFromLayerId(focusedId) !== getSatelliteSourceIdFromLayerId(layerId)) {
+        return false;
+    }
+    bodyCentricCamera.deactivate();
+    return true;
 }
 
 function removeGroundStationLayer(layerId) {
@@ -1157,9 +1227,7 @@ function setCompositeLayerActive(layerId, active) {
     if (isCelestialBodyLayerId(layerId)) {
         if (!isActive) {
             const entity = celestialBodyLayers.getEntity(layerId);
-            if (bodyCentricCamera.getFocusedBodyId() === layerId) {
-                bodyCentricCamera.deactivate();
-            }
+            deactivateLocalCameraForLayer(layerId);
             if (viewer.trackedEntity === entity) {
                 viewer.trackedEntity = undefined;
             }
@@ -1187,6 +1255,7 @@ function setCompositeLayerActive(layerId, active) {
     if (isSatelliteDuplicateLayerId(layerId)) {
         if (!isActive) {
             const sourceId = getSatelliteSourceIdFromLayerId(layerId);
+            deactivateLocalCameraForLayer(layerId);
             satelliteDuplicateLayers.delete(layerId);
             layerDisplayNameOverrides.delete(layerId);
             emitObjectStateChanged({ layerId, sourceId, reason: "activation" });
@@ -1196,6 +1265,7 @@ function setCompositeLayerActive(layerId, active) {
     }
 
     if (!isActive) {
+        deactivateLocalCameraForLayer(layerId, { matchSatelliteSource: true });
         for (const [dupId, dup] of satelliteDuplicateLayers.entries()) {
             if (dup.sourceId === layerId) {
                 satelliteDuplicateLayers.delete(dupId);
@@ -3059,13 +3129,25 @@ function focusSatellite(entity) {
         applyCameraNavigationMode("centered", { keepTrackedEntity: true });
     }
 
-    bodyCentricCamera.deactivate();
-    viewer.trackedEntity = entity;
+    const satelliteId = String(entity.satelliteId || "").trim();
+    const bodyCameraTicket = satelliteId ? bodyCentricCamera.beginFocus(satelliteId) : null;
+    if (!bodyCameraTicket) {
+        bodyCentricCamera.deactivate();
+    }
+    // A normal satellite focus keeps the Earth-style local frame; retain
+    // EntityView only as a safe fallback while a pooled entity has no current
+    // position. First-person focus below intentionally still tracks.
+    viewer.trackedEntity = bodyCameraTicket ? undefined : entity;
     entity.viewFrom = new Cesium.Cartesian3(0, -180000, 90000);
-    viewer.flyTo(entity, {
+    const flyToOptions = {
         duration: 0.8,
         offset: new Cesium.HeadingPitchRange(0, -0.35, 180000)
-    });
+    };
+    if (bodyCameraTicket) {
+        flyToOptions.complete = () => bodyCentricCamera.activateAfterFlight(bodyCameraTicket);
+        flyToOptions.cancel = () => bodyCentricCamera.cancelFocus(bodyCameraTicket);
+    }
+    viewer.flyTo(entity, flyToOptions);
 }
 
 function firstPersonSatellite(entity) {
@@ -3117,7 +3199,9 @@ function centerViewOnObject(layerId) {
     const layerType = String(getLayerType(id) || "SATELLITE").toUpperCase();
     const isMoonBody = layerType === "CELESTIAL_BODY"
         && celestialBodyLayers.getDefinition(id)?.kind === "moon";
-    if (!isMoonBody) {
+    const isSatelliteFocus = layerType === "SATELLITE";
+    const usesBodyCentricCamera = isMoonBody || isSatelliteFocus;
+    if (!usesBodyCentricCamera) {
         bodyCentricCamera.deactivate();
     }
     // Earth is our reference frame, not a distant external body. Preserve the
@@ -3129,7 +3213,7 @@ function centerViewOnObject(layerId) {
     const focus = () => {
         let flyToOptions = { offset: new Cesium.HeadingPitchRange(0, -0.35, 180000) };
         let focusBoundingSphere = null;
-        let bodyCameraTicket = null;
+        let bodyCameraTicket = isSatelliteFocus ? bodyCentricCamera.beginFocus(id) : null;
         if (layerType === "CELESTIAL_BODY") {
             const metrics = getCelestialFocusMetrics(id);
             const definition = celestialBodyLayers.getDefinition(id);
@@ -3160,14 +3244,21 @@ function centerViewOnObject(layerId) {
             flyToOptions = {
                 offset: new Cesium.HeadingPitchRange(0, -0.35, range)
             };
-            if (bodyCameraTicket) {
-                flyToOptions.complete = () => bodyCentricCamera.activateAfterFlight(bodyCameraTicket);
-                flyToOptions.cancel = () => bodyCentricCamera.cancelFocus(bodyCameraTicket);
-            }
             focusBoundingSphere = new Cesium.BoundingSphere(
                 Cesium.Cartesian3.clone(bodyPosition),
                 definition.radiusMeters
             );
+        }
+
+        if (usesBodyCentricCamera && !bodyCameraTicket) {
+            // The selected pooled satellite may have disappeared between UI
+            // selection and focus. Fall back to EntityView cleanly instead of
+            // leaving a previous Moon/Satellite frame active.
+            bodyCentricCamera.deactivate();
+        }
+        if (bodyCameraTicket) {
+            flyToOptions.complete = () => bodyCentricCamera.activateAfterFlight(bodyCameraTicket);
+            flyToOptions.cancel = () => bodyCentricCamera.cancelFocus(bodyCameraTicket);
         }
 
         const centered = centerViewOnEntity({
@@ -3177,10 +3268,10 @@ function centerViewOnObject(layerId) {
             duration: 0.8,
             flyToOptions,
             focusBoundingSphere,
-            // A Moon uses a translation-only local camera frame after the
-            // flight, so EntityView must stay off. If a runtime cannot create
-            // that frame, retain the previous tracked-body fallback.
-            trackEntity: !isMoonBody || !bodyCameraTicket
+            // Moon and ordinary satellite focus use a translation-only local
+            // frame after the flight. If no live target position is available,
+            // retain the previous EntityView fallback.
+            trackEntity: !usesBodyCentricCamera || !bodyCameraTicket
         });
         if (!centered && bodyCameraTicket) {
             bodyCentricCamera.cancelFocus(bodyCameraTicket);
@@ -4975,6 +5066,7 @@ function setupPropagatedParametersInspector() {
         onToggleObjectLayer: (id, active) => setCompositeLayerActive(id, active),
         onAddAllLayers: () => setAllSatelliteLayersActive(true),
         onRemoveAllLayers: () => {
+            bodyCentricCamera.deactivate();
             setAllSatelliteLayersActive(false);
             for (const stationId of [...groundStationLayers.keys()]) {
                 removeGroundStationLayer(stationId);
@@ -4996,6 +5088,7 @@ function setupPropagatedParametersInspector() {
             }
         },
         onHideAllObjects: () => {
+            bodyCentricCamera.deactivate();
             setAllSatellitesVisible(false);
             for (const stationId of groundStationLayers.keys()) {
                 setCompositeLayerVisibility(stationId, false);
@@ -5229,7 +5322,11 @@ function setupPropagatedParametersInspector() {
         if (isGroundStationLayerId(pickedId)) {
             focusSatellite(entity);
         } else if (isSatelliteLayer(pickedId)) {
-            firstPersonSatellite(entity);
+            // Double-click now uses the same stable local-orbit camera as
+            // regular satellite focus. The dedicated first-person helper is
+            // retained for an explicit cockpit action rather than being the
+            // default interaction.
+            focusSatellite(entity);
         } else {
             centerViewOnObject(pickedId);
         }

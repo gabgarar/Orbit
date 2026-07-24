@@ -161,7 +161,7 @@ test("physical Sun framing expands Cesium's far plane without display-scale shor
     assert.equal(far < 160_000_000_000, true);
 });
 
-test("Moon surface uses Cesium's self-lit emission map with the packaged texture", () => {
+test("Moon surface uses a solar-lit albedo material with a faint night-side floor", () => {
     const Cesium = createCesiumStub();
     const viewer = createViewer();
     const anchor = { id: "body:moon" };
@@ -179,15 +179,17 @@ test("Moon surface uses Cesium's self-lit emission map with the packaged texture
     assert.equal(primitive.id, anchor);
     assert.equal(primitive.show, true);
     assert.equal(primitive.radii.x, 1_737_400);
-    assert.equal(primitive.material.type, "EmissionMap");
+    assert.equal(primitive.material.type, "OrbitLunarSolarSurface");
     assert.equal(primitive.material.uniforms.image, MOON_TEXTURE_URL);
-    assert.equal(primitive.material.uniforms.channels, "rgb");
     assert.equal(primitive.material.uniforms.repeat.x, 1);
     assert.equal(primitive.material.uniforms.repeat.y, 1);
+    assert.equal(primitive.material.uniforms.nightSideEmission, 0.015);
+    assert.match(primitive.material.fabric.source, /material\.diffuse = albedo/);
+    assert.match(primitive.material.fabric.source, /material\.emission = albedo \* nightSideEmission/);
     assert.equal(primitive.material.minificationFilter, "linear-mipmap-linear");
     assert.equal(primitive.material.magnificationFilter, "linear");
     assert.equal(primitive.material.translucent, false);
-    assert.equal(primitive.onlySunLighting, false);
+    assert.equal(primitive.onlySunLighting, true);
     // Cesium.Moon uses an external-body opaque path without a depth test.
     assert.equal(primitive.depthTestEnabled, false);
     assert.equal(viewer.camera.frustum.far, 500_000_000);

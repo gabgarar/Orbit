@@ -8,9 +8,9 @@
  * normal `scene.primitives` collection instead, after the sky dome.
  *
  * The Moon keeps Cesium's own IAU lunar orientation and the exact scene
- * clock. Its map uses Cesium's packaged self-lit emission material so the
- * visible lunar face remains readable regardless of the current solar phase
- * while the primitive remains in the ordinary scene collection.
+ * clock. Its map is illuminated by Cesium's solar light so its terminator and
+ * lunar phases remain visible while the primitive stays in the ordinary scene
+ * collection.
  */
 
 // This detailed lunar map is kept as a project asset so Docker has it before
@@ -29,6 +29,10 @@ const SUN_FRUSTUM_MARGIN_MULTIPLIER = 1.03;
 // supplied lunar map is 4096 px wide, which can silently fall back to
 // Cesium's black default texture on constrained GPUs.
 const MOON_TEXTURE_SAFE_MAX_WIDTH = 2048;
+// Preserve only a very faint earthshine-like signal on the night side. This
+// makes the unlit disc legible without hiding the solar terminator or making a
+// missing texture indistinguishable from a real new Moon.
+const MOON_NIGHT_SIDE_EMISSION = 0.015;
 
 function createCartesian(Cesium, x = 0, y = 0, z = 0) {
     return typeof Cesium?.Cartesian3 === "function"
@@ -218,21 +222,40 @@ function createMoonMaterial(Cesium, textureUrl, {
     onTextureReady = null,
     onTextureError = null
 } = {}) {
-    if (typeof Cesium?.Material?.fromType !== "function") {
+    if (typeof Cesium?.Material !== "function") {
         return null;
     }
-    // An Image material is purely diffuse, so the Moon becomes completely
-    // black when its camera-facing hemisphere is outside the Sun's light.
-    // Cesium's built-in EmissionMap fabric samples the exact same texture but
-    // contributes it as emission, keeping lunar features visible at every
-    // simulation time without a custom WebGL shader.
+    // `diffuse` is evaluated by EllipsoidPrimitive's lighting pass. With
+    // `onlySunLighting` below it uses the actual solar direction, yielding a
+    // physical day/night terminator. A tiny emission term is deliberate
+    // earthshine rather than full self-lighting, so an unlit Moon remains a
+    // faintly readable disc instead of looking like a failed texture upload.
     const browserPlaceholder = createLunarPlaceholderCanvas();
-    const material = Cesium.Material.fromType("EmissionMap", {
-        // Node/test runtimes have no DOM canvas. They retain the URL path;
-        // browser runtimes replace the placeholder once decoding completes.
-        image: browserPlaceholder || textureUrl,
-        channels: "rgb",
-        repeat: typeof Cesium?.Cartesian2 === "function" ? new Cesium.Cartesian2(1, 1) : { x: 1, y: 1 }
+    const material = new Cesium.Material({
+        fabric: {
+            type: "OrbitLunarSolarSurface",
+            uniforms: {
+                // Node/test runtimes have no DOM canvas. They retain the URL
+                // path; browser runtimes replace the placeholder after decode.
+                image: browserPlaceholder || textureUrl,
+                repeat: typeof Cesium?.Cartesian2 === "function" ? new Cesium.Cartesian2(1, 1) : { x: 1, y: 1 },
+                nightSideEmission: MOON_NIGHT_SIDE_EMISSION
+            },
+            source: `
+                czm_material czm_getMaterial(czm_materialInput materialInput)
+                {
+                    czm_material material = czm_getDefaultMaterial(materialInput);
+                    vec3 albedo = czm_gammaCorrect(
+                        texture(image, fract(repeat * materialInput.st)).rgb
+                    );
+                    material.diffuse = albedo;
+                    material.emission = albedo * nightSideEmission;
+                    material.alpha = 1.0;
+                    return material;
+                }
+            `
+        },
+        translucent: false
     });
     loadWebGlSafeMoonTexture(textureUrl, {
         onImageCreated: (image) => {
@@ -583,11 +606,9 @@ export function createCelestialSurfaceRenderer({
             primitive = addPrimitive(collection, new Cesium.EllipsoidPrimitive({
                 radii: createCartesian(Cesium, radiusMeters, radiusMeters, radiusMeters),
                 material,
-                // The lunar map is self-lit through EmissionMap. Keeping the
-                // normal scene lighting route preserves the compatible
-                // primitive path while no solar phase can black out the map.
-                // The Sun is self-lit too, so this is harmless for it.
-                onlySunLighting: false,
+                // The Moon uses the real solar direction for its terminator;
+                // the self-lit Sun remains unchanged.
+                onlySunLighting: isMoon,
                 // Cesium's native Moon deliberately disables depth testing
                 // for an external ephemeris body. Matching that route keeps
                 // this surface from being rejected by the globe/sky depth

@@ -143,6 +143,12 @@ export function createBodyCentricCameraController({
             if (!canUseCamera || !bodyId) {
                 return null;
             }
+            // A pooled satellite can disappear or be reassigned between a
+            // click and its camera command. Do not detach the current frame
+            // unless the target has a real position at this simulation time.
+            if (!getPosition(bodyId, viewer?.clock?.currentTime)) {
+                return null;
+            }
             releaseLocalFrame();
             activeBodyId = null;
             const ticket = ++focusSequence;
@@ -157,7 +163,15 @@ export function createBodyCentricCameraController({
             }
             activeBodyId = pendingFocus.bodyId;
             pendingFocus = null;
-            return update();
+            const activated = update();
+            // A pooled satellite can be released while its camera flight is
+            // still in progress. Do not retain an active id with no local
+            // frame in that race; the caller can safely fall back to Cesium.
+            if (!activated) {
+                activeBodyId = null;
+                releaseLocalFrame();
+            }
+            return activated;
         },
 
         cancelFocus(ticket) {
