@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { createOrbitApp } from "../../src/app.js";
 
@@ -51,17 +53,45 @@ test("health endpoint reflects Python backend readiness", async () => {
     });
 });
 
-test("the known-good low-resolution Moon texture is served locally through the explicit assets route", async () => {
+test("the 4K Moon texture is served locally through the explicit assets route", async () => {
     const app = createOrbitApp(dependencies(async () => true));
 
     await withApp(app, async (baseUrl) => {
-        const response = await fetch(`${baseUrl}/assets/basemap/moon_color_low.jpg`);
+        const response = await fetch(`${baseUrl}/assets/basemap/Moon_color_16bit_srgb_4k.png`);
         assert.equal(response.status, 200);
-        assert.match(response.headers.get("content-type") || "", /^image\/jpeg\b/i);
+        assert.match(response.headers.get("content-type") || "", /^image\/png\b/i);
         const image = Buffer.from(await response.arrayBuffer());
         assert.equal(image.length > 10_000, true);
-        assert.deepEqual([...image.subarray(0, 3)], [255, 216, 255]);
+        assert.deepEqual([...image.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
     });
+});
+
+test("the generated distribution retains the Moon texture when source assets are stale", async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "orbit-moon-texture-"));
+    const frontDir = path.join(temporaryRoot, "front");
+    const reactDistDir = path.join(temporaryRoot, "dist");
+    const textureRelativePath = path.join("assets", "basemap", "Moon_color_16bit_srgb_4k.png");
+    const generatedTexture = path.join(reactDistDir, textureRelativePath);
+
+    await Promise.all([
+        fs.mkdir(path.join(frontDir, "assets", "basemap"), { recursive: true }),
+        fs.mkdir(path.dirname(generatedTexture), { recursive: true })
+    ]);
+    await fs.writeFile(generatedTexture, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+
+    try {
+        const app = createOrbitApp(dependencies(async () => true, {
+            runtime: { reactDistDir, frontDir, configDir: temporaryRoot }
+        }));
+        await withApp(app, async (baseUrl) => {
+            const response = await fetch(`${baseUrl}/assets/basemap/Moon_color_16bit_srgb_4k.png`);
+            assert.equal(response.status, 200);
+            assert.match(response.headers.get("content-type") || "", /^image\/png\b/i);
+            assert.deepEqual([...Buffer.from(await response.arrayBuffer())], [137, 80, 78, 71, 13, 10, 26, 10]);
+        });
+    } finally {
+        await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
 });
 
 test("invalid JSON payloads use the API error contract without mutating configuration", async () => {

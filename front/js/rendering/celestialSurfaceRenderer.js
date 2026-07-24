@@ -8,24 +8,27 @@
  * normal `scene.primitives` collection instead, after the sky dome.
  *
  * The Moon keeps Cesium's own IAU lunar orientation and the exact scene
- * clock. Its material uses Cesium's packaged Image material, keeping the
- * texture path identical to the known-good native Moon route while the
- * primitive remains in the ordinary scene collection.
+ * clock. Its map uses Cesium's packaged self-lit emission material so the
+ * visible lunar face remains readable regardless of the current solar phase
+ * while the primitive remains in the ordinary scene collection.
  */
 
-// This is the known-good low-resolution lunar map used by the initial
-// Cesium-based implementation. It is deliberately kept as a project asset
-// so Docker has it before the React runtime vendor files are built.
+// This detailed lunar map is kept as a project asset so Docker has it before
+// the React runtime vendor files are built.
 //
 // The URL is root-relative, so it works from every hash route and from the
 // Docker image's offline HTTP server.
-export const MOON_TEXTURE_URL = "/assets/basemap/moon_color_low.jpg";
+export const MOON_TEXTURE_URL = "/assets/basemap/Moon_color_16bit_srgb_4k.png";
 
 // Cesium's default perspective frustum ends around 500,000 km.  That safely
 // covers the Moon but not the Sun at one astronomical unit, so a physical
 // solar ellipsoid would be culled before it can render.  Keep a small margin
 // around the full disc whenever the Sun layer is visible.
 const SUN_FRUSTUM_MARGIN_MULTIPLIER = 1.03;
+// WebGL guarantees support for at least a 2048-pixel texture dimension. The
+// supplied lunar map is 4096 px wide, which can silently fall back to
+// Cesium's black default texture on constrained GPUs.
+const MOON_TEXTURE_SAFE_MAX_WIDTH = 2048;
 
 function createCartesian(Cesium, x = 0, y = 0, z = 0) {
     return typeof Cesium?.Cartesian3 === "function"
@@ -148,23 +151,124 @@ export function computeMoonModelMatrix({
     return undefined;
 }
 
-function createMoonMaterial(Cesium, textureUrl) {
+function createLunarPlaceholderCanvas() {
+    if (typeof document === "undefined" || typeof document.createElement !== "function") {
+        return null;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext?.("2d");
+    if (context) {
+        // Do not leave a black sphere onscreen during image decode/upload.
+        context.fillStyle = "#b8b6af";
+        context.fillRect(0, 0, 1, 1);
+    }
+    return canvas;
+}
+
+function loadWebGlSafeMoonTexture(textureUrl, {
+    onImageCreated = null,
+    onReady = null,
+    onError = null
+} = {}) {
+    if (
+        typeof Image !== "function"
+        || typeof document === "undefined"
+        || typeof document.createElement !== "function"
+    ) {
+        return null;
+    }
+    const image = new Image();
+    // An Image whose only reference is a local variable can be collected
+    // before its asynchronous decode completes. Let the material retain it
+    // until either load or error resolves the request.
+    onImageCreated?.(image);
+    image.decoding = "async";
+    image.onload = () => {
+        const sourceWidth = Number(image.naturalWidth || image.width);
+        const sourceHeight = Number(image.naturalHeight || image.height);
+        if (!Number.isFinite(sourceWidth) || sourceWidth <= 0 || !Number.isFinite(sourceHeight) || sourceHeight <= 0) {
+            onError?.(new Error("Moon texture has invalid dimensions."));
+            return;
+        }
+
+        // Preserve the equirectangular map aspect ratio while guaranteeing
+        // the upload stays inside the portable WebGL texture limit.
+        const targetWidth = Math.min(MOON_TEXTURE_SAFE_MAX_WIDTH, Math.round(sourceWidth));
+        const targetHeight = Math.max(1, Math.round(sourceHeight * (targetWidth / sourceWidth)));
+        const canvas = document.createElement("canvas");
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const context = canvas.getContext?.("2d");
+        if (!context) {
+            onError?.(new Error("Moon texture canvas is unavailable."));
+            return;
+        }
+        context.drawImage(image, 0, 0, targetWidth, targetHeight);
+        onReady?.(canvas);
+    };
+    image.onerror = () => onError?.(new Error(`Unable to load Moon texture: ${textureUrl}`));
+    image.src = textureUrl;
+    return image;
+}
+
+function createMoonMaterial(Cesium, textureUrl, {
+    textureContext = null,
+    onTextureReady = null,
+    onTextureError = null
+} = {}) {
     if (typeof Cesium?.Material?.fromType !== "function") {
         return null;
     }
-    // Use Cesium's own Image fabric instead of a custom lunar shader.  It is
-    // the most reliable route for browser/Docker WebGL contexts and keeps the
-    // low-resolution project map visible even when no external star field is
-    // enabled.  With `onlySunLighting: false` on the primitive, Cesium's
-    // regular scene light supplies the ambient component.
-    const material = Cesium.Material.fromType("Image", {
-        image: textureUrl,
+    // An Image material is purely diffuse, so the Moon becomes completely
+    // black when its camera-facing hemisphere is outside the Sun's light.
+    // Cesium's built-in EmissionMap fabric samples the exact same texture but
+    // contributes it as emission, keeping lunar features visible at every
+    // simulation time without a custom WebGL shader.
+    const browserPlaceholder = createLunarPlaceholderCanvas();
+    const material = Cesium.Material.fromType("EmissionMap", {
+        // Node/test runtimes have no DOM canvas. They retain the URL path;
+        // browser runtimes replace the placeholder once decoding completes.
+        image: browserPlaceholder || textureUrl,
+        channels: "rgb",
         repeat: typeof Cesium?.Cartesian2 === "function" ? new Cesium.Cartesian2(1, 1) : { x: 1, y: 1 }
     });
-    // The lunar map dimensions are powers of two (256 × 128), so Cesium can
-    // safely build a mip chain. Trilinear sampling prevents distant craters
-    // and the limb from aliasing, while linear magnification keeps close
-    // inspection smooth without inventing surface detail.
+    loadWebGlSafeMoonTexture(textureUrl, {
+        onImageCreated: (image) => {
+            material._orbitMoonSourceImage = image;
+        },
+        onReady: (canvas) => {
+            let textureSource = canvas;
+            // Cesium can bind a supplied Texture in the same material update.
+            // Swapping from one canvas source to another otherwise needs an
+            // extra idle render pass, during which Cesium samples its black
+            // default texture. Creating the texture explicitly avoids that
+            // transient (and, in request-render mode, persistent) black Moon.
+            if (textureContext && typeof Cesium?.Texture === "function") {
+                try {
+                    textureSource = new Cesium.Texture({
+                        context: textureContext,
+                        source: canvas
+                    });
+                } catch (error) {
+                    // The canvas remains a compatible fallback on contexts
+                    // that do not permit explicit texture allocation here.
+                    onTextureError?.(error);
+                }
+            }
+            material.uniforms.image = textureSource;
+            material._orbitMoonSourceImage = null;
+            onTextureReady?.();
+        },
+        onError: (error) => {
+            material._orbitMoonSourceImage = null;
+            onTextureError?.(error);
+        }
+    });
+    // The 2048-by-1024 safe canvas remains power-of-two, so Cesium can build a
+    // mip chain. Trilinear sampling prevents distant craters and the limb
+    // from aliasing, while linear magnification keeps close inspection smooth.
     if (Cesium?.TextureMinificationFilter?.LINEAR_MIPMAP_LINEAR !== undefined) {
         material.minificationFilter = Cesium.TextureMinificationFilter.LINEAR_MIPMAP_LINEAR;
     }
@@ -466,7 +570,11 @@ export function createCelestialSurfaceRenderer({
         }
         try {
             const material = isMoon
-                ? createMoonMaterial(Cesium, textureUrl)
+                ? createMoonMaterial(Cesium, textureUrl, {
+                    textureContext: viewer?.scene?.context || null,
+                    onTextureReady: () => viewer?.scene?.requestRender?.(),
+                    onTextureError: (error) => logger?.warn?.("No se pudo cargar la textura de la Luna.", error)
+                })
                 : createSunMaterial(Cesium);
             if (!material) {
                 failed = true;
@@ -475,10 +583,10 @@ export function createCelestialSurfaceRenderer({
             primitive = addPrimitive(collection, new Cesium.EllipsoidPrimitive({
                 radii: createCartesian(Cesium, radiusMeters, radiusMeters, radiusMeters),
                 material,
-                // Keep the Moon on Cesium's regular lighting path so the
-                // standard Image material remains legible on all supported
-                // WebGL drivers. The Sun is self-lit, so this is harmless
-                // for its emission material too.
+                // The lunar map is self-lit through EmissionMap. Keeping the
+                // normal scene lighting route preserves the compatible
+                // primitive path while no solar phase can black out the map.
+                // The Sun is self-lit too, so this is harmless for it.
                 onlySunLighting: false,
                 // Cesium's native Moon deliberately disables depth testing
                 // for an external ephemeris body. Matching that route keeps

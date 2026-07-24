@@ -44,6 +44,7 @@ test("frontend packages and serves Cesium and pako locally", async () => {
     assert.match(viteConfig, /publicDir:\s*"\.runtime-vendor"/);
     assert.match(viteConfig, /path\.join\(outputDirectory, "Cesium"\)/);
     assert.match(viteConfig, /path\.join\(outputDirectory, "vendor", "pako\.min\.js"\)/);
+    assert.match(viteConfig, /Moon_color_16bit_srgb_4k\.png/);
     assert.match(vendorScript, /async function packPackage/);
     assert.match(vendorScript, /"pack",/);
     assert.match(vendorScript, /cesium@\$\{versions\.cesium\}/);
@@ -52,6 +53,7 @@ test("frontend packages and serves Cesium and pako locally", async () => {
     assert.match(vendorScript, /dist", "pako\.min\.js/);
     assert.match(buildValidator, /Cesium\/Workers/);
     assert.match(buildValidator, /Cesium\/Assets/);
+    assert.match(buildValidator, /assets\/basemap\/Moon_color_16bit_srgb_4k\.png/);
     assert.match(buildValidator, /CDN reference found in generated frontend asset/);
     assert.match(vendorScript, /Unable to download pinned runtime package/);
     assert.match(dockerfile, /npm run build --prefix react-ui/);
@@ -60,11 +62,11 @@ test("frontend packages and serves Cesium and pako locally", async () => {
     assert.match(dockerignore, /^react-ui\/\.runtime-vendor\/?$/m);
     assert.doesNotMatch(
         dockerignore,
-        /^front\/assets\/basemap\/moon_color_low\.jpg\/?$/m,
-        "the known-good Moon texture must remain in Docker's build context"
+        /^front\/assets\/basemap\/Moon_color_16bit_srgb_4k\.png\/?$/m,
+        "the Moon texture must remain in Docker's build context"
     );
 
-    const lunarTexture = await fs.stat(path.join(projectRoot, "front", "assets", "basemap", "moon_color_low.jpg"));
+    const lunarTexture = await fs.stat(path.join(projectRoot, "front", "assets", "basemap", "Moon_color_16bit_srgb_4k.png"));
     assert.equal(lunarTexture.size > 10_000, true, "the packaged Moon texture must not be an empty placeholder");
 
     const packageConfig = JSON.parse(packageFile);

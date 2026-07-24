@@ -10,6 +10,8 @@ import {
 } from "./scripts/runtime-vendor-paths.mjs";
 
 const outputDirectory = path.resolve(reactUiDirectory, "../front/dist");
+const moonTextureSource = path.resolve(reactUiDirectory, "../front/assets/basemap/Moon_color_16bit_srgb_4k.png");
+const moonTextureOutput = path.join(outputDirectory, "assets", "basemap", "Moon_color_16bit_srgb_4k.png");
 
 async function requireBuildAsset(source, label) {
     try {
@@ -25,16 +27,25 @@ function copyLocalRuntimeAssets() {
         async closeBundle() {
             await Promise.all([
                 requireBuildAsset(path.join(cesiumVendorDirectory, "Cesium.js"), "Cesium Build/Cesium"),
-                requireBuildAsset(pakoVendorFile, "pako dist/pako.min.js")
+                requireBuildAsset(pakoVendorFile, "pako dist/pako.min.js"),
+                requireBuildAsset(moonTextureSource, "Moon texture")
             ]);
             await Promise.all([
                 cp(cesiumVendorDirectory, path.join(outputDirectory, "Cesium"), {
                     recursive: true,
                     force: true
                 }),
-                mkdir(path.join(outputDirectory, "vendor"), { recursive: true })
+                mkdir(path.join(outputDirectory, "vendor"), { recursive: true }),
+                mkdir(path.dirname(moonTextureOutput), { recursive: true })
             ]);
-            await copyFile(pakoVendorFile, path.join(outputDirectory, "vendor", "pako.min.js"));
+            await Promise.all([
+                copyFile(pakoVendorFile, path.join(outputDirectory, "vendor", "pako.min.js")),
+                // Source body assets are mounted before the Vite distribution
+                // at runtime. Copy the Moon map into the distribution too, so
+                // a packaged build retains a fallback if that source mount is
+                // absent or stale.
+                copyFile(moonTextureSource, moonTextureOutput)
+            ]);
         }
     };
 }

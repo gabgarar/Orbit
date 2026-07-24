@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getOrbitInfoFromTelemetry } from "../../js/objectSidebar.js";
+import { buildInfoText, getOrbitInfoFromTelemetry } from "../../js/objectSidebar.js";
 
 test("telemetry orbit fallback returns a detail payload without a catalogue mission helper", () => {
     assert.doesNotThrow(() => getOrbitInfoFromTelemetry({
@@ -24,4 +24,16 @@ test("telemetry orbit fallback remains safe when geographic telemetry is absent"
     assert.equal(orbit.kind, "unknown");
     assert.equal(orbit.altitudeKm, null);
     assert.equal(orbit.recommendedWindow, "Sin referencia");
+});
+
+test("celestial telemetry remains renderable when it has no velocity vector", () => {
+    const html = buildInfoText({
+        id: "Moon",
+        source_format: "CELESTIAL",
+        celestial_body: "moon",
+        geo: {}
+    });
+
+    assert.match(html, /Velocidad X/);
+    assert.match(html, />-<\/span>/);
 });

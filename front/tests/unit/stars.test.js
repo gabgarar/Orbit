@@ -25,7 +25,7 @@ test("disabling stars only releases the Tycho background and preserves celestial
     const nativeMoon = createTrackedVisibility(true);
     const moonSurface = {
         show: true,
-        material: { type: "Image", uniforms: { image: "/assets/basemap/moon_color_low.jpg" } }
+        material: { type: "Image", uniforms: { image: "/assets/basemap/Moon_color_16bit_srgb_4k.png" } }
     };
     const solarSurface = { show: true, material: { fabric: { type: "OrbitSolarEmission" } } };
     const viewer = {
@@ -67,7 +67,7 @@ test("disabling stars only releases the Tycho background and preserves celestial
     assert.equal(nativeSun.writes, 0);
     assert.equal(nativeMoon.writes, 0);
     assert.equal(moonSurface.show, true);
-    assert.equal(moonSurface.material.uniforms.image, "/assets/basemap/moon_color_low.jpg");
+    assert.equal(moonSurface.material.uniforms.image, "/assets/basemap/Moon_color_16bit_srgb_4k.png");
     assert.equal(solarSurface.show, true);
 
     assert.equal(applyStarsConfig({

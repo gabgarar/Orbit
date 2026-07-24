@@ -85,6 +85,7 @@ import {
     getCelestialMaximumZoomDistance,
     getSafeCelestialFocusRange
 } from "./js/runtime/centerView.js";
+import { createBodyCentricCameraController } from "./js/runtime/bodyCentricCamera.js";
 import {
     emitPropagatedParametersContext,
     emitPropagatedParametersOpen,
@@ -291,6 +292,14 @@ const layerDisplayNameOverrides = new Map();
 // Native Cesium Sun/Moon visuals are exposed as ordinary workspace layers.
 // The manager owns their real ephemerides and transparent focus anchors.
 const celestialBodyLayers = createCelestialBodyLayerManager({ viewer, Cesium, logger });
+// The Moon uses a translation-only local camera frame after its initial
+// flight. This keeps the regular Earth-style drag/zoom controller around the
+// lunar centre without installing Cesium's EntityView tracking camera.
+const bodyCentricCamera = createBodyCentricCameraController({
+    viewer,
+    Cesium,
+    getBodyPosition: (id, time, result) => celestialBodyLayers.getPosition(id, time, result)
+});
 let groundStationSequence = 1;
 let stationHeatMapTimer = null;
 let currentProjectFileHandle = null;
@@ -371,7 +380,10 @@ const projectLifecycle = createProjectLifecycle({
     removeGroundStationLayer,
     getCelestialBodies: () => celestialBodyLayers.getSnapshot(),
     restoreCelestialBodies: (entries) => celestialBodyLayers.restore(entries),
-    clearCelestialBodies: () => celestialBodyLayers.clear(),
+    clearCelestialBodies: () => {
+        bodyCentricCamera.deactivate();
+        celestialBodyLayers.clear();
+    },
     clearDuplicateLayers: () => satelliteDuplicateLayers.clear(),
     getLayerNameOverrides: () => layerDisplayNameOverrides,
     clearSatelliteVisualizationConfigs: clearAllSatelliteVisualizationConfigs,
@@ -987,7 +999,9 @@ function getCelestialFocusMetrics(layerId) {
 }
 
 function getCameraMaximumZoomDistance() {
-    const trackedMetrics = getCelestialFocusMetrics(viewer?.trackedEntity?.id);
+    const trackedMetrics = getCelestialFocusMetrics(
+        viewer?.trackedEntity?.id || bodyCentricCamera.getFocusedBodyId()
+    );
     return Math.max(
         DEFAULT_CAMERA_MAXIMUM_ZOOM_DISTANCE_METERS,
         Number(trackedMetrics?.maximumZoomDistanceMeters) || 0
@@ -999,6 +1013,7 @@ function computeStationElevationDeg(stationCartesian, satCartesian) {
 }
 
 function resetCameraView() {
+    bodyCentricCamera.deactivate();
     viewer.trackedEntity = undefined;
     viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(0, 20, 20_000_000), duration: 0.8 });
 }
@@ -1142,6 +1157,9 @@ function setCompositeLayerActive(layerId, active) {
     if (isCelestialBodyLayerId(layerId)) {
         if (!isActive) {
             const entity = celestialBodyLayers.getEntity(layerId);
+            if (bodyCentricCamera.getFocusedBodyId() === layerId) {
+                bodyCentricCamera.deactivate();
+            }
             if (viewer.trackedEntity === entity) {
                 viewer.trackedEntity = undefined;
             }
@@ -2857,6 +2875,7 @@ function applyCameraNavigationMode(mode, options = {}) {
     controller.enableLook = true;
 
     if (nextMode === "free") {
+        bodyCentricCamera.deactivate();
         if (!options.keepTrackedEntity) {
             viewer.trackedEntity = undefined;
         }
@@ -3040,6 +3059,7 @@ function focusSatellite(entity) {
         applyCameraNavigationMode("centered", { keepTrackedEntity: true });
     }
 
+    bodyCentricCamera.deactivate();
     viewer.trackedEntity = entity;
     entity.viewFrom = new Cesium.Cartesian3(0, -180000, 90000);
     viewer.flyTo(entity, {
@@ -3057,6 +3077,7 @@ function firstPersonSatellite(entity) {
         applyCameraNavigationMode("centered", { keepTrackedEntity: true });
     }
 
+    bodyCentricCamera.deactivate();
     viewer.trackedEntity = entity;
     // Offsets muy pequeños para sensación de cámara embarcada.
     entity.viewFrom = new Cesium.Cartesian3(0, 0, 2.5);
@@ -3094,6 +3115,11 @@ function centerViewOnObject(layerId) {
     }
 
     const layerType = String(getLayerType(id) || "SATELLITE").toUpperCase();
+    const isMoonBody = layerType === "CELESTIAL_BODY"
+        && celestialBodyLayers.getDefinition(id)?.kind === "moon";
+    if (!isMoonBody) {
+        bodyCentricCamera.deactivate();
+    }
     // Earth is our reference frame, not a distant external body. Preserve the
     // normal Cesium Home framing while retaining the Earth layer selection.
     if (layerType === "EARTH") {
@@ -3103,6 +3129,7 @@ function centerViewOnObject(layerId) {
     const focus = () => {
         let flyToOptions = { offset: new Cesium.HeadingPitchRange(0, -0.35, 180000) };
         let focusBoundingSphere = null;
+        let bodyCameraTicket = null;
         if (layerType === "CELESTIAL_BODY") {
             const metrics = getCelestialFocusMetrics(id);
             const definition = celestialBodyLayers.getDefinition(id);
@@ -3124,26 +3151,41 @@ function centerViewOnObject(layerId) {
             }
 
             const range = metrics.focusRangeMeters;
-            // `viewFrom` is also consumed after the initial flight by Cesium's
-            // tracked entity camera. Its magnitude remains outside the body.
+            // Retain a safe EntityView offset as a fallback for any physical
+            // body that cannot use the body-centric controller.
             entity.viewFrom = new Cesium.Cartesian3(0, -range, range * 0.24);
+            if (definition.kind === "moon") {
+                bodyCameraTicket = bodyCentricCamera.beginFocus(id);
+            }
             flyToOptions = {
                 offset: new Cesium.HeadingPitchRange(0, -0.35, range)
             };
+            if (bodyCameraTicket) {
+                flyToOptions.complete = () => bodyCentricCamera.activateAfterFlight(bodyCameraTicket);
+                flyToOptions.cancel = () => bodyCentricCamera.cancelFocus(bodyCameraTicket);
+            }
             focusBoundingSphere = new Cesium.BoundingSphere(
                 Cesium.Cartesian3.clone(bodyPosition),
                 definition.radiusMeters
             );
         }
 
-        return centerViewOnEntity({
+        const centered = centerViewOnEntity({
             viewer,
             entity,
             logger,
             duration: 0.8,
             flyToOptions,
-            focusBoundingSphere
+            focusBoundingSphere,
+            // A Moon uses a translation-only local camera frame after the
+            // flight, so EntityView must stay off. If a runtime cannot create
+            // that frame, retain the previous tracked-body fallback.
+            trackEntity: !isMoonBody || !bodyCameraTicket
         });
+        if (!centered && bodyCameraTicket) {
+            bodyCentricCamera.cancelFocus(bodyCameraTicket);
+        }
+        return centered;
     };
 
     // Cesium's physical ellipsoid primitives intentionally render only in

@@ -161,7 +161,7 @@ test("physical Sun framing expands Cesium's far plane without display-scale shor
     assert.equal(far < 160_000_000_000, true);
 });
 
-test("Moon surface uses Cesium's stable Image material with the packaged texture", () => {
+test("Moon surface uses Cesium's self-lit emission map with the packaged texture", () => {
     const Cesium = createCesiumStub();
     const viewer = createViewer();
     const anchor = { id: "body:moon" };
@@ -179,8 +179,9 @@ test("Moon surface uses Cesium's stable Image material with the packaged texture
     assert.equal(primitive.id, anchor);
     assert.equal(primitive.show, true);
     assert.equal(primitive.radii.x, 1_737_400);
-    assert.equal(primitive.material.type, "Image");
+    assert.equal(primitive.material.type, "EmissionMap");
     assert.equal(primitive.material.uniforms.image, MOON_TEXTURE_URL);
+    assert.equal(primitive.material.uniforms.channels, "rgb");
     assert.equal(primitive.material.uniforms.repeat.x, 1);
     assert.equal(primitive.material.uniforms.repeat.y, 1);
     assert.equal(primitive.material.minificationFilter, "linear-mipmap-linear");
@@ -204,6 +205,84 @@ test("Moon surface uses Cesium's stable Image material with the packaged texture
     renderer.destroy();
     assert.equal(viewer.scene.primitives.values.length, 0);
     assert.equal(primitive.destroyed, true);
+});
+
+test("Moon texture is reduced to a portable WebGL canvas before upload", () => {
+    const originalDocument = globalThis.document;
+    const originalImage = globalThis.Image;
+    const canvases = [];
+    const drawCalls = [];
+    let pendingImage = null;
+    globalThis.document = {
+        createElement(tagName) {
+            assert.equal(tagName, "canvas");
+            const context = {
+                fillStyle: null,
+                fillRect() {},
+                drawImage(...argumentsList) {
+                    drawCalls.push(argumentsList);
+                }
+            };
+            const canvas = {
+                width: 0,
+                height: 0,
+                getContext: (kind) => {
+                    assert.equal(kind, "2d");
+                    return context;
+                }
+            };
+            canvases.push(canvas);
+            return canvas;
+        }
+    };
+    globalThis.Image = class FakeImage {
+        constructor() {
+            this.naturalWidth = 4096;
+            this.naturalHeight = 2048;
+            pendingImage = this;
+        }
+
+        set src(value) {
+            this.source = value;
+        }
+    };
+
+    try {
+        const Cesium = createCesiumStub();
+        const viewer = createViewer();
+        const renderer = createCelestialSurfaceRenderer({
+            kind: "moon",
+            viewer,
+            Cesium,
+            radiusMeters: 1_737_400,
+            getPosition: (_time, result) => Object.assign(result, { x: 10, y: 20, z: 30 })
+        });
+
+        assert.equal(renderer.setVisible(true), true);
+        const primitive = renderer.getPrimitive();
+        // Retaining this object is essential: browsers may otherwise collect
+        // a detached Image before its asynchronous onload callback fires.
+        assert.equal(primitive.material._orbitMoonSourceImage, pendingImage);
+        assert.equal(primitive.material.uniforms.image.width, 1);
+
+        pendingImage.onload();
+        const textureCanvas = primitive.material.uniforms.image;
+        assert.equal(canvases.length, 2);
+        assert.equal(textureCanvas.width, 2048);
+        assert.equal(textureCanvas.height, 1024);
+        assert.equal(primitive.material._orbitMoonSourceImage, null);
+        assert.equal(drawCalls.length, 1);
+        assert.equal(drawCalls[0][3], 2048);
+        assert.equal(drawCalls[0][4], 1024);
+        // One request makes the body visible and the other flushes the
+        // decoded canvas after its texture source changes.
+        assert.equal(viewer.scene.renderRequests, 2);
+    } finally {
+        if (originalDocument === undefined) delete globalThis.document;
+        else globalThis.document = originalDocument;
+        if (originalImage === undefined) delete globalThis.Image;
+        else globalThis.Image = originalImage;
+    }
 });
 
 test("Sun surface is a physical emissive primitive rather than the occluded environment Sun", () => {

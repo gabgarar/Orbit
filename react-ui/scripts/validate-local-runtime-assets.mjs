@@ -39,7 +39,8 @@ await Promise.all([
     requireFile("Cesium/Widgets/widgets.css"),
     requireDirectory("Cesium/Assets"),
     requireDirectory("Cesium/Workers"),
-    requireFile("vendor/pako.min.js")
+    requireFile("vendor/pako.min.js"),
+    requireFile("assets/basemap/Moon_color_16bit_srgb_4k.png")
 ]);
 
 for await (const filePath of textFiles(outputDirectory)) {
@@ -48,4 +49,3 @@ for await (const filePath of textFiles(outputDirectory)) {
         throw new Error(`CDN reference found in generated frontend asset: ${path.relative(outputDirectory, filePath)}`);
     }
 }
-

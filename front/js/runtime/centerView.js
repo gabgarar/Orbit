@@ -63,6 +63,7 @@ export function centerViewOnEntity({
     duration = DEFAULT_CENTER_VIEW_DURATION_SECONDS,
     flyToOptions = {},
     focusBoundingSphere = null,
+    trackEntity = true,
     logger = null
 } = {}) {
     if (!viewer || !entity) {
@@ -73,7 +74,10 @@ export function centerViewOnEntity({
     const previousTrackedEntity = viewer.trackedEntity;
     try {
         viewer.selectedEntity = entity;
-        viewer.trackedEntity = entity;
+        // Physical-body callers can install their own local camera frame
+        // after the flight instead of Cesium's EntityView transform. Keep the
+        // selection either way so the rest of the UI remains in sync.
+        viewer.trackedEntity = trackEntity === false ? undefined : entity;
 
         const options = { ...flyToOptions, duration };
         // A position-only entity is deliberately used for physically-rendered

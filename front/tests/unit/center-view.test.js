@@ -56,6 +56,30 @@ test("centers and tracks any Cesium entity through the generic camera action", (
     assert.deepEqual(calls, [{ target: entity, options: { duration: 0.8 } }]);
 });
 
+test("can focus a physical body without installing Cesium's tracked-entity camera", () => {
+    const entity = { id: "body:moon" };
+    const sphere = { center: { x: 1, y: 2, z: 3 }, radius: 1_737_400 };
+    const calls = [];
+    const viewer = {
+        trackedEntity: { id: "SAT-1" },
+        camera: {
+            flyToBoundingSphere(target, options) {
+                calls.push({ target, options });
+            }
+        }
+    };
+
+    assert.equal(centerViewOnEntity({
+        viewer,
+        entity,
+        focusBoundingSphere: sphere,
+        trackEntity: false
+    }), true);
+    assert.equal(viewer.selectedEntity, entity);
+    assert.equal(viewer.trackedEntity, undefined);
+    assert.deepEqual(calls, [{ target: sphere, options: { duration: 0.8 } }]);
+});
+
 test("Earth keeps its layer selection but restores Cesium Home instead of tracking its origin", () => {
     const earth = { id: "body:earth" };
     const previousTracked = { id: "SAT-1" };

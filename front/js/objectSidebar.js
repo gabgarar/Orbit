@@ -167,7 +167,7 @@ function buildGroundStationInfoText(telemetry, sectionOpenState = {}) {
     `;
 }
 
-function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOpenState = {}, oemDomainActive = false) {
+export function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOpenState = {}, oemDomainActive = false) {
     if (!telemetry) {
         return "<div class=\"object-info-empty\">Selecciona un objeto para ver telemetria en tiempo real.</div>";
     }
@@ -178,7 +178,10 @@ function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOp
     }
 
     const g = telemetry.geo || {};
-    const v = telemetry.velocity;
+    // Celestial bodies expose positional ephemerides, not a satellite
+    // velocity vector. Keep the shared telemetry panel renderable while
+    // showing unavailable kinematic components as "-".
+    const v = telemetry.velocity || {};
     const sourceFormat = String(telemetry.source_format || "TLE").toUpperCase();
     const sourceOrigin = String(telemetry.source_origin || "CATALOG").toUpperCase();
     const oem = telemetry.oem || null;

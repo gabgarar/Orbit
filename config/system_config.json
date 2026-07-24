@@ -27,11 +27,11 @@
     "rendering": {
       "antialias_mode": "msaa",
       "antialias_enabled": true,
-      "background_color": "#03070d",
-      "sky_atmosphere": false,
-      "globe_lighting": false,
+      "background_color": "#ffffff",
+      "sky_atmosphere": true,
+      "globe_lighting": true,
       "stars_enabled": true,
-      "earth_basemap": "esri-world-imagery"
+      "earth_basemap": "natural-earth"
     },
     "recording": {
       "quality": "medium",

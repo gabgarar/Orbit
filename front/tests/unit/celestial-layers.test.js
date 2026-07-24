@@ -201,10 +201,10 @@ test("Moon/Sun positions are calculated from the exact Cesium clock and body lay
     const moon = manager.getEntity(moonId);
     const moonSurface = manager.getSurfacePrimitive(moonId);
     assert.equal(viewer.scene.moon.show, false);
-    assert.equal(moonSurface.material.type, "Image");
+    assert.equal(moonSurface.material.type, "EmissionMap");
     assert.equal(moonSurface.material.uniforms.image, MOON_TEXTURE_URL);
-    // Keep Cesium's standard Image material on its regular lighting path so
-    // the packaged lunar map is visible in every supported WebGL context.
+    // EmissionMap keeps the packaged lunar map visible independently of the
+    // face currently illuminated by the Sun.
     assert.equal(moonSurface.onlySunLighting, false);
     assert.equal(moonSurface.id, moon);
     viewer.trackedEntity = moon;
@@ -289,8 +289,8 @@ test("Earth is an immutable WGS84 scene layer with a real globe visibility toggl
     assert.equal(manager.getSnapshot().some((entry) => entry.kind === "earth"), false);
 });
 
-test("Moon surface uses the known-good low-resolution packaged texture", () => {
-    assert.equal(MOON_TEXTURE_URL, "/assets/basemap/moon_color_low.jpg");
+test("Moon surface uses the packaged 4K lunar texture", () => {
+    assert.equal(MOON_TEXTURE_URL, "/assets/basemap/Moon_color_16bit_srgb_4k.png");
 });
 
 test("celestial identifiers and project snapshots are normalised without duplicate bodies", () => {
