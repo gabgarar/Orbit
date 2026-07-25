@@ -8,6 +8,46 @@ function publishLayersPanelState(open) {
     window.dispatchEvent(new CustomEvent("orbit:layers-panel-state", { detail: { open } }));
 }
 
+const PROJECT_ACTIONS = [
+    { action: "new", label: "Nuevo proyecto", description: "Crea un espacio de trabajo vacío" },
+    { action: "open", label: "Importar proyecto", description: "Abre un archivo .json de Orbit" },
+    { action: "save", label: "Guardar proyecto", description: "Guarda los cambios del proyecto" },
+    { action: "export", label: "Exportar proyecto", description: "Descarga una copia .json" }
+];
+
+function ProjectActionsMenu({ source, left, top, onSelect }) {
+    const isContextMenu = source === "context";
+    return <div
+        id="projectActionsMenu"
+        data-project-actions-menu="true"
+        data-project-actions-source={source}
+        className={`${isContextMenu ? "fixed" : "absolute right-0 top-[calc(100%+7px)]"} z-[10260] grid w-[228px] gap-[3px] rounded-[9px] border border-[#35557e] bg-[linear-gradient(145deg,rgba(13,26,45,.98),rgba(7,15,28,.98))] p-[5px] font-[system-ui,sans-serif] shadow-[0_16px_32px_rgba(0,0,0,.46)] backdrop-blur-md`}
+        style={isContextMenu ? { left: `${left}px`, top: `${top}px` } : undefined}
+        role="menu"
+        aria-label="Acciones de proyecto"
+        onPointerDown={(event) => event.stopPropagation()}
+    >
+        <div className="flex items-center gap-[7px] border-b border-[#233b5b] px-[7px] py-[6px] text-[#a9bfdd]">
+            <span className="grid size-[17px] place-items-center text-[#83a6ff] [&>svg]:size-[15px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" aria-hidden="true"><FolderIcon /></span>
+            <span className="text-[9px] leading-none font-bold tracking-[.14em]">PROYECTO</span>
+        </div>
+        {PROJECT_ACTIONS.map(({ action, label, description }) => <button
+            className={`grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_14px] items-center gap-2 rounded-[6px] border-0 bg-transparent px-[8px] py-[7px] text-left font-[system-ui,sans-serif] transition-colors hover:bg-[#173157] focus-visible:bg-[#173157] focus-visible:outline-none${action === "export" ? " mt-[2px] border-t border-[#233b5b] pt-[9px]" : ""}`}
+            data-project-action={action}
+            type="button"
+            role="menuitem"
+            key={action}
+            onClick={() => onSelect(action)}
+        >
+            <span className="grid min-w-0 gap-[3px]">
+                <span className="text-[11px] leading-none font-semibold text-[#e0eafe]">{label}</span>
+                <span className="truncate text-[9px] leading-none font-medium text-[#8fa7c8]">{description}</span>
+            </span>
+            <span className="text-right text-[14px] leading-none text-[#7295c9]" aria-hidden="true">&#8250;</span>
+        </button>)}
+    </div>;
+}
+
 function ProjectTimeFooter() {
     const [context, setContext] = useState({ date: new Date(), mode: "realtime", isPlaying: true });
     const [designMode, setDesignMode] = useState(false);
@@ -86,6 +126,7 @@ export default function WorkspaceSidebar() {
     const [projectName, setProjectName] = useState("MY PROJECT");
     const [projectTreeExpanded, setProjectTreeExpanded] = useState(true);
     const [projectLayerCount, setProjectLayerCount] = useState(0);
+    const [projectActionsMenu, setProjectActionsMenu] = useState(null);
     const [searchMenuOpen, setSearchMenuOpen] = useState(false);
     const [searchOptions, setSearchOptions] = useState({ matchCase: false, wholeWord: false, regex: false });
     const [allLayersVisible, setAllLayersVisible] = useState(true);
@@ -170,6 +211,25 @@ export default function WorkspaceSidebar() {
     useEffect(() => {
         if (designMode) setSearchMenuOpen(false);
     }, [designMode]);
+    useEffect(() => {
+        if (designMode) setProjectActionsMenu(null);
+    }, [designMode]);
+    useEffect(() => {
+        if (!projectActionsMenu) return undefined;
+        const close = (event) => {
+            if (event.target?.closest?.("[data-project-actions-control='true'], [data-project-actions-menu='true']")) return;
+            setProjectActionsMenu(null);
+        };
+        const closeOnEscape = (event) => {
+            if (event.key === "Escape") setProjectActionsMenu(null);
+        };
+        document.addEventListener("pointerdown", close);
+        document.addEventListener("keydown", closeOnEscape);
+        return () => {
+            document.removeEventListener("pointerdown", close);
+            document.removeEventListener("keydown", closeOnEscape);
+        };
+    }, [projectActionsMenu]);
     const togglePanel = () => {
         const next = !openPanel;
         setOpenPanel(next);
@@ -201,6 +261,25 @@ export default function WorkspaceSidebar() {
             return next;
         });
     };
+    const toggleProjectActionsMenu = () => {
+        setProjectActionsMenu((current) => current?.source === "toolbar" ? null : { source: "toolbar" });
+    };
+    const openProjectContextMenu = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const margin = 8;
+        const menuWidth = 228;
+        const menuHeight = 214;
+        setProjectActionsMenu({
+            source: "context",
+            left: Math.max(margin, Math.min(event.clientX, window.innerWidth - menuWidth - margin)),
+            top: Math.max(margin, Math.min(event.clientY, window.innerHeight - menuHeight - margin))
+        });
+    };
+    const selectProjectAction = (action) => {
+        setProjectActionsMenu(null);
+        window.dispatchEvent(new CustomEvent("orbit:project-action", { detail: action }));
+    };
     return <>
         <aside id="leftSidebar" aria-label="Paneles del visor">
             <button id="leftSatellitesBtn" className={`sidebar-btn${openPanel ? " active" : ""}`} type="button" title="Capas y satelites" aria-label="Capas y satelites" onClick={togglePanel}><SatelliteIcon /></button>
@@ -211,11 +290,15 @@ export default function WorkspaceSidebar() {
             <CameraControls />
         </aside>
         <aside id="leftSatellitesPanel" className={`sidebar-panel${openPanel ? " open" : ""}`}>
-            <div className="sidebar-panel-header orbit-layers-panel-header after:!hidden max-[620px]:!min-h-[62px] max-[620px]:!p-[14px]">
+            <div className="sidebar-panel-header orbit-layers-panel-header relative z-[2] !flex !items-center !justify-between !overflow-visible after:!hidden max-[620px]:!min-h-[62px] max-[620px]:!p-[14px]">
                 <div className="orbit-layers-heading">LAYERS</div>
+                <div className="relative shrink-0">
+                    <button id="projectActionsBtn" className={`grid size-[29px] cursor-pointer place-items-center rounded-[6px] border bg-[#0c1829] text-[#a9c0df] transition-colors hover:border-[#4974aa] hover:bg-[#142640] hover:text-[#e4efff] focus-visible:border-[#5b83ca] focus-visible:bg-[#142640] focus-visible:text-[#f0f6ff] focus-visible:outline-none [&>svg]:size-[16px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]${projectActionsMenu?.source === "toolbar" ? " border-[#537fc2] bg-[#183152] text-[#edf4ff]" : " border-[#274261]"}`} data-project-actions-control="true" type="button" title="Acciones de proyecto" aria-label="Acciones de proyecto" aria-haspopup="menu" aria-expanded={projectActionsMenu?.source === "toolbar"} aria-controls="projectActionsMenu" onClick={toggleProjectActionsMenu}><FolderIcon /></button>
+                    {projectActionsMenu?.source === "toolbar" && <ProjectActionsMenu source="toolbar" onSelect={selectProjectAction} />}
+                </div>
             </div>
             <div className="orbit-project-header mx-[14px] mb-2 flex min-h-[41px] items-center justify-between gap-2">
-                <button className="orbit-project-root-toggle flex min-w-0 flex-1 cursor-pointer items-center gap-[5px] rounded-[6px] border-0 bg-transparent px-[5px] py-0 text-left font-[system-ui,sans-serif] text-[#edf3ff] hover:bg-[#101d31] focus-visible:outline-2 focus-visible:outline-[#5278db] focus-visible:outline-offset-[-2px]" data-layer-tree-project-root="true" type="button" title={projectTreeExpanded ? "Plegar proyecto" : "Desplegar proyecto"} aria-label={`${projectTreeExpanded ? "Plegar" : "Desplegar"} proyecto ${projectName}`} aria-expanded={projectTreeExpanded} aria-controls="leftSatellitesPanelContent" onClick={() => setProjectTreeExpanded((expanded) => !expanded)}>
+                <button className="orbit-project-root-toggle flex min-w-0 flex-1 cursor-pointer items-center gap-[5px] rounded-[6px] border-0 bg-transparent px-[5px] py-0 text-left font-[system-ui,sans-serif] text-[#edf3ff] hover:bg-[#101d31] focus-visible:outline-2 focus-visible:outline-[#5278db] focus-visible:outline-offset-[-2px]" data-layer-tree-project-root="true" type="button" title={projectTreeExpanded ? "Plegar proyecto" : "Desplegar proyecto"} aria-label={`${projectTreeExpanded ? "Plegar" : "Desplegar"} proyecto ${projectName}`} aria-expanded={projectTreeExpanded} aria-controls="leftSatellitesPanelContent" onClick={() => setProjectTreeExpanded((expanded) => !expanded)} onContextMenu={openProjectContextMenu}>
                     <span className={`layer-tree-chevron grid place-items-center transition-transform${projectTreeExpanded ? "" : " -rotate-90"}`} aria-hidden="true"><ChevronDownIcon /></span>
                     <span className="layer-tree-icon" aria-hidden="true"><FolderIcon /></span>
                     <span className="orbit-project-title min-w-0 flex-1 -translate-y-px truncate text-[11px] leading-none font-bold tracking-[.1em] text-[#c3d0e5]" data-project-title title={projectName}>{projectName}</span>
@@ -226,7 +309,7 @@ export default function WorkspaceSidebar() {
                         {allLayersVisible ? <EyeIcon /> : <EyeOffIcon />}
                     </button>
                     <button className="object-global-remove-btn inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#542637] !bg-[#1c111a] !p-0 !text-[#f1a8b6] hover:!border-[#d15c74] hover:!bg-[#371421] hover:!text-[#ffe3e8] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="removeAllLayersHeaderBtn" type="button" title={designMode ? "Las capas no se pueden eliminar durante el diseño orbital" : "Quitar todas las capas"} aria-label="Quitar todas las capas" disabled={designMode} hidden={!hasActiveLayers}><TrashIcon /></button>
-                    <button className="object-add-btn !inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#4167ff] !bg-[#3d5cf4] !text-[25px] !text-white !shadow-[0_6px_14px_rgba(54,84,238,.3)] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="openCatalogBtn" type="button" title={designMode ? "El catálogo se bloquea durante el diseño orbital" : "Anadir capa"} disabled={designMode}><PlusIcon /></button>
+                    <button className="object-add-btn !inline-flex !h-[33px] !min-w-[76px] !cursor-pointer !items-center !justify-center !gap-[5px] !rounded-[7px] !border !border-[#4167ff] !bg-[#3d5cf4] !px-[9px] !text-[11px] !font-bold !text-white !shadow-[0_6px_14px_rgba(54,84,238,.3)] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-[15px] [&>svg]:shrink-0 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="openCatalogBtn" type="button" title={designMode ? "El catálogo se bloquea durante el diseño orbital" : "Añadir capa"} aria-label="Añadir capa" disabled={designMode}><PlusIcon /><span>Añadir</span></button>
                 </div>
             </div>
             <div className="mt-[8px] grid h-[38px] grid-cols-[36px_minmax(0,1fr)_42px] items-center rounded-lg border border-[#1a2a47] bg-[#0a1221] mx-[14px] mb-[12px] font-[system-ui,sans-serif] text-sm leading-none font-medium text-[#a5b2c9] [&>svg]:m-auto [&>svg]:size-[18px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-width:1.8]" role="search">
@@ -245,6 +328,7 @@ export default function WorkspaceSidebar() {
             <ProjectTimeFooter />
             <div className="sidebar-panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Redimensionar panel de capas" />
         </aside>
+        {projectActionsMenu?.source === "context" && <ProjectActionsMenu source="context" left={projectActionsMenu.left} top={projectActionsMenu.top} onSelect={selectProjectAction} />}
         <div id="legacyHiddenInfo" hidden />
     </>;
 }

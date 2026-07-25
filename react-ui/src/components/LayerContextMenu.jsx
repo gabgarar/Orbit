@@ -61,10 +61,12 @@ export default function LayerContextMenu() {
     const layerType = String(menu.layerType || "").toUpperCase();
     const isEarth = menu.earth === true || layerType === "EARTH" || String(menu.id || "").toLowerCase() === "body:earth";
     const isCelestialBody = layerType === "CELESTIAL_BODY" || isEarth;
+    const visibilityAction = ["toggle-visibility", menu.visible === false ? "Mostrar capa" : "Ocultar capa"];
     const baseActions = menu.groundStation
-        ? [["center-view", "Centrar vista"], ["station", "Update parameters"], ["remove", "Eliminar capa"]]
+        ? [["center-view", "Centrar vista"], visibilityAction, ["station", "Update parameters"], ["remove", "Eliminar capa"]]
         : [
             ["center-view", "Centrar vista"],
+            visibilityAction,
             ["rename", "Renombrar capa"],
             ...(menu.manualOrbit === true ? [["edit-manual", "Editar órbita manual"]] : []),
             ["propagated-parameters", "Parámetros orbitales propagados"],
@@ -75,9 +77,9 @@ export default function LayerContextMenu() {
             ["remove", "Eliminar capa"]
         ];
     const actions = isEarth
-        ? [["center-view", "Centrar vista"], ["earth-basemap", "Mapa base"]]
+        ? [["center-view", "Centrar vista"], visibilityAction, ["earth-basemap", "Mapa base"]]
         : isCelestialBody
-        ? [["center-view", "Centrar vista"], ["rename", "Renombrar capa"], ["remove", "Eliminar capa"]]
+        ? [["center-view", "Centrar vista"], visibilityAction, ["rename", "Renombrar capa"], ["remove", "Eliminar capa"]]
         : baseActions;
 
     const choices = Array.isArray(basemapChoices?.choices) ? basemapChoices.choices : [];

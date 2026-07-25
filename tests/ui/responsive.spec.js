@@ -16,6 +16,12 @@ const catalogControlSelectors = [
     "[data-testid='catalog-select-all']",
     "#catalogModal button[aria-label='Cerrar']"
 ];
+const projectActionOptions = [
+    { action: "new", label: "Nuevo proyecto" },
+    { action: "open", label: "Importar proyecto" },
+    { action: "save", label: "Guardar proyecto" },
+    { action: "export", label: "Exportar proyecto" }
+];
 let workspaceSequence = 0;
 
 test.beforeEach(async ({ page }) => {
@@ -129,6 +135,22 @@ async function openLayerAddMenu(page) {
     await expect(addMenu).toHaveClass(/open/);
 }
 
+async function expectProjectActionsMenu(page, source) {
+    const menu = page.locator("#projectActionsMenu");
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute("role", "menu");
+    await expect(menu).toHaveAttribute("aria-label", "Acciones de proyecto");
+    await expect(menu).toHaveAttribute("data-project-actions-source", source);
+    await expectPanelInsideViewport(page, "#projectActionsMenu");
+    for (const { action, label } of projectActionOptions) {
+        const item = menu.locator(`[data-project-action="${action}"]`);
+        await expect(item).toBeVisible();
+        await expect(item).toHaveAttribute("role", "menuitem");
+        await expect(item).toContainText(label);
+    }
+    return menu;
+}
+
 async function chooseLayerKind(page, kind) {
     await openLayerAddMenu(page);
     const addLayerMenu = page.locator("#layerAddMenu .folder-add-menu").filter({ hasText: "Add layer" });
@@ -207,7 +229,7 @@ async function expectApplicationShellLayout(page) {
     const layerPanelControls = await page.evaluate(() => {
         const panel = document.querySelector("#leftSatellitesPanel");
         const resizeHandle = panel?.querySelector(".sidebar-panel-resize-handle");
-        const addLayer = panel?.querySelector(".react-layer-tree .object-list-add-item");
+        const addLayer = panel?.querySelector("#openCatalogBtn");
         const panelRect = panel?.getBoundingClientRect();
         const resizeHandleRect = resizeHandle?.getBoundingClientRect();
         const addLayerRect = addLayer?.getBoundingClientRect();
@@ -220,6 +242,7 @@ async function expectApplicationShellLayout(page) {
                     ? {
                         ...addLayerRect.toJSON(),
                         fontSize: Number.parseFloat(getComputedStyle(addLayer).fontSize),
+                        label: addLayer.textContent?.trim(),
                         visible: getComputedStyle(addLayer).visibility !== "hidden" && addLayerRect.width > 0 && addLayerRect.height > 0
                     }
                     : null
@@ -232,8 +255,10 @@ async function expectApplicationShellLayout(page) {
     expect(layerPanelControls.resizeHandle.right, "Resize handle must reach the right panel edge").toBeGreaterThanOrEqual(layerPanelControls.panel.right - 1);
     expect(layerPanelControls.addLayer, "Visible React add-layer control must exist").not.toBeNull();
     expect(layerPanelControls.addLayer.visible, "Add-layer control must be visible").toBeTruthy();
-    expect(layerPanelControls.addLayer.height, "Add-layer control must remain compact").toBeLessThanOrEqual(42);
+    expect(layerPanelControls.addLayer.height, "Add-layer control must remain a clear call to action").toBeGreaterThanOrEqual(30);
+    expect(layerPanelControls.addLayer.height, "Add-layer control must remain compact").toBeLessThanOrEqual(38);
     expect(layerPanelControls.addLayer.fontSize, "Layer names must match catalog density").toBeLessThanOrEqual(12);
+    expect(layerPanelControls.addLayer.label, "Add-layer control must explain its action").toContain("Añadir");
 }
 
 async function expectCatalogLayout(page, zoom = 1) {
@@ -403,6 +428,63 @@ for (const zoom of zoomLevels) {
         await expectCatalogLayout(page, zoom);
     });
 }
+
+test("Las acciones de proyecto estan disponibles desde Layers y su raiz", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await openWorkspace(page);
+    await ensureLayersPanelOpen(page);
+
+    const projectActionsButton = page.locator("#projectActionsBtn");
+    const projectRoot = page.locator("[data-layer-tree-project-root]");
+    await expect(projectActionsButton).toBeVisible();
+    await expect(projectActionsButton).toHaveAccessibleName("Acciones de proyecto");
+    await expect(projectActionsButton).toHaveAttribute("aria-haspopup", "menu");
+    await expect(projectActionsButton).toHaveAttribute("aria-expanded", "false");
+    await expect(projectActionsButton.locator("svg")).toHaveCount(1);
+
+    await projectActionsButton.click();
+    const toolbarMenu = await expectProjectActionsMenu(page, "toolbar");
+    await expect(projectActionsButton).toHaveAttribute("aria-expanded", "true");
+    await page.keyboard.press("Escape");
+    await expect(toolbarMenu).toHaveCount(0);
+    await expect(projectActionsButton).toHaveAttribute("aria-expanded", "false");
+
+    // Capture the bridge event before its normal bubble listener. The menu
+    // contract can then verify all commands without opening file pickers,
+    // triggering downloads, or replacing the workspace under test.
+    await page.evaluate(() => {
+        const events = [];
+        const listener = (event) => {
+            events.push(String(event.detail || ""));
+            event.stopImmediatePropagation();
+        };
+        window.__orbitProjectActionsMenuTest = { events, listener };
+        window.addEventListener("orbit:project-action", listener, true);
+    });
+    try {
+        for (const { action } of projectActionOptions) {
+            await projectActionsButton.click();
+            const menu = await expectProjectActionsMenu(page, "toolbar");
+            await menu.locator(`[data-project-action="${action}"]`).click();
+            await expect(menu).toHaveCount(0);
+        }
+        const dispatchedActions = await page.evaluate(() => window.__orbitProjectActionsMenuTest.events);
+        expect(dispatchedActions).toEqual(projectActionOptions.map(({ action }) => action));
+    } finally {
+        await page.evaluate(() => {
+            const probe = window.__orbitProjectActionsMenuTest;
+            if (probe) window.removeEventListener("orbit:project-action", probe.listener, true);
+            delete window.__orbitProjectActionsMenuTest;
+        });
+    }
+
+    await expect(projectRoot).toBeVisible();
+    await projectRoot.click({ button: "right" });
+    const contextMenu = await expectProjectActionsMenu(page, "context");
+    await expect(projectActionsButton).toHaveAttribute("aria-expanded", "false");
+    await page.keyboard.press("Escape");
+    await expect(contextMenu).toHaveCount(0);
+});
 
 test("Los paneles principales mantienen controles accesibles", async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 768 });

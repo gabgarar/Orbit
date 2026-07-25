@@ -1202,17 +1202,32 @@ export function setupObjectSidebar({
 
     const folderContextMenu = document.createElement("div");
     folderContextMenu.id = "folderContextMenu";
+    folderContextMenu.setAttribute("role", "menu");
+    folderContextMenu.tabIndex = -1;
     folderContextMenu.innerHTML = `
-        <div class="folder-add-menu"><button class="catalog-context-action" type="button">Add layer <span>›</span></button><div class="folder-add-submenu">
-            <div class="folder-add-menu"><button class="catalog-context-action" type="button">Add satellite <span>›</span></button><div class="folder-add-submenu">
-                <button class="catalog-context-action" data-folder-action="catalog" type="button">Add TLE from catalog</button>
-                <button class="catalog-context-action" data-folder-action="import" type="button">Import satellite</button>
+        <div class="folder-add-menu"><button class="catalog-context-action" type="button">Añadir capa <span>›</span></button><div class="folder-add-submenu">
+            <div class="folder-add-menu"><button class="catalog-context-action" type="button">Añadir satélite <span>›</span></button><div class="folder-add-submenu">
+                <button class="catalog-context-action" data-folder-action="catalog" type="button">TLE desde catálogo</button>
+                <button class="catalog-context-action" data-folder-action="import" type="button">Importar satélite</button>
             </div></div>
             <button class="catalog-context-action" data-folder-action="station" type="button">Estación de tierra</button>
         </div></div>
         <button class="catalog-context-action" data-folder-action="create" type="button">Nueva subcarpeta</button>
         <div class="catalog-context-separator"></div>
-        <button class="catalog-context-action" data-folder-action="delete" type="button">Eliminar carpeta</button>`;
+        <button class="catalog-context-action danger" data-folder-action="delete" type="button">Eliminar carpeta</button>`;
+    folderContextMenu.insertAdjacentHTML("afterbegin", `
+        <button class="catalog-context-action" data-folder-action="show" type="button" role="menuitem">Mostrar todas las capas</button>
+        <button class="catalog-context-action" data-folder-action="hide" type="button" role="menuitem">Ocultar todas las capas</button>
+        <div class="catalog-context-separator"></div>
+    `);
+    folderContextMenu.querySelector('[data-folder-action="create"]')?.insertAdjacentHTML("afterend", `
+        <button class="catalog-context-action" data-folder-action="rename" type="button" role="menuitem">Renombrar carpeta</button>
+    `);
+    folderContextMenu.querySelectorAll("button").forEach((button) => button.setAttribute("role", "menuitem"));
+    const folderContextMenuMarkup = folderContextMenu.innerHTML;
+    const bodiesContextMenuMarkup = `
+        <button class="catalog-context-action" data-folder-action="bodies-show" type="button" role="menuitem">Mostrar todos los cuerpos</button>
+        <button class="catalog-context-action" data-folder-action="bodies-hide" type="button" role="menuitem">Ocultar todos los cuerpos</button>`;
     document.body.appendChild(folderContextMenu);
 
     const folderNameModal = document.createElement("div");
@@ -1270,18 +1285,94 @@ export function setupObjectSidebar({
     let pendingFolderAssignment = null;
     let pendingFolderImportAssignment = null;
 
-    function openFolderContextMenu(folder, x, y) {
-        folderContextTarget = folder;
-        folderContextMenu.style.left = `${Math.max(8, x)}px`;
-        folderContextMenu.style.top = `${Math.max(8, y)}px`;
+    function getActiveBodyLayerIds() {
+        return getRenderableLayerIds().filter((id) => isBodyLayer(getLayerType?.(id), id));
+    }
+
+    function getActiveProjectLayerIds() {
+        return getRenderableLayerIds().filter((id) => !isBodyLayer(getLayerType?.(id), id));
+    }
+
+    function getFolderLayerIds(folderId) {
+        return layerTree.getFolderLayerIds(folderId, getActiveProjectLayerIds());
+    }
+
+    function areLayersVisible(layerIds) {
+        return layerIds.length > 0 && layerIds.every((id) => getObjectVisibility(id) !== false);
+    }
+
+    function setLayersVisibility(layerIds, visible) {
+        layerIds.forEach((id) => {
+            if (getObjectVisibility(id) !== visible) onToggleObjectVisibility(id, visible);
+        });
+        renderList();
+        renderInfo();
+    }
+
+    function setFolderVisibility(folder, visible) {
+        setLayersVisibility(getFolderLayerIds(folder.id), visible);
+    }
+
+    function setBodiesVisibility(visible) {
+        setLayersVisibility(getActiveBodyLayerIds(), visible);
+    }
+
+    async function removeFolderAndRehome(folder) {
+        const tree = layerTree.snapshot(getRenderableLayerIds());
+        const hasContent = tree.folders.some((item) => item.parentId === folder.id)
+            || Object.values(tree.layerParents).some((parentId) => parentId === folder.id);
+        const shouldDelete = !hasContent || await askConfirmation({
+            title: "Eliminar carpeta",
+            message: `La carpeta '${folder.name}' contiene elementos. Se reubicaran en la raiz del proyecto.`,
+            confirmText: "Eliminar",
+            cancelText: "Cancelar"
+        });
+        if (!shouldDelete) return false;
+        const removed = layerTree.removeFolder(folder.id);
+        if (removed) renderList();
+        return removed;
+    }
+
+    function showFolderContextMenu(x, y, markup, target, menuWidth = 260, menuHeight = 230) {
+        folderContextTarget = target;
+        folderContextMenu.innerHTML = markup;
+        const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
+        const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
+        folderContextMenu.style.left = `${left}px`;
+        folderContextMenu.style.top = `${top}px`;
         folderContextMenu.classList.add("open");
+        folderContextMenu.querySelector("button")?.focus({ preventScroll: true });
+    }
+
+    function openFolderContextMenu(folder, x, y) {
+        showFolderContextMenu(x, y, folderContextMenuMarkup, { type: "folder", folder });
+    }
+
+    function openBodiesContextMenu(x, y) {
+        showFolderContextMenu(x, y, bodiesContextMenuMarkup, { type: "bodies" }, 230, 100);
     }
 
     folderContextMenu.addEventListener("click", async (event) => {
         const action = event.target.closest("[data-folder-action]")?.dataset.folderAction;
-        const folder = folderContextTarget;
+        const target = folderContextTarget;
+        const folder = target?.type === "folder" ? target.folder : null;
         folderContextMenu.classList.remove("open");
-        if (!action || !folder) return;
+        folderContextTarget = null;
+        if (!action || !target) return;
+        if (target.type === "bodies") {
+            if (action === "bodies-show") setBodiesVisibility(true);
+            if (action === "bodies-hide") setBodiesVisibility(false);
+            return;
+        }
+        if (!folder) return;
+        if (action === "show") {
+            setFolderVisibility(folder, true);
+            return;
+        }
+        if (action === "hide") {
+            setFolderVisibility(folder, false);
+            return;
+        }
         if (action === "catalog") {
             pendingFolderAssignment = { folderId: folder.id, knownIds: new Set(getRenderableLayerIds()) };
             onRequestAddSatellite?.();
@@ -1302,40 +1393,28 @@ export function setupObjectSidebar({
             if (layerTree.createFolder(name, folder.id)) renderList();
             return;
         }
-        const tree = layerTree.snapshot(getRenderableLayerIds());
-        const hasContent = tree.folders.some((item) => item.parentId === folder.id)
-            || Object.values(tree.layerParents).some((parentId) => parentId === folder.id);
-        const shouldDelete = !hasContent || await askConfirmation({
-            title: "Eliminar carpeta",
-            message: `La carpeta '${folder.name}' contiene elementos. ¿Eliminarla y devolver su contenido a la raíz?`,
-            confirmText: "Eliminar",
-            cancelText: "Cancelar"
-        });
-        if (shouldDelete) {
-            const foldersToDelete = new Set([folder.id]);
-            let foundNestedFolder = true;
-            while (foundNestedFolder) {
-                foundNestedFolder = false;
-                tree.folders.forEach((item) => {
-                    if (foldersToDelete.has(item.parentId) && !foldersToDelete.has(item.id)) {
-                        foldersToDelete.add(item.id);
-                        foundNestedFolder = true;
-                    }
-                });
-            }
-            Object.entries(tree.layerParents).forEach(([layerId, parentId]) => {
-                if (foldersToDelete.has(parentId)) onToggleObjectLayer(layerId, false);
+        if (action === "rename") {
+            const name = await requestFolderName({
+                title: "Renombrar carpeta",
+                label: "Nombre de la carpeta",
+                initialValue: folder.name
             });
-            layerTree.removeFolder(folder.id);
-            renderList();
+            if (layerTree.renameFolder(folder.id, name)) renderList();
+            return;
         }
+        if (action !== "delete") return;
+        await removeFolderAndRehome(folder);
     });
 
     document.addEventListener("pointerdown", (event) => {
         if (!contextMenu.contains(event.target) && !event.target.closest?.("#catalogContextMenu")) closeContextMenu();
-        if (!folderContextMenu.contains(event.target)) folderContextMenu.classList.remove("open");
+        if (!folderContextMenu.contains(event.target)) {
+            folderContextMenu.classList.remove("open");
+            folderContextTarget = null;
+        }
         const detailsPanel = document.querySelector(".object-details-panel");
-        if (!listRoot.contains(event.target) && !contextMenu.contains(event.target) && !folderContextMenu.contains(event.target) && !detailsPanel?.contains(event.target) && selectedId) {
+        const projectControl = event.target.closest?.("[data-project-actions-control='true'], [data-project-actions-menu='true'], [data-layer-tree-project-root='true']");
+        if (!listRoot.contains(event.target) && !contextMenu.contains(event.target) && !folderContextMenu.contains(event.target) && !detailsPanel?.contains(event.target) && !projectControl && selectedId) {
             selectedId = null;
             renderList();
             renderInfo();
@@ -1345,6 +1424,7 @@ export function setupObjectSidebar({
         if (event.key !== "Escape") return;
         closeContextMenu();
         folderContextMenu.classList.remove("open");
+        folderContextTarget = null;
         closeFolderNameDialog();
     });
 
@@ -1379,25 +1459,6 @@ export function setupObjectSidebar({
     `;
     addMenu.prepend(addLayerEntry);
     document.body.appendChild(addMenu);
-    const projectActionsEntry = document.createElement("div");
-    projectActionsEntry.className = "folder-add-menu project-actions-entry";
-    projectActionsEntry.innerHTML = `
-        <button class="catalog-context-action" type="button">Manage project <span>›</span></button>
-        <div class="folder-add-submenu">
-            <button class="catalog-context-action" data-project-action="new" type="button">Nuevo proyecto</button>
-            <button class="catalog-context-action" data-project-action="open" type="button">Abrir proyecto</button>
-            <button class="catalog-context-action" data-project-action="save" type="button">Guardar proyecto</button>
-            <button class="catalog-context-action" data-project-action="export" type="button">Exportar proyecto</button>
-        </div>
-    `;
-    projectActionsEntry.querySelectorAll("[data-project-action]").forEach((button) => {
-        button.addEventListener("click", () => {
-            closeAddMenu();
-            window.dispatchEvent(new CustomEvent("orbit:project-action", { detail: button.dataset.projectAction }));
-        });
-    });
-    addMenu.prepend(projectActionsEntry);
-
     const groundStationModal = document.createElement("div");
     groundStationModal.id = "groundStationModal";
     groundStationModal.innerHTML = `
@@ -2015,9 +2076,6 @@ export function setupObjectSidebar({
         if (!anchorElement) {
             return;
         }
-        // Project-level actions belong only to the root project's Add button,
-        // never to the Add controls rendered inside individual folders.
-        projectActionsEntry.hidden = anchorElement !== openCatalogBtn;
         const rect = anchorElement.getBoundingClientRect();
         const menuWidth = 280;
         const menuHeight = 180;
@@ -2421,7 +2479,7 @@ export function setupObjectSidebar({
         // Keep the orbital-analysis and optional manual-edit actions inside
         // the viewport instead of letting the last entry slip under the
         // simulation dock.
-        const menuHeight = isEarth ? 122 : (isCelestialBody ? 130 : (isGroundStation ? 126 : (isManualOrbit ? 358 : 320)));
+        const menuHeight = isEarth ? 158 : (isCelestialBody ? 166 : (isGroundStation ? 162 : (isManualOrbit ? 394 : 356)));
         const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
         const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
 
@@ -2451,6 +2509,7 @@ export function setupObjectSidebar({
                 groundStation: isGroundStation,
                 layerType,
                 earth: isEarth,
+                visible: getObjectVisibility(satelliteId) !== false,
                 groundTrackVisible: getGroundTrackVisible?.(satelliteId) === true,
                 // Only local authored manual orbits get an edit action. The
                 // callback is supplied by the runtime and resolves duplicate
@@ -3000,6 +3059,16 @@ export function setupObjectSidebar({
         const detail = event.detail;
         const action = typeof detail === "string" ? detail : String(detail?.action || "").trim();
         const targetId = String((typeof detail === "object" && detail?.id) || contextTargetId || "").trim();
+        if (action === "toggle-visibility") {
+            if (!targetId || getObjectLayerActive(targetId) !== true) {
+                return;
+            }
+            onToggleObjectVisibility(targetId, getObjectVisibility(targetId) === false);
+            closeContextMenu();
+            renderList();
+            renderInfo();
+            return;
+        }
         if (action === "center-view") {
             if (!targetId || getObjectLayerActive(targetId) !== true) {
                 return;
@@ -3672,12 +3741,32 @@ export function setupObjectSidebar({
             group.className = "layer-tree-folder";
             const folderExpanded = filteringLayers || folder.expanded;
             const folderBodyId = `layer-tree-folder-body-${String(folder.id).replace(/[^a-z0-9_-]/gi, "-")}`;
-            const header = document.createElement("button");
-            header.type = "button";
+            const header = document.createElement("div");
             header.className = "layer-tree-folder-header";
-            header.setAttribute("aria-expanded", folderExpanded ? "true" : "false");
-            header.setAttribute("aria-controls", folderBodyId);
-            header.innerHTML = `<span class="layer-tree-chevron" aria-hidden="true">${folderExpanded ? "▾" : "▸"}</span><span class="layer-tree-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8.2a2.2 2.2 0 0 1 2.2-2.2h3.2l1.9 2.3h6.2a2.2 2.2 0 0 1 2.2 2.2v6.9a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2z"/><path d="M3.8 11.1h16.4"/></svg></span><span class="layer-tree-folder-name">${folder.name}</span>`;
+            header.dataset.layerTreeFolderId = folder.id;
+            header.setAttribute("role", "group");
+            header.setAttribute("aria-label", `Carpeta ${folder.name}`);
+
+            const folderToggle = document.createElement("button");
+            folderToggle.type = "button";
+            folderToggle.className = "layer-tree-folder-toggle";
+            folderToggle.setAttribute("aria-expanded", folderExpanded ? "true" : "false");
+            folderToggle.setAttribute("aria-controls", folderBodyId);
+            folderToggle.setAttribute("aria-label", `${folderExpanded ? "Plegar" : "Desplegar"} carpeta ${folder.name}`);
+
+            const folderChevron = document.createElement("span");
+            folderChevron.className = "layer-tree-chevron";
+            folderChevron.setAttribute("aria-hidden", "true");
+            folderChevron.textContent = folderExpanded ? "▾" : "▸";
+
+            const folderIcon = document.createElement("span");
+            folderIcon.className = "layer-tree-icon";
+            folderIcon.setAttribute("aria-hidden", "true");
+            folderIcon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3.5 8.2a2.2 2.2 0 0 1 2.2-2.2h3.2l1.9 2.3h6.2a2.2 2.2 0 0 1 2.2 2.2v6.9a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2z"/><path d="M3.8 11.1h16.4"/></svg>';
+
+            const folderName = document.createElement("span");
+            folderName.className = "layer-tree-folder-name";
+            folderName.textContent = folder.name;
             const folderCount = document.createElement("span");
             const count = folderLayerCounts.get(folder.id) || 0;
             folderCount.className = "layer-tree-count layer-tree-folder-count";
@@ -3685,7 +3774,40 @@ export function setupObjectSidebar({
             folderCount.textContent = String(count);
             folderCount.title = `${count} capas`;
             folderCount.setAttribute("aria-label", `${count} capas`);
-            header.appendChild(folderCount);
+            folderToggle.append(folderChevron, folderIcon, folderName, folderCount);
+
+            const folderActions = document.createElement("div");
+            folderActions.className = "layer-tree-folder-actions";
+            const folderLayerIds = getFolderLayerIds(folder.id);
+            const folderVisible = areLayersVisible(folderLayerIds);
+            const folderVisibilityBtn = document.createElement("button");
+            folderVisibilityBtn.type = "button";
+            folderVisibilityBtn.className = `layer-tree-folder-visibility-btn${folderVisible ? "" : " is-hidden"}`;
+            folderVisibilityBtn.disabled = folderLayerIds.length === 0;
+            folderVisibilityBtn.title = folderLayerIds.length
+                ? (folderVisible ? "Ocultar todas las capas de la carpeta" : "Mostrar todas las capas de la carpeta")
+                : "La carpeta no contiene capas";
+            folderVisibilityBtn.setAttribute("aria-label", folderVisibilityBtn.title);
+            folderVisibilityBtn.setAttribute("aria-pressed", folderVisible ? "true" : "false");
+            folderVisibilityBtn.innerHTML = visibilityIconMarkup(folderVisible);
+            folderVisibilityBtn.addEventListener("click", (event) => {
+                event.stopPropagation();
+                setFolderVisibility(folder, !folderVisible);
+            });
+
+            const folderRemoveBtn = document.createElement("button");
+            folderRemoveBtn.type = "button";
+            folderRemoveBtn.className = "layer-tree-folder-remove-btn";
+            folderRemoveBtn.title = "Eliminar carpeta y reubicar su contenido";
+            folderRemoveBtn.setAttribute("aria-label", folderRemoveBtn.title);
+            folderRemoveBtn.innerHTML = trashIconMarkup;
+            folderRemoveBtn.addEventListener("click", (event) => {
+                event.stopPropagation();
+                void removeFolderAndRehome(folder);
+            });
+
+            folderActions.append(folderVisibilityBtn, folderRemoveBtn);
+            header.append(folderToggle, folderActions);
             header.draggable = true;
             header.addEventListener("dragstart", (event) => { event.dataTransfer.setData("text/plain", folder.id); event.dataTransfer.effectAllowed = "move"; });
             header.addEventListener("dragover", (event) => { event.preventDefault(); event.stopPropagation(); });
@@ -3694,10 +3816,17 @@ export function setupObjectSidebar({
                 const id = event.dataTransfer.getData("text/plain");
                 if (layerTree.move(id, folder.id)) renderList();
             });
-            header.addEventListener("click", () => { layerTree.toggle(folder.id); renderList(); });
+            folderToggle.addEventListener("click", () => { layerTree.toggle(folder.id); renderList(); });
             header.addEventListener("contextmenu", (event) => {
                 event.preventDefault();
-                openFolderContextMenu(folder, event.clientX, event.clientY);
+                const bounds = header.getBoundingClientRect();
+                openFolderContextMenu(folder, event.clientX || bounds.left, event.clientY || bounds.bottom);
+            });
+            header.addEventListener("keydown", (event) => {
+                if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+                event.preventDefault();
+                const bounds = header.getBoundingClientRect();
+                openFolderContextMenu(folder, bounds.left, bounds.bottom);
             });
             group.appendChild(header);
             const body = document.createElement("div");
@@ -3822,31 +3951,22 @@ export function setupObjectSidebar({
             (containers.get(tree.layerParents[id]) || listFragment).appendChild(createLayerRow(id));
         }
 
-        // Última fila: acción "+" con aspecto de satélite que abre el catálogo.
-        const addRow = document.createElement("div");
-        addRow.className = "object-list-row object-list-row-add";
-        const addItem = document.createElement("button");
-        addItem.type = "button";
-        addItem.className = "object-list-item object-list-add-item";
-        addItem.title = "Añadir capa";
-        addItem.setAttribute("aria-label", "Añadir capa");
-        addItem.innerHTML = `<span class="object-list-add-plus">+</span><span>Añadir capa</span>`;
-        addItem.addEventListener("click", (event) => {
-            event.stopPropagation();
-            openAddMenu(addItem);
-        });
-        addRow.appendChild(addItem);
-        listFragment.appendChild(addRow);
         if (bodyLayerIds.length) {
             const expanded = filteringLayers || bodiesExpanded;
             const bodySection = document.createElement("section");
             bodySection.className = `layer-tree-body-section${expanded ? " is-expanded" : ""}`;
             bodySection.dataset.layerTreeBodies = "true";
             bodySection.setAttribute("aria-label", "Bodies");
-            const bodyHeading = document.createElement("button");
-            bodyHeading.type = "button";
+            const bodyHeading = document.createElement("div");
             bodyHeading.className = "layer-tree-body-section-header";
-            bodyHeading.setAttribute("aria-expanded", expanded ? "true" : "false");
+            bodyHeading.setAttribute("role", "group");
+            bodyHeading.setAttribute("aria-label", "Bodies");
+
+            const bodyToggle = document.createElement("button");
+            bodyToggle.type = "button";
+            bodyToggle.className = "layer-tree-body-toggle";
+            bodyToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+            bodyToggle.setAttribute("aria-label", `${expanded ? "Plegar" : "Desplegar"} Bodies`);
 
             const bodyChevron = document.createElement("span");
             bodyChevron.className = "layer-tree-chevron";
@@ -3865,16 +3985,48 @@ export function setupObjectSidebar({
             bodyCount.textContent = String(bodyLayerIds.length);
 
             const bodyRows = document.createElement("div");
+            bodyRows.id = "layer-tree-body-section-rows";
             bodyRows.className = "layer-tree-body-section-rows";
             bodyRows.hidden = !expanded;
             bodyLayerIds.forEach((id) => bodyRows.appendChild(createLayerRow(id)));
             bodyRows.classList.toggle("is-empty", bodyRows.children.length === 0);
+            bodyToggle.setAttribute("aria-controls", bodyRows.id);
 
-            bodyHeading.addEventListener("click", () => {
+            const bodyActions = document.createElement("div");
+            bodyActions.className = "layer-tree-body-actions";
+            const activeBodyLayerIds = getActiveBodyLayerIds();
+            const bodiesVisible = areLayersVisible(activeBodyLayerIds);
+            const bodyVisibilityBtn = document.createElement("button");
+            bodyVisibilityBtn.type = "button";
+            bodyVisibilityBtn.className = `layer-tree-body-visibility-btn${bodiesVisible ? "" : " is-hidden"}`;
+            bodyVisibilityBtn.disabled = activeBodyLayerIds.length === 0;
+            bodyVisibilityBtn.title = bodiesVisible ? "Ocultar todos los cuerpos" : "Mostrar todos los cuerpos";
+            bodyVisibilityBtn.setAttribute("aria-label", bodyVisibilityBtn.title);
+            bodyVisibilityBtn.setAttribute("aria-pressed", bodiesVisible ? "true" : "false");
+            bodyVisibilityBtn.innerHTML = visibilityIconMarkup(bodiesVisible);
+            bodyVisibilityBtn.addEventListener("click", (event) => {
+                event.stopPropagation();
+                setBodiesVisibility(!bodiesVisible);
+            });
+            bodyActions.appendChild(bodyVisibilityBtn);
+
+            bodyToggle.addEventListener("click", () => {
                 bodiesExpanded = !bodiesExpanded;
                 renderList();
             });
-            bodyHeading.append(bodyChevron, bodyHeadingIcon, bodyHeadingText, bodyCount);
+            bodyHeading.addEventListener("contextmenu", (event) => {
+                event.preventDefault();
+                const bounds = bodyHeading.getBoundingClientRect();
+                openBodiesContextMenu(event.clientX || bounds.left, event.clientY || bounds.bottom);
+            });
+            bodyHeading.addEventListener("keydown", (event) => {
+                if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+                event.preventDefault();
+                const bounds = bodyHeading.getBoundingClientRect();
+                openBodiesContextMenu(bounds.left, bounds.bottom);
+            });
+            bodyToggle.append(bodyChevron, bodyHeadingIcon, bodyHeadingText, bodyCount);
+            bodyHeading.append(bodyToggle, bodyActions);
             bodySection.append(bodyHeading, bodyRows);
             listFragment.appendChild(bodySection);
         }

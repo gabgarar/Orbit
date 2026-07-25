@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createLayerTree, getLayerFolderCounts, getVisibleLayerFolderIds } from "../../js/features/layers/layerTree.js";
+import {
+    createLayerTree,
+    getLayerFolderCounts,
+    getLayerFolderDescendantIds,
+    getLayerFolderLayerIds,
+    getVisibleLayerFolderIds
+} from "../../js/features/layers/layerTree.js";
 
 function memoryStorage() { const data = new Map(); return { getItem: (key) => data.get(key) || null, setItem: (key, value) => data.set(key, value) }; }
 
@@ -24,9 +30,49 @@ test("layer tree prevents moving a folder into itself or descendants", () => {
 test("removing a folder returns direct children to root", () => {
     const tree = createLayerTree(memoryStorage());
     const folder = tree.createFolder("Temporary");
+    const child = tree.createFolder("Child", folder);
+    const nested = tree.createFolder("Nested", child);
     tree.move("ISS", folder);
     tree.removeFolder(folder);
     assert.equal(tree.snapshot(["ISS"]).layerParents.ISS, null);
+    const folders = tree.snapshot([]).folders;
+    assert.equal(folders.find((item) => item.id === child).parentId, null);
+    assert.equal(folders.find((item) => item.id === nested).parentId, child);
+});
+
+test("folder helpers resolve nested folders and the layers they contain", () => {
+    const folders = [
+        { id: "mission", name: "Mission", parentId: null, expanded: true },
+        { id: "leo", name: "LEO", parentId: "mission", expanded: true },
+        { id: "science", name: "Science", parentId: "leo", expanded: true },
+        { id: "archive", name: "Archive", parentId: null, expanded: true }
+    ];
+    const layerParents = { station: "mission", iss: "leo", hubble: "science", retired: "archive" };
+
+    assert.deepEqual(
+        [...getLayerFolderDescendantIds({ folders, folderId: "mission" })].sort(),
+        ["leo", "mission", "science"]
+    );
+    assert.deepEqual(
+        getLayerFolderLayerIds({
+            folders,
+            layerParents,
+            layerIds: ["station", "iss", "hubble", "retired"],
+            folderId: "mission"
+        }),
+        ["station", "iss", "hubble"]
+    );
+});
+
+test("tree instances expose descendant layers for folder-level visibility actions", () => {
+    const tree = createLayerTree(memoryStorage());
+    const mission = tree.createFolder("Mission");
+    const leo = tree.createFolder("LEO", mission);
+    tree.move("ISS", leo);
+    tree.move("Station", mission);
+
+    assert.deepEqual([...tree.getFolderDescendantIds(mission)].sort(), [leo, mission].sort());
+    assert.deepEqual(tree.getFolderLayerIds(mission, ["ISS", "Station", "Other"]), ["ISS", "Station"]);
 });
 
 test("layer tree restores exported hierarchy and can clear it", () => {

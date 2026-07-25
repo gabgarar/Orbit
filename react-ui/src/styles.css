@@ -221,7 +221,93 @@ body.with-toolbars #cesiumContainer {
 }
 #leftSatellitesPanel .object-sidebar-body-compact { padding: 0; gap: 6px; }
 #leftSatellitesPanel .object-sidebar-body-compact #objectList { padding-right: 5px; }
-#leftSatellitesPanel .layer-tree-folder-header { min-height: 31px; padding: 0 5px; color: #edf3ff; font-size: 12px; }
+#leftSatellitesPanel .layer-tree-folder-header {
+    display: flex;
+    min-height: 34px;
+    align-items: center;
+    gap: 4px;
+    padding: 0 5px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    color: #edf3ff;
+    font-size: 12px;
+    transition: background-color .15s ease, border-color .15s ease;
+}
+#leftSatellitesPanel .layer-tree-folder-header:hover,
+#leftSatellitesPanel .layer-tree-folder-header:focus-within {
+    border-color: rgba(75, 113, 168, .30);
+    background: linear-gradient(90deg, rgba(29, 55, 91, .38), rgba(16, 31, 52, .16));
+}
+#leftSatellitesPanel .layer-tree-folder-toggle {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    min-height: 30px;
+    align-items: center;
+    gap: 5px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+#leftSatellitesPanel .layer-tree-folder-toggle:focus-visible {
+    outline: 2px solid #5278db;
+    outline-offset: -2px;
+}
+#leftSatellitesPanel .layer-tree-folder-actions,
+#leftSatellitesPanel .layer-tree-body-actions {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    padding-left: 3px;
+    opacity: .72;
+    transition: opacity .15s ease;
+}
+#leftSatellitesPanel .layer-tree-folder-header:hover .layer-tree-folder-actions,
+#leftSatellitesPanel .layer-tree-folder-header:focus-within .layer-tree-folder-actions,
+#leftSatellitesPanel .layer-tree-body-section-header:hover .layer-tree-body-actions,
+#leftSatellitesPanel .layer-tree-body-section-header:focus-within .layer-tree-body-actions { opacity: 1; }
+#leftSatellitesPanel .layer-tree-folder-visibility-btn,
+#leftSatellitesPanel .layer-tree-folder-remove-btn,
+#leftSatellitesPanel .layer-tree-body-visibility-btn {
+    display: inline-grid;
+    width: 25px;
+    height: 25px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: #aebfd8;
+    cursor: pointer;
+}
+#leftSatellitesPanel .layer-tree-folder-visibility-btn:hover,
+#leftSatellitesPanel .layer-tree-body-visibility-btn:hover {
+    border-color: rgba(82, 130, 194, .65);
+    background: rgba(26, 51, 86, .72);
+    color: #edf5ff;
+}
+#leftSatellitesPanel .layer-tree-folder-remove-btn { color: #dba8b5; }
+#leftSatellitesPanel .layer-tree-folder-remove-btn:hover {
+    border-color: rgba(194, 86, 108, .68);
+    background: rgba(83, 26, 41, .56);
+    color: #ffe1e6;
+}
+#leftSatellitesPanel .layer-tree-folder-visibility-btn svg,
+#leftSatellitesPanel .layer-tree-folder-remove-btn svg,
+#leftSatellitesPanel .layer-tree-body-visibility-btn svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
 #leftSatellitesPanel .layer-tree-folder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #leftSatellitesPanel .layer-tree-chevron { width: 9px; font-size: 9px; }
 #leftSatellitesPanel .layer-tree-icon { display: inline-grid; width: 18px; height: 18px; place-items: center; color: #f0c96a; }
@@ -233,18 +319,90 @@ body.with-toolbars #cesiumContainer {
 #leftSatellitesPanel .object-sidebar-body-compact .object-list-row:hover { border-color: transparent; background: #101d31; }
 #leftSatellitesPanel .object-sidebar-body-compact .object-visibility-btn { padding: 5px 6px; color: #c8d6ed; font-size: 13px; opacity: 0.9; }
 #leftSatellitesPanel .object-sidebar-body-compact .object-remove-layer-btn { padding: 5px 6px; font-size: 10px; }
-#leftSatellitesPanel .object-sidebar-body-compact .object-list-row-add { min-height: 34px; border-color: #3454d0; border-radius: 7px; background: rgba(46, 74, 200, 0.1); }
-#leftSatellitesPanel .object-sidebar-body-compact .object-list-add-item { min-height: 34px; color: #aebfff; font-size: 11px; }
 #leftSatellitesPanel .object-sidebar-body-compact .layer-type-icon { width: 16px; height: 16px; border-radius: 5px; }
 #leftSatellitesPanel .object-sidebar-body-compact .layer-type-icon svg { width: 12px; height: 12px; }
 #leftSatellitesPanel .layer-type-icon.is-bodies { color: #b9a7ff; }
 #leftSatellitesPanel .layer-tree-count { margin-left: auto; min-width: 14px; color: #90a5c2; font-size: 9px; line-height: 1; letter-spacing: 0; text-align: right; }
 #leftSatellitesPanel .layer-tree-body-section { margin-top: 7px; padding-top: 7px; }
-#leftSatellitesPanel .layer-tree-body-section-header { min-height: 26px; padding: 0 5px; border: 0; background: transparent; color: #c7d2e7; font-size: 10px; cursor: pointer; }
-#leftSatellitesPanel .layer-tree-body-section-header:hover { background: #101d31; }
-#leftSatellitesPanel .layer-tree-body-section-header:focus-visible { outline: 2px solid #5278db; outline-offset: -2px; }
+#leftSatellitesPanel .layer-tree-body-section-header {
+    display: flex;
+    min-height: 30px;
+    align-items: center;
+    gap: 4px;
+    padding: 0 5px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: #c7d2e7;
+    font-size: 10px;
+    transition: background-color .15s ease, border-color .15s ease;
+}
+#leftSatellitesPanel .layer-tree-body-section-header:hover,
+#leftSatellitesPanel .layer-tree-body-section-header:focus-within {
+    border-color: rgba(75, 113, 168, .30);
+    background: linear-gradient(90deg, rgba(29, 55, 91, .32), rgba(16, 31, 52, .12));
+}
+#leftSatellitesPanel .layer-tree-body-toggle {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    min-height: 28px;
+    align-items: center;
+    gap: 5px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+#leftSatellitesPanel .layer-tree-body-toggle:focus-visible { outline: 2px solid #5278db; outline-offset: -2px; }
 #leftSatellitesPanel .layer-tree-body-section-rows { min-height: 4px; margin-left: 16px; padding-left: 16px; border-left: 0; }
 #leftSatellitesPanel .layer-tree-body-section-rows:not([hidden]):not(.is-empty) { border-left: 1px solid #31455f; }
+
+/* Folder and Bodies menus use the same calm glass surface as the React layer
+   menu.  They are still owned by the legacy tree runtime, so the visual
+   contract lives here rather than duplicating a second tree. */
+#folderContextMenu {
+    z-index: 10270;
+    min-width: 218px;
+    padding: 5px;
+    border-color: rgba(88, 128, 185, .66);
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(12, 27, 47, .90), rgba(5, 14, 27, .84));
+    box-shadow: 0 16px 34px rgba(0, 0, 0, .42), inset 0 1px rgba(231, 242, 255, .05);
+    -webkit-backdrop-filter: blur(14px) saturate(114%);
+    backdrop-filter: blur(14px) saturate(114%);
+}
+#folderContextMenu .catalog-context-action {
+    display: flex;
+    width: 100%;
+    min-height: 31px;
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: #d4e1f4;
+}
+#folderContextMenu .catalog-context-action + .catalog-context-action { border-top: 0; }
+#folderContextMenu .catalog-context-action:hover,
+#folderContextMenu .catalog-context-action:focus-visible {
+    border-color: rgba(86, 132, 202, .48);
+    background: rgba(34, 67, 111, .72);
+    color: #f1f6ff;
+    outline: none;
+}
+#folderContextMenu .catalog-context-action.danger { color: #f0adbb; }
+#folderContextMenu .catalog-context-action.danger:hover { background: rgba(123, 37, 56, .48); color: #ffe3e8; }
+#folderContextMenu .catalog-context-separator { margin: 4px 5px; background: rgba(75, 108, 151, .48); }
+#folderContextMenu .folder-add-submenu {
+    border-color: rgba(88, 128, 185, .66);
+    background: linear-gradient(145deg, rgba(12, 27, 47, .96), rgba(5, 14, 27, .92));
+    box-shadow: 0 16px 34px rgba(0, 0, 0, .42);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+}
 
 /* Every layer item branches off the vertical tree guide. */
 #leftSatellitesPanel .layer-tree-folder-body > .object-list-row,
