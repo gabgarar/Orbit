@@ -58,7 +58,7 @@ import { createProjectLifecycle } from "./js/runtime/projectLifecycle.js";
 import { setupCameraActions } from "./js/runtime/camera/actions.js";
 import { createFreeCameraKeyboardControls } from "./js/runtime/camera/freeKeyboardControls.js";
 import { formatDurationCompact, formatTimeHudDate, parseTleEpochDate } from "./js/runtime/simulation/timeFormatting.js";
-import { advanceSimulation, createSimulationState, setSimulationRange, SIMULATION_MODE_RANGE, SIMULATION_MODE_REALTIME } from "./js/runtime/simulation/simulationState.js";
+import { advanceSimulation, createSimulationState, setSimulationRange, SIMULATION_MODE_RANGE, SIMULATION_MODE_REALTIME, SIMULATION_MODE_STATIC } from "./js/runtime/simulation/simulationState.js";
 import { createSimulationController } from "./js/runtime/simulation/simulationController.js";
 import { clamp, getDateAtTimelineRatio, getRangeHours, getTimelineRatio } from "./js/runtime/simulation/timeline.js";
 import { createWelcomeScene } from "./js/rendering/welcomeScene.js";
@@ -197,6 +197,7 @@ let sessionRecordingStream = null;
 let sessionRecordingChunks = [];
 let sessionRecordingMimeType = "video/webm";
 let isSessionRecording = false;
+let isSessionRecordingProcessing = false;
 let runtimeRecordingConfig = {
     quality: "medium",
     output_format: "webm"
@@ -393,6 +394,7 @@ const projectLifecycle = createProjectLifecycle({
     restoreManualOrbits: restoreManualOrbitsFromProject,
     getSimulationState: () => simulationState,
     applySimulationRange,
+    restoreSimulation: restoreProjectSimulationState,
     showConfirm: showAppConfirm,
     showAlert: showAppAlert,
     getAlertTitle: () => uiText("alertTitle")
@@ -500,6 +502,7 @@ const UI_TEXT = {
         globalSearchNoResults: "Sin coincidencias",
         globalSearchAddHint: "Pulsa Enter para seleccionar",
         simRealtime: "Tiempo real",
+        simStatic: "Estatico",
         simRange: "Rango",
         simHistorical: "Histórico",
         simPlay: "Play",
@@ -616,6 +619,7 @@ const UI_TEXT = {
         globalSearchNoResults: "No matches",
         globalSearchAddHint: "Press Enter to select",
         simRealtime: "Realtime",
+        simStatic: "Static",
         simRange: "Range",
         simHistorical: "Historical",
         simPlay: "Play",
@@ -658,6 +662,9 @@ async function confirmLargeSimulationRangeIfNeeded(startDate, endDate) {
 function getSimulationModeLabel() {
     if (simulationState.mode === SIMULATION_MODE_RANGE) {
         return uiText("simRange");
+    }
+    if (simulationState.mode === SIMULATION_MODE_STATIC) {
+        return uiText("simStatic");
     }
     return uiText("simRealtime");
 }
@@ -1656,6 +1663,7 @@ function buildGroundStationTelemetry(layerId) {
 
 function getSimulationTelemetryContext() {
     const isRangeMode = simulationState.mode === SIMULATION_MODE_RANGE;
+    const isStaticMode = simulationState.mode === SIMULATION_MODE_STATIC;
     const currentDate = getDisplayedSimulationDate();
     const currentTime = currentDate instanceof Date && !Number.isNaN(currentDate.getTime())
         ? currentDate.toISOString()
@@ -1663,10 +1671,10 @@ function getSimulationTelemetryContext() {
     const configuredScale = Number(simulationState.speed);
 
     return {
-        mode: isRangeMode ? "simulated" : "realtime",
+        mode: isRangeMode ? "simulated" : (isStaticMode ? "static" : "realtime"),
         current_time: currentTime,
         time_scale: isRangeMode && Number.isFinite(configuredScale) && configuredScale > 0 ? configuredScale : 1,
-        is_playing: Boolean(simulationState.isPlaying)
+        is_playing: isStaticMode ? false : Boolean(simulationState.isPlaying)
     };
 }
 
@@ -1931,15 +1939,17 @@ function updateTelemetryTimeContext() {
     const subtitle = document.querySelector("#leftInfoPanel .telemetry-panel-subtitle");
     if (!subtitle) return;
     const isRangeMode = simulationState.mode === SIMULATION_MODE_RANGE;
+    const isStaticMode = simulationState.mode === SIMULATION_MODE_STATIC;
     subtitle.classList.toggle("is-simulated", isRangeMode);
     subtitle.lastChild.textContent = isRangeMode
         ? " SIMULACIÓN EN RANGO"
-        : (simulationState.isPlaying === false ? " REAL TIME PAUSED" : " DATOS EN TIEMPO REAL");
+        : (isStaticMode ? " TIEMPO ESTATICO" : (simulationState.isPlaying === false ? " REAL TIME PAUSED" : " DATOS EN TIEMPO REAL"));
 }
 
 function setSimulationMode(mode) {
     const previousMode = simulationState.mode;
-    const normalized = [SIMULATION_MODE_REALTIME, SIMULATION_MODE_RANGE].includes(mode)
+    const displayedDate = getDisplayedSimulationDate();
+    const normalized = [SIMULATION_MODE_REALTIME, SIMULATION_MODE_RANGE, SIMULATION_MODE_STATIC].includes(mode)
         ? mode
         : SIMULATION_MODE_REALTIME;
 
@@ -1965,6 +1975,15 @@ function setSimulationMode(mode) {
         simulationState.rewind = false;
         simulationState.speed = 1;
         simulationState.currentDate = new Date();
+    } else if (normalized === SIMULATION_MODE_STATIC) {
+        // Static mode freezes the exact frame currently on screen. Keeping it
+        // distinct from paused realtime makes renderers sample this orbital
+        // state instead of continuing to consume live WebSocket positions.
+        simulationState.currentDate = new Date(displayedDate);
+        simulationState.isPlaying = false;
+        simulationState.playing = false;
+        simulationState.rewind = false;
+        simulationState.speed = 1;
     } else {
         if (previousMode !== SIMULATION_MODE_RANGE) {
             simulationState.currentDate = new Date(simulationState.startDate);
@@ -2031,6 +2050,73 @@ function applySimulationRange(startDate, endDate) {
     return true;
 }
 
+function restoreProjectSimulationState(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") {
+        return false;
+    }
+
+    const hasSavedState = ["mode", "startDate", "endDate", "currentDate"].some((key) => snapshot[key] !== undefined && snapshot[key] !== null);
+    if (!hasSavedState) {
+        return false;
+    }
+
+    const requestedMode = [SIMULATION_MODE_REALTIME, SIMULATION_MODE_RANGE, SIMULATION_MODE_STATIC].includes(snapshot.mode)
+        ? snapshot.mode
+        : SIMULATION_MODE_RANGE;
+    const savedStart = new Date(snapshot.startDate);
+    const savedEnd = new Date(snapshot.endDate);
+    const hasSavedRange = !Number.isNaN(savedStart.getTime())
+        && !Number.isNaN(savedEnd.getTime())
+        && savedEnd > savedStart;
+
+    if (hasSavedRange) {
+        applySimulationRange(savedStart, savedEnd);
+    }
+
+    const savedCurrent = new Date(snapshot.currentDate);
+    const hasSavedCurrent = !Number.isNaN(savedCurrent.getTime());
+    const rangeStartMs = simulationState.startDate.getTime();
+    const rangeEndMs = simulationState.endDate.getTime();
+    const hasActiveRange = Number.isFinite(rangeStartMs)
+        && Number.isFinite(rangeEndMs)
+        && rangeEndMs >= rangeStartMs;
+    let restoredDate = hasSavedCurrent ? new Date(savedCurrent) : getDisplayedSimulationDate();
+    if (requestedMode === SIMULATION_MODE_RANGE && hasActiveRange && !Number.isNaN(restoredDate.getTime())) {
+        restoredDate = new Date(clamp(restoredDate.getTime(), rangeStartMs, rangeEndMs));
+    }
+
+    if (requestedMode === SIMULATION_MODE_REALTIME && !hasLoadedOemEphemerisTracks()) {
+        simulationState.mode = SIMULATION_MODE_REALTIME;
+        simulationState.currentDate = new Date();
+        simulationState.isPlaying = true;
+        simulationState.playing = true;
+        simulationState.rewind = false;
+        simulationState.speed = 1;
+    } else if (requestedMode === SIMULATION_MODE_STATIC) {
+        simulationState.mode = SIMULATION_MODE_STATIC;
+        simulationState.currentDate = restoredDate;
+        simulationState.isPlaying = false;
+        simulationState.playing = false;
+        simulationState.rewind = false;
+        simulationState.speed = 1;
+    } else {
+        const savedSpeed = Number(snapshot.speed);
+        simulationState.mode = SIMULATION_MODE_RANGE;
+        simulationState.currentDate = restoredDate;
+        simulationState.isPlaying = snapshot.isPlaying !== false;
+        simulationState.playing = simulationState.isPlaying;
+        simulationState.rewind = false;
+        simulationState.speed = Number.isFinite(savedSpeed) && savedSpeed > 0 ? savedSpeed : 1;
+    }
+
+    simulationState.lastTickTimestamp = Date.now();
+    applySimulationDateToViewer(getDisplayedSimulationDate());
+    syncViewerClockPlayback();
+    refreshSimulationControlsUi();
+    updateTopToolbarTime();
+    return true;
+}
+
 function tickSimulationClock() {
     simulationController.tick();
 }
@@ -2049,6 +2135,8 @@ window.addEventListener("orbit:simulation-action", async (event) => {
             } else {
                 pauseRealtimeClock();
             }
+        } else if (simulationState.mode === SIMULATION_MODE_STATIC) {
+            setSimulationMode(SIMULATION_MODE_REALTIME);
         } else {
             simulationState.isPlaying = !simulationState.isPlaying;
             simulationState.playing = simulationState.isPlaying;
@@ -2130,10 +2218,14 @@ function applyTimeHudVisibilityConfig(systemConfig) {
 }
 
 function updateSessionRecordButtonLabel(options = {}) {
-    const isProcessing = options.processing === true;
+    if (typeof options.processing === "boolean") {
+        isSessionRecordingProcessing = options.processing;
+    } else if (!isSessionRecording) {
+        isSessionRecordingProcessing = false;
+    }
     // React owns the visible recording control.
     window.dispatchEvent(new CustomEvent("orbit:recording-state", {
-        detail: { active: isSessionRecording, processing: isProcessing }
+        detail: { active: isSessionRecording, processing: isSessionRecordingProcessing }
     }));
 }
 
@@ -2392,7 +2484,9 @@ function updateTopToolbarState() {
             modeText.textContent = cameraNavigationMode === "free" ? "Libre" : "Centrado";
         }
     }
-    window.dispatchEvent(new CustomEvent("orbit:recording-state", { detail: isSessionRecording }));
+    window.dispatchEvent(new CustomEvent("orbit:recording-state", {
+        detail: { active: isSessionRecording, processing: isSessionRecordingProcessing }
+    }));
 }
 
 function updateTopToolbarTime() {
@@ -2880,6 +2974,7 @@ async function startSessionRecording() {
 
         sessionRecorder.start(1000);
         isSessionRecording = true;
+        isSessionRecordingProcessing = false;
         updateSessionRecordButtonLabel();
         updateTopToolbarState();
         logger.info("Grabacion de sesion iniciada.");

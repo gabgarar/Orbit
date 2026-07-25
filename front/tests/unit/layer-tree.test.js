@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createLayerTree, getVisibleLayerFolderIds } from "../../js/features/layers/layerTree.js";
+import { createLayerTree, getLayerFolderCounts, getVisibleLayerFolderIds } from "../../js/features/layers/layerTree.js";
 
 function memoryStorage() { const data = new Map(); return { getItem: (key) => data.get(key) || null, setItem: (key, value) => data.set(key, value) }; }
 
@@ -73,4 +73,20 @@ test("folder search keeps a matching empty folder and its parent, not unrelated 
         })].sort(),
         ["future", "missions"]
     );
+});
+
+test("folder counters include descendant operational layers and retain empty folders", () => {
+    const folders = [
+        { id: "operations", name: "Operations", parentId: null, expanded: true },
+        { id: "leo", name: "LEO", parentId: "operations", expanded: true },
+        { id: "future", name: "Future", parentId: "operations", expanded: true }
+    ];
+
+    const counts = getLayerFolderCounts({
+        folders,
+        layerParents: { station: "operations", iss: "leo" },
+        layerIds: ["station", "iss"]
+    });
+
+    assert.deepEqual(Object.fromEntries(counts), { operations: 2, leo: 1, future: 0 });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CalendarIcon, EyeIcon, EyeOffIcon, ManualOrbitIcon, PlusIcon, PropagatedParametersIcon, SatelliteIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons.jsx";
+import { CalendarIcon, ChevronDownIcon, EyeIcon, EyeOffIcon, FolderIcon, ManualOrbitIcon, PlusIcon, PropagatedParametersIcon, SatelliteIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons.jsx";
 import CameraControls from "../features/camera/CameraControls.jsx";
 import { getLayerActionsState, LAYER_ACTIONS_STATE_EVENT } from "../../../front/js/runtime/layerActionsState.js";
 import { emitPropagatedParametersClose, emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
@@ -9,8 +9,9 @@ function publishLayersPanelState(open) {
 }
 
 function ProjectTimeFooter() {
-    const [context, setContext] = useState({ date: new Date(), mode: "realtime" });
+    const [context, setContext] = useState({ date: new Date(), mode: "realtime", isPlaying: true });
     const [designMode, setDesignMode] = useState(false);
+    const [modeMenuOpen, setModeMenuOpen] = useState(false);
     useEffect(() => {
         const onTimeContext = (event) => {
             const nextDate = new Date(event.detail?.date || Date.now());
@@ -24,25 +25,67 @@ function ProjectTimeFooter() {
         window.addEventListener("orbit:manual-orbit-design-state", onDesignMode);
         return () => window.removeEventListener("orbit:manual-orbit-design-state", onDesignMode);
     }, []);
-    const isRealtime = context.mode === "realtime";
-    const isRealtimePaused = isRealtime && context.isPlaying === false;
+
+    const isStatic = context.mode === "static";
+    const isPausedRealtime = context.mode === "realtime" && context.isPlaying === false;
+    const selectedMode = context.mode === "range" ? "range" : (isStatic ? "static" : "realtime");
+    const modePresentation = isPausedRealtime
+        ? { label: "Paused", dot: "bg-[#f0ae45] shadow-[0_0_8px_rgba(240,174,69,.65)]" }
+        : {
+        static: { label: "Static", dot: "bg-[#f0ae45] shadow-[0_0_8px_rgba(240,174,69,.65)]" },
+        realtime: { label: "Real time", dot: "bg-[#46d481] shadow-[0_0_8px_rgba(70,212,129,.65)]" },
+        range: { label: "Simulated", dot: "bg-[#8e78ff] shadow-[0_0_8px_rgba(142,120,255,.62)]" }
+    }[selectedMode];
+    const selectMode = (mode) => {
+        window.dispatchEvent(new CustomEvent("orbit:simulation-action", { detail: { type: "mode", value: mode } }));
+        setModeMenuOpen(false);
+    };
+
     // The design panel owns its two explicit epochs. Keeping the project
     // clock visible here would make the isolated scene look like realtime is
     // still active, and it consumes useful space in the Layers panel.
     if (designMode) return null;
-    return <footer id="projectTimeFooter" className="grid min-h-[74px] grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-2.5 border-t border-[#17283d] px-1 pt-[11px] pb-[13px] mx-[14px] font-[system-ui,sans-serif] text-[#dbe6f8]">
-        <span className="grid size-[30px] place-items-center border-r border-[#203148] text-[#b9c9df] [&>svg]:size-[19px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.7]" aria-hidden="true"><CalendarIcon /></span>
-        <div className="grid gap-1">
-            <small className="text-[11px] leading-none font-semibold text-[#aab8cf]">{context.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</small>
-            <strong className="text-[16px] leading-none font-medium tracking-[.02em] text-[#f2f6ff]">{context.date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })} UTC</strong>
+    return <footer id="projectTimeFooter" className="project-time-footer relative flex min-h-[48px] items-center gap-[10px] border-t border-[#294467] px-[12px] py-[7px] mx-[14px] mb-0 font-[system-ui,sans-serif] text-[#dbe6f8]">
+        <span className="project-time-footer__calendar grid size-[21px] shrink-0 place-items-center text-[#c5d6ef] [&>svg]:size-[15px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.7]" aria-hidden="true"><CalendarIcon /></span>
+        <div className="project-time-footer__clock grid min-w-0 gap-[3px]">
+            <small className="truncate text-[10px] leading-none font-semibold uppercase tracking-[.035em] text-[#9eafc8]">{context.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</small>
+            <strong className="truncate font-mono text-[13px] leading-none font-semibold tracking-[.02em] text-[#f2f6ff] tabular-nums">{context.date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })} <span className="text-[#9db0cd]">UTC</span></strong>
         </div>
-        <span className="inline-flex items-center gap-[7px] whitespace-nowrap text-[11px] leading-none font-semibold text-[#bed0e8]" aria-live="polite"><i className={`size-[7px] rounded-full ${isRealtimePaused ? "bg-[#f0ae45] shadow-[0_0_8px_rgba(240,174,69,.65)]" : (isRealtime ? "bg-[#46d481] shadow-[0_0_8px_rgba(70,212,129,.65)]" : "bg-[#f0ae45] shadow-[0_0_8px_rgba(240,174,69,.65)]")}`} />{isRealtimePaused ? "Paused" : (isRealtime ? "Real time" : `Simulated (${context.oemDomainActive ? "OEM" : "Manual range"})`)}</span>
+        <div className="relative ml-auto shrink-0">
+            <button id="projectTimeModeBtn" className={`project-time-footer__mode inline-flex h-[28px] cursor-pointer items-center gap-[6px] rounded-[6px] border px-[7px] font-[system-ui,sans-serif] text-[10px] leading-none font-semibold whitespace-nowrap transition-colors focus-visible:outline-none ${modeMenuOpen ? "text-[#f2f6ff]" : "text-[#c8d8ed] hover:text-[#f2f6ff] focus-visible:text-[#f2f6ff]"}`} type="button" aria-label={modePresentation.label} aria-haspopup="menu" aria-expanded={modeMenuOpen} onClick={() => setModeMenuOpen((open) => !open)}>
+                <i className={`size-[7px] shrink-0 rounded-full ${modePresentation.dot}`} aria-hidden="true" />
+                <span aria-live="polite">{modePresentation.label}</span>
+                <span className={`ml-px grid size-[13px] shrink-0 place-items-center text-[#a9beda] transition-transform ${modeMenuOpen ? "rotate-180" : ""}`} aria-hidden="true"><ChevronDownIcon /></span>
+            </button>
+            {modeMenuOpen && <div id="projectTimeModeMenu" className="absolute right-0 bottom-[calc(100%+6px)] z-[10230] grid min-w-[120px] gap-1 rounded-[7px] border border-[#315178] bg-[#0c1728] p-[4px] shadow-[0_12px_28px_rgba(0,0,0,.45)]" role="menu" aria-label="Modo temporal">
+                {[{ value: "static", label: "Static" }, { value: "realtime", label: "Real time" }, { value: "range", label: "Simulated" }].map((option) => <button className={`orbit-time-mode-option cursor-pointer appearance-none rounded-[5px] border-0 bg-transparent px-[8px] py-[7px] text-left font-[system-ui,sans-serif] text-[10px] leading-none font-semibold text-[#c7d5e9]${selectedMode === option.value ? " is-selected" : ""}`} type="button" role="menuitemradio" aria-checked={selectedMode === option.value} key={option.value} onClick={() => selectMode(option.value)}>{option.label}</button>)}
+            </div>}
+        </div>
     </footer>;
+}
+
+function SessionRecordButton() {
+    const [recording, setRecording] = useState(false);
+    const [processing, setProcessing] = useState(false);
+    useEffect(() => {
+        const onRecordingState = (event) => {
+            setRecording(event.detail === true || event.detail?.active === true);
+            setProcessing(event.detail?.processing === true);
+        };
+        window.addEventListener("orbit:recording-state", onRecordingState);
+        return () => window.removeEventListener("orbit:recording-state", onRecordingState);
+    }, []);
+    const label = processing ? "Procesando grabacion" : (recording ? "Detener grabacion" : "Grabar sesion");
+    return <button id="leftRecordBtn" className={`sidebar-btn ${recording ? "!border !border-[#d2556b] !bg-[#351724]" : ""} ${processing ? "!border !border-[#5d7194] !bg-[#152238]" : ""}`} type="button" title={label} aria-label={label} aria-pressed={recording} disabled={processing} onClick={() => window.dispatchEvent(new CustomEvent("orbit:simulation-action", { detail: { type: "record-toggle" } }))}>
+        {recording ? <span className="block size-[11px] rounded-[2px] bg-[#ff7185] shadow-[0_0_8px_rgba(255,87,109,.6)]" aria-hidden="true" /> : <span className={`block size-[11px] rounded-full ${processing ? "bg-[#9dafc9] animate-pulse" : "bg-[#ff576d] shadow-[0_0_8px_rgba(255,87,109,.6)]"}`} aria-hidden="true" />}
+    </button>;
 }
 
 export default function WorkspaceSidebar() {
     const [openPanel, setOpenPanel] = useState(true);
     const [projectName, setProjectName] = useState("MY PROJECT");
+    const [projectTreeExpanded, setProjectTreeExpanded] = useState(true);
+    const [projectLayerCount, setProjectLayerCount] = useState(0);
     const [searchMenuOpen, setSearchMenuOpen] = useState(false);
     const [searchOptions, setSearchOptions] = useState({ matchCase: false, wholeWord: false, regex: false });
     const [allLayersVisible, setAllLayersVisible] = useState(true);
@@ -55,6 +98,14 @@ export default function WorkspaceSidebar() {
         const onProjectTitle = (event) => setProjectName(String(event.detail || "MY PROJECT").toUpperCase());
         window.addEventListener("orbit:project-title", onProjectTitle);
         return () => window.removeEventListener("orbit:project-title", onProjectTitle);
+    }, []);
+    useEffect(() => {
+        const onProjectLayerCount = (event) => {
+            const next = Number(event.detail);
+            setProjectLayerCount(Number.isFinite(next) && next >= 0 ? next : 0);
+        };
+        window.addEventListener("orbit:project-layer-count", onProjectLayerCount);
+        return () => window.removeEventListener("orbit:project-layer-count", onProjectLayerCount);
     }, []);
     useEffect(() => {
         const onLayersPanelCollapse = () => setOpenPanel(false);
@@ -156,14 +207,20 @@ export default function WorkspaceSidebar() {
             <button id="leftManualOrbitBtn" className={`sidebar-btn${manualOrbitOpen ? " active" : ""}`} type="button" title={"Crear \u00f3rbita manual"} aria-label={"Crear \u00f3rbita manual"} aria-expanded={manualOrbitOpen} onClick={() => window.dispatchEvent(new CustomEvent("orbit:manual-orbit-toggle", { detail: { open: !manualOrbitOpen } }))}><ManualOrbitIcon /></button>
             <button id="leftPropagatedParametersBtn" className={`sidebar-btn${propagatedParametersOpen ? " active" : ""} disabled:!cursor-not-allowed disabled:!opacity-40`} type="button" title={propagatedParametersTitle} aria-label={propagatedParametersTitle} aria-expanded={propagatedParametersOpen} disabled={!propagatedParametersAvailable} onClick={togglePropagatedParameters}><PropagatedParametersIcon /></button>
             <div className="sidebar-spacer" />
+            <SessionRecordButton />
             <CameraControls />
         </aside>
         <aside id="leftSatellitesPanel" className={`sidebar-panel${openPanel ? " open" : ""}`}>
             <div className="sidebar-panel-header orbit-layers-panel-header after:!hidden max-[620px]:!min-h-[62px] max-[620px]:!p-[14px]">
                 <div className="orbit-layers-heading">LAYERS</div>
             </div>
-            <div className="orbit-project-header mx-[14px] mb-2 flex min-h-[41px] items-center justify-between gap-2 border-t border-[#172334] pt-[7px]">
-                <div className="orbit-project-title min-w-0 -translate-y-px truncate font-[system-ui,sans-serif] text-[11px] leading-none font-bold tracking-[.1em] text-[#c3d0e5]" data-project-title title={projectName}>{projectName}</div>
+            <div className="orbit-project-header mx-[14px] mb-2 flex min-h-[41px] items-center justify-between gap-2">
+                <button className="orbit-project-root-toggle flex min-w-0 flex-1 cursor-pointer items-center gap-[5px] rounded-[6px] border-0 bg-transparent px-[5px] py-0 text-left font-[system-ui,sans-serif] text-[#edf3ff] hover:bg-[#101d31] focus-visible:outline-2 focus-visible:outline-[#5278db] focus-visible:outline-offset-[-2px]" data-layer-tree-project-root="true" type="button" title={projectTreeExpanded ? "Plegar proyecto" : "Desplegar proyecto"} aria-label={`${projectTreeExpanded ? "Plegar" : "Desplegar"} proyecto ${projectName}`} aria-expanded={projectTreeExpanded} aria-controls="leftSatellitesPanelContent" onClick={() => setProjectTreeExpanded((expanded) => !expanded)}>
+                    <span className={`layer-tree-chevron grid place-items-center transition-transform${projectTreeExpanded ? "" : " -rotate-90"}`} aria-hidden="true"><ChevronDownIcon /></span>
+                    <span className="layer-tree-icon" aria-hidden="true"><FolderIcon /></span>
+                    <span className="orbit-project-title min-w-0 flex-1 -translate-y-px truncate text-[11px] leading-none font-bold tracking-[.1em] text-[#c3d0e5]" data-project-title title={projectName}>{projectName}</span>
+                    <span className="layer-tree-count orbit-project-layer-count" aria-label={`${projectLayerCount} capas`} title={`${projectLayerCount} capas`}>{projectLayerCount}</span>
+                </button>
                 <div className="sidebar-panel-actions orbit-project-actions shrink-0 !gap-[6px]">
                     <button className="object-global-eye-btn inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#17263c] !bg-[#0c1522] !text-[#c9d6ec] hover:!border-[#4168a3] hover:!bg-[#14243d] hover:!text-[#edf4ff] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="toggleAllVisibilityBtn" data-react-visibility-toggle="true" type="button" title={designMode ? "Las capas se restaurarán al salir del diseño orbital" : visibilityTitle} aria-label={visibilityTitle} aria-pressed={allLayersVisible} disabled={designMode} hidden={!hasActiveLayers}>
                         {allLayersVisible ? <EyeIcon /> : <EyeOffIcon />}
@@ -184,7 +241,7 @@ export default function WorkspaceSidebar() {
                     </div>}
                 </div>
             </div>
-            <div id="leftSatellitesPanelContent" className={`sidebar-panel-content${designMode ? " pointer-events-none select-none opacity-50" : ""}`} aria-disabled={designMode} />
+            <div id="leftSatellitesPanelContent" data-layer-tree-project-body="true" className={`sidebar-panel-content${designMode ? " pointer-events-none select-none opacity-50" : ""}${projectTreeExpanded ? "" : " !invisible !pointer-events-none"}`} aria-hidden={!projectTreeExpanded} aria-disabled={designMode} />
             <ProjectTimeFooter />
             <div className="sidebar-panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Redimensionar panel de capas" />
         </aside>

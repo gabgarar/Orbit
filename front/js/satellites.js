@@ -1748,8 +1748,8 @@ export function getSatelliteTelemetry(id) {
     }
 
     const simulationCtx = resolveSimulationTimelineContext();
-    const isSimulated = Boolean(simulationCtx && simulationCtx.mode === "range");
-    const simulatedKinematics = isSimulated
+    const usesTimelineFrame = Boolean(simulationCtx && simulationCtx.mode !== "realtime");
+    const simulatedKinematics = usesTimelineFrame
         ? sampleSimulationTrackKinematics(state, simulationCtx.date)
         : null;
     const simulatedPosition = simulatedKinematics?.position
@@ -1781,10 +1781,10 @@ export function getSatelliteTelemetry(id) {
     // not the latest realtime WebSocket message. Never mix that realtime
     // velocity/acceleration into the simulated frame; derive both from the
     // neighbouring track samples, or leave them unavailable.
-    const velocityVector = isSimulated
+    const velocityVector = usesTimelineFrame
         ? finiteVector(simulatedKinematics?.velocity)
         : finiteVector(state.lastVelocity);
-    const accelerationVector = isSimulated
+    const accelerationVector = usesTimelineFrame
         ? finiteVector(simulatedKinematics?.acceleration)
         : finiteVector(state.lastAcceleration);
     const positionEcef = coordinatesAreEarthFixed ? positionVector : null;
@@ -1805,8 +1805,8 @@ export function getSatelliteTelemetry(id) {
     const speedKmS = Number.isFinite(speed) ? speed / 1000 : null;
     const speedKmH = Number.isFinite(speed) ? speed * 3.6 : null;
     const nowMs = Date.now();
-    const frameTimeMs = isSimulated ? simulationCtx.date.getTime() : nowMs;
-    const telemetryAgeMs = isSimulated ? null : nowMs - (state.lastMessageTime || nowMs);
+    const frameTimeMs = usesTimelineFrame ? simulationCtx.date.getTime() : nowMs;
+    const telemetryAgeMs = usesTimelineFrame ? null : nowMs - (state.lastMessageTime || nowMs);
     const propagationFutureHours = getPropagationHoursForSatellite(id);
 
     let oem = null;

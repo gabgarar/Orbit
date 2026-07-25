@@ -52,7 +52,7 @@ export default function CameraControls() {
     }, []);
 
     return <div className="relative shrink-0">
-        <button className={`sidebar-btn${open ? " active" : ""}`} type="button" title="Controles de cámara" aria-label="Controles de cámara" aria-expanded={open} onClick={toggleOpen}><CameraIcon /></button>
+        <button id="leftCameraControlsBtn" className={`sidebar-btn${open ? " active" : ""}`} type="button" title="Controles de cámara" aria-label="Controles de cámara" aria-expanded={open} onClick={toggleOpen}><CameraIcon /></button>
         {open && <div className="absolute bottom-0 left-[calc(100%+8px)] grid min-w-[176px] rounded-lg border border-[#36548a] bg-[#101c31] p-[5px] shadow-[0_10px_28px_rgba(0,0,0,.35)]" role="menu">
             <button className={menuItemClass} type="button" role="menuitem" onClick={() => select("reset")}>Restablecer vista</button>
             {viewOptions.map(([value, label]) => {

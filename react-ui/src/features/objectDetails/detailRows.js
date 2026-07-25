@@ -38,6 +38,7 @@ function vectorMagnitude(input) {
 
 function simulationMode(input) {
     if (input === "simulated") return "Simulated";
+    if (input === "static") return "Static";
     if (input === "realtime") return "Real time";
     return "-";
 }

@@ -1,4 +1,4 @@
-import { advanceSimulation, SIMULATION_MODE_REALTIME } from "./simulationState.js";
+import { advanceSimulation, SIMULATION_MODE_REALTIME, SIMULATION_MODE_STATIC } from "./simulationState.js";
 
 /** Keeps simulation time progression independent from Cesium and UI details. */
 export function createSimulationController({ state, now = () => Date.now(), onDateChange }) {
@@ -6,6 +6,10 @@ export function createSimulationController({ state, now = () => Date.now(), onDa
         const timestamp = now();
         const elapsedMs = Math.max(0, timestamp - state.lastTickTimestamp);
         state.lastTickTimestamp = timestamp;
+
+        if (state.mode === SIMULATION_MODE_STATIC) {
+            return state.currentDate;
+        }
 
         if (state.mode === SIMULATION_MODE_REALTIME) {
             // Realtime is still a controllable clock. When explicitly

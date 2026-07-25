@@ -1,4 +1,4 @@
-import { createLayerTree, getVisibleLayerFolderIds } from "./features/layers/layerTree.js";
+import { createLayerTree, getLayerFolderCounts, getVisibleLayerFolderIds } from "./features/layers/layerTree.js";
 import { getBodyGroupPresentation, getLayerPresentation, isBodyLayer, isEarthLayer } from "./features/layers/layerPresentation.js";
 import { OBJECT_STATE_CHANGED_EVENT } from "./runtime/objectDetailsEvents.js";
 import { deriveLayerActionsState, emitLayerActionsState } from "./runtime/layerActionsState.js";
@@ -3647,6 +3647,11 @@ export function setupObjectSidebar({
         // on operational layers while preserving every row interaction.
         const projectLayerIds = filtered.filter((id) => !isBodyLayer(getLayerTypeForId(id), id));
         const bodyLayerIds = filtered.filter((id) => isBodyLayer(getLayerTypeForId(id), id));
+        const folderLayerCounts = getLayerFolderCounts({
+            folders: tree.folders,
+            layerParents: tree.layerParents,
+            layerIds: projectLayerIds
+        });
         // A folder is useful before it contains a layer: it is where a user
         // intends to import or drag the next object. Keep every saved folder
         // in the normal tree; an active search still narrows it to matching
@@ -3665,10 +3670,22 @@ export function setupObjectSidebar({
             if (!visibleFolderIds.has(folder.id)) return;
             const group = document.createElement("section");
             group.className = "layer-tree-folder";
+            const folderExpanded = filteringLayers || folder.expanded;
+            const folderBodyId = `layer-tree-folder-body-${String(folder.id).replace(/[^a-z0-9_-]/gi, "-")}`;
             const header = document.createElement("button");
             header.type = "button";
             header.className = "layer-tree-folder-header";
-            header.innerHTML = `<span class="layer-tree-chevron">${folder.expanded ? "▾" : "▸"}</span><span class="layer-tree-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8.2a2.2 2.2 0 0 1 2.2-2.2h3.2l1.9 2.3h6.2a2.2 2.2 0 0 1 2.2 2.2v6.9a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2z"/><path d="M3.8 11.1h16.4"/></svg></span><span>${folder.name}</span>`;
+            header.setAttribute("aria-expanded", folderExpanded ? "true" : "false");
+            header.setAttribute("aria-controls", folderBodyId);
+            header.innerHTML = `<span class="layer-tree-chevron" aria-hidden="true">${folderExpanded ? "▾" : "▸"}</span><span class="layer-tree-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8.2a2.2 2.2 0 0 1 2.2-2.2h3.2l1.9 2.3h6.2a2.2 2.2 0 0 1 2.2 2.2v6.9a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2z"/><path d="M3.8 11.1h16.4"/></svg></span><span class="layer-tree-folder-name">${folder.name}</span>`;
+            const folderCount = document.createElement("span");
+            const count = folderLayerCounts.get(folder.id) || 0;
+            folderCount.className = "layer-tree-count layer-tree-folder-count";
+            folderCount.dataset.layerTreeFolderCount = folder.id;
+            folderCount.textContent = String(count);
+            folderCount.title = `${count} capas`;
+            folderCount.setAttribute("aria-label", `${count} capas`);
+            header.appendChild(folderCount);
             header.draggable = true;
             header.addEventListener("dragstart", (event) => { event.dataTransfer.setData("text/plain", folder.id); event.dataTransfer.effectAllowed = "move"; });
             header.addEventListener("dragover", (event) => { event.preventDefault(); event.stopPropagation(); });
@@ -3684,7 +3701,8 @@ export function setupObjectSidebar({
             });
             group.appendChild(header);
             const body = document.createElement("div");
-            body.hidden = filteringLayers ? false : !folder.expanded;
+            body.id = folderBodyId;
+            body.hidden = !folderExpanded;
             body.className = "layer-tree-folder-body";
             body.addEventListener("dragover", (event) => { event.preventDefault(); event.stopPropagation(); });
             body.addEventListener("drop", (event) => {
@@ -3823,6 +3841,7 @@ export function setupObjectSidebar({
             const expanded = filteringLayers || bodiesExpanded;
             const bodySection = document.createElement("section");
             bodySection.className = `layer-tree-body-section${expanded ? " is-expanded" : ""}`;
+            bodySection.dataset.layerTreeBodies = "true";
             bodySection.setAttribute("aria-label", "Bodies");
             const bodyHeading = document.createElement("button");
             bodyHeading.type = "button";
@@ -3842,7 +3861,7 @@ export function setupObjectSidebar({
             const bodyHeadingText = document.createElement("span");
             bodyHeadingText.textContent = "BODIES";
             const bodyCount = document.createElement("span");
-            bodyCount.className = "layer-tree-body-count";
+            bodyCount.className = "layer-tree-count layer-tree-body-count";
             bodyCount.textContent = String(bodyLayerIds.length);
 
             const bodyRows = document.createElement("div");
@@ -3860,6 +3879,8 @@ export function setupObjectSidebar({
             listFragment.appendChild(bodySection);
         }
         listRoot.replaceChildren(listFragment);
+
+        window.dispatchEvent(new CustomEvent("orbit:project-layer-count", { detail: filtered.length }));
 
         // Empty folders do not need a vertical guide; the guide is reserved
         // for folders that actually contain a layer or a subfolder.

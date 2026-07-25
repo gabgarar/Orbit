@@ -1,5 +1,6 @@
 export const SIMULATION_MODE_REALTIME = "realtime";
 export const SIMULATION_MODE_RANGE = "range";
+export const SIMULATION_MODE_STATIC = "static";
 
 export function createSimulationState(now = new Date()) {
     return {
@@ -23,6 +24,9 @@ export function setSimulationRange(state, startDate, endDate) {
 }
 
 export function advanceSimulation(state, elapsedMs) {
+    // A static scene intentionally keeps the sampled instant unchanged even
+    // if a caller tries to advance the shared clock.
+    if (state.mode === SIMULATION_MODE_STATIC) return state.currentDate;
     if (!state.isPlaying && !state.playing) return state.currentDate;
     const direction = state.rewind ? -1 : 1;
     const next = new Date(state.currentDate.getTime() + (Math.max(0, elapsedMs) * state.speed * direction));

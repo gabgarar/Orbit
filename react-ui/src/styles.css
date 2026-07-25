@@ -29,10 +29,12 @@ body.with-toolbars #cesiumContainer {
     top: max(72px, calc(76px * var(--orbit-ui-scale))) !important;
     bottom: 6px;
     left: max(62px, calc(68px * var(--orbit-ui-scale))) !important;
-    border: 1px solid rgba(73, 104, 153, 0.36);
+    border: 1px solid rgba(87, 120, 169, 0.42);
     border-radius: 10px;
-    background: linear-gradient(145deg, #0b131f, #070d17);
-    box-shadow: 0 20px 44px rgba(0, 0, 0, 0.42), inset 0 1px rgba(255, 255, 255, 0.035);
+    background: linear-gradient(145deg, rgba(11, 20, 34, 0.78), rgba(6, 13, 24, 0.70));
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.36), inset 0 1px rgba(231, 242, 255, 0.045);
+    -webkit-backdrop-filter: blur(14px) saturate(112%);
+    backdrop-filter: blur(14px) saturate(112%);
     overflow: hidden;
     transform: translateX(calc(-100% - 86px));
     z-index: 10125 !important;
@@ -42,10 +44,12 @@ body.with-toolbars #cesiumContainer {
     top: max(72px, calc(76px * var(--orbit-ui-scale))) !important;
     bottom: 6px;
     left: max(62px, calc(68px * var(--orbit-ui-scale))) !important;
-    border: 1px solid rgba(73, 104, 153, 0.36);
+    border: 1px solid rgba(87, 120, 169, 0.42);
     border-radius: 10px;
-    background: linear-gradient(145deg, #0b131f, #070d17);
-    box-shadow: 0 20px 44px rgba(0, 0, 0, 0.42);
+    background: linear-gradient(145deg, rgba(11, 20, 34, 0.78), rgba(6, 13, 24, 0.70));
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.36), inset 0 1px rgba(231, 242, 255, 0.035);
+    -webkit-backdrop-filter: blur(14px) saturate(112%);
+    backdrop-filter: blur(14px) saturate(112%);
     overflow: hidden;
     transform: translateX(calc(-100% - 86px));
     z-index: 10125 !important;
@@ -62,10 +66,12 @@ body.with-toolbars #cesiumContainer {
     left: 8px;
     width: 44px;
     padding: 4px 0;
-    border: 1px solid rgba(73, 104, 153, 0.3);
+    border: 1px solid rgba(87, 120, 169, 0.36);
     border-radius: 9px;
-    background: linear-gradient(180deg, #0b131f, #07101a);
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.34);
+    background: linear-gradient(180deg, rgba(11, 20, 34, 0.76), rgba(6, 15, 26, 0.68));
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.30), inset 0 1px rgba(231, 242, 255, 0.03);
+    -webkit-backdrop-filter: blur(14px) saturate(110%);
+    backdrop-filter: blur(14px) saturate(110%);
     z-index: 10130 !important;
     pointer-events: auto;
 }
@@ -75,15 +81,104 @@ body.with-toolbars #cesiumContainer {
 #leftSidebar #leftSatellitesBtn svg { width: 21px; height: 21px; stroke-width: 1.65; }
 #leftSidebar #leftSatellitesBtn.active { box-shadow: inset 0 0 0 1px rgba(104, 150, 255, 0.14), 0 4px 14px rgba(25, 74, 157, 0.2); }
 
+/* The time controls use a shared, deliberately light glass treatment. The
+   project keeps Tailwind preflight disabled, so the menu also needs explicit
+   colours to avoid the browser's light native button surface. */
+#projectTimeModeMenu {
+    border-color: rgba(93, 132, 189, 0.58);
+    background: linear-gradient(145deg, rgba(10, 23, 41, 0.68), rgba(5, 13, 25, 0.58));
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.30), inset 0 1px rgba(231, 242, 255, 0.045);
+    -webkit-backdrop-filter: blur(14px) saturate(115%);
+    backdrop-filter: blur(14px) saturate(115%);
+}
+#projectTimeModeMenu .orbit-time-mode-option {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: #c7d5e9;
+    -webkit-text-fill-color: #c7d5e9;
+}
+#projectTimeModeMenu .orbit-time-mode-option:hover,
+#projectTimeModeMenu .orbit-time-mode-option:focus-visible {
+    background: #1c3153;
+    color: #f2f6ff;
+    -webkit-text-fill-color: #f2f6ff;
+}
+#projectTimeModeMenu .orbit-time-mode-option:focus-visible {
+    outline: 2px solid #5b85c7;
+    outline-offset: -2px;
+}
+#projectTimeModeMenu .orbit-time-mode-option.is-selected {
+    background: rgba(49, 80, 139, 0.74);
+    color: #f2f6ff;
+    -webkit-text-fill-color: #f2f6ff;
+}
+#projectTimeFooter .project-time-footer__mode span > svg {
+    width: 13px;
+    height: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* Keep the project clock visually light and compact.  It is deliberately a
+   footer rather than a second card: the upper rule separates it from Layers,
+   while the lower inset leaves a little breathing room above the panel edge. */
+#projectTimeFooter {
+    flex: 0 0 52px;
+    height: 52px;
+    margin: auto 14px 12px;
+    padding: 8px 10px 0;
+    border: 0;
+    border-top: 1px solid rgba(89, 127, 183, 0.45);
+    border-radius: 0 !important;
+    background: linear-gradient(90deg, rgba(18, 39, 68, 0.20), rgba(9, 20, 35, 0.08) 58%, transparent);
+    box-shadow: none;
+    -webkit-backdrop-filter: blur(8px) saturate(108%);
+    backdrop-filter: blur(8px) saturate(108%);
+}
+#projectTimeFooter .project-time-footer__calendar {
+    width: 20px;
+    height: 20px;
+    border: 0;
+    border-radius: 4px;
+    background: rgba(33, 60, 95, 0.24);
+    box-shadow: none;
+    color: #c0d0e8;
+}
+#projectTimeFooter .project-time-footer__clock {
+    min-width: 0;
+    padding-block: 1px;
+}
+#projectTimeFooter .project-time-footer__clock small { color: #9cafca; }
+#projectTimeFooter .project-time-footer__clock strong {
+    color: #f0f5ff;
+    letter-spacing: 0.015em;
+    font-variant-numeric: tabular-nums;
+}
+#projectTimeFooter .project-time-footer__mode {
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none;
+}
+#projectTimeFooter .project-time-footer__mode:hover,
+#projectTimeFooter .project-time-footer__mode[aria-expanded="true"] {
+    border-color: transparent !important;
+    background: rgba(38, 71, 115, 0.30) !important;
+    box-shadow: none;
+}
+
 /* A calm, contiguous header: the old decorative orb is intentionally removed
    so the panel reads as one surface instead of a second floating card. */
 #leftSatellitesPanel .orbit-layers-panel-header {
     min-height: 54px;
     padding: 13px 14px 9px;
     border: 0;
-    border-bottom: 1px solid #1b2b43;
-    background: linear-gradient(106deg, #101e32 0%, #0c1727 56%, #09121f 100%);
-    box-shadow: inset 0 1px rgba(174, 205, 255, 0.035), inset 0 -1px rgba(0, 0, 0, 0.18);
+    border-bottom: 1px solid rgba(74, 106, 150, 0.32);
+    background: linear-gradient(106deg, rgba(18, 35, 58, 0.68) 0%, rgba(12, 24, 42, 0.64) 56%, rgba(8, 17, 30, 0.60) 100%);
+    box-shadow: inset 0 1px rgba(174, 205, 255, 0.045), inset 0 -1px rgba(0, 0, 0, 0.14);
 }
 #leftSatellitesPanel .orbit-layers-heading {
     color: #f0f5ff;
@@ -91,8 +186,14 @@ body.with-toolbars #cesiumContainer {
     letter-spacing: 0.07em;
 }
 
-/* Keep the panel header deliberately quiet. Global layer actions belong to
-   the project row, where they describe the tree they affect. */
+#leftInfoPanel .sidebar-panel-header,
+#leftInfoPanel .telemetry-panel-header {
+    background: linear-gradient(120deg, rgba(45, 98, 162, 0.16), transparent 58%), rgba(18, 28, 45, 0.66);
+}
+
+/* The project is the always-visible root of the Layers tree. Its contents
+   hang from the same guide as regular folders, while its own toggle keeps the
+   hierarchy compact when needed. */
 #leftSatellitesPanel > .orbit-layers-panel-header { order: 0; }
 #leftSatellitesPanel > [role="search"] { order: 1; }
 #leftSatellitesPanel > .orbit-project-header { order: 2; flex-shrink: 0; }
@@ -100,11 +201,28 @@ body.with-toolbars #cesiumContainer {
 #leftSatellitesPanel > #projectTimeFooter { order: 4; }
 #leftSatellitesPanel .orbit-project-title { max-width: 100%; }
 #leftSatellitesPanel .orbit-project-actions { align-self: center; }
+#leftSatellitesPanel .orbit-project-root-toggle { min-height: 31px; }
+#leftSatellitesPanel .orbit-project-root-toggle .layer-tree-chevron { color: #9aaecb; }
+#leftSatellitesPanel .orbit-project-root-toggle .layer-tree-chevron svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-#leftSatellitesPanel #leftSatellitesPanelContent { padding: 0 10px 10px 14px; }
+#leftSatellitesPanel #leftSatellitesPanelContent { position: relative; margin-left: 30px; padding: 0 10px 10px 14px; border-left: 0; }
+/* The project guide intentionally stops before the footer divider. This keeps
+   the hierarchy legible without making the tree look visually connected to
+   the clock. */
+#leftSatellitesPanel #leftSatellitesPanelContent::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 18px;
+    left: 0;
+    width: 1px;
+    background: linear-gradient(to bottom, #31455f 0%, #31455f calc(100% - 12px), rgba(49, 69, 95, 0));
+    pointer-events: none;
+}
 #leftSatellitesPanel .object-sidebar-body-compact { padding: 0; gap: 6px; }
 #leftSatellitesPanel .object-sidebar-body-compact #objectList { padding-right: 5px; }
 #leftSatellitesPanel .layer-tree-folder-header { min-height: 31px; padding: 0 5px; color: #edf3ff; font-size: 12px; }
+#leftSatellitesPanel .layer-tree-folder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #leftSatellitesPanel .layer-tree-chevron { width: 9px; font-size: 9px; }
 #leftSatellitesPanel .layer-tree-icon { display: inline-grid; width: 18px; height: 18px; place-items: center; color: #f0c96a; }
 #leftSatellitesPanel .layer-tree-icon svg { width: 17px; height: 17px; fill: rgba(240, 201, 106, 0.12); stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
@@ -120,6 +238,7 @@ body.with-toolbars #cesiumContainer {
 #leftSatellitesPanel .object-sidebar-body-compact .layer-type-icon { width: 16px; height: 16px; border-radius: 5px; }
 #leftSatellitesPanel .object-sidebar-body-compact .layer-type-icon svg { width: 12px; height: 12px; }
 #leftSatellitesPanel .layer-type-icon.is-bodies { color: #b9a7ff; }
+#leftSatellitesPanel .layer-tree-count { margin-left: auto; min-width: 14px; color: #90a5c2; font-size: 9px; line-height: 1; letter-spacing: 0; text-align: right; }
 #leftSatellitesPanel .layer-tree-body-section { margin-top: 7px; padding-top: 7px; }
 #leftSatellitesPanel .layer-tree-body-section-header { min-height: 26px; padding: 0 5px; border: 0; background: transparent; color: #c7d2e7; font-size: 10px; cursor: pointer; }
 #leftSatellitesPanel .layer-tree-body-section-header:hover { background: #101d31; }
@@ -165,9 +284,11 @@ body.with-toolbars #cesiumContainer {
     padding: 0;
     border: 1px solid rgba(65, 99, 147, 0.58);
     border-radius: 10px;
-    background: linear-gradient(145deg, rgba(12, 25, 42, 0.985), rgba(5, 14, 25, 0.985));
+    background: linear-gradient(145deg, rgba(12, 25, 42, 0.78), rgba(5, 14, 25, 0.70));
     color: #dbe7fa;
     box-shadow: 0 22px 60px rgba(0, 0, 0, 0.46), inset 0 1px rgba(255, 255, 255, 0.045);
+    -webkit-backdrop-filter: blur(14px) saturate(112%);
+    backdrop-filter: blur(14px) saturate(112%);
     pointer-events: auto;
 }
 
@@ -176,6 +297,88 @@ body.with-toolbars #cesiumContainer {
     margin: 0;
     cursor: default;
     user-select: auto;
+}
+
+/* Shared translucent treatment for the remaining floating work surfaces.
+   The alpha changes only the surface; text and interactive contrast stay
+   intact, while the blur prevents the globe from competing with the content. */
+.object-details-panel,
+#manualOrbitPanel,
+.propagated-orbit-parameters-panel {
+    background: linear-gradient(145deg, rgba(12, 25, 42, 0.78), rgba(5, 14, 25, 0.70));
+    -webkit-backdrop-filter: blur(14px) saturate(112%);
+    backdrop-filter: blur(14px) saturate(112%);
+}
+
+.react-simulation-dock,
+#groundStationHeatLegend,
+.orbit-floating-panel {
+    background: linear-gradient(118deg, rgba(10, 23, 41, 0.66), rgba(5, 14, 25, 0.54));
+    -webkit-backdrop-filter: blur(14px) saturate(114%);
+    backdrop-filter: blur(14px) saturate(114%);
+}
+
+/* The dock is a continuation of the compact clock rather than a second heavy
+   footer. Keep its actions flat, make the timeline legible, and reserve blue
+   for the active time position instead of the whole control surface. */
+.react-simulation-dock {
+    border-color: rgba(89, 127, 183, 0.48);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.26), inset 0 1px rgba(231, 242, 255, 0.045);
+}
+.react-simulation-dock button {
+    border-radius: 6px;
+}
+.react-simulation-dock button[aria-haspopup="menu"] {
+    font-variant-numeric: tabular-nums;
+}
+.react-simulation-dock output {
+    border-color: #5178d9;
+    background: linear-gradient(135deg, #315fc8, #264eaa);
+    box-shadow: 0 5px 12px rgba(25, 62, 145, 0.32);
+}
+.react-simulation-dock input[type="range"]::-webkit-slider-runnable-track {
+    background: linear-gradient(to right, #5b80e5 0 var(--timeline-progress), #263b58 var(--timeline-progress) 100%);
+    box-shadow: inset 0 0 0 1px rgba(132, 160, 202, 0.20);
+}
+.react-simulation-dock input[type="range"]::-webkit-slider-thumb {
+    border-color: #9bb5ff;
+    background: #3969d7;
+    box-shadow: 0 0 0 3px rgba(71, 113, 226, 0.18);
+}
+.react-simulation-dock input[type="range"]::-moz-range-track {
+    background: #263b58;
+    box-shadow: inset 0 0 0 1px rgba(132, 160, 202, 0.20);
+}
+.react-simulation-dock input[type="range"]::-moz-range-progress { background: #5b80e5; }
+.react-simulation-dock input[type="range"]::-moz-range-thumb {
+    border-color: #9bb5ff;
+    background: #3969d7;
+    box-shadow: 0 0 0 3px rgba(71, 113, 226, 0.18);
+}
+.react-simulation-dock [aria-hidden="true"] > span > i {
+    background: #647992;
+    opacity: 0.68;
+}
+.react-simulation-dock [aria-hidden="true"] > span.is-major > i {
+    background: #9fb2ce;
+    opacity: 0.86;
+}
+.react-simulation-dock time {
+    color: #95a9c6;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+.react-simulation-dock time b { color: #c8d6ea; }
+.react-simulation-dock + button {
+    border-color: rgba(89, 127, 183, 0.56) !important;
+    background: linear-gradient(145deg, rgba(16, 37, 64, 0.84), rgba(9, 23, 42, 0.78)) !important;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.22), inset 0 1px rgba(231, 242, 255, 0.055) !important;
+    -webkit-backdrop-filter: blur(12px) saturate(112%);
+    backdrop-filter: blur(12px) saturate(112%);
+}
+.react-simulation-dock + button:hover,
+.react-simulation-dock + button:focus-visible {
+    border-color: rgba(125, 171, 237, 0.82) !important;
+    background: linear-gradient(145deg, rgba(25, 54, 91, 0.92), rgba(12, 31, 58, 0.86)) !important;
 }
 
 @media (max-width: 760px) {

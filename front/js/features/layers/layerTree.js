@@ -49,6 +49,30 @@ export function getVisibleLayerFolderIds({
     return visible;
 }
 
+/**
+ * Count the operational layers represented by every folder, including layers
+ * nested in descendant folders.  Bodies deliberately stay outside this
+ * helper: their permanent explorer section owns its own counter.
+ */
+export function getLayerFolderCounts({ folders = [], layerParents = {}, layerIds = [] } = {}) {
+    const parentById = new Map((Array.isArray(folders) ? folders : [])
+        .map((folder) => [String(folder?.id || "").trim(), String(folder?.parentId || "").trim() || null])
+        .filter(([id]) => Boolean(id)));
+    const counts = new Map([...parentById.keys()].map((id) => [id, 0]));
+
+    (Array.isArray(layerIds) ? layerIds : []).forEach((layerId) => {
+        let currentId = String(layerParents?.[layerId] || "").trim();
+        const visited = new Set();
+        while (currentId && parentById.has(currentId) && !visited.has(currentId)) {
+            counts.set(currentId, (counts.get(currentId) || 0) + 1);
+            visited.add(currentId);
+            currentId = parentById.get(currentId) || "";
+        }
+    });
+
+    return counts;
+}
+
 export function createLayerTree(storage = globalThis.localStorage, key = "orbit.layerTree.v1") {
     let state = read(storage, key);
     const save = () => storage?.setItem?.(key, JSON.stringify(state));

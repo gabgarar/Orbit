@@ -6,14 +6,17 @@ export function HelpIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.6 2.6 0 1 1 4.4 1.9c-1.1 1-1.9 1.5-1.9 3.1M12 17h.01" /></svg>;
 }
 
+export function FolderIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8.2A2.2 2.2 0 0 1 5.7 6h3.2l1.9 2.3H17a2.2 2.2 0 0 1 2.2 2.2v6.9a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2Z" /><path d="M3.8 11.1h16.4" /></svg>;
+}
+
 export function SatelliteIcon() {
-    return <svg viewBox="0 0 24 24" aria-hidden="true">
-        <g transform="rotate(-45 12 12)">
-            <rect x="9" y="9" width="6" height="6" rx="1.15" />
-            <rect x="3.5" y="9.5" width="5.5" height="5" rx=".45" />
-            <rect x="15" y="9.5" width="5.5" height="5" rx=".45" />
-            <path d="M6.25 9.5v5M17.75 9.5v5M9 11.5h6M12 9v6M12 9V6.4M12 17.6V15" />
-        </g>
+    return <svg viewBox="0 0 24 24" aria-hidden="true" data-orbit-icon="layers">
+        {/* Keep the colour on each layer local: sidebar SVG rules deliberately
+            use stroked icons, while this supplied Layers glyph is filled. */}
+        <path fill="#83a6ff" stroke="none" d="M12 2.9 2.5 7.8 12 12.7l9.5-4.9L12 2.9Z" />
+        <path fill="#6387ef" stroke="none" d="m2.5 11.2 9.5 4.9 9.5-4.9v3.5L12 19.6l-9.5-4.9v-3.5Z" />
+        <path fill="#466ddd" stroke="none" d="m2.5 16.1 9.5 4.9 9.5-4.9v2.1L12 23l-9.5-4.8v-2.1Z" />
     </svg>;
 }
 
@@ -31,6 +34,10 @@ export function ControlPanelIcon() {
 
 export function CalendarIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14" rx="2" /><path d="M8 3.5v4M16 3.5v4M4 10h16M8 14h.01M12 14h.01M16 14h.01" /></svg>;
+}
+
+export function ChevronDownIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 9 5.5 5.5L17.5 9" /></svg>;
 }
 
 export function EyeIcon() {

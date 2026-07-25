@@ -7,7 +7,7 @@ export function createProjectLifecycle(deps) {
         getActiveSatelliteIds, setAllSatelliteLayersActive, setSatelliteLayerActive,
         getGroundStationLayers, removeGroundStationLayer, clearDuplicateLayers,
         getLayerNameOverrides, clearSatelliteVisualizationConfigs, getObjectSidebar,
-        getSimulationState, applySimulationRange, showConfirm, showAlert, getAlertTitle,
+        getSimulationState, applySimulationRange, restoreSimulation = null, showConfirm, showAlert, getAlertTitle,
         getManualOrbitEntries = () => [], restoreManualOrbits = async () => ({ restored: [], failed: [] }),
         getCelestialBodies = () => [], restoreCelestialBodies = () => [], clearCelestialBodies = () => {}
     } = deps;
@@ -32,7 +32,14 @@ export function createProjectLifecycle(deps) {
             layerNames: Object.fromEntries(getLayerNameOverrides()),
             layerTree: getObjectSidebar()?.getProjectTree?.(),
             groundStations: [...getGroundStationLayers().values()].map(({ entity, coverageEntity, ...station }) => station),
-            simulation: { mode: simulation.mode, startDate: simulation.startDate, endDate: simulation.endDate }
+            simulation: {
+                mode: simulation.mode,
+                startDate: simulation.startDate,
+                endDate: simulation.endDate,
+                currentDate: simulation.currentDate,
+                isPlaying: simulation.isPlaying,
+                speed: simulation.speed
+            }
         });
     };
 
@@ -108,7 +115,11 @@ export function createProjectLifecycle(deps) {
             }
             setSatelliteLayerActive(normalizedId, true);
         }
-        if (project.simulation?.startDate && project.simulation?.endDate) applySimulationRange(new Date(project.simulation.startDate), new Date(project.simulation.endDate));
+        if (typeof restoreSimulation === "function") {
+            restoreSimulation(project.simulation);
+        } else if (project.simulation?.startDate && project.simulation?.endDate) {
+            applySimulationRange(new Date(project.simulation.startDate), new Date(project.simulation.endDate));
+        }
         restoreCelestialBodies(project.celestialBodies);
         try {
             const restoration = await restoreManualOrbits(manualOrbits);

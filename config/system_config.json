@@ -1,7 +1,7 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 97.98602861111111,
+      "propagation_hours": 122,
       "future_show": true,
       "ground_track_show": false,
       "future_line_width": 2.5,
@@ -29,9 +29,9 @@
       "antialias_enabled": true,
       "background_color": "#ffffff",
       "sky_atmosphere": true,
-      "globe_lighting": true,
-      "stars_enabled": true,
-      "earth_basemap": "natural-earth"
+      "globe_lighting": false,
+      "stars_enabled": false,
+      "earth_basemap": "openstreetmap"
     },
     "recording": {
       "quality": "medium",

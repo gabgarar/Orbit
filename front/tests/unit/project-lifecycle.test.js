@@ -41,6 +41,62 @@ test("starting a project always emits the opened event after a cleanup failure",
     }
 });
 
+test("project lifecycle persists and restores a static simulation frame", async () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const events = new EventTarget();
+    globalThis.window = events;
+    globalThis.document = { querySelectorAll: () => [] };
+    try {
+        let projectName = null;
+        const restoredSnapshots = [];
+        const simulation = {
+            mode: "static",
+            startDate: new Date("2026-07-25T00:00:00.000Z"),
+            endDate: new Date("2026-07-25T12:00:00.000Z"),
+            currentDate: new Date("2026-07-25T02:06:11.000Z"),
+            isPlaying: false,
+            speed: 1
+        };
+        const lifecycle = createProjectLifecycle({
+            getProjectName: () => projectName,
+            setProjectName: (value) => { projectName = value; },
+            getProjectFileHandle: () => null,
+            setProjectFileHandle: () => {},
+            getActiveSatelliteIds: () => [],
+            setAllSatelliteLayersActive: () => {},
+            setSatelliteLayerActive: () => {},
+            getGroundStationLayers: () => new Map(),
+            removeGroundStationLayer: () => {},
+            clearDuplicateLayers: () => {},
+            getLayerNameOverrides: () => new Map(),
+            clearSatelliteVisualizationConfigs: () => {},
+            getObjectSidebar: () => null,
+            getSimulationState: () => simulation,
+            applySimulationRange: () => { throw new Error("the dedicated simulation restorer must be used"); },
+            restoreSimulation: (snapshot) => restoredSnapshots.push(snapshot),
+            showConfirm: async () => true,
+            showAlert: () => {},
+            getAlertTitle: () => "Orbit"
+        });
+
+        const saved = lifecycle.buildDocument();
+        assert.equal(saved.simulation.mode, "static");
+        assert.equal(saved.simulation.currentDate.toISOString(), "2026-07-25T02:06:11.000Z");
+        assert.equal(saved.simulation.isPlaying, false);
+
+        const file = { name: "static-frame.json", text: async () => JSON.stringify(saved) };
+        assert.equal(await lifecycle.loadFile(file), true);
+        assert.equal(restoredSnapshots.length, 1);
+        assert.equal(restoredSnapshots[0].mode, "static");
+        assert.equal(restoredSnapshots[0].currentDate, "2026-07-25T02:06:11.000Z");
+        assert.equal(restoredSnapshots[0].isPlaying, false);
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+    }
+});
+
 test("project lifecycle serializes manual orbits separately and restores them without catalogue activation", async () => {
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;
