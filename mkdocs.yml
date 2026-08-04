@@ -44,13 +44,17 @@ plugins:
           default: true
           nav:
             - Inicio: index.md
-            - Conceptos de ingeniería: engineering.md
+            - Introducción: index.md
+            - Primeros pasos: gateway.md
+            - Guía de usuario: workspace.md
+            - Ingeniería: engineering.md
+            - Formatos espaciales: orbit-service.md
             - Propagación: propagation.md
-            - Servicio orbital: orbit-service.md
-            - Gateway: gateway.md
-            - Espacio de trabajo: workspace.md
-            - Referencia API: api.md
-            - Internals: internals.md
+            - Análisis: orbit-service.md
+            - Integraciones: api.md
+            - Operación: gateway.md
+            - Guía de desarrollo: internals.md
+            - Referencia: internals.md
         - locale: en
           name: English
           build: true
@@ -58,13 +62,17 @@ plugins:
           site_description: Technical and operational documentation for Orbit.
           nav:
             - Overview: index.md
-            - Engineering concepts: engineering.md
+            - Introduction: index.md
+            - Getting started: gateway.md
+            - User guide: workspace.md
+            - Engineering: engineering.md
+            - Space formats: orbit-service.md
             - Propagation: propagation.md
-            - Orbit service: orbit-service.md
-            - Gateway: gateway.md
-            - Workspace: workspace.md
-            - API reference: api.md
-            - Internals: internals.md
+            - Analysis: orbit-service.md
+            - Integrations: api.md
+            - Operations: gateway.md
+            - Development guide: internals.md
+            - Reference: internals.md
   - search:
       lang:
         - es
@@ -97,10 +105,14 @@ extra_javascript:
 
 nav:
   - Inicio: index.md
-  - Conceptos de ingeniería: engineering.md
+  - Introducción: index.md
+  - Primeros pasos: gateway.md
+  - Guía de usuario: workspace.md
+  - Ingeniería: engineering.md
+  - Formatos espaciales: orbit-service.md
   - Propagación: propagation.md
-  - Servicio orbital: orbit-service.md
-  - Gateway: gateway.md
-  - Espacio de trabajo: workspace.md
-  - Referencia API: api.md
-  - Internals: internals.md
+  - Análisis: orbit-service.md
+  - Integraciones: api.md
+  - Operación: gateway.md
+  - Guía de desarrollo: internals.md
+  - Referencia: internals.md

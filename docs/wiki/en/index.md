@@ -20,53 +20,17 @@ TLE / OEM / manual definition → native StateVector → requested transform
                                             → viewer, analysis or export
 ```
 
-## Explore Orbit
+## Modules
 
-<div class="grid cards" markdown>
-
-- :material-orbit: **Engineering concepts**
-
-  States, elements, frames, time and Earth models.
-
-  [Open engineering →](engineering.md)
-
-- :material-chart-timeline-variant: **Propagation**
-
-  SGP4, two-body, Cowell, force models, integration and cache.
-
-  [Open propagation →](propagation.md)
-
-- :material-satellite-variant: **Orbit service**
-
-  Formats, catalogue, analysis and export boundaries.
-
-  [Open service →](orbit-service.md)
-
-- :material-server-network: **Gateway**
-
-  Node runtime, routes, persistence and process supervision.
-
-  [Open gateway →](gateway.md)
-
-- :material-layers-triple: **Workspace**
-
-  Projects, layers, bodies, time modes and 3D visualisation.
-
-  [Open workspace →](workspace.md)
-
-- :material-api: **API reference**
-
-  HTTP, WebSocket and public integration contracts.
-
-  [Open API →](api.md)
-
-- :material-function-variant: **Internals**
-
-  Mathematics, reference data, strict mode and explicit limits.
-
-  [Open internals →](internals.md)
-
-</div>
+| Module | Purpose |
+| --- | --- |
+| [Engineering concepts](engineering.md) | States, elements, frames, time and Earth models. |
+| [Propagation](propagation.md) | Propagators, forces, integration and cache. |
+| [Orbit service](orbit-service.md) | Formats, catalogue, analysis and export. |
+| [Gateway](gateway.md) | Node runtime, routes, persistence and supervision. |
+| [Workspace](workspace.md) | Projects, layers, bodies, time and 3D view. |
+| [API reference](api.md) | HTTP, WebSocket and integration contracts. |
+| [Internals](internals.md) | Mathematics, provenance, strict mode and limits. |
 
 !!! note "Local runtime"
 
