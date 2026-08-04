@@ -90,14 +90,29 @@ plugins:
             - Space formats:
                 - Overview: formats/index.md
                 - Availability matrix: formats/overview.md
-                - Ephemerides and interpolation: orbit-service.md
-                - TLE: formats/tle.md
-                - OMM: formats/omm.md
-                - OEM: formats/oem.md
-                - OPM: formats/opm.md
-                - SP3: formats/sp3.md
-                - CPF: formats/cpf.md
-                - RINEX: formats/rinex.md
+                - Orbital formats:
+                    - Overview: formats/orbital/index.md
+                    - Ephemerides and interpolation: orbit-service.md
+                    - TLE: formats/tle.md
+                    - OMM: formats/omm.md
+                    - OEM: formats/oem.md
+                    - OPM: formats/opm.md
+                    - SP3: formats/sp3.md
+                    - CPF: formats/cpf.md
+                - Terrain formats:
+                    - Overview: formats/terrain/index.md
+                    - Cesium World Terrain: formats/terrain/world-terrain.md
+                    - Local terrain files: formats/terrain/local-terrain.md
+                - Ground-station formats:
+                    - Overview: formats/ground-stations/index.md
+                    - Project JSON: formats/ground-stations/project-json.md
+                    - External interchange: formats/ground-stations/interchange.md
+                    - RINEX: formats/rinex.md
+                - Time formats:
+                    - Overview: formats/time/index.md
+                    - IERS EOP C04: formats/time/iers-c04.md
+                    - Leap-second table: formats/time/leap-seconds.md
+                    - IERS Bulletins A and B: formats/time/bulletins.md
                 - Unsupported formats: formats/unsupported-formats.md
             - Propagation:
                 - Overview: propagation/index.md
@@ -249,14 +264,29 @@ nav:
   - Formatos espaciales:
       - Visión general: formats/index.md
       - Matriz de disponibilidad: formats/overview.md
-      - Efemérides e interpolación: orbit-service.md
-      - TLE: formats/tle.md
-      - OMM: formats/omm.md
-      - OEM: formats/oem.md
-      - OPM: formats/opm.md
-      - SP3: formats/sp3.md
-      - CPF: formats/cpf.md
-      - RINEX: formats/rinex.md
+      - Formatos orbitales:
+          - Visión general: formats/orbital/index.md
+          - Efemérides e interpolación: orbit-service.md
+          - TLE: formats/tle.md
+          - OMM: formats/omm.md
+          - OEM: formats/oem.md
+          - OPM: formats/opm.md
+          - SP3: formats/sp3.md
+          - CPF: formats/cpf.md
+      - Formatos de terreno:
+          - Visión general: formats/terrain/index.md
+          - Cesium World Terrain: formats/terrain/world-terrain.md
+          - Archivos locales de terreno: formats/terrain/local-terrain.md
+      - Formatos de estaciones de tierra:
+          - Visión general: formats/ground-stations/index.md
+          - JSON de proyecto: formats/ground-stations/project-json.md
+          - Intercambio externo: formats/ground-stations/interchange.md
+          - RINEX: formats/rinex.md
+      - Formatos de tiempo:
+          - Visión general: formats/time/index.md
+          - IERS EOP C04: formats/time/iers-c04.md
+          - Tabla de segundos intercalares: formats/time/leap-seconds.md
+          - Boletines IERS A y B: formats/time/bulletins.md
       - Formatos no soportados: formats/unsupported-formats.md
   - Propagación:
       - Visión general: propagation/index.md

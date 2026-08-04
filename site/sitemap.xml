@@ -302,6 +302,83 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/unsupported-formats/"/>
     </url>
     <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/ground-stations/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/ground-stations/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/ground-stations/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/ground-stations/interchange/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/ground-stations/interchange/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/ground-stations/interchange/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/ground-stations/project-json/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/ground-stations/project-json/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/ground-stations/project-json/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/orbital/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/orbital/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/orbital/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/terrain/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/terrain/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/terrain/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/terrain/local-terrain/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/terrain/local-terrain/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/terrain/local-terrain/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/terrain/world-terrain/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/terrain/world-terrain/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/terrain/world-terrain/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/time/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/time/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/time/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/time/bulletins/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/time/bulletins/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/time/bulletins/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/time/iers-c04/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/time/iers-c04/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/time/iers-c04/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/time/leap-seconds/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/time/leap-seconds/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/time/leap-seconds/"/>
+    </url>
+    <url>
         <loc>https://gabgarar.github.io/Orbit/getting-started/installation/</loc>
         <lastmod>2026-08-04</lastmod>
         <changefreq>daily</changefreq>
@@ -1049,6 +1126,83 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/unsupported-formats/"/>
         <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/unsupported-formats/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/ground-stations/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/ground-stations/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/ground-stations/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/ground-stations/interchange/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/ground-stations/interchange/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/ground-stations/interchange/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/ground-stations/project-json/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/ground-stations/project-json/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/ground-stations/project-json/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/orbital/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/orbital/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/orbital/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/terrain/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/terrain/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/terrain/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/terrain/local-terrain/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/terrain/local-terrain/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/terrain/local-terrain/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/terrain/world-terrain/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/terrain/world-terrain/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/terrain/world-terrain/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/time/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/time/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/time/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/time/bulletins/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/time/bulletins/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/time/bulletins/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/time/iers-c04/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/time/iers-c04/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/time/iers-c04/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/time/leap-seconds/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/time/leap-seconds/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/time/leap-seconds/"/>
     </url>
     <url>
         <loc>https://gabgarar.github.io/Orbit/en/getting-started/installation/</loc>

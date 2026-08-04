@@ -174,7 +174,14 @@
 .md-sidebar--primary .md-nav__link[href*="solar-radiation-pressure"]:not(.md-nav__link--active),
 .md-sidebar--primary .md-nav__link[href*="relativity"]:not(.md-nav__link--active),
 .md-sidebar--primary .md-nav__link[href*="attitude"]:not(.md-nav__link--active),
-.md-sidebar--primary .md-nav__link[href*="resonances"]:not(.md-nav__link--active) {
+.md-sidebar--primary .md-nav__link[href*="resonances"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="local-terrain"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="interchange"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="rinex"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="bulletins"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="opm"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="cpf"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="unsupported-formats"]:not(.md-nav__link--active) {
   color: var(--orbit-planned-color) !important;
   font-weight: 700;
 }
