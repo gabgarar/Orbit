@@ -88,7 +88,6 @@ plugins:
                 - Earth models: engineering/earth-models.md
                 - Gravity models: engineering/gravity-models.md
                 - Atmospheric models: engineering/atmospheric-models.md
-                - Engineering concepts: modules/engineering.md
             - Space formats:
                 - Overview: formats/index.md
                 - Availability matrix: formats/overview.md
@@ -248,7 +247,6 @@ nav:
       - Modelos de la Tierra: engineering/earth-models.md
       - Modelos de gravedad: engineering/gravity-models.md
       - Modelos atmosféricos: engineering/atmospheric-models.md
-      - Conceptos de ingeniería: modules/engineering.md
   - Formatos espaciales:
       - Visión general: formats/index.md
       - Matriz de disponibilidad: formats/overview.md

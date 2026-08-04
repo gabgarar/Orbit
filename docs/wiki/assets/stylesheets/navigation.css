@@ -85,7 +85,35 @@
 
 .md-sidebar--primary .md-nav__item--nested > .md-nav__link[for] .md-nav__icon {
   color: var(--orbit-section-color);
+  display: block;
+  flex: 0 0 0.7rem;
+  height: 0.7rem;
+  margin-left: auto;
   opacity: 0.9;
+  position: relative;
+  width: 0.7rem;
+}
+
+/* A deliberately simple CSS chevron: right when closed, down when open. It
+ * remains legible even when Material's optional icon mask is unavailable. */
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link[for] .md-nav__icon::after {
+  background: none !important;
+  border-bottom: 0.1rem solid currentcolor;
+  border-right: 0.1rem solid currentcolor;
+  content: "";
+  height: 0.3rem;
+  left: 0.1rem;
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+  position: absolute;
+  top: 0.16rem;
+  transform: rotate(-45deg);
+  transition: transform 150ms ease;
+  width: 0.3rem;
+}
+
+.md-sidebar--primary .md-nav__toggle:checked + .md-nav__link[for] .md-nav__icon::after {
+  transform: rotate(45deg);
 }
 
 .md-sidebar--primary .md-nav__item--nested > .md-nav__link[for]:hover {
