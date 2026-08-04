@@ -30,7 +30,6 @@ theme:
     - navigation.tabs
     - navigation.tabs.sticky
     - navigation.footer
-    - navigation.sections
     - navigation.path
     - navigation.top
     - navigation.tracking
