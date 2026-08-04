@@ -31,3 +31,12 @@ There is no hidden parameter to activate solar or lunar forces in Cowell.
     \frac{\mathbf r_b-\mathbf r}{\lVert\mathbf r_b-\mathbf r\rVert^3}
     -\frac{\mathbf r_b}{\lVert\mathbf r_b\rVert^3}\right).
     $$
+
+    | Symbol | Meaning | Unit |
+    | --- | --- | --- |
+    | \(\mathbf r\), \(\mathbf r_b\) | Satellite and perturbing-body positions from the same origin. | km. |
+    | \(\mu_b\) | Perturbing-body gravitational parameter. | km³/s². |
+    | \(\mathbf a_{3B}\) | Differential third-body acceleration. | km/s². |
+
+    The equation is not run by Cowell today; it needs ephemerides and one
+    common origin for \(\mathbf r\) and \(\mathbf r_b\).

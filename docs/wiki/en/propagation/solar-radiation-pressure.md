@@ -30,3 +30,12 @@ different direction and physical dependence.
     \frac{1}{m}\sum_i A_i\max(0,\hat{\mathbf n}_i\cdot\hat{\mathbf s})
     C_{R,i}\hat{\mathbf s}.
     $$
+
+    | Symbol | Meaning | Unit |
+    | --- | --- | --- |
+    | \(P_\odot\) | Reference solar pressure. | N/m². |
+    | \(\mathrm{AU}\), \(d_\odot\) | Astronomical unit and Sun–satellite distance. | Same length unit. |
+    | \(m\), \(A_i\) | Mass and area of face \(i\). | kg, m². |
+    | \(\hat{\mathbf n}_i\), \(\hat{\mathbf s}\) | Face normal and solar direction. | Dimensionless. |
+    | \(C_{R,i}\) | Reflectivity coefficient. | Dimensionless. |
+    | \(\mathbf a_{\mathrm{SRP}}\) | SRP acceleration. | m/s², converted to km/s² in Cowell. |

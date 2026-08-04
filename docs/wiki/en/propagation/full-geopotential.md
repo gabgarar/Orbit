@@ -43,3 +43,18 @@ Earth model.
     \left(\bar C_{nm}\cos m\lambda+\bar S_{nm}\sin m\lambda\right)\right],
     \qquad \mathbf a=-\nabla U.
     $$
+
+    | Symbol | Meaning | Unit |
+    | --- | --- | --- |
+    | \(U\) | Gravitational potential. | km²/s². |
+    | \(r\) | Object geocentric distance. | km. |
+    | \(\phi\), \(\lambda\) | Geocentric latitude and longitude. | rad. |
+    | \(\mu\) | Earth gravitational parameter. | km³/s². |
+    | \(R_\oplus\) | Reference equatorial radius. | km. |
+    | \(n\), \(m\), \(N\) | Expansion degree, order, and upper limit. | Dimensionless. |
+    | \(\bar P_{nm}\), \(\bar C_{nm}\), \(\bar S_{nm}\) | Normalized Legendre polynomial and harmonic coefficients. | Dimensionless. |
+    | \(\mathbf a\) | Resulting acceleration. | km/s². |
+
+    Orbit does not yet evaluate this expression: `cowell-rk4` only applies
+    central gravity, J2, J3, J4, and drag. The table fixes the units a future
+    implementation must respect before normalising output state to SI.

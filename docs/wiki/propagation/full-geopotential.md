@@ -43,3 +43,18 @@ modelo de Tierra.
     \left(\bar C_{nm}\cos m\lambda+\bar S_{nm}\sin m\lambda\right)\right],
     \qquad \mathbf a=-\nabla U.
     $$
+
+    | Símbolo | Significado | Unidad |
+    | --- | --- | --- |
+    | \(U\) | Potencial gravitatorio. | km²/s². |
+    | \(r\) | Distancia geocéntrica del objeto. | km. |
+    | \(\phi\), \(\lambda\) | Latitud geocéntrica y longitud. | rad. |
+    | \(\mu\) | Parámetro gravitatorio terrestre. | km³/s². |
+    | \(R_\oplus\) | Radio ecuatorial de referencia. | km. |
+    | \(n\), \(m\), \(N\) | Grado, orden y límite de la expansión. | Adimensionales. |
+    | \(\bar P_{nm}\), \(\bar C_{nm}\), \(\bar S_{nm}\) | Polinomio de Legendre normalizado y coeficientes armónicos. | Adimensionales. |
+    | \(\mathbf a\) | Aceleración resultante. | km/s². |
+
+    Orbit no evalúa aún esta expresión: `cowell-rk4` solo aplica central,
+    J2, J3, J4 y drag. La tabla fija las unidades que deberá respetar una
+    implementación futura antes de normalizar el estado de salida a SI.

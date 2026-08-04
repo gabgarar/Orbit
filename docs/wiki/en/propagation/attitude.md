@@ -17,6 +17,17 @@ dynamics, actuator model or coupling between attitude, exposed area and force.
     \qquad I\dot{\mathbf\omega}+\mathbf\omega\times(I\mathbf\omega)=\mathbf\tau.
     $$
 
+    | Symbol | Meaning | Unit |
+    | --- | --- | --- |
+    | \(\mathbf q\) | Attitude quaternion. | Dimensionless. |
+    | \(\mathbf\omega\), \(\dot{\mathbf\omega}\) | Angular velocity and acceleration. | rad/s, rad/s². |
+    | \(\Omega\) | Kinematic matrix constructed from \(\mathbf\omega\). | s⁻¹. |
+    | \(I\) | Inertia tensor. | kg·m². |
+    | \(\mathbf\tau\) | Applied torque. | N·m. |
+
+    Orbit does not execute this: it has no attitude state or force-orientation
+    coupling.
+
 ## Future scope
 
 Attitude is required before enabling multi-surface SRP, variable drag area, or

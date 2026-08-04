@@ -30,3 +30,12 @@ dirección y dependencia física diferentes.
     \frac{1}{m}\sum_i A_i\max(0,\hat{\mathbf n}_i\cdot\hat{\mathbf s})
     C_{R,i}\hat{\mathbf s}.
     $$
+
+    | Símbolo | Significado | Unidad |
+    | --- | --- | --- |
+    | \(P_\odot\) | Presión solar de referencia. | N/m². |
+    | \(\mathrm{AU}\), \(d_\odot\) | Unidad astronómica y distancia Sol–satélite. | Misma unidad de longitud. |
+    | \(m\), \(A_i\) | Masa y área de la cara \(i\). | kg, m². |
+    | \(\hat{\mathbf n}_i\), \(\hat{\mathbf s}\) | Normal de la cara y dirección solar. | Adimensionales. |
+    | \(C_{R,i}\) | Coeficiente de reflectividad. | Adimensional. |
+    | \(\mathbf a_{\mathrm{SRP}}\) | Aceleración SRP. | m/s², convertida a km/s² en Cowell. |

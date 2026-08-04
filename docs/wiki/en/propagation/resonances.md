@@ -17,6 +17,16 @@ not detect, propagate or correct resonant angles.
     \qquad \dot\phi\approx0.
     $$
 
+    | Symbol | Meaning | Unit |
+    | --- | --- | --- |
+    | \(\phi\) | Resonant critical angle. | rad. |
+    | \(\lambda\), \(\lambda_b\), \(\varpi\), \(\Omega\) | Orbital, perturbing-body, periapsis, and node longitudes. | rad. |
+    | \(k_1\ldots k_4\) | Integers defining the resonant family. | Dimensionless. |
+    | \(\dot\phi\) | Critical-angle rate. | rad/s. |
+
+    Orbit does not calculate this angle or its rates; units are stated for a
+    future dynamical model, not for the viewer.
+
 ## Future scope
 
 Implementation would need a perturbing body, resonance family and reference

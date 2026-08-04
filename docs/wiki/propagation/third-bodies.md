@@ -31,3 +31,12 @@ No existe un parámetro oculto para activar fuerzas solar o lunar en Cowell.
     \frac{\mathbf r_b-\mathbf r}{\lVert\mathbf r_b-\mathbf r\rVert^3}
     -\frac{\mathbf r_b}{\lVert\mathbf r_b\rVert^3}\right).
     $$
+
+    | Símbolo | Significado | Unidad |
+    | --- | --- | --- |
+    | \(\mathbf r\), \(\mathbf r_b\) | Posición del satélite y del cuerpo perturbador, respecto al mismo origen. | km. |
+    | \(\mu_b\) | Parámetro gravitatorio del cuerpo perturbador. | km³/s². |
+    | \(\mathbf a_{3B}\) | Aceleración diferencial de terceros cuerpos. | km/s². |
+
+    La ecuación no se ejecuta hoy en Cowell; exigiría efemérides y un origen
+    común para \(\mathbf r\) y \(\mathbf r_b\).

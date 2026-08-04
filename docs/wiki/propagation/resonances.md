@@ -17,6 +17,16 @@ no detectan, propagan ni corrigen ángulos resonantes.
     \qquad \dot\phi\approx0.
     $$
 
+    | Símbolo | Significado | Unidad |
+    | --- | --- | --- |
+    | \(\phi\) | Ángulo crítico resonante. | rad. |
+    | \(\lambda\), \(\lambda_b\), \(\varpi\), \(\Omega\) | Longitudes orbitales, del cuerpo perturbador, periapsis y nodo. | rad. |
+    | \(k_1\ldots k_4\) | Enteros que definen la familia resonante. | Adimensionales. |
+    | \(\dot\phi\) | Tasa del ángulo crítico. | rad/s. |
+
+    Orbit no calcula este ángulo ni sus tasas; las unidades se indican para un
+    futuro modelo dinámico, no para el visor.
+
 ## Alcance futuro
 
 La implementación exigiría definir el cuerpo perturbador, la familia de
