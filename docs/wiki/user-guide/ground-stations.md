@@ -43,6 +43,43 @@ flowchart LR
     mayor resolución y valide el resultado con herramientas apropiadas para
     misión.
 
++### Ecuaciones de visibilidad implementadas
+
+Orbit convierte la estación geodésica WGS-84 a ITRF. Con semieje mayor \(a\), excentricidad cuadrada \(e^2\), latitud \(\varphi\), longitud \(\lambda\) y altura \(h\):
+
+$$
+N(\varphi)=\frac{a}{\sqrt{1-e^2\sin^2\varphi}},
+$$
+
+$$
+\mathbf r_{\mathrm{est}}=
+\begin{bmatrix}
+(N+h)\cos\varphi\cos\lambda\\
+(N+h)\cos\varphi\sin\lambda\\
+\left[N(1-e^2)+h\right]\sin\varphi
+\end{bmatrix}.
+$$
+
+Para \(\Delta\mathbf r=\mathbf r_{\mathrm{sat,ITRF}}-\mathbf r_{\mathrm{est}}\), las componentes locales que calcula el servicio son:
+
+$$
+\begin{aligned}
+E&=-\sin\lambda\,\Delta x+\cos\lambda\,\Delta y,\\
+N&=-\sin\varphi\cos\lambda\,\Delta x-\sin\varphi\sin\lambda\,\Delta y+\cos\varphi\,\Delta z,\\
+U&=\cos\varphi\cos\lambda\,\Delta x+\cos\varphi\sin\lambda\,\Delta y+\sin\varphi\,\Delta z.
+\end{aligned}
+$$
+
+La elevación y la clasificación de visibilidad son:
+
+$$
+\epsilon=\operatorname{atan2}\left(U,\sqrt{E^2+N^2}\right),
+\qquad
+\mathrm{visible}\iff\epsilon\ge\epsilon_{\min}.
+$$
+
+AOS y LOS se extraen de la primera y última muestra que cumplen ese umbral; no se refina el instante de cruce.
+
 ## Cobertura y radio
 
 El footprint y el mapa de calor son representaciones visuales asociadas a la
@@ -62,4 +99,3 @@ ni medidas recibidas.
 Las estaciones no son objetos de catálogo y no se exportan como un estándar
 externo de estación desde el diálogo de efemérides. Actualmente se conservan
 en el JSON de proyecto.
-

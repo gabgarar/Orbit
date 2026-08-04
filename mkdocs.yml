@@ -62,6 +62,7 @@ plugins:
                 - Equinoctial elements: engineering/equinoctial-elements.md
                 - Orbit representations: engineering/orbit-representations.md
                 - Reference frames: engineering/reference-frames.md
+                - Time, EOP and ITRF: time.md
                 - Time systems: engineering/time-systems.md
                 - Coordinate systems: engineering/coordinate-systems.md
                 - Earth models: engineering/earth-models.md
@@ -70,6 +71,7 @@ plugins:
             - Space formats:
                 - Overview: formats/index.md
                 - Availability matrix: formats/overview.md
+                - Ephemerides and interpolation: orbit-service.md
                 - TLE: formats/tle.md
                 - OMM: formats/omm.md
                 - OEM: formats/oem.md
@@ -80,6 +82,7 @@ plugins:
                 - Unsupported formats: formats/unsupported-formats.md
             - Propagation:
                 - Overview: propagation/index.md
+                - Implemented equations: modules/propagation.md
                 - Propagators: propagation/overview.md
                 - SGP4: propagation/sgp4.md
                 - Two body: propagation/two-body.md
@@ -204,6 +207,7 @@ nav:
       - Elementos equinocciales: engineering/equinoctial-elements.md
       - Representaciones orbitales: engineering/orbit-representations.md
       - Marcos de referencia: engineering/reference-frames.md
+      - Tiempo, EOP e ITRF: time.md
       - Sistemas temporales: engineering/time-systems.md
       - Sistemas de coordenadas: engineering/coordinate-systems.md
       - Modelos de la Tierra: engineering/earth-models.md
@@ -212,6 +216,7 @@ nav:
   - Formatos espaciales:
       - Visión general: formats/index.md
       - Matriz de disponibilidad: formats/overview.md
+      - Efemérides e interpolación: orbit-service.md
       - TLE: formats/tle.md
       - OMM: formats/omm.md
       - OEM: formats/oem.md
@@ -222,6 +227,7 @@ nav:
       - Formatos no soportados: formats/unsupported-formats.md
   - Propagación:
       - Visión general: propagation/index.md
+      - Ecuaciones implementadas: modules/propagation.md
       - Propagadores: propagation/overview.md
       - SGP4: propagation/sgp4.md
       - Dos cuerpos: propagation/two-body.md

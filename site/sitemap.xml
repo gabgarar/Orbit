@@ -218,6 +218,13 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/orbit-service/"/>
     </url>
     <url>
+        <loc>https://gabgarar.github.io/Orbit/time/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/time/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/time/"/>
+    </url>
+    <url>
         <loc>https://gabgarar.github.io/Orbit/workspace/</loc>
         <lastmod>2026-08-04</lastmod>
         <changefreq>daily</changefreq>
@@ -867,6 +874,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/orbit-service/"/>
         <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/orbit-service/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/time/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/time/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/time/"/>
     </url>
     <url>
         <loc>https://gabgarar.github.io/Orbit/en/workspace/</loc>
