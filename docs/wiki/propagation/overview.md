@@ -22,13 +22,17 @@ flowchart LR
     E[EOP + tabla UTC-TAI] --> F
 ```
 
-## Motores disponibles
+## Propagadores disponibles
 
-| Motor | Origen | Estado nativo | Dinámica | Disponibilidad operativa |
+Un propagador define cómo evoluciona el estado. Los términos como J2, J3, J4 y
+arrastre son [modelos de fuerza](force-models.md), no propagadores: Cowell los
+compone y el integrador [RK4](rk4.md) resuelve el sistema numérico.
+
+| Propagador | Origen | Estado nativo | Dinámica | Disponibilidad operativa |
 | --- | --- | --- | --- | --- |
 | [SGP4](sgp4.md) | TLE | TEME, UTC | Implementación SGP4 de `sgp4.api.Satrec`. | Registro predeterminado del catálogo. |
 | [Dos cuerpos](two-body.md) | Elementos manuales | EME2000, UTC | Kepler elíptico analítico. | Órbita manual. |
-| [J2](j2.md) | Elementos manuales | EME2000, UTC | Tasas seculares analíticas de primer orden. | Compatibilidad manual. |
+| [J2 secular](j2-analytical.md) | Elementos manuales | EME2000, UTC | Tasas seculares analíticas de primer orden. | Compatibilidad manual. |
 | [Cowell](cowell.md) | Estado manual | EME2000, UTC | RK4 fijo, central/J2/J3/J4/drag. | Órbita manual. |
 | J2+J3+J4 | Estado manual | EME2000, UTC | Preset RK4 fijo sin drag. | Compatibilidad manual. |
 
@@ -64,5 +68,6 @@ modelo.
 - El lector OEM/SP3 es una fuente tabulada Python; no es un propagador
   registrado en `OrbitRuntime` ni una carga de producto UI/API.
 
-Consulte [Formatos](../formats/index.md) para fuentes de datos y
+Consulte [Formatos](../formats/index.md) para fuentes de datos,
+[Integradores numéricos](numerical-integrators.md) para RK4 y
 [Modelos de fuerza](force-models.md) para las fuerzas disponibles.

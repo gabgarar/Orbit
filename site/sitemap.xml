@@ -603,6 +603,13 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/full-geopotential/"/>
     </url>
     <url>
+        <loc>https://gabgarar.github.io/Orbit/propagation/j2-analytical/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/j2-analytical/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/j2-analytical/"/>
+    </url>
+    <url>
         <loc>https://gabgarar.github.io/Orbit/propagation/j2/</loc>
         <lastmod>2026-08-04</lastmod>
         <changefreq>daily</changefreq>
@@ -1434,6 +1441,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/full-geopotential/"/>
         <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/full-geopotential/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/propagation/j2-analytical/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/j2-analytical/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/j2-analytical/"/>
     </url>
     <url>
         <loc>https://gabgarar.github.io/Orbit/en/propagation/j2/</loc>
