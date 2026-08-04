@@ -30,8 +30,8 @@ control de acceso externo.
 
 ## Ejecución sin Docker
 
-La ejecución directa exige Node.js **20.19 o posterior**, o **22.12 o
-posterior**, y Python **3.10 o posterior**. También exige npm y acceso a las
+La ejecución directa exige Node.js **24** y Python **3.10 o posterior**.
+También exige npm y acceso a las
 dependencias fijadas durante la instalación. El frontend debe compilarse antes
 de iniciar el gateway.
 

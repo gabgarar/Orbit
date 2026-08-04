@@ -61,7 +61,7 @@ Las pruebas se ejecutan con dos workers en paralelo. En un equipo potente puedes
 
 ## Ejecutar sin Docker
 
-Requiere Node.js 20.19+ (o 22.12+) y Python 3.10+. En Windows, instala Python marcando la opción de añadirlo al `PATH`. Después:
+Requiere Node.js 24 y Python 3.10+. En Windows, instala Python marcando la opción de añadirlo al `PATH`. Después:
 
 ```bash
 py -3 -m pip install -r server/requirements.txt

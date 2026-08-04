@@ -11,7 +11,7 @@ proceso de publicación externo ni una garantía de aceptación.
 ## Preparación del entorno
 
 La ruta reproducible recomendada es Docker Compose. Para desarrollo sin Docker,
-el repositorio documenta Node.js 20.19+ o 22.12+ y Python 3.10+ como mínimo,
+el repositorio documenta Node.js 24 y Python 3.10+ como mínimo,
 además de las dependencias fijadas por los lockfiles y
 `server/requirements.txt`.
 
