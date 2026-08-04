@@ -1,0 +1,33 @@
+# Full geopotential
+
+[Home](../index.md) · [Propagation](index.md) · [Gravity Models](../engineering/gravity-models.md) · [J2](j2.md)
+
+## Support status
+
+Orbit does not implement a full geopotential.
+
+There is no harmonic coefficient reader \(C_{nm}\) and \(S_{nm}\), selection of
+model, degree, order, normalization, tides, temporal variation or evaluation
+of tesseral and sectoral terms. The only gravitational disturbances
+Available numerical codes are the zonal harmonics J2, J3 and J4 of the Cowell model.
+
+## Operational consequence
+
+A J2/J3/J4 composition should not be interpreted as a truncation
+configurable of a complete gravitational field. The available coefficients
+are internal constants, not a versioned gravity product or API.
+Earth model.
+
+## Alternatives available
+
+- [Two bodies](two-body.md) for an idealized orbit.
+- [J2](j2.md) for the secular approximation or the numerical term J2.
+- [Cowell](cowell.md) with J2/J3/J4 for first order sensitivity.
+- [OEM](../formats/oem.md) or [SP3](../formats/sp3.md) when needed
+  consume a trajectory already tabulated by an external system.
+
+!!! warning "Does not replace external validation"
+
+    Analyzes requiring geopotential of controlled degree and order should
+    be done in a tool or service that implements and documents that
+    model. Orbit does not offer a silent approach.

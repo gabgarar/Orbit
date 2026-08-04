@@ -82,7 +82,7 @@ $$
 La atmósfera del modelo actual corrota con la Tierra:
 
 $$
-\mathbf v_{\mathrm{rel}}=\mathbf v-\boldsymbol\omega_\oplus\times\mathbf r,\qquad
+\mathbf v_{\mathrm{rel}}=\mathbf v-\mathbf\omega_\oplus\times\mathbf r,\qquad
 \rho(h)=\rho_0\exp\left(-\frac{h-h_0}{H}\right).
 $$
 
@@ -130,8 +130,8 @@ Orbit selecciona \((\rho_0,h_0,H)\) de capas exponenciales locales, evalúa la n
     **Actitud.** Orbit no propaga actitud:
 
     $$
-    \dot{\mathbf q}=\frac{1}{2}\Omega(\boldsymbol\omega)\mathbf q,\qquad
-    I\dot{\boldsymbol\omega}+\boldsymbol\omega\times(I\boldsymbol\omega)=\boldsymbol\tau.
+    \dot{\mathbf q}=\frac{1}{2}\Omega(\mathbf\omega)\mathbf q,\qquad
+    I\dot{\mathbf\omega}+\mathbf\omega\times(I\mathbf\omega)=\mathbf\tau.
     $$
 
 !!! warning "Ecuación prevista para implementación futura"

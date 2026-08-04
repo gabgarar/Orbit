@@ -82,7 +82,7 @@ $$
 The current atmosphere model co-rotates with Earth:
 
 $$
-\mathbf v_{\mathrm{rel}}=\mathbf v-\boldsymbol\omega_\oplus\times\mathbf r,\qquad
+\mathbf v_{\mathrm{rel}}=\mathbf v-\mathbf\omega_\oplus\times\mathbf r,\qquad
 \rho(h)=\rho_0\exp\left(-\frac{h-h_0}{H}\right).
 $$
 
@@ -97,7 +97,7 @@ Orbit selects \((\rho_0,h_0,H)\) from local exponential layers, evaluates speed 
 
 ## Planned equations
 
-!!! warning "Ecuación prevista para implementación futura"
+!!! warning "Equation planned for future implementation"
 
     **High-order geopotential.** The current model stops at \(J_4\). A degree-and-order \(N\) expansion would require:
 
@@ -108,7 +108,7 @@ Orbit selects \((\rho_0,h_0,H)\) from local exponential layers, evaluates speed 
     \qquad \mathbf a=-\nabla U.
     $$
 
-!!! warning "Ecuación prevista para implementación futura"
+!!! warning "Equation planned for future implementation"
 
     **Multi-surface SRP.** Cowell has no active SRP force term. A face-based model could sum:
 
@@ -117,7 +117,7 @@ Orbit selects \((\rho_0,h_0,H)\) from local exponential layers, evaluates speed 
     \frac{1}{m}\sum_i A_i\max(0,\hat{\mathbf n}_i\cdot\hat{\mathbf s})C_{R,i}\hat{\mathbf s}.
     $$
 
-!!! warning "Ecuación prevista para implementación futura"
+!!! warning "Equation planned for future implementation"
 
     **Advanced drag.** The current runtime contains neither MSIS nor solar-geomagnetic forcing:
 
@@ -125,16 +125,16 @@ Orbit selects \((\rho_0,h_0,H)\) from local exponential layers, evaluates speed 
     \rho=\rho_{\mathrm{MSIS}}(h,\phi,\lambda,t,F_{10.7},\overline{F}_{10.7},A_p).
     $$
 
-!!! warning "Ecuación prevista para implementación futura"
+!!! warning "Equation planned for future implementation"
 
     **Attitude.** Orbit does not propagate attitude:
 
     $$
-    \dot{\mathbf q}=\frac{1}{2}\Omega(\boldsymbol\omega)\mathbf q,\qquad
-    I\dot{\boldsymbol\omega}+\boldsymbol\omega\times(I\boldsymbol\omega)=\boldsymbol\tau.
+    \dot{\mathbf q}=\frac{1}{2}\Omega(\mathbf\omega)\mathbf q,\qquad
+    I\dot{\mathbf\omega}+\mathbf\omega\times(I\mathbf\omega)=\mathbf\tau.
     $$
 
-!!! warning "Ecuación prevista para implementación futura"
+!!! warning "Equation planned for future implementation"
 
     **Third bodies.** There is no third-body force in the current composition:
 
@@ -144,7 +144,7 @@ Orbit selects \((\rho_0,h_0,H)\) from local exponential layers, evaluates speed 
     -\frac{\mathbf r_b}{\lVert\mathbf r_b\rVert^3}\right).
     $$
 
-!!! warning "Ecuación prevista para implementación futura"
+!!! warning "Equation planned for future implementation"
 
     **Resonances.** No resonant model exists:
 

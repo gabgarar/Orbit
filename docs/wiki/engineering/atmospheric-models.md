@@ -22,7 +22,7 @@ altitud estilo US Standard Atmosphere. La tabla incluye capas desde 0 km hasta
 
 - La altura se estima con el elipsoide WGS-84.
 - La atmósfera se considera corrotante con la Tierra.
-- La velocidad relativa usa \(\mathbf v-\boldsymbol\omega\times\mathbf r\).
+- La velocidad relativa usa \(\mathbf v-\mathbf\omega\times\mathbf r\).
 - El usuario proporciona coeficiente de arrastre, área de referencia y masa;
   todos deben ser finitos y mayores que cero.
 - El término se habilita de manera explícita dentro de `force_terms` o mediante
