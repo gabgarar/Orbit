@@ -8,6 +8,8 @@ exclude_docs: |
 theme:
   name: material
   language: es
+  logo: assets/images/orbit-logo.svg
+  favicon: assets/images/orbit-logo.svg
   features:
     - i18n
     - navigation.tabs
