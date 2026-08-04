@@ -24,8 +24,8 @@ TLE / OEM / manual definition → native StateVector → requested transform
 
 | Module | Purpose |
 | --- | --- |
-| [Engineering concepts](engineering.md) | States, elements, frames, time and Earth models. |
-| [Propagation](propagation.md) | Propagators, forces, integration and cache. |
+| [Engineering concepts](modules/engineering.md) | States, elements, frames, time and Earth models. |
+| [Propagation](modules/propagation.md) | Propagators, forces, integration and cache. |
 | [Orbit service](orbit-service.md) | Formats, catalogue, analysis and export. |
 | [Gateway](gateway.md) | Node runtime, routes, persistence and supervision. |
 | [Workspace](workspace.md) | Projects, layers, bodies, time and 3D view. |
