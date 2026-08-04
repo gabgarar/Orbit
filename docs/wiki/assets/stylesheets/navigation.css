@@ -40,11 +40,11 @@
 .md-header {
   background-color: #0a1628;
   background-image:
-    linear-gradient(90deg, rgba(7, 17, 33, 0.9), rgba(7, 20, 38, 0.74)),
+    linear-gradient(90deg, rgba(7, 17, 33, 0.7), rgba(7, 20, 38, 0.48)),
     var(--orbit-header-image);
-  background-position: center;
+  background-position: center 74%;
   background-repeat: no-repeat;
-  background-size: cover;
+  background-size: 100% auto;
 }
 
 .md-tabs {
@@ -55,6 +55,13 @@
 .md-header__button.md-logo img,
 .md-header__button.md-logo svg {
   filter: drop-shadow(0 1px 5px rgba(86, 192, 255, 0.45));
+}
+
+/* In dark mode, category labels remain blue landmarks, while the page the
+ * reader is currently on is unmistakably white rather than another blue link. */
+[data-md-color-scheme="slate"] .md-sidebar--primary .md-nav__link--active {
+  color: #ffffff !important;
+  font-weight: 700;
 }
 
 @media screen and (min-width: 76.25em) {
