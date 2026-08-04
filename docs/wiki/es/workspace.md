@@ -27,3 +27,21 @@ Cesium renderiza Tierra, cuerpos, capas, trazas y cámara. La grabación es una 
 - WebGL es obligatorio para el visor 3D.
 - El visor puede usar EOP visual etiquetado; análisis/exportación estrictos requieren datos fijados.
 - No hay proyecto compartido ni colaboración en tiempo real.
+
+## Siguientes destinos
+
+<div class="grid cards" markdown>
+
+- :material-satellite-variant: **Preparar datos orbitales**
+
+  Importación, formatos y análisis del servicio Python.
+
+  [Ir al servicio orbital →](orbit-service.md)
+
+- :material-api: **Automatizar el flujo**
+
+  Integración HTTP y snapshots WebSocket.
+
+  [Ir a la API →](api.md)
+
+</div>

@@ -33,3 +33,21 @@ Available terms include J2/J3/J4, full geopotential, third bodies, drag, SRP and
 - Accuracy depends on forces, coefficients, step size and reference data.
 - Visual EOP is for the viewer, not strict products.
 - Imported OEM/SP3 states are ephemerides, not re-propagated by an implicit force model.
+
+## Next destinations
+
+<div class="grid cards" markdown>
+
+- :material-satellite-variant: **Use orbital products**
+
+  Formats, catalogue, analysis and export.
+
+  [Open orbit service →](orbit-service.md)
+
+- :material-function-variant: **Review assumptions**
+
+  Frame reduction, EOP data and precision limits.
+
+  [Open internals →](internals.md)
+
+</div>

@@ -27,3 +27,21 @@ Cesium renders Earth, bodies, layers, tracks and camera. Recording is a UI featu
 - WebGL is required for 3D view.
 - Viewer may use labelled visual EOP; strict analysis/export requires pinned data.
 - No shared project or realtime collaboration.
+
+## Next destinations
+
+<div class="grid cards" markdown>
+
+- :material-satellite-variant: **Prepare orbital data**
+
+  Import, formats and analysis in the Python service.
+
+  [Open orbit service →](orbit-service.md)
+
+- :material-api: **Automate the flow**
+
+  HTTP integration and WebSocket snapshots.
+
+  [Open API →](api.md)
+
+</div>

@@ -25,3 +25,21 @@ El servicio inspecciona registros, crea órbitas manuales, analiza y genera sali
 - SP3 y OEM de alta fidelidad no se degradan a semántica TLE.
 - No se anuncia precisión, datum o modelo de fuerzas que el origen no haya establecido.
 - Los formatos no soportados siguen siendo límites explícitos.
+
+## Siguientes destinos
+
+<div class="grid cards" markdown>
+
+- :material-api: **Integrar mediante API**
+
+  Contratos HTTP, WebSocket y errores explícitos.
+
+  [Ir a la API →](api.md)
+
+- :material-layers-triple: **Visualizar resultados**
+
+  Capas, proyectos, modos temporales y visor 3D.
+
+  [Ir al espacio de trabajo →](workspace.md)
+
+</div>

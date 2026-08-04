@@ -31,3 +31,21 @@ Cowell integra \(\ddot{\mathbf r}=\mathbf a_{central}+\sum_i\mathbf a_i\) con RK
 - El fallback visual no es una transformación de precisión.
 - Solo se cubren marcos geocéntricos Earth.
 - No hay alineación de datum implícita para SP3/OEM de alta fidelidad.
+
+## Siguientes destinos
+
+<div class="grid cards" markdown>
+
+- :material-orbit: **Volver a los contratos**
+
+  Estados, elementos, marcos y escalas temporales.
+
+  [Ir a conceptos de ingeniería →](engineering.md)
+
+- :material-chart-timeline-variant: **Aplicar los modelos**
+
+  Propagadores, fuerzas e integración.
+
+  [Ir a propagación →](propagation.md)
+
+</div>

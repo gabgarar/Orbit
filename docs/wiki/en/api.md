@@ -29,3 +29,21 @@ OpenAPI defines the exact endpoint and schema; the example only shows intent.
 - Input errors are explicit, not silent fallbacks.
 - WebSocket does not guarantee delivery or retention of each snapshot.
 - Python port is private and not part of supported API.
+
+## Next destinations
+
+<div class="grid cards" markdown>
+
+- :material-server-network: **Understand the gateway**
+
+  Runtime, persistence and service supervision.
+
+  [Open gateway →](gateway.md)
+
+- :material-function-variant: **Validate provenance**
+
+  Frames, reference data and strict policies.
+
+  [Open internals →](internals.md)
+
+</div>

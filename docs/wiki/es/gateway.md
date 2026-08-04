@@ -23,3 +23,21 @@ La imagen instala dependencias y ejecuta pruebas Node, frontend y Python antes d
 - No hay despliegue distribuido, base de datos remota ni colaboración multiusuario.
 - El puerto Python no es API pública.
 - La configuración local no es un gestor de secretos.
+
+## Siguientes destinos
+
+<div class="grid cards" markdown>
+
+- :material-api: **Consumir el límite público**
+
+  Rutas HTTP, WebSocket y contratos de respuesta.
+
+  [Ir a la API →](api.md)
+
+- :material-layers-triple: **Abrir el cliente**
+
+  Comportamiento del proyecto y visualización.
+
+  [Ir al espacio de trabajo →](workspace.md)
+
+</div>

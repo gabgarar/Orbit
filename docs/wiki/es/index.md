@@ -20,17 +20,53 @@ TLE / OEM / definición manual → StateVector nativo → transformación solici
                                            → visor, análisis o exportación
 ```
 
-## Módulos
+## Explorar Orbit
 
-| Módulo | Propósito |
-| --- | --- |
-| [Conceptos de ingeniería](engineering.md) | Estados, elementos, marcos, tiempo y modelos terrestres. |
-| [Propagación](propagation.md) | Propagadores, fuerzas, integración y caché. |
-| [Servicio orbital](orbit-service.md) | Formatos, catálogo, análisis y exportación. |
-| [Gateway](gateway.md) | Runtime Node, rutas, persistencia y supervisión. |
-| [Espacio de trabajo](workspace.md) | Proyectos, capas, cuerpos, tiempo y vista 3D. |
-| [Referencia API](api.md) | HTTP, WebSocket y contratos de integración. |
-| [Internals](internals.md) | Matemáticas, procedencia, modo estricto y límites. |
+<div class="grid cards" markdown>
+
+- :material-orbit: **Conceptos de ingeniería**
+
+  Estados, elementos, marcos, tiempo y modelos terrestres.
+
+  [Abrir conceptos →](engineering.md)
+
+- :material-chart-timeline-variant: **Propagación**
+
+  SGP4, dos cuerpos, Cowell, fuerzas, integración y caché.
+
+  [Abrir propagación →](propagation.md)
+
+- :material-satellite-variant: **Servicio orbital**
+
+  Formatos, catálogo, análisis y fronteras de exportación.
+
+  [Abrir servicio →](orbit-service.md)
+
+- :material-server-network: **Gateway**
+
+  Runtime Node, rutas, persistencia y supervisión de procesos.
+
+  [Abrir gateway →](gateway.md)
+
+- :material-layers-triple: **Espacio de trabajo**
+
+  Proyectos, capas, cuerpos, modos de tiempo y visualización 3D.
+
+  [Abrir espacio de trabajo →](workspace.md)
+
+- :material-api: **Referencia API**
+
+  HTTP, WebSocket y contratos de integración pública.
+
+  [Abrir API →](api.md)
+
+- :material-function-variant: **Internals**
+
+  Matemáticas, datos de referencia, modo estricto y límites explícitos.
+
+  [Abrir internals →](internals.md)
+
+</div>
 
 !!! note "Runtime local"
 

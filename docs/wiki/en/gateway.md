@@ -23,3 +23,21 @@ The image installs dependencies and runs Node, frontend and Python tests before 
 - No distributed deployment, remote database or multi-user collaboration.
 - Python port is not public API.
 - Local configuration is not a secrets manager.
+
+## Next destinations
+
+<div class="grid cards" markdown>
+
+- :material-api: **Use the public boundary**
+
+  HTTP routes, WebSocket and response contracts.
+
+  [Open API →](api.md)
+
+- :material-layers-triple: **Open the client**
+
+  Project behaviour and visualisation.
+
+  [Open workspace →](workspace.md)
+
+</div>
