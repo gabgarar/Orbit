@@ -13,3 +13,12 @@
     letter-spacing: 0;
   }
 }
+
+/*
+ * Category labels in the primary sidebar are visual landmarks. Their colour
+ * follows the active Material primary colour, matching the header banner.
+ */
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link .md-ellipsis {
+  color: var(--md-primary-fg-color);
+  font-weight: 700;
+}

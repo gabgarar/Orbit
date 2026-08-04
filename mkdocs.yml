@@ -8,8 +8,23 @@ exclude_docs: |
 theme:
   name: material
   language: es
-  logo: assets/images/orbit-logo.svg
-  favicon: assets/images/orbit-logo.svg
+  logo: assets/images/orbit-mark.svg
+  favicon: assets/images/orbit-mark.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Cambiar a modo oscuro
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Cambiar a modo claro
   features:
     - i18n
     - navigation.tabs
@@ -182,6 +197,7 @@ markdown_extensions:
 
 extra_javascript:
   - assets/javascripts/mathjax.js
+  - assets/javascripts/shortcuts.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 extra_css:

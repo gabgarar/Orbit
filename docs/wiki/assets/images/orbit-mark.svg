@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Orbit">
+  <defs>
+    <linearGradient id="orbit-gradient" x1="14" y1="18" x2="82" y2="78" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8B7CFF"/>
+      <stop offset=".48" stop-color="#5267FF"/>
+      <stop offset="1" stop-color="#2BC9E8"/>
+    </linearGradient>
+    <filter id="orbit-glow" x="-35%" y="-35%" width="170%" height="170%">
+      <feGaussianBlur stdDeviation="2.4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <circle cx="48" cy="48" r="12" fill="url(#orbit-gradient)"/>
+  <ellipse cx="48" cy="48" rx="37" ry="17" fill="none" stroke="url(#orbit-gradient)" stroke-width="7" transform="rotate(-31 48 48)"/>
+  <circle cx="77" cy="27" r="6" fill="#A9F2FF" filter="url(#orbit-glow)"/>
+</svg>
