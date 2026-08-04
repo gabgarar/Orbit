@@ -64,6 +64,18 @@
   font-weight: 700;
 }
 
+/* Nested documentation reads like a project tree: each level gains a small,
+ * calm indentation and a hairline guide without shrinking the reading area. */
+.md-sidebar--primary .md-nav__item--nested > .md-nav {
+  border-left: 1px solid rgba(109, 139, 176, 0.25);
+  margin-left: 0.38rem;
+  padding-left: 0.52rem;
+}
+
+[data-md-color-scheme="slate"] .md-sidebar--primary .md-nav__item--nested > .md-nav {
+  border-left-color: rgba(119, 196, 255, 0.22);
+}
+
 @media screen and (min-width: 76.25em) {
   .md-tabs__inner {
     padding-inline: 0.25rem;

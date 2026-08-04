@@ -29,6 +29,7 @@ theme:
     - i18n
     - navigation.tabs
     - navigation.tabs.sticky
+    - navigation.footer
     - navigation.sections
     - navigation.path
     - navigation.top
@@ -65,6 +66,7 @@ plugins:
                 - Overview: user-guide/index.md
                 - Projects: user-guide/projects.md
                 - Workspace: user-guide/workspace.md
+                - Workspace concepts: workspace.md
                 - Layers: user-guide/layers.md
                 - Visualisation: user-guide/visualization.md
                 - 3D view: user-guide/three-d-view.md
@@ -85,6 +87,7 @@ plugins:
                 - Earth models: engineering/earth-models.md
                 - Gravity models: engineering/gravity-models.md
                 - Atmospheric models: engineering/atmospheric-models.md
+                - Engineering concepts: modules/engineering.md
             - Space formats:
                 - Overview: formats/index.md
                 - Availability matrix: formats/overview.md
@@ -138,6 +141,8 @@ plugins:
                     - Ground stations: integrations/rest-api/ground-stations.md
                     - Export: integrations/rest-api/exports.md
                     - Backend boundary: integrations/rest-api/backend-boundary.md
+                - Gateway concepts: gateway.md
+                - API concepts: api.md
                 - WebSocket: integrations/websocket.md
                 - OpenAPI: integrations/openapi.md
                 - Python SDK: integrations/python-sdk.md
@@ -169,6 +174,7 @@ plugins:
                 - Appendix: reference/appendix.md
                 - Documentation roadmap: reference/roadmap.md
                 - Release notes: reference/release-notes.md
+                - Internals overview: internals.md
   - search:
       lang:
         - es
@@ -215,6 +221,7 @@ nav:
       - Visión general: user-guide/index.md
       - Proyectos: user-guide/projects.md
       - Espacio de trabajo: user-guide/workspace.md
+      - Conceptos de espacio de trabajo: workspace.md
       - Capas: user-guide/layers.md
       - Visualización: user-guide/visualization.md
       - Vista 3D: user-guide/three-d-view.md
@@ -235,6 +242,7 @@ nav:
       - Modelos de la Tierra: engineering/earth-models.md
       - Modelos de gravedad: engineering/gravity-models.md
       - Modelos atmosféricos: engineering/atmospheric-models.md
+      - Conceptos de ingeniería: modules/engineering.md
   - Formatos espaciales:
       - Visión general: formats/index.md
       - Matriz de disponibilidad: formats/overview.md
@@ -288,6 +296,8 @@ nav:
           - Estaciones de tierra: integrations/rest-api/ground-stations.md
           - Exportación: integrations/rest-api/exports.md
           - Frontera del backend: integrations/rest-api/backend-boundary.md
+      - Conceptos de gateway: gateway.md
+      - Conceptos de API: api.md
       - WebSocket: integrations/websocket.md
       - OpenAPI: integrations/openapi.md
       - SDK Python: integrations/python-sdk.md
@@ -319,3 +329,4 @@ nav:
       - Apéndice: reference/appendix.md
       - Roadmap documental: reference/roadmap.md
       - Notas de versión: reference/release-notes.md
+      - Visión interna: internals.md
