@@ -1,37 +1,60 @@
 :root {
-  --orbit-section-color: #434fc4;
+  --orbit-section-color: #0c6fb7;
+  --orbit-header-image: url("../images/orbit-header-space.png");
 }
 
 [data-md-color-scheme="default"] {
-  --md-default-bg-color: #f7f9fe;
-  --md-default-fg-color: #172033;
-  --md-default-fg-color--light: #5d6b82;
-  --md-default-fg-color--lighter: #8794a9;
-  --md-default-fg-color--lightest: #e5eaf4;
-  --md-primary-fg-color: #4e5bd5;
-  --md-primary-fg-color--light: #7e8aff;
-  --md-primary-fg-color--dark: #3542af;
+  --md-default-bg-color: #f8fafc;
+  --md-default-fg-color: #17243a;
+  --md-default-fg-color--light: #5d6e83;
+  --md-default-fg-color--lighter: #8796aa;
+  --md-default-fg-color--lightest: #e4eaf2;
+  --md-primary-fg-color: #0d1e36;
+  --md-primary-fg-color--light: #193a62;
+  --md-primary-fg-color--dark: #071221;
   --md-primary-bg-color: #ffffff;
-  --md-accent-fg-color: #4e5bd5;
-  --md-typeset-a-color: #4054d4;
-  --md-code-bg-color: #edf1fa;
-  --orbit-section-color: #3e4ec2;
+  --md-accent-fg-color: #087ec8;
+  --md-typeset-a-color: #0873bb;
+  --md-code-bg-color: #ecf2f8;
+  --orbit-section-color: #086daf;
 }
 
 [data-md-color-scheme="slate"] {
-  --md-default-bg-color: #0a1020;
-  --md-default-fg-color: #e8edf8;
-  --md-default-fg-color--light: #b6c1d6;
-  --md-default-fg-color--lighter: #8290aa;
-  --md-default-fg-color--lightest: #172239;
-  --md-primary-fg-color: #6576ff;
-  --md-primary-fg-color--light: #9ba7ff;
-  --md-primary-fg-color--dark: #4d5de0;
+  --md-default-bg-color: #0a1220;
+  --md-default-fg-color: #e4edf7;
+  --md-default-fg-color--light: #b4c2d3;
+  --md-default-fg-color--lighter: #718299;
+  --md-default-fg-color--lightest: #142136;
+  --md-primary-fg-color: #0a1628;
+  --md-primary-fg-color--light: #193a62;
+  --md-primary-fg-color--dark: #06101e;
   --md-primary-bg-color: #ffffff;
-  --md-accent-fg-color: #9eabff;
-  --md-typeset-a-color: #aab5ff;
-  --md-code-bg-color: #111b31;
-  --orbit-section-color: #aab5ff;
+  --md-accent-fg-color: #55b7f7;
+  --md-typeset-a-color: #79c7ff;
+  --md-code-bg-color: #111e31;
+  --orbit-section-color: #77c4ff;
+}
+
+/* The masthead has a quiet orbital scene. A dark overlay keeps all controls
+ * and the documentation title legible in either colour scheme. */
+.md-header {
+  background-color: #0a1628;
+  background-image:
+    linear-gradient(90deg, rgba(7, 17, 33, 0.9), rgba(7, 20, 38, 0.74)),
+    var(--orbit-header-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.md-tabs {
+  background-color: #0d1e36;
+  border-top: 1px solid rgba(133, 197, 255, 0.16);
+}
+
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  filter: drop-shadow(0 1px 5px rgba(86, 192, 255, 0.45));
 }
 
 @media screen and (min-width: 76.25em) {
