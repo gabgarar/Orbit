@@ -51,7 +51,7 @@ list `force_terms`, the presence or absence of `drag` is authoritative.
 SGP4 accepts a TLE and has its own model. Cowell terms do not apply
 to an SGP4 catalog object nor are they used to correct a TLE.
 
-See [Point mass](point-mass.md), [J2](j2.md),
-[Atmospheric Drag](atmospheric-drag.md) and capabilities pages do not
-available for [third bodies](third-bodies.md),
+See [Point mass](point-mass.md), [J2](j2.md), [J3](j3.md), [J4](j4.md) and
+[atmospheric drag](atmospheric-drag.md), plus the unsupported capability pages
+for [third bodies](third-bodies.md),
 [SRP](solar-radiation-pressure.md) and [relativity](relativity.md).

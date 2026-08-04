@@ -21,3 +21,13 @@ indirecta por un origen baricéntrico.
   Python no están integrados en la UI/API de producto.
 
 No existe un parámetro oculto para activar fuerzas solar o lunar en Cowell.
+
+!!! warning "Ecuación prevista para implementación futura"
+
+    Para un cuerpo perturbador \(b\), la aceleración diferencial prevista es:
+
+    $$
+    \mathbf a_{3B}=\mu_b\left(
+    \frac{\mathbf r_b-\mathbf r}{\lVert\mathbf r_b-\mathbf r\rVert^3}
+    -\frac{\mathbf r_b}{\lVert\mathbf r_b\rVert^3}\right).
+    $$

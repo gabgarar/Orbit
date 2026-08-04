@@ -20,3 +20,13 @@ modelo de actitud asociado. La visualización del Sol no es una fuente de SRP.
 
 No se debe representar `drag` como sustituto de SRP: son términos con origen,
 dirección y dependencia física diferentes.
+
+!!! warning "Ecuación prevista para implementación futura"
+
+    Un modelo SRP por múltiples superficies podría sumar las caras iluminadas:
+
+    $$
+    \mathbf a_{\mathrm{SRP}}=-P_\odot\left(\frac{\mathrm{AU}}{d_\odot}\right)^2
+    \frac{1}{m}\sum_i A_i\max(0,\hat{\mathbf n}_i\cdot\hat{\mathbf s})
+    C_{R,i}\hat{\mathbf s}.
+    $$

@@ -31,3 +31,15 @@ modelo de Tierra.
     Los análisis que requieran geopotencial de grado y orden controlado deben
     realizarse en una herramienta o servicio que implemente y documente ese
     modelo. Orbit no ofrece una aproximación silenciosa.
+
+!!! warning "Ecuación prevista para implementación futura"
+
+    Un geopotencial hasta grado y orden \(N\) requeriría una expansión de
+    armónicos esféricos y su gradiente:
+
+    $$
+    U(r,\phi,\lambda)=\frac{\mu}{r}\left[1+\sum_{n=2}^{N}
+    \left(\frac{R_\oplus}{r}\right)^n\sum_{m=0}^{n}\bar P_{nm}(\sin\phi)
+    \left(\bar C_{nm}\cos m\lambda+\bar S_{nm}\sin m\lambda\right)\right],
+    \qquad \mathbf a=-\nabla U.
+    $$

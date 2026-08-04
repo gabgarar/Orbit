@@ -19,6 +19,8 @@ analytical and numerical delimited.
 | [Force Models](force-models.md) | Composition available. |
 | [Point mass](point-mass.md) | Central gravity. |
 | [J2](j2.md) | Analytical path and numerical term. |
+| [J3](j3.md) | Cowell numerical zonal term. |
+| [J4](j4.md) | Cowell numerical zonal term. |
 | [Full Geopotential](full-geopotential.md) | Support status: not available. |
 | [Third bodies](third-bodies.md) | Support status: not available. |
 | [Atmospheric drag](atmospheric-drag.md) | First-order Cowell term. |

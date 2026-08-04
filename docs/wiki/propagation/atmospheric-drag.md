@@ -22,6 +22,12 @@ rotación terrestre y evalúa una densidad exponencial por capas usando la
 altura WGS-84. El cálculo interno conserva km y km/s, con conversiones para
 mantener coherencia dimensional con los parámetros de arrastre en SI.
 
+$$
+\mathbf v_{rel}=\mathbf v-\mathbf\omega_\oplus\times\mathbf r,
+\qquad
+\rho(h)=\rho_0\exp\left(-\frac{h-h_0}{H}\right).
+$$
+
 ## Parámetros
 
 | Parámetro | Unidad | Restricción |
@@ -44,3 +50,12 @@ una composición explícita.
 El modelo es útil para explorar el efecto cualitativo del arrastre en órbitas
 manuales, no para predicción operacional. Véase
 [Modelo atmosférico](../engineering/atmospheric-models.md).
+
+!!! warning "Ecuación prevista para implementación futura"
+
+    **Arrastre avanzado.** El runtime actual no incorpora MSIS ni forzamientos
+    solar-geomagnéticos. Un modelo futuro podría evaluar:
+
+    $$
+    \rho=\rho_{\mathrm{MSIS}}(h,\phi,\lambda,t,F_{10.7},\overline{F}_{10.7},A_p).
+    $$

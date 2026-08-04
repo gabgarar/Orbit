@@ -19,6 +19,8 @@ analíticas y numéricas delimitadas.
 | [Modelos de fuerza](force-models.md) | Composición disponible. |
 | [Masa puntual](point-mass.md) | Gravedad central. |
 | [J2](j2.md) | Ruta analítica y término numérico. |
+| [J3](j3.md) | Término zonal numérico de Cowell. |
+| [J4](j4.md) | Término zonal numérico de Cowell. |
 | [Geopotencial completo](full-geopotential.md) | Estado de soporte: no disponible. |
 | [Terceros cuerpos](third-bodies.md) | Estado de soporte: no disponible. |
 | [Arrastre atmosférico](atmospheric-drag.md) | Término Cowell de primer orden. |

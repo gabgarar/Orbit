@@ -22,6 +22,12 @@ Earth's rotation and evaluates a layered exponential density using the
 height WGS-84. The internal calculation preserves km and km/s, with conversions for
 maintain dimensional consistency with the drag parameters in SI.
 
+$$
+\mathbf v_{rel}=\mathbf v-\mathbf\omega_\oplus\times\mathbf r,
+\qquad
+\rho(h)=\rho_0\exp\left(-\frac{h-h_0}{H}\right).
+$$
+
 ## Parameters
 
 | Parameter | Unit | Restriction |
@@ -44,3 +50,12 @@ an explicit composition.
 The model is useful to explore the qualitative effect of drag on orbits
 manuals, not for operational prediction. See
 [Atmospheric model](../engineering/atmospheric-models.md).
+
+!!! warning "Equation planned for future implementation"
+
+    **Advanced drag.** The current runtime includes neither MSIS nor
+    solar-geomagnetic forcing. A future model could evaluate:
+
+    $$
+    \rho=\rho_{\mathrm{MSIS}}(h,\phi,\lambda,t,F_{10.7},\overline{F}_{10.7},A_p).
+    $$

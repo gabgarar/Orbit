@@ -1,5 +1,6 @@
 :root {
   --orbit-section-color: #0c6fb7;
+  --orbit-planned-color: #a85d00;
   --orbit-header-image: url("../images/orbit-header-space.png");
 }
 
@@ -17,6 +18,7 @@
   --md-typeset-a-color: #0873bb;
   --md-code-bg-color: #ecf2f8;
   --orbit-section-color: #086daf;
+  --orbit-planned-color: #a85d00;
 }
 
 [data-md-color-scheme="slate"] {
@@ -33,6 +35,7 @@
   --md-typeset-a-color: #79c7ff;
   --md-code-bg-color: #111e31;
   --orbit-section-color: #77c4ff;
+  --orbit-planned-color: #ffbd59;
 }
 
 /* The masthead has a quiet orbital scene. A dark overlay keeps all controls
@@ -100,5 +103,18 @@
 .md-sidebar--primary .md-nav__item--section > .md-nav__link[for],
 .md-sidebar--primary .md-nav__item--nested > .md-nav__link .md-ellipsis {
   color: var(--orbit-section-color) !important;
+  font-weight: 700;
+}
+
+/* Orange is reserved for documented force models which Orbit does not yet
+ * implement. It is deliberately not used for features that are available but
+ * have stated fidelity limits. */
+.md-sidebar--primary .md-nav__link[href*="full-geopotential"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="third-bodies"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="solar-radiation-pressure"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="relativity"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="attitude"]:not(.md-nav__link--active),
+.md-sidebar--primary .md-nav__link[href*="resonances"]:not(.md-nav__link--active) {
+  color: var(--orbit-planned-color) !important;
   font-weight: 700;
 }

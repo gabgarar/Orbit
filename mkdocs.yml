@@ -55,25 +55,26 @@ plugins:
           site_name: Orbit documentation
           site_description: Technical and operational documentation for Orbit.
           nav:
-            - Overview: index.md
-            - Introduction:
-                - Overview: introduction/overview.md
-            - Getting started:
-                - Installation: getting-started/installation.md
-                - Requirements: getting-started/requirements.md
-                - Quick start: getting-started/quick-start.md
-            - User guide:
-                - Overview: user-guide/index.md
-                - Projects: user-guide/projects.md
-                - Workspace: user-guide/workspace.md
-                - Workspace concepts: workspace.md
-                - Layers: user-guide/layers.md
-                - Visualisation: user-guide/visualization.md
-                - 3D view: user-guide/three-d-view.md
-                - Timeline: user-guide/timeline.md
-                - Ground stations: user-guide/ground-stations.md
-                - Import: user-guide/import.md
-                - Export: user-guide/export.md
+            - Home:
+                - Overview: index.md
+                - Introduction:
+                    - Overview: introduction/overview.md
+                - Getting started:
+                    - Installation: getting-started/installation.md
+                    - Requirements: getting-started/requirements.md
+                    - Quick start: getting-started/quick-start.md
+                - User guide:
+                    - Overview: user-guide/index.md
+                    - Projects: user-guide/projects.md
+                    - Workspace: user-guide/workspace.md
+                    - Workspace concepts: workspace.md
+                    - Layers: user-guide/layers.md
+                    - Visualisation: user-guide/visualization.md
+                    - 3D view: user-guide/three-d-view.md
+                    - Timeline: user-guide/timeline.md
+                    - Ground stations: user-guide/ground-stations.md
+                    - Import: user-guide/import.md
+                    - Export: user-guide/export.md
             - Engineering:
                 - Overview: engineering/index.md
                 - Cartesian states: engineering/cartesian-states.md
@@ -102,7 +103,6 @@ plugins:
                 - Unsupported formats: formats/unsupported-formats.md
             - Propagation:
                 - Overview: propagation/index.md
-                - Implemented equations: modules/propagation.md
                 - Propagators: propagation/overview.md
                 - SGP4: propagation/sgp4.md
                 - Two body: propagation/two-body.md
@@ -117,11 +117,16 @@ plugins:
                     - Overview: propagation/force-models.md
                     - Point mass: propagation/point-mass.md
                     - J2: propagation/j2.md
+                    - J3: propagation/j3.md
+                    - J4: propagation/j4.md
                     - Full geopotential: propagation/full-geopotential.md
                     - Third bodies: propagation/third-bodies.md
                     - Atmospheric drag: propagation/atmospheric-drag.md
                     - Solar radiation pressure: propagation/solar-radiation-pressure.md
                     - Relativity: propagation/relativity.md
+                - Future dynamics:
+                    - Attitude: propagation/attitude.md
+                    - Resonances: propagation/resonances.md
             - Analysis:
                 - Overview: analysis/index.md
                 - Analysis scope: analysis/overview.md
@@ -210,25 +215,26 @@ extra_css:
   - assets/stylesheets/navigation.css
 
 nav:
-  - Inicio: index.md
-  - Introducción:
-      - Visión general: introduction/overview.md
-  - Primeros pasos:
-      - Instalación: getting-started/installation.md
-      - Requisitos: getting-started/requirements.md
-      - Inicio rápido: getting-started/quick-start.md
-  - Guía de usuario:
-      - Visión general: user-guide/index.md
-      - Proyectos: user-guide/projects.md
-      - Espacio de trabajo: user-guide/workspace.md
-      - Conceptos de espacio de trabajo: workspace.md
-      - Capas: user-guide/layers.md
-      - Visualización: user-guide/visualization.md
-      - Vista 3D: user-guide/three-d-view.md
-      - Línea temporal: user-guide/timeline.md
-      - Estaciones de tierra: user-guide/ground-stations.md
-      - Importación: user-guide/import.md
-      - Exportación: user-guide/export.md
+  - Inicio:
+      - Visión general: index.md
+      - Introducción:
+          - Visión general: introduction/overview.md
+      - Primeros pasos:
+          - Instalación: getting-started/installation.md
+          - Requisitos: getting-started/requirements.md
+          - Inicio rápido: getting-started/quick-start.md
+      - Guía de usuario:
+          - Visión general: user-guide/index.md
+          - Proyectos: user-guide/projects.md
+          - Espacio de trabajo: user-guide/workspace.md
+          - Conceptos de espacio de trabajo: workspace.md
+          - Capas: user-guide/layers.md
+          - Visualización: user-guide/visualization.md
+          - Vista 3D: user-guide/three-d-view.md
+          - Línea temporal: user-guide/timeline.md
+          - Estaciones de tierra: user-guide/ground-stations.md
+          - Importación: user-guide/import.md
+          - Exportación: user-guide/export.md
   - Ingeniería:
       - Visión general: engineering/index.md
       - Estados cartesianos: engineering/cartesian-states.md
@@ -257,7 +263,6 @@ nav:
       - Formatos no soportados: formats/unsupported-formats.md
   - Propagación:
       - Visión general: propagation/index.md
-      - Ecuaciones implementadas: modules/propagation.md
       - Propagadores: propagation/overview.md
       - SGP4: propagation/sgp4.md
       - Dos cuerpos: propagation/two-body.md
@@ -272,11 +277,16 @@ nav:
           - Visión general: propagation/force-models.md
           - Punto masa: propagation/point-mass.md
           - J2: propagation/j2.md
+          - J3: propagation/j3.md
+          - J4: propagation/j4.md
           - Geopotencial completo: propagation/full-geopotential.md
           - Terceros cuerpos: propagation/third-bodies.md
           - Arrastre atmosférico: propagation/atmospheric-drag.md
           - Presión de radiación solar: propagation/solar-radiation-pressure.md
           - Relatividad: propagation/relativity.md
+      - Dinámica futura:
+          - Actitud: propagation/attitude.md
+          - Resonancias: propagation/resonances.md
   - Análisis:
       - Visión general: analysis/index.md
       - Alcance del análisis: analysis/overview.md

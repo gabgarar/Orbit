@@ -51,7 +51,7 @@ lista `force_terms`, la presencia o ausencia de `drag` es autoritativa.
 SGP4 acepta un TLE y tiene su propio modelo. Los términos Cowell no se aplican
 a un objeto de catálogo SGP4 ni se usan para corregir un TLE.
 
-Véanse [Masa puntual](point-mass.md), [J2](j2.md),
-[Arrastre atmosférico](atmospheric-drag.md) y las páginas de capacidades no
-disponibles para [terceros cuerpos](third-bodies.md),
+Véanse [Masa puntual](point-mass.md), [J2](j2.md), [J3](j3.md), [J4](j4.md)
+y [Arrastre atmosférico](atmospheric-drag.md), además de las páginas de
+capacidades no disponibles para [terceros cuerpos](third-bodies.md),
 [SRP](solar-radiation-pressure.md) y [relatividad](relativity.md).

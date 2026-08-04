@@ -31,3 +31,15 @@ Earth model.
     Analyzes requiring geopotential of controlled degree and order should
     be done in a tool or service that implements and documents that
     model. Orbit does not offer a silent approach.
+
+!!! warning "Equation planned for future implementation"
+
+    A degree-and-order \(N\) geopotential would require a spherical-harmonic
+    expansion and its gradient:
+
+    $$
+    U(r,\phi,\lambda)=\frac{\mu}{r}\left[1+\sum_{n=2}^{N}
+    \left(\frac{R_\oplus}{r}\right)^n\sum_{m=0}^{n}\bar P_{nm}(\sin\phi)
+    \left(\bar C_{nm}\cos m\lambda+\bar S_{nm}\sin m\lambda\right)\right],
+    \qquad \mathbf a=-\nabla U.
+    $$

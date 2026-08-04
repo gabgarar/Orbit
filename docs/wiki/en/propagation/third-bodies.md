@@ -21,3 +21,13 @@ indirectly due to a barycentric origin.
   Python are not integrated into the product UI/API.
 
 There is no hidden parameter to activate solar or lunar forces in Cowell.
+
+!!! warning "Equation planned for future implementation"
+
+    For a perturbing body \(b\), the planned differential acceleration is:
+
+    $$
+    \mathbf a_{3B}=\mu_b\left(
+    \frac{\mathbf r_b-\mathbf r}{\lVert\mathbf r_b-\mathbf r\rVert^3}
+    -\frac{\mathbf r_b}{\lVert\mathbf r_b\rVert^3}\right).
+    $$
