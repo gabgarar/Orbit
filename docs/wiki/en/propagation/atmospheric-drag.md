@@ -17,6 +17,15 @@ $$
 \mathbf a_{drag}=-\frac{1}{2}B\rho\lVert\mathbf v_{rel}\rVert\mathbf v_{rel}.
 $$
 
+| Symbol | Meaning | Unit |
+| --- | --- | --- |
+| \(\mathbf a_{drag}\) | Drag acceleration applied by Cowell. | km/s² in the core; SI when publishing `StateVector`. |
+| \(B=C_DA/m\) | Area-normalised ballistic coefficient. | m²/kg. |
+| \(C_D\) | Drag coefficient. | Dimensionless. |
+| \(A\), \(m\) | Reference area and mass. | m², kg. |
+| \(\rho\) | Atmospheric density. | kg/m³. |
+| \(\mathbf v_{rel}\) | Velocity relative to the co-rotating atmosphere. | m/s during drag calculation. |
+
 The implementation calculates the relative speed using the term
 Earth's rotation and evaluates a layered exponential density using the
 height WGS-84. The internal calculation preserves km and km/s, with conversions for
@@ -27,6 +36,17 @@ $$
 \qquad
 \rho(h)=\rho_0\exp\left(-\frac{h-h_0}{H}\right).
 $$
+
+| Symbol | Meaning | Unit |
+| --- | --- | --- |
+| \(\mathbf v\), \(\mathbf r\) | Cowell state velocity and position. | km/s, km; converted to SI where required. |
+| \(\mathbf\omega_\oplus\) | Earth angular velocity. | rad/s. |
+| \(h\), \(h_0\), \(H\) | Height, layer base, and exponential scale height. | One common length unit. |
+| \(\rho_0\) | Density at the layer base. | kg/m³. |
+
+Orbit evaluates \(\rho\) in WGS-84 layers and computes the cross product
+before evaluating \(\lVert\mathbf v_{rel}\rVert\); none of these conversions
+is left implicit in the UI.
 
 ## Parameters
 

@@ -1,6 +1,6 @@
 # Determinación de órbita
 
-[Análisis](index.md){ .md-button }
+[Análisis](index.md)
 
 La determinación de órbita no está implementada en Orbit. El runtime propaga
 un TLE, una definición manual o una efeméride tabulada; no estima el estado ni

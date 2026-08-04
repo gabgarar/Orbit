@@ -1,6 +1,6 @@
 # Orbit determination
 
-[Analysis](index.md){ .md-button }
+[Analysis](index.md)
 
 Orbit determination is not implemented in Orbit. The runtime propagates
 a TLE, a manual definition or a tabulated ephemeris; does not value the state or
