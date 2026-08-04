@@ -116,16 +116,19 @@ plugins:
                 - Unsupported formats: formats/unsupported-formats.md
             - Propagation:
                 - Overview: propagation/index.md
-                - Propagators: propagation/overview.md
-                - SGP4: propagation/sgp4.md
-                - Two body: propagation/two-body.md
-                - Cowell:
-                    - Overview: propagation/cowell.md
-                    - Input and forces: propagation/cowell/input-and-forces.md
-                    - Integration and cache: propagation/cowell/integration.md
-                    - Output and provenance: propagation/cowell/output.md
-                    - Failures and limits: propagation/cowell/limits.md
-                - Numerical integrators: propagation/numerical-integrators.md
+                - Propagators:
+                    - Overview: propagation/overview.md
+                    - SGP4: propagation/sgp4.md
+                    - Two body: propagation/two-body.md
+                    - Cowell:
+                        - Overview: propagation/cowell.md
+                        - Input and forces: propagation/cowell/input-and-forces.md
+                        - Integration and cache: propagation/cowell/integration.md
+                        - Output and provenance: propagation/cowell/output.md
+                        - Failures and limits: propagation/cowell/limits.md
+                - Numerical integrators:
+                    - Overview: propagation/numerical-integrators.md
+                    - RK4: propagation/rk4.md
                 - Force models:
                     - Overview: propagation/force-models.md
                     - Point mass: propagation/point-mass.md
@@ -290,16 +293,19 @@ nav:
       - Formatos no soportados: formats/unsupported-formats.md
   - Propagación:
       - Visión general: propagation/index.md
-      - Propagadores: propagation/overview.md
-      - SGP4: propagation/sgp4.md
-      - Dos cuerpos: propagation/two-body.md
-      - Cowell:
-          - Visión general: propagation/cowell.md
-          - Entrada y fuerzas: propagation/cowell/input-and-forces.md
-          - Integración y caché: propagation/cowell/integration.md
-          - Salida y procedencia: propagation/cowell/output.md
-          - Fallos y límites: propagation/cowell/limits.md
-      - Integradores numéricos: propagation/numerical-integrators.md
+      - Propagadores:
+          - Visión general: propagation/overview.md
+          - SGP4: propagation/sgp4.md
+          - Dos cuerpos: propagation/two-body.md
+          - Cowell:
+              - Visión general: propagation/cowell.md
+              - Entrada y fuerzas: propagation/cowell/input-and-forces.md
+              - Integración y caché: propagation/cowell/integration.md
+              - Salida y procedencia: propagation/cowell/output.md
+              - Fallos y límites: propagation/cowell/limits.md
+      - Integradores numéricos:
+          - Visión general: propagation/numerical-integrators.md
+          - RK4: propagation/rk4.md
       - Modelos de fuerzas:
           - Visión general: propagation/force-models.md
           - Punto masa: propagation/point-mass.md

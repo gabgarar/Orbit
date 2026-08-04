@@ -659,6 +659,13 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/resonances/"/>
     </url>
     <url>
+        <loc>https://gabgarar.github.io/Orbit/propagation/rk4/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/rk4/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/rk4/"/>
+    </url>
+    <url>
         <loc>https://gabgarar.github.io/Orbit/propagation/sgp4/</loc>
         <lastmod>2026-08-04</lastmod>
         <changefreq>daily</changefreq>
@@ -1483,6 +1490,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/resonances/"/>
         <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/resonances/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/propagation/rk4/</loc>
+        <lastmod>2026-08-04</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/rk4/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/rk4/"/>
     </url>
     <url>
         <loc>https://gabgarar.github.io/Orbit/en/propagation/sgp4/</loc>
