@@ -14,9 +14,10 @@ import datetime
 import hashlib
 import math
 import re
-from collections.abc import Iterable, Protocol
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from .scales import ensure_utc
 

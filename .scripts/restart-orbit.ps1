@@ -1,8 +1,9 @@
-# Rebuild (using Docker cache by default) and restart Orbit from any directory.
+# Build documentation, rebuild (using Docker cache by default) and restart Orbit.
 
 param(
     [switch]$SkipBuild,
-    [switch]$NoCache
+    [switch]$NoCache,
+    [switch]$SkipDocsBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,6 +25,21 @@ if ($SkipBuild -and $NoCache) {
 
 Push-Location $projectRoot
 try {
+    if ($SkipDocsBuild) {
+        Write-Host "Skipping documentation build." -ForegroundColor Cyan
+    } else {
+        $docsPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+        if (-not (Test-Path -LiteralPath $docsPython)) {
+            throw "Documentation environment was not found at .venv. Create it with: py -m venv .venv"
+        }
+
+        Write-Host "Building documentation..." -ForegroundColor Cyan
+        & $docsPython -m mkdocs build --strict
+        if ($LASTEXITCODE -ne 0) {
+            throw "Documentation build failed. Orbit was not restarted."
+        }
+    }
+
     if ($SkipBuild) {
         Write-Host "Reusing the current Orbit image." -ForegroundColor Cyan
     } else {

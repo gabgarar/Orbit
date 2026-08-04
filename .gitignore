@@ -28,6 +28,9 @@ Thumbs.db
 # Generated files
 dist/
 build/
+site/
+/.venv/
+/.venv-docs/
 server/ui-artifacts/
 tests/artifacts/
 

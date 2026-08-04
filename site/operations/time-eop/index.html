@@ -10,11 +10,13 @@
       
       
       
+        <link rel="canonical" href="https://gabgarar.github.io/Orbit/operations/time-eop/">
+      
       
         <link rel="prev" href="../configuration/">
       
       
-        <link rel="next" href="../performance/">
+        <link rel="next" href="data-files/">
       
       
         
@@ -25,7 +27,7 @@
     
     
       
-        <title>Tiempo, EOP e ITRF - Documentación de Orbit</title>
+        <title>Visión general - Documentación de Orbit</title>
       
     
     
@@ -80,7 +82,7 @@
 
   
 
-<header class="md-header md-header--shadow" data-md-component="header">
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Cabecera">
     <a href="../.." title="Documentación de Orbit" class="md-header__button md-logo" aria-label="Documentación de Orbit" data-md-component="logo">
       
@@ -102,7 +104,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Tiempo, EOP e ITRF
+              Visión general
             
           </span>
         </div>
@@ -159,13 +161,263 @@
     
   </nav>
   
+    
+      
+<nav class="md-tabs" aria-label="Pestañas" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Inicio
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../introduction/overview/" class="md-tabs__link">
+          
+  
+  
+  Introducción
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/installation/" class="md-tabs__link">
+          
+  
+  
+  Primeros pasos
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/" class="md-tabs__link">
+          
+  
+  
+  Guía de usuario
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../engineering/" class="md-tabs__link">
+          
+  
+  
+  Ingeniería
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../formats/" class="md-tabs__link">
+          
+  
+  
+  Formatos espaciales
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../propagation/" class="md-tabs__link">
+          
+  
+  
+  Propagación
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../analysis/" class="md-tabs__link">
+          
+  
+  
+  Análisis
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../integrations/" class="md-tabs__link">
+          
+  
+  
+  Integraciones
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  Operación
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../development/" class="md-tabs__link">
+          
+  
+  
+  Guía de desarrollo
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
+          
+  
+  
+  Referencia
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
 </header>
     
     <div class="md-container" data-md-component="container">
       
       
-        
-          
         
       
       <main class="md-main" data-md-component="main">
@@ -179,8 +431,10 @@
                     
 
 
+  
 
-<nav class="md-nav md-nav--primary" aria-label="Navegación" data-md-level="0">
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navegación" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
     <a href="../.." title="Documentación de Orbit" class="md-nav__button md-logo" aria-label="Documentación de Orbit" data-md-component="logo">
       
@@ -231,21 +485,19 @@
     
     
       
-        
+      
         
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
             
   
   
@@ -320,21 +572,19 @@
     
     
       
-        
+      
         
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
             
   
   
@@ -465,21 +715,19 @@
     
     
       
-        
+      
         
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
             
   
   
@@ -806,21 +1054,19 @@
     
     
       
-        
+      
         
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -1175,21 +1421,19 @@
     
     
       
-        
+      
         
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
             
   
   
@@ -1233,6 +1477,34 @@
     
   
     Visión general
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formats/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Matriz de disponibilidad
   
 
     
@@ -1488,21 +1760,19 @@
     
     
       
-        
+      
         
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
         
           
-          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
             
   
   
@@ -1649,9 +1919,25 @@
   
   
   
-    <li class="md-nav__item">
-      <a href="../../propagation/cowell/" class="md-nav__link">
+    
+    
+    
+    
+      
+      
         
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_5" id="__nav_7_5_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -1665,7 +1951,163 @@
   
   
 
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Cowell
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../propagation/cowell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visión general
+  
+
+    
+  </span>
+  
+  
+
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../propagation/cowell/input-and-forces/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Entrada y fuerzas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../propagation/cowell/integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integración y caché
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../propagation/cowell/output/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Salida y procedencia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../propagation/cowell/limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fallos y límites
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -1941,21 +2383,19 @@
     
     
       
-        
+      
         
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
         
           
-          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
             
   
   
@@ -2254,21 +2694,19 @@
     
     
       
-        
+      
         
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
         
           
-          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="">
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
             
   
   
@@ -2331,9 +2769,25 @@
   
   
   
-    <li class="md-nav__item">
-      <a href="../../integrations/rest-api/" class="md-nav__link">
+    
+    
+    
+    
+      
+      
         
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_9_2" id="__nav_9_2_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -2347,7 +2801,191 @@
   
   
 
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    REST API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/rest-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visión general
+  
+
+    
+  </span>
+  
+  
+
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/rest-api/system-and-catalog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estado, configuración y catálogo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/rest-api/orbit-operations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Propagación y efemérides
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/rest-api/ground-stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Estaciones de tierra
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/rest-api/exports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Exportación
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/rest-api/backend-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frontera del backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -2516,6 +3154,9 @@
         
         
       
+      
+        
+      
     
     
     <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
@@ -2618,6 +3259,63 @@
   
   
   
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_10_3" id="__nav_10_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tiempo, EOP e ITRF
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_10_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_10_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tiempo, EOP e ITRF
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
     <li class="md-nav__item md-nav__item--active">
       
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
@@ -2633,7 +3331,7 @@
   <span class="md-ellipsis">
     
   
-    Tiempo, EOP e ITRF
+    Visión general
   
 
     
@@ -2651,7 +3349,7 @@
   <span class="md-ellipsis">
     
   
-    Tiempo, EOP e ITRF
+    Visión general
   
 
     
@@ -2688,65 +3386,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#archivos-locales-requeridos" class="md-nav__link">
+  <a href="#guias-operativas" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Archivos locales requeridos
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuracion-estricta" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuración estricta
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#variables" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Variables
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#realizaciones-gnss" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Realizaciones GNSS
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#modo-visual" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Modo visual
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#actualizacion-controlada" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Actualización controlada
+        Guías operativas
       
     </span>
   </a>
@@ -2756,6 +3399,126 @@
     </ul>
   
 </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="data-files/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archivos locales
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="strict-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Modo estricto
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="realizations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Realizaciones y modo visual
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="updates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Actualización controlada
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
       
     </li>
   
@@ -2864,21 +3627,19 @@
     
     
       
-        
+      
         
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
         
           
-          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="">
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="0">
             
   
   
@@ -3093,21 +3854,19 @@
     
     
       
-        
+      
         
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
         
           
-          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="">
+          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
             
   
   
@@ -3349,65 +4108,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#archivos-locales-requeridos" class="md-nav__link">
+  <a href="#guias-operativas" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Archivos locales requeridos
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configuracion-estricta" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Configuración estricta
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#variables" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Variables
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#realizaciones-gnss" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Realizaciones GNSS
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#modo-visual" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Modo visual
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#actualizacion-controlada" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Actualización controlada
+        Guías operativas
       
     </span>
   </a>
@@ -3425,6 +4129,72 @@
           
             <div class="md-content" data-md-component="content">
               
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navegación" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Inicio
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Operación
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="./" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Tiempo, EOP e ITRF
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
               <article class="md-content__inner md-typeset">
                 
                   
@@ -3432,181 +4202,47 @@
 
 
 <h1 id="operacion-de-tiempo-eop-e-itrf">Operación de tiempo, EOP e ITRF</h1>
-<p><a href="../../">Inicio</a> · <a href="../">Operación</a> · <a href="../configuration/">Configuración</a> · <a href="../../user-guide/timeline/">Línea temporal</a> · <a href="../../user-guide/export/">Exportar</a></p>
+<p><a href="../../">Inicio</a> · <a href="../">Operación</a> · <a href="../configuration/">Configuración</a></p>
 <p>Orbit trata tiempo, orientación terrestre y realización como contratos
 explícitos. No descarga productos de tiempo durante una propagación ni una
-transformación: el operador monta snapshots locales, los identifica por
-contenido y reinicia el servicio para adoptar una revisión.</p>
+transformación: el operador monta snapshots locales e identifica cada revisión.</p>
 <h2 id="cadena-temporal-y-de-marcos">Cadena temporal y de marcos</h2>
-<p>La interfaz muestra UTC. El backend distingue las escalas necesarias para una
-reducción terrestre.</p>
 <pre class="mermaid"><code>flowchart LR
     UTC[UTC] --&gt;|DUT1| UT1[UT1]
     UTC --&gt;|segundos intercalares| TAI[TAI]
     TAI --&gt;|+ 32.184 s| TT[TT]
-
-    I[GCRF / ICRF / EME2000] --&gt; C[CIRS]
-    C --&gt; T[TIRS]
-    T --&gt; R[ITRF]
-
-    M[TEME] --&gt; P[PEF]
-    P --&gt; R</code></pre>
-<ul>
-<li>UT1 se obtiene de UTC aplicando DUT1 del producto EOP.</li>
-<li>TT se obtiene mediante UTC → TAI → TT y se utiliza en la parte celeste de
-  las transformaciones.</li>
-<li>La ruta GCRF, ICRF o EME2000 usa CIRS y TIRS antes de ITRF.</li>
-<li>La ruta TEME usa PEF antes de ITRF.</li>
-<li>Las etiquetas ECI y ECEF genéricas se rechazan porque no describen una
-  transformación suficiente.</li>
-</ul>
-<p>El acrónimo correcto del marco terrestre es <strong>ITRF</strong>, no IRTF. ITRF designa
-una familia de realizaciones; una salida terrestre debe declarar la realización
-cuando ésta sea relevante.</p>
-<h2 id="archivos-locales-requeridos">Archivos locales requeridos</h2>
+    I[GCRF / ICRF / EME2000] --&gt; C[CIRS] --&gt; T[TIRS] --&gt; R[ITRF]
+    M[TEME] --&gt; P[PEF] --&gt; R</code></pre>
+<p>La interfaz muestra UTC. UT1 se obtiene aplicando DUT1 y TT mediante
+UTC → TAI → TT. Las etiquetas genéricas ECI y ECEF se rechazan. El acrónimo
+correcto es ITRF, no IRTF.</p>
+<h2 id="guias-operativas">Guías operativas</h2>
 <table>
 <thead>
 <tr>
-<th>Producto</th>
-<th>Función</th>
-<th>Formato aceptado</th>
+<th>Tema</th>
+<th>Contenido</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>IERS EOP C04</td>
-<td>DUT1, movimiento polar, dX, dY y LOD para la transformación terrestre</td>
-<td>ASCII C04-14 o C04-20 con variante IAU 2000A dX/dY.</td>
+<td><a href="data-files/">Archivos locales</a></td>
+<td>C04 y leap-seconds.list requeridos.</td>
 </tr>
 <tr>
-<td>leap-seconds.list</td>
-<td>UTC ↔ TAI ↔ TT y escalas GNSS</td>
-<td>Archivo ASCII IERS/NTP con identidad y fecha de expiración.</td>
+<td><a href="strict-mode/">Modo estricto</a></td>
+<td>Hashes, variables y cobertura comprobable.</td>
+</tr>
+<tr>
+<td><a href="realizations/">Realizaciones y modo visual</a></td>
+<td>IGS20, ITRF2020 y aproximaciones.</td>
+</tr>
+<tr>
+<td><a href="updates/">Actualización controlada</a></td>
+<td>Renovación de snapshots e invalidación de caché.</td>
 </tr>
 </tbody>
 </table>
-<p>No use un C04 IAU 1980 que declara dPsi/dEps en lugar de dX/dY. Orbit lo
-rechaza cuando el encabezado lo identifica.</p>
-<h2 id="configuracion-estricta">Configuración estricta</h2>
-<p>Guarde los archivos bajo config/eop/ y calcule sus hashes:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Force</span> <span class="p">.\</span><span class="n">config</span><span class="p">\</span><span class="n">eop</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">Get-FileHash</span> <span class="p">.\</span><span class="n">config</span><span class="p">\</span><span class="n">eop</span><span class="p">\</span><span class="n">eopc04</span><span class="p">.</span><span class="n">txt</span> <span class="n">-Algorithm</span> <span class="n">SHA256</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nb">Get-FileHash</span> <span class="p">.\</span><span class="n">config</span><span class="p">\</span><span class="n">eop</span><span class="p">\</span><span class="n">leap-seconds</span><span class="p">.</span><span class="n">list</span> <span class="n">-Algorithm</span> <span class="n">SHA256</span>
-</code></pre></div>
-<p>Defina rutas <strong>del contenedor</strong>, no rutas del host:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">$env:ORBIT_EOP_C04_PATH</span> <span class="p">=</span> <span class="s2">&quot;/app/config/eop/eopc04.txt&quot;</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nv">$env:ORBIT_EOP_C04_SHA256</span> <span class="p">=</span> <span class="s2">&quot;&lt;sha256-del-c04&gt;&quot;</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nv">$env:ORBIT_EOP_SOURCE</span> <span class="p">=</span> <span class="s2">&quot;IERS EOP C04&quot;</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="nv">$env:ORBIT_EOP_VERSION</span> <span class="p">=</span> <span class="s2">&quot;revision-controlada&quot;</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nv">$env:ORBIT_EOP_QUALITY</span> <span class="p">=</span> <span class="s2">&quot;final&quot;</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="nv">$env:ORBIT_EOP_STRICT</span> <span class="p">=</span> <span class="s2">&quot;true&quot;</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="nv">$env:ORBIT_TERRESTRIAL_REALIZATION</span> <span class="p">=</span> <span class="s2">&quot;ITRF2020&quot;</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="nv">$env:ORBIT_LEAP_SECONDS_PATH</span> <span class="p">=</span> <span class="s2">&quot;/app/config/eop/leap-seconds.list&quot;</span>
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="nv">$env:ORBIT_LEAP_SECONDS_SHA256</span> <span class="p">=</span> <span class="s2">&quot;&lt;sha256-de-leap-seconds-list&gt;&quot;</span>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="nv">$env:ORBIT_LEAP_SECONDS_VERSION</span> <span class="p">=</span> <span class="s2">&quot;revision-controlada&quot;</span>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="nv">$env:ORBIT_LEAP_SECONDS_REQUIRED</span> <span class="p">=</span> <span class="s2">&quot;true&quot;</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="nv">$env:ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED</span> <span class="p">=</span> <span class="s2">&quot;true&quot;</span>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="p">./.</span><span class="n">scripts</span><span class="p">/</span><span class="nb">restart-orbit</span><span class="p">.</span><span class="n">cmd</span> <span class="n">-SkipBuild</span>
-</code></pre></div>
-<p>ORBIT_EOP_STRICT=true exige el C04 local, su SHA-256 y una tabla local de
-segundos intercalares vigente según su línea #@. También impide extrapolar EOP
-y limita la calidad a final o rapid.</p>
-<p>Para una ventana conocida de simulación o exportación:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nv">$env:ORBIT_EOP_REQUIRED_START</span> <span class="p">=</span> <span class="s2">&quot;2026-08-03T00:00:00Z&quot;</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nv">$env:ORBIT_EOP_REQUIRED_END</span> <span class="p">=</span> <span class="s2">&quot;2026-08-10T00:00:00Z&quot;</span>
-</code></pre></div>
-<p>El inicio falla si el C04 o la tabla UTC–TAI no cubren completamente los
-límites. En modo estricto, una consulta que requiera datos fuera de cobertura
-se rechaza durante la operación. Si se configura un SHA-256 para la tabla
-UTC–TAI, cada consulta también verifica que su fecha no sea posterior a <code>#@</code>.</p>
-<h2 id="variables">Variables</h2>
-<table>
-<thead>
-<tr>
-<th>Variable</th>
-<th>Efecto</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>ORBIT_EOP_C04_PATH</td>
-<td>Ruta local del C04 dentro del proceso.</td>
-</tr>
-<tr>
-<td>ORBIT_EOP_C04_SHA256</td>
-<td>Hash esperado del archivo C04.</td>
-</tr>
-<tr>
-<td>ORBIT_EOP_C04_REQUIRE_SHA256</td>
-<td>Exige hash incluso fuera de modo estricto.</td>
-</tr>
-<tr>
-<td>ORBIT_EOP_SOURCE, ORBIT_EOP_VERSION, ORBIT_EOP_QUALITY</td>
-<td>Procedencia registrada con la transformación.</td>
-</tr>
-<tr>
-<td>ORBIT_EOP_STRICT</td>
-<td>Exige C04 identificado y tabla de leap seconds vigente; rechaza aproximación y extrapolación.</td>
-</tr>
-<tr>
-<td>ORBIT_EOP_ALLOW_EXTRAPOLATION</td>
-<td>Permite extrapolación sólo fuera de la política estricta.</td>
-</tr>
-<tr>
-<td>ORBIT_EOP_REQUIRED_START, ORBIT_EOP_REQUIRED_END</td>
-<td>Ventana mínima comprobada al iniciar contra C04 y UTC–TAI.</td>
-</tr>
-<tr>
-<td>ORBIT_LEAP_SECONDS_PATH, ORBIT_LEAP_SECONDS_SHA256</td>
-<td>Tabla local y hash esperado.</td>
-</tr>
-<tr>
-<td>ORBIT_LEAP_SECONDS_REQUIRED</td>
-<td>Impide usar la tabla histórica incluida.</td>
-</tr>
-<tr>
-<td>ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED</td>
-<td>Requiere una fecha #@ futura.</td>
-</tr>
-<tr>
-<td>ORBIT_TERRESTRIAL_REALIZATION</td>
-<td>Realización terrestre de salida explícita.</td>
-</tr>
-<tr>
-<td>ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT</td>
-<td>Habilita de forma opt-in la operación global IGS20 ↔ ITRF2020 para estados orbitales.</td>
-</tr>
-</tbody>
-</table>
-<h2 id="realizaciones-gnss">Realizaciones GNSS</h2>
-<p>Por defecto, un estado que declara IGS20 conserva esa realización y no se
-reescribe a ITRF. La operación global IGS20 ↔ ITRF2020 se habilita sólo con:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">$env:ORBIT_TERRESTRIAL_REALIZATION</span> <span class="p">=</span> <span class="s2">&quot;ITRF2020&quot;</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nv">$env:ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT</span> <span class="p">=</span> <span class="s2">&quot;true&quot;</span>
-</code></pre></div>
-<p>Esta excepción usa parámetros globales publicados para estados orbitales. No
-aplica correcciones de estación o antena. Las realizaciones IGb20 e IGc20 se
-conservan sin conversión implícita hasta que exista y se registre una operación
-publicada específica.</p>
-<h2 id="modo-visual">Modo visual</h2>
-<p>Sin ORBIT_EOP_C04_PATH, Orbit conserva una aproximación visual UTC≈UT1 y la
-marca como approximate en la procedencia. Sin una tabla local de segundos
-intercalares usa una programación histórica incluida cuyo último registro es
-2017-01-01 con TAI−UTC = 37 s. Este modo sirve para visualización, no para
-análisis preciso ni exportación terrestre reproducible.</p>
-<h2 id="actualizacion-controlada">Actualización controlada</h2>
-<ol>
-<li>Descargue y revise las nuevas fuentes fuera de Orbit.</li>
-<li>Sustituya los archivos de config/eop/ de manera controlada.</li>
-<li>Calcule sus hashes y actualice las variables de entorno y revisiones.</li>
-<li>Reinicie el runtime.</li>
-<li>Compruebe docker compose ps y los logs.</li>
-</ol>
-<p>La identidad de los bytes de C04 y de leap-seconds.list forma parte de la
-clave de caché. Un cambio de cualquiera de ambos invalida resultados previos
-aunque la etiqueta de versión no cambie.</p>
 
 
 
@@ -3664,7 +4300,7 @@ aunque la etiqueta de versión no cambie.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.instant.progress", "navigation.sections", "navigation.expand", "navigation.top", "navigation.tracking", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copiado al portapapeles", "clipboard.copy": "Copiar al portapapeles", "search.result.more.one": "1 m\u00e1s en esta p\u00e1gina", "search.result.more.other": "# m\u00e1s en esta p\u00e1gina", "search.result.none": "No se encontraron documentos", "search.result.one": "1 documento encontrado", "search.result.other": "# documentos encontrados", "search.result.placeholder": "Teclee para comenzar b\u00fasqueda", "search.result.term.missing": "Falta", "select.version": "Seleccionar versi\u00f3n"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.instant.progress", "navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.path", "navigation.top", "navigation.tracking", "toc.follow", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copiado al portapapeles", "clipboard.copy": "Copiar al portapapeles", "search.result.more.one": "1 m\u00e1s en esta p\u00e1gina", "search.result.more.other": "# m\u00e1s en esta p\u00e1gina", "search.result.none": "No se encontraron documentos", "search.result.one": "1 documento encontrado", "search.result.other": "# documentos encontrados", "search.result.placeholder": "Teclee para comenzar b\u00fasqueda", "search.result.term.missing": "Falta", "select.version": "Seleccionar versi\u00f3n"}, "version": null}</script>
     
     
       <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
