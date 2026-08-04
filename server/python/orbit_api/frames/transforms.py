@@ -477,12 +477,17 @@ class FrameTransformService:
     def _is_external_terrestrial(cls, frame: FrameId | str) -> bool:
         """Return whether ``frame`` is a non-ITRF terrestrial source label."""
 
-        return isinstance(frame, str) and cls._is_terrestrial(frame)
+        # ``FrameId`` deliberately inherits from ``str`` so it serializes
+        # naturally at the API boundary.  Check it first: otherwise standard
+        # internal frames such as TEME/PEF/ITRF are mistaken for imported
+        # labels and every normal celestial-to-terrestrial transformation is
+        # incorrectly routed through the datum-adapter guard.
+        return not isinstance(frame, FrameId) and isinstance(frame, str) and cls._is_terrestrial(frame)
 
     def _terrestrial_realization(self, frame: FrameId | str, realization: str | None) -> str | None:
         if frame is FrameId.ITRF:
             return realization or "LEGACY-UNSPECIFIED"
-        if isinstance(frame, str) and self._is_terrestrial(frame):
+        if not isinstance(frame, FrameId) and isinstance(frame, str) and self._is_terrestrial(frame):
             return realization or frame
         return None
 
@@ -540,7 +545,7 @@ class FrameTransformService:
     ) -> Matrix3:
         if frame is FrameId.ITRF:
             return _IDENTITY
-        if isinstance(frame, str):
+        if not isinstance(frame, FrameId) and isinstance(frame, str):
             if self._is_terrestrial(frame):
                 return _IDENTITY
             raise FrameTransformationError(f"El marco de origen '{frame}' no tiene ruta de transformación registrada")
