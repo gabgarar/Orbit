@@ -1,0 +1,27 @@
+{
+  "name": "orbit-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node ./scripts/vendor-runtime-assets.mjs && vite",
+    "vendor:runtime": "node ./scripts/vendor-runtime-assets.mjs",
+    "build": "node ./scripts/vendor-runtime-assets.mjs && vite build && node ./scripts/validate-local-runtime-assets.mjs && node ./scripts/clean-runtime-vendor.mjs",
+    "preview": "vite preview",
+    "validate:local-assets": "node ./scripts/validate-local-runtime-assets.mjs"
+  },
+  "orbitRuntimeDependencies": {
+    "cesium": "1.143.0",
+    "pako": "2.1.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "6.0.3",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "vite": "8.1.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "tailwindcss": "^4.3.3"
+  }
+}

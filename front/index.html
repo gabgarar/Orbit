@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Orbit Tracker</title>
+    <link rel="icon" type="image/svg+xml" href="assets/icon/favicon.svg">
+    <script>window.CESIUM_BASE_URL = "/Cesium/";</script>
+    <script src="/Cesium/Cesium.js"></script>
+    <link href="/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <link href="assets/css/theme.css" rel="stylesheet">
+    <link href="assets/css/config-panel.css" rel="stylesheet">
+    <link href="assets/css/object-sidebar.css" rel="stylesheet">
+    <!-- Pako para descompresión de datos zlib en WebSocket -->
+    <script src="/vendor/pako.min.js"></script>
+</head>
+<body>
+    <div id="cesiumContainer" style="width:100%; height:100vh;"></div>
+    <script type="module" src="main.js"></script>
+</body>
+</html>
+

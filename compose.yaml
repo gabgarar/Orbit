@@ -1,0 +1,37 @@
+services:
+  orbit:
+    build:
+      context: .
+    ports:
+      # Keep the gateway private to this machine unless exposure is deliberate.
+      # Set ORBIT_HTTP_BIND=0.0.0.0 to publish it on every network interface.
+      - "${ORBIT_HTTP_BIND:-127.0.0.1}:${ORBIT_HTTP_PORT:-8100}:8100"
+    environment:
+      # The HTTP port inside the container is part of the runtime contract.
+      PORT: "8100"
+      PYTHON_BACKEND_URL: "http://127.0.0.1:8765"
+      # Pinned time data is opt-in and remains local to the mounted config
+      # volume. Paths here are container paths, normally /app/config/eop/… .
+      ORBIT_EOP_C04_PATH: "${ORBIT_EOP_C04_PATH:-}"
+      ORBIT_EOP_C04_SHA256: "${ORBIT_EOP_C04_SHA256:-}"
+      ORBIT_EOP_C04_REQUIRE_SHA256: "${ORBIT_EOP_C04_REQUIRE_SHA256:-}"
+      ORBIT_EOP_SOURCE: "${ORBIT_EOP_SOURCE:-}"
+      ORBIT_EOP_VERSION: "${ORBIT_EOP_VERSION:-}"
+      ORBIT_EOP_QUALITY: "${ORBIT_EOP_QUALITY:-}"
+      ORBIT_EOP_STRICT: "${ORBIT_EOP_STRICT:-}"
+      ORBIT_EOP_ALLOW_EXTRAPOLATION: "${ORBIT_EOP_ALLOW_EXTRAPOLATION:-}"
+      ORBIT_EOP_REQUIRED_START: "${ORBIT_EOP_REQUIRED_START:-}"
+      ORBIT_EOP_REQUIRED_END: "${ORBIT_EOP_REQUIRED_END:-}"
+      ORBIT_LEAP_SECONDS_PATH: "${ORBIT_LEAP_SECONDS_PATH:-}"
+      ORBIT_LEAP_SECONDS_SHA256: "${ORBIT_LEAP_SECONDS_SHA256:-}"
+      ORBIT_LEAP_SECONDS_SOURCE: "${ORBIT_LEAP_SECONDS_SOURCE:-}"
+      ORBIT_LEAP_SECONDS_VERSION: "${ORBIT_LEAP_SECONDS_VERSION:-}"
+      ORBIT_LEAP_SECONDS_REQUIRED: "${ORBIT_LEAP_SECONDS_REQUIRED:-}"
+      ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED: "${ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED:-}"
+      ORBIT_TERRESTRIAL_REALIZATION: "${ORBIT_TERRESTRIAL_REALIZATION:-}"
+      ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT: "${ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT:-}"
+    volumes:
+      # Conserva cambios de configuración y catálogos fuera de la imagen.
+      - ./config:/app/config
+    restart: unless-stopped
+    init: true

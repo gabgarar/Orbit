@@ -1,0 +1,142 @@
+site_name: Documentación de Orbit
+site_description: Documentación técnica y operacional de Orbit.
+docs_dir: docs/wiki
+
+theme:
+  name: material
+  language: es
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search:
+      lang: es
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - assets/javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Inicio: index.md
+  - Introducción:
+      - Visión general: introduction/overview.md
+  - Primeros pasos:
+      - Instalación: getting-started/installation.md
+      - Requisitos: getting-started/requirements.md
+      - Inicio rápido: getting-started/quick-start.md
+  - Guía de usuario:
+      - Visión general: user-guide/index.md
+      - Proyectos: user-guide/projects.md
+      - Espacio de trabajo: user-guide/workspace.md
+      - Capas: user-guide/layers.md
+      - Visualización: user-guide/visualization.md
+      - Vista 3D: user-guide/three-d-view.md
+      - Línea temporal: user-guide/timeline.md
+      - Estaciones de tierra: user-guide/ground-stations.md
+      - Importación: user-guide/import.md
+      - Exportación: user-guide/export.md
+  - Ingeniería:
+      - Visión general: engineering/index.md
+      - Estados cartesianos: engineering/cartesian-states.md
+      - Elementos keplerianos: engineering/keplerian-elements.md
+      - Elementos equinocciales: engineering/equinoctial-elements.md
+      - Representaciones orbitales: engineering/orbit-representations.md
+      - Marcos de referencia: engineering/reference-frames.md
+      - Sistemas temporales: engineering/time-systems.md
+      - Sistemas de coordenadas: engineering/coordinate-systems.md
+      - Modelos de la Tierra: engineering/earth-models.md
+      - Modelos de gravedad: engineering/gravity-models.md
+      - Modelos atmosféricos: engineering/atmospheric-models.md
+  - Formatos espaciales:
+      - Visión general: formats/index.md
+      - TLE: formats/tle.md
+      - OMM: formats/omm.md
+      - OEM: formats/oem.md
+      - OPM: formats/opm.md
+      - SP3: formats/sp3.md
+      - CPF: formats/cpf.md
+      - RINEX: formats/rinex.md
+      - Formatos no soportados: formats/unsupported-formats.md
+  - Propagación:
+      - Visión general: propagation/index.md
+      - Propagadores: propagation/overview.md
+      - SGP4: propagation/sgp4.md
+      - Dos cuerpos: propagation/two-body.md
+      - Cowell: propagation/cowell.md
+      - Integradores numéricos: propagation/numerical-integrators.md
+      - Modelos de fuerzas: propagation/force-models.md
+      - Punto masa: propagation/point-mass.md
+      - J2: propagation/j2.md
+      - Geopotencial completo: propagation/full-geopotential.md
+      - Terceros cuerpos: propagation/third-bodies.md
+      - Arrastre atmosférico: propagation/atmospheric-drag.md
+      - Presión de radiación solar: propagation/solar-radiation-pressure.md
+      - Relatividad: propagation/relativity.md
+  - Análisis:
+      - Visión general: analysis/index.md
+      - Alcance del análisis: analysis/overview.md
+      - Comparación de propagadores: analysis/comparison-tools.md
+      - Gráficas: analysis/plots.md
+      - Estadísticas: analysis/statistics.md
+      - Eventos: analysis/events.md
+      - Medidas: analysis/measurements.md
+      - Tracking: analysis/tracking.md
+      - Determinación de órbita: analysis/orbit-determination.md
+  - Integraciones:
+      - Visión general: integrations/index.md
+      - REST API: integrations/rest-api.md
+      - WebSocket: integrations/websocket.md
+      - OpenAPI: integrations/openapi.md
+      - SDK Python: integrations/python-sdk.md
+      - CLI: integrations/cli.md
+      - Plugins: integrations/plugins.md
+  - Operación:
+      - Visión general: operations/index.md
+      - Configuración: operations/configuration.md
+      - Tiempo, EOP e ITRF: operations/time-eop.md
+      - Rendimiento: operations/performance.md
+      - Validación: operations/validation.md
+      - Preguntas frecuentes: operations/faq.md
+  - Guía de desarrollo:
+      - Visión general: development/index.md
+      - Arquitectura: development/architecture.md
+      - Pruebas: development/testing.md
+      - Despliegue: development/deployment.md
+      - Contribución: development/contributing.md
+      - Validación de desarrollo: development/validation.md
+  - Referencia:
+      - Visión general: reference/index.md
+      - Glosario: reference/glossary.md
+      - Bibliografía: reference/bibliography.md
+      - Apéndice: reference/appendix.md
+      - Roadmap documental: reference/roadmap.md
+      - Notas de versión: reference/release-notes.md

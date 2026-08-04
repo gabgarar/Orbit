@@ -1,0 +1,36 @@
+# Node modules
+/server/node_modules/
+/react-ui/node_modules/
+/react-ui/.npm-cache/
+/react-ui/.runtime-vendor/
+
+# Python cache files
+/server/python/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs and runtime files
+server/server.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+server/debug.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+*.swp
+
+# Generated files
+dist/
+build/
+server/ui-artifacts/
+tests/artifacts/
+
+# Local high-bit-depth source imagery. Commit the browser-ready lossless PNG
+# (`front/assets/basemap/moon_color_4k_lossless.png`) instead of the TIFF.
+/front/assets/basemap/Moon_color_16bit_srgb_4k.tif

@@ -1,0 +1,10 @@
+{
+  "name": "Orbit",
+  "forwardPorts": [8100],
+  "portsAttributes": {
+    "8100": {
+      "label": "Orbit Web",
+      "onAutoForward": "public"
+    }
+  }
+}

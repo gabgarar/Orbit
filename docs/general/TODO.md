@@ -1,0 +1,141 @@
+# Orbit — Tareas futuras / Roadmap
+
+Listado de ideas y mejoras ordenadas por área. Marca con `[x]` cuando se implemente.
+
+---
+
+## 🕐 Simulación y control de tiempo
+
+- [x] **Modo simulación por rango de fechas**: seleccionar fecha/hora de inicio y fin, ejecutar la simulación y ver la evolución de las órbitas en ese intervalo.
+- [x] **Modo tiempo real**: seguimiento live con actualización continua usando la hora del sistema (sin necesidad de arrcar el propagador manualmente).
+- [x] **Control de velocidad de reproducción**: ×1, ×10, ×100, ×1000, rewind y pausa desde la UI.
+- [x] **Timeline visual** en pantalla: barra scrubable para navegar por la simulación como en un vídeo.
+- [x] **Modo histórico / replay**: reproducir el estado de la constelación en un instante pasado dado un TLE de esa época.
+- [x] **Epoch de TLE vs. hora actual**: indicar en el HUD la diferencia entre la época del TLE y la hora simulada para advertir de inexactitud.
+
+---
+
+## 🔭 Propagadores
+
+- [ ] **SGP4/SDP4** (actual, via python-sgp4): base operativa para órbitas LEO/MEO/GEO/HEO.
+- [ ] **Selector de propagador en UI**: dropdown o panel para escoger qué propagador usar por satélite o globalmente.
+- [ ] **J2 analítico simple**: propagador analítico de baja fidelidad para comparación rápida.
+- [ ] **Integrador numérico RK4/RK45**: propagación de alta fidelidad con fuerza gravitacional completa.
+- [ ] **Comparador de propagadores**: mostrar simultáneamente la trayectoria de un mismo satélite con dos propagadores distintos, en colores diferentes, para evaluar desviación.
+- [x] **Exportar efeméredes**: descargar CSV/JSON con posición y velocidad para un rango de tiempo dado.
+
+---
+
+## 🌍 Perturbaciones y física orbital
+
+- [ ] **Achatamiento terrestre (J2, J3, J4)**: corregir precesión del nodo ascendente y del argumento del perigeo.
+- [ ] **Resistencia atmosférica (drag)**: modelado con NRLMSISE-00 o exponencial simple; parámetro Cd y área de sección transversal configurables por satélite.
+- [ ] **Presión de radiación solar (SRP)**: modelado básico con coeficiente de reflexión y área efectiva.
+- [ ] **Gravedad de terceros cuerpos**: perturbaciones lunares y solares para órbitas altas (GEO, HEO, lunar).
+- [ ] **Panel de perturbaciones activas**: checklist en la UI para activar/desactivar cada fuente de perturbación.
+- [ ] **Estimación de vida útil orbital**: calcular el tiempo aproximado hasta reentrada en función del drag configurado.
+
+---
+
+## 🛰️ Maniobras orbitales
+
+- [ ] **Delta-V impulsivo**: definir maniobra en un instante dado (vector ΔV o cambio de parámetros orbitales) y propagarla.
+- [ ] **Transferencia de Hohmann**: asistente visual para calcular la transferencia entre dos órbitas circulares.
+- [ ] **Corrección de plano (RAAN / inclinación)**: calcular ΔV necesario y representar la nueva órbita.
+- [ ] **Station keeping**: definir ventana de tolerancia y calcular maniobras periódicas de mantenimiento.
+- [ ] **Historial de maniobras**: línea de tiempo con todas las maniobras aplicadas a un satélite, exportable.
+
+---
+
+## 📡 Estaciones terrestres y cobertura
+
+- [x] **Gestor de estaciones terrestres**: añadir, nombrar y posicionar estaciones en el globo con máscara de elevación configurable.
+- [x] **Ventanas de visibilidad (AOS/LOS)**: calcular y mostrar cuándo cada satélite es visible desde cada estación en el rango de simulación.
+- [x] **Cono de cobertura del sensor**: visualizar el footprint/FOV de un satélite sobre la superficie terrestre en tiempo real.
+- [x] **Zona de cobertura acumulada**: mapa de calor de cobertura acumulada de una constelación en un periodo de tiempo. (MVP en 3D)
+- [x] **Link budget básico**: potencia de señal estimada en función de distancia, ganancia de antena y frecuencia.
+- [x] **Tabla de pases**: vista tabular con AOS, LOS, elevación máxima y azimut para cada par satélite–estación.
+- [ ] **Cobertura con DEM local**: incorporar modelos digitales de elevación para línea de vista realista por relieve local.
+
+---
+
+## 🗂️ Sistema de layers (GIS-like)
+
+- [x] **Alta de capa con menú `+`**: desplegable para elegir entre añadir satélite o estación terrestre.
+- [x] **Renombrar capa por contexto**: clic derecho sobre capa activa > renombrar.
+- [x] **Duplicado de capas satelitales**: permitir múltiples instancias del mismo satélite (ej: `ISS (2)`).
+- [x] **Update parameters en estación**: clic derecho sobre estación > edición de parámetros de operación y visualización.
+
+---
+
+## 🗺️ Visualización avanzada
+
+- [x] **Vista 2D de ground track**: proyección equirectangular con trayectoria del satélite y footprint.
+- [ ] **Terminator solar**: línea de separación día/noche animada en tiempo real sobre el mapa 2D.
+- [ ] **Zona de sombra orbital**: visualizar cuándo el satélite entra en eclipse de la Tierra.
+- [ ] **Cambio de referencial**: toggle entre marco inercial (ECI) y marco rotante (ECEF).
+- [ ] **Trayectorias de impacto de debris**: mostrar la zona de reentrada estimada con incertidumbre.
+- [ ] **Escala de tiempo logarítmica**: útil para visualizar órbitas muy elípticas (Molniya, GTO).
+- [ ] **Panel de estado del sol**: posición del sol, sombra planetaria y ángulo beta de la órbita.
+
+---
+
+## 📊 Análisis orbital
+
+- [ ] **Conjunciones (close approaches)**: detectar y alertar cuando dos objetos se acercan por debajo de un umbral de distancia configurable.
+- [ ] **Dispersión de constelación**: mostrar evolución del RAAN drift a lo largo del tiempo para detectar descomposición de la constelación.
+- [ ] **Parámetros orbitales en tiempo real**: panel con a, e, i, Ω, ω, ν actualizados en cada tick de simulación.
+- [ ] **Histograma de altitud de perigeo/apogeo**: útil para analizar flotas grandes.
+- [ ] **Análisis de cobertura temporal**: porcentaje de tiempo que un punto de la superficie está cubierto por al menos N satélites.
+
+---
+
+## 🌐 Fuentes de datos
+
+- [x] **Actualización automática de TLEs**: obtener TLEs frescos de CelesTrak o Space-Track directamente desde la app, con periodicidad configurable.
+- [x] **Importar TLE desde archivo local**: drag & drop de un fichero `.tle` o `.txt`.
+- [x] **Soporte de OMM (Orbital Mean-Elements Message)**: formato JSON/XML estándar de Space-Track.
+- [x] **Catálogos predefinidos**: ISS, Starlink, OneWeb, GPS, GLONASS, Galileo, debris, etc., seleccionables con un click.
+- [x] **Filtro por operador/propietario**: mostrar solo los satélites de una agencia o empresa concreta.
+- [ ] **Alertas de decay**: notificación cuando un TLE en el catálogo tiene perigeo < umbral configurable.
+- [x] **Umbral de decay configurable**: ajuste del umbral de perigeo (km) desde panel de configuración runtime.
+
+---
+
+## ⚙️ Infraestructura y rendimiento
+
+- [x] **Migrar backend Python a FastAPI + uvicorn**: reemplazar el servidor HTTP casero y el WebSocket manual por FastAPI (Starlette), ganando endpoints REST tipados con Pydantic, documentación OpenAPI automática y mejor integración con asyncio. Base necesaria para la API de propagación, efeméridas y análisis orbital.
+- [x] **Documentación API interactiva**: habilitar Swagger en `/docs` (generado automáticamente por FastAPI)
+- [x] **Endpoints REST adicionales**: `/propagate/{sat_id}`, `/orbits/{sat_id}`, `/aos-los`, `/ephemeris`
+- [x] **Caché de efeméridas pre-calculadas**: precalcular posiciones para el rango de simulación antes de reproducir.
+- [x] **Backend propagation API**: endpoint REST que acepta TLE + rango de tiempo y devuelve la efemérides, para desacoplar cálculo de render.
+- [x] **Modo offline**: funcionalidad completa sin conexión a internet (TLEs almacenados localmente, tiles offline).
+- [x] **Perfiles de configuración guardados**: guardar/restaurar sets completos de configuración (colores, propagador, perturbaciones) como presets con nombre.
+
+---
+
+## 🖥️ UX / Interfaz
+
+- [x] **Búsqueda rápida de satélite**: cuadro de búsqueda global (NORAD ID, nombre) que centra la cámara en el objeto.
+- [x] **Modo presentación**: ocultar toda la UI excepto el globo para capturas y vídeos limpios.
+- [ ] **Atajos de teclado**: documentados y configurables (foco, pausa, velocidad, modo cámara…).
+- [ ] **Tour guiado**: tutorial interactivo para nuevos usuarios que explique las funciones principales.
+- [x] **Soporte multiidioma**: i18n básica (ES/EN).
+- [x] **Tema oscuro/claro**: toggle de apariencia para la UI (paneles, sidebar).
+- [ ] **Mostrar BIT y notificaciones**: notificar eventos y errores.
+- [x] **Centro de alertas persistente**: avisos/errores acumulables en panel desplegable, cierre manual individual o global.
+
+---
+
+## 🔬 Simulación avanzada (largo plazo)
+
+- [ ] **Propagación de covariancias (estado + incertidumbre)**: representar elipsoide de incertidumbre en posición.
+- [ ] **Determinación de órbita (OD)**: ajustar la órbita a partir de un conjunto de observaciones simuladas o reales.
+- [ ] **Monte Carlo de reentrada**: distribución estadística de puntos de impacto para objetos en decay.
+- [ ] **Simulación de constelaciones Walker**: generador automático de constelaciones con parámetros T/P/F configurables.
+- [ ] **Optimización de constelación**: asistente para encontrar la configuración de N satélites que maximiza la cobertura de una región.
+
+---
+
+
+*Última actualización: 2026-07-02*

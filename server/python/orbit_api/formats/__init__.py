@@ -1,0 +1,38 @@
+"""Format-neutral metadata readers for imported orbital ephemerides.
+
+These readers preserve native frame and time-scale declarations.  They are an
+ingestion boundary only; propagation and frame transformations remain separate
+services.
+"""
+
+from orbit_api.timekeeping import TimeScale
+
+from .metadata import (
+    EphemerisFormatError,
+    OemMetadata,
+    OemSegmentMetadata,
+    ReferenceFrame,
+    Sp3Metadata,
+    parse_reference_frame,
+)
+from .oem import OemCovarianceRecord, OemStateProvider, parse_oem_metadata, parse_oem_state_provider
+from .sp3 import Sp3StateProvider, parse_sp3_metadata, parse_sp3_state_provider
+from .tabular import TabularStateProvider
+
+__all__ = [
+    "EphemerisFormatError",
+    "OemMetadata",
+    "OemSegmentMetadata",
+    "OemCovarianceRecord",
+    "OemStateProvider",
+    "ReferenceFrame",
+    "Sp3Metadata",
+    "Sp3StateProvider",
+    "TabularStateProvider",
+    "TimeScale",
+    "parse_oem_metadata",
+    "parse_oem_state_provider",
+    "parse_reference_frame",
+    "parse_sp3_metadata",
+    "parse_sp3_state_provider",
+]

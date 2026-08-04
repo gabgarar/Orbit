@@ -1,0 +1,50 @@
+{
+  "system": {
+    "orbit": {
+      "propagation_hours": 10,
+      "future_show": true,
+      "ground_track_show": true,
+      "future_line_width": 2.5,
+      "future_color": "#7fd7ff",
+      "selected_color": "#ff2d2d"
+    },
+    "satellites": {
+      "label_size_px": 10,
+      "model_scale": 1,
+      "use_3d_model": true,
+      "size_mode": "visual",
+      "decay_alert_perigee_km": 200
+    },
+    "realtime": {
+      "state_interval_seconds": 1,
+      "orbit_interval_seconds": 10
+    },
+    "logging": {
+      "enabled": true,
+      "level": "info",
+      "show_top_clock": true
+    },
+    "rendering": {
+      "antialias_mode": "msaa",
+      "antialias_enabled": true,
+      "background_color": "#ffffff",
+      "sky_atmosphere": true,
+      "globe_lighting": true,
+      "stars_enabled": true,
+      "earth_basemap": "esri-world-imagery"
+    },
+    "recording": {
+      "quality": "medium",
+      "output_format": "webm"
+    },
+    "ui": {
+      "language": "es",
+      "theme": "dark"
+    }
+  },
+  "data": {
+    "satellites_catalog_file": "catalog.json",
+    "decay_alert_perigee_km": 200,
+    "catalog_last_refresh_attempt_at": 1784996119865
+  }
+}

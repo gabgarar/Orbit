@@ -1,0 +1,101 @@
+# Configuración
+
+[Inicio](../index.md) · [Operación](index.md) · [Rendimiento](performance.md) · [Tiempo y EOP](time-eop.md)
+
+Orbit conserva la configuración de aplicación y el catálogo editable dentro de
+config/. En el despliegue Compose estándar, esa ruta se monta en el contenedor
+como /app/config para que sobreviva a una recreación de la imagen.
+
+## Archivo de configuración
+
+El archivo principal es config/system_config.json. Su forma pública agrupa
+valores bajo system y data.
+
+~~~json
+{
+  "system": {
+    "orbit": {},
+    "satellites": {},
+    "realtime": {},
+    "logging": {},
+    "rendering": {},
+    "recording": {},
+    "ui": {}
+  },
+  "data": {
+    "satellites_catalog_file": "catalog.json"
+  }
+}
+~~~
+
+La interfaz carga este archivo y guarda cambios a través de la ruta interna
+/api/system-config. El runtime acepta también varias claves planas históricas
+al normalizar la configuración, pero las nuevas configuraciones deben usar la
+forma agrupada.
+
+## Secciones de interfaz
+
+| Sección | Parámetros expuestos |
+| --- | --- |
+| Órbitas | Horizonte de propagación, traza futura, track de suelo, ancho y colores. |
+| Satélites | Etiquetas, escala de modelo, uso de modelo 3D, modo de tamaño y alerta de perigeo. |
+| Tiempo real | Intervalos de actualización de estado y órbita. |
+| Logs | Activación, nivel y visibilidad del reloj superior. |
+| Renderizado | Antialiasing, fondo, atmósfera, iluminación, estrellas y mapa base. |
+| Grabación | Calidad y formato solicitado para MediaRecorder. |
+| Interfaz | Idioma y tema. |
+
+Los valores seleccionables de renderizado incluyen antialiasing off, fxaa y
+msaa; y los mapas Natural Earth local, Earth 2 km local, OpenStreetMap y World
+Imagery de Esri.
+
+## Catálogo persistente
+
+El campo data.satellites_catalog_file indica el nombre del archivo de catálogo
+dentro de config/. El backend normaliza el nombre para impedir rutas fuera de
+ese directorio y rechaza nombres reservados de Windows, separadores de ruta,
+caracteres de control y system_config.json.
+
+!!! warning "Edición manual"
+
+    Mantenga JSON válido y haga una copia de seguridad antes de editar
+    config/system_config.json fuera de la interfaz. Un archivo ilegible hace
+    que el backend use valores seguros por defecto para la configuración que
+    pueda cargar, y puede ocultar el error operativo hasta revisar los logs.
+
+## Variables de ejecución
+
+| Variable | Efecto |
+| --- | --- |
+| ORBIT_HTTP_PORT | Puerto publicado en el host; no cambia el puerto interno 8100. |
+| ORBIT_HTTP_BIND | Interfaz de escucha. El valor predeterminado 127.0.0.1 mantiene el acceso local. |
+| PYTHON_BACKEND_URL | URL interna usada por el gateway para el backend Python. |
+| ORBIT_EOP_* | Política y procedencia del snapshot C04 local. |
+| ORBIT_LEAP_SECONDS_* | Política de la tabla UTC–TAI local. |
+| ORBIT_TERRESTRIAL_REALIZATION | Realización terrestre de salida elegida explícitamente. |
+
+Las variables temporales y de realización no pertenecen al JSON de interfaz.
+Se inyectan en Compose al iniciar el proceso; su contrato se documenta en
+[Tiempo y EOP](time-eop.md).
+
+## Aplicación de cambios
+
+Los cambios de la interfaz se persisten en el archivo de configuración. Los
+cambios que afecten a la imagen, al puerto publicado, a datos EOP, a variables
+de entorno o a dependencias requieren recrear o reiniciar el runtime. En
+Windows, use:
+
+~~~powershell
+./.scripts/restart-orbit.cmd
+~~~
+
+Para reiniciar sin reconstruir la imagen actual:
+
+~~~powershell
+./.scripts/restart-orbit.cmd -SkipBuild
+~~~
+
+No use un reinicio para sustituir una política de precisión sin actualizar
+también los hashes y versiones de los archivos locales; consulte
+[Tiempo y EOP](time-eop.md).
+

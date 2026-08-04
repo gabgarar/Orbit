@@ -1,0 +1,12 @@
+fastapi>=0.115,<1
+pydantic>=2.7,<3
+requests>=2.31,<3
+sgp4>=2.23,<3
+# IAU SOFA/ERFA routines for the GCRF/CIRS/TIRS/ITRF transformation chain.
+pyerfa>=2.0,<3
+uvicorn[standard]>=0.30,<1
+watchdog>=4,<7
+websockets>=12,<15
+# Solo se usa al ejecutar `npm run tiles:earth2km`.
+Pillow>=10,<12
+pytest>=8,<9
