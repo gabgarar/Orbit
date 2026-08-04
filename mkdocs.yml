@@ -93,14 +93,15 @@ plugins:
                     - Output and provenance: propagation/cowell/output.md
                     - Failures and limits: propagation/cowell/limits.md
                 - Numerical integrators: propagation/numerical-integrators.md
-                - Force models: propagation/force-models.md
-                - Point mass: propagation/point-mass.md
-                - J2: propagation/j2.md
-                - Full geopotential: propagation/full-geopotential.md
-                - Third bodies: propagation/third-bodies.md
-                - Atmospheric drag: propagation/atmospheric-drag.md
-                - Solar radiation pressure: propagation/solar-radiation-pressure.md
-                - Relativity: propagation/relativity.md
+                - Force models:
+                    - Overview: propagation/force-models.md
+                    - Point mass: propagation/point-mass.md
+                    - J2: propagation/j2.md
+                    - Full geopotential: propagation/full-geopotential.md
+                    - Third bodies: propagation/third-bodies.md
+                    - Atmospheric drag: propagation/atmospheric-drag.md
+                    - Solar radiation pressure: propagation/solar-radiation-pressure.md
+                    - Relativity: propagation/relativity.md
             - Analysis:
                 - Overview: analysis/index.md
                 - Analysis scope: analysis/overview.md
@@ -181,6 +182,9 @@ extra_javascript:
   - assets/javascripts/mathjax.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
+extra_css:
+  - assets/stylesheets/navigation.css
+
 nav:
   - Inicio: index.md
   - Introducción:
@@ -238,14 +242,15 @@ nav:
           - Salida y procedencia: propagation/cowell/output.md
           - Fallos y límites: propagation/cowell/limits.md
       - Integradores numéricos: propagation/numerical-integrators.md
-      - Modelos de fuerzas: propagation/force-models.md
-      - Punto masa: propagation/point-mass.md
-      - J2: propagation/j2.md
-      - Geopotencial completo: propagation/full-geopotential.md
-      - Terceros cuerpos: propagation/third-bodies.md
-      - Arrastre atmosférico: propagation/atmospheric-drag.md
-      - Presión de radiación solar: propagation/solar-radiation-pressure.md
-      - Relatividad: propagation/relativity.md
+      - Modelos de fuerzas:
+          - Visión general: propagation/force-models.md
+          - Punto masa: propagation/point-mass.md
+          - J2: propagation/j2.md
+          - Geopotencial completo: propagation/full-geopotential.md
+          - Terceros cuerpos: propagation/third-bodies.md
+          - Arrastre atmosférico: propagation/atmospheric-drag.md
+          - Presión de radiación solar: propagation/solar-radiation-pressure.md
+          - Relatividad: propagation/relativity.md
   - Análisis:
       - Visión general: analysis/index.md
       - Alcance del análisis: analysis/overview.md

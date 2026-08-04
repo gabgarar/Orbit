@@ -1,0 +1,15 @@
+@media screen and (min-width: 76.25em) {
+  .md-tabs__inner {
+    padding-inline: 0.25rem;
+  }
+
+  .md-tabs__item {
+    padding-inline: 0.35rem;
+  }
+
+  .md-tabs__link {
+    margin-inline: 0;
+    font-size: 0.67rem;
+    letter-spacing: 0;
+  }
+}
