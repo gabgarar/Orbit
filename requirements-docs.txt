@@ -1,0 +1,2 @@
+# Dependencias exclusivas del sitio de documentación; no son dependencias del runtime.
+mkdocs-material>=9.6,<10

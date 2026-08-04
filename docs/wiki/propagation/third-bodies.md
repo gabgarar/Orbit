@@ -1,0 +1,23 @@
+# Terceros cuerpos
+
+[Inicio](../index.md) · [Propagación](index.md) · [Modelos de fuerza](force-models.md) · [Cowell](cowell.md)
+
+## Estado de soporte
+
+Orbit no implementa aceleraciones de terceros cuerpos. El Sol y la Luna pueden
+formar parte de la visualización, pero su presencia visual no añade fuerza
+gravitatoria a los propagadores.
+
+No hay efemérides planetarias para integración, selección de cuerpos,
+coeficientes gravitatorios externos, mareas de terceros cuerpos ni corrección
+indirecta por un origen baricéntrico.
+
+## Alternativas disponibles
+
+- Use [Dos cuerpos](two-body.md) o [Cowell](cowell.md) dentro del alcance de
+  fuerzas documentado.
+- Consuma una [efeméride OEM](../formats/oem.md) o [SP3](../formats/sp3.md)
+  que haya sido producida externamente, teniendo en cuenta que esos lectores
+  Python no están integrados en la UI/API de producto.
+
+No existe un parámetro oculto para activar fuerzas solar o lunar en Cowell.

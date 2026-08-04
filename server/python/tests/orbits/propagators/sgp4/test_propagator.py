@@ -34,8 +34,8 @@ def test_sgp4_exposes_its_native_teme_state_separately_from_renderer_itrf():
     assert not math.isclose(teme[0], itrf[0] / 1000.0, abs_tol=1e-6)
 
 
-def test_teme_to_ecef_velocity_includes_the_correct_earth_rotation_derivative():
-    x, y, _z, vx, vy, _vz = SGP4Propagator._teme_to_ecef(3_000.0, 4_000.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+def test_teme_to_itrf_velocity_includes_the_correct_earth_rotation_derivative():
+    x, y, _z, vx, vy, _vz = SGP4Propagator._teme_to_itrf(3_000.0, 4_000.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     earth_rotation_rate = 7.2921150e-5
 
     assert math.isclose(vx, earth_rotation_rate * y, abs_tol=1e-12)

@@ -7,22 +7,32 @@ from fastapi import APIRouter, Query
 
 from orbit_api.core.settings import AUTO_MAX_ORBIT_SAMPLES, PROPAGATION_HOURS_MAX, PROPAGATION_HOURS_MIN
 from orbit_api.domain.requests import EphemerisRequest, OrbitRequest, PropagationRequest
+from orbit_api.timekeeping import ensure_utc, utc_now
 
 
-def create_orbits_router(resolve_propagator, serialize_state, auto_samples: Callable, build_ephemeris: Callable) -> APIRouter:
+def create_orbits_router(
+    resolve_propagator,
+    serialize_state,
+    auto_samples: Callable,
+    build_ephemeris: Callable,
+    renderer_state_at: Callable | None = None,
+) -> APIRouter:
     """Build orbit routes from application-level operations."""
     router = APIRouter(tags=["orbits"])
 
     def orbit_payload(name, propagator, horizon_hours: float, samples: int | None) -> dict:
         sample_count = samples or auto_samples(horizon_hours, 1, propagator)
-        reference_time = datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+        reference_time = utc_now()
         points = []
         for index in range(sample_count):
             offset = (index / max(sample_count - 1, 1)) * horizon_hours * 3600
-            x, y, z, _, _, _ = propagator.propagate_datetime(
-                reference_time + datetime.timedelta(seconds=offset)
-            )
-            points.append({"x": x, "y": y, "z": z})
+            moment = reference_time + datetime.timedelta(seconds=offset)
+            if renderer_state_at is not None:
+                state = renderer_state_at(propagator, moment)
+                points.append({"x": state.position_m[0], "y": state.position_m[1], "z": state.position_m[2]})
+            else:
+                x, y, z, _, _, _ = propagator.propagate_datetime(moment)
+                points.append({"x": x, "y": y, "z": z})
         return {
             "satellite": name,
             "orbit_horizon_hours": horizon_hours,
@@ -33,15 +43,21 @@ def create_orbits_router(resolve_propagator, serialize_state, auto_samples: Call
     @router.get("/propagate/{sat_id}")
     def propagate_satellite_at(sat_id: str, at: datetime.datetime | None = Query(default=None)) -> dict:
         name, propagator = resolve_propagator(sat_id, None, None)
-        target = at or datetime.datetime.now(datetime.UTC)
-        x, y, z, vx, vy, vz = propagator.propagate_datetime(target.replace(tzinfo=None))
+        target = ensure_utc(at or utc_now())
+        if renderer_state_at is not None:
+            state = renderer_state_at(propagator, target)
+            return serialize_state(name, target, include_velocity=True, state=state)
+        x, y, z, vx, vy, vz = propagator.propagate_datetime(target)
         return serialize_state(name, target, x, y, z, vx, vy, vz, include_velocity=True)
 
     @router.post("/propagate")
     def propagate_from_request(payload: PropagationRequest) -> dict:
         name, propagator = resolve_propagator(payload.sat_id, payload.line1, payload.line2)
-        target = payload.at or datetime.datetime.now(datetime.UTC)
-        x, y, z, vx, vy, vz = propagator.propagate_datetime(target.replace(tzinfo=None))
+        target = ensure_utc(payload.at or utc_now())
+        if renderer_state_at is not None:
+            state = renderer_state_at(propagator, target)
+            return serialize_state(name, target, include_velocity=True, state=state)
+        x, y, z, vx, vy, vz = propagator.propagate_datetime(target)
         return serialize_state(name, target, x, y, z, vx, vy, vz, include_velocity=True)
 
     @router.get("/orbits/{sat_id}")

@@ -1,14 +1,14 @@
 """Pure serialization strategies for orbital catalog and ephemeris exports."""
 
 import csv
-import datetime
 from io import StringIO
 
+from orbit_api.timekeeping import utc_now
 
-# SGP4Propagator converts TEME output into Orbit's Earth-fixed runtime frame
-# and returns metres / metres per second. CCSDS OEM data is expressed in km
-# and km/s, so OEM export must convert both values and declare the resulting
-# frame rather than leaking the propagator's input TEME frame.
+
+# SGP4/TEME and manual EME2000 states are transformed into the renderer's
+# terrestrial frame before export. OEM remains in km/km/s, but must preserve
+# an explicitly declared realization rather than inventing one.
 _RUNTIME_OEM_REF_FRAME = "ITRF"
 _METRES_PER_KILOMETRE = 1000.0
 
@@ -65,19 +65,20 @@ def ocm_json_from_entry(entry: dict) -> dict:
         "format": "OCM",
         "object": {"name": entry.get("name")},
         "mean_elements_source": {"line1": entry.get("line1"), "line2": entry.get("line2")},
-        "generatedAt": datetime.datetime.now(datetime.UTC).isoformat(),
+        "generatedAt": utc_now().isoformat(),
     }
 
 
 def ephemeris_csv_text(points: list[dict], source_format: str = "TLE", propagator: str = "sgp4") -> str:
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(["time", "x", "y", "z", "vx", "vy", "vz", "source_format", "propagator"])
+    writer.writerow(["time", "epoch", "time_scale", "x", "y", "z", "vx", "vy", "vz", "source_format", "propagator"])
     for point in points:
         position = point.get("position") or {}
         velocity = point.get("velocity") or {}
         writer.writerow([
-            point.get("time", ""), position.get("x", ""), position.get("y", ""), position.get("z", ""),
+            point.get("time", ""), point.get("epoch", point.get("time", "")), point.get("time_scale", "UTC"),
+            position.get("x", ""), position.get("y", ""), position.get("z", ""),
             velocity.get("x", ""), velocity.get("y", ""), velocity.get("z", ""), source_format, propagator,
         ])
     return output.getvalue()
@@ -90,15 +91,29 @@ def ephemeris_oem_text(
     points: list[dict],
     source_format: str = "TLE",
     propagator: str = "sgp4",
+    reference_frame: str | None = None,
+    time_system: str | None = None,
 ) -> str:
+    declared_frames = {str(point.get("reference_frame") or "").strip() for point in points}
+    declared_frames.discard("")
+    declared_time_scales = {str(point.get("time_scale") or "").strip() for point in points}
+    declared_time_scales.discard("")
+    if len(declared_frames) > 1:
+        raise ValueError("No se puede exportar OEM con puntos de distintos marcos de referencia")
+    if len(declared_time_scales) > 1:
+        raise ValueError("No se puede exportar OEM con puntos de distintas escalas temporales")
+    resolved_frame = str(reference_frame or next(iter(declared_frames), _RUNTIME_OEM_REF_FRAME)).strip() or _RUNTIME_OEM_REF_FRAME
+    resolved_time_system = str(time_system or next(iter(declared_time_scales), "UTC")).strip() or "UTC"
+    first_epoch = str(points[0].get("epoch") or points[0].get("time") or start_iso) if points else start_iso
+    last_epoch = str(points[-1].get("epoch") or points[-1].get("time") or end_iso) if points else end_iso
     lines = [
         "CCSDS_OEM_VERS = 2.0",
-        f"CREATION_DATE = {datetime.datetime.now(datetime.UTC).isoformat()}",
+        f"CREATION_DATE = {utc_now().isoformat()}",
         "ORIGINATOR = Orbit",
         f"COMMENT = SOURCE_FORMAT {source_format}",
         f"COMMENT = PROPAGATOR {propagator}",
         "META_START", f"OBJECT_NAME = {name}", f"OBJECT_ID = {name}", "CENTER_NAME = EARTH",
-        f"REF_FRAME = {_RUNTIME_OEM_REF_FRAME}", "TIME_SYSTEM = UTC", f"START_TIME = {start_iso}", f"STOP_TIME = {end_iso}", "META_STOP",
+        f"REF_FRAME = {resolved_frame}", f"TIME_SYSTEM = {resolved_time_system}", f"START_TIME = {first_epoch}", f"STOP_TIME = {last_epoch}", "META_STOP",
         "COMMENT = ORBIT_POSITION_UNIT = km",
         "COMMENT = ORBIT_VELOCITY_UNIT = km/s",
     ]
@@ -112,6 +127,6 @@ def ephemeris_oem_text(
         vy = float(velocity.get("y", 0)) / _METRES_PER_KILOMETRE
         vz = float(velocity.get("z", 0)) / _METRES_PER_KILOMETRE
         lines.append(
-            f"{point.get('time', '')} {x} {y} {z} {vx} {vy} {vz}"
+            f"{point.get('epoch', point.get('time', ''))} {x} {y} {z} {vx} {vy} {vz}"
         )
     return "\n".join(lines) + "\n"

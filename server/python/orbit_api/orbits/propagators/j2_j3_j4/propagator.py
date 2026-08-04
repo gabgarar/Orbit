@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 
+from orbit_api.frames import FrameId, FrameTransformService, StateVector
+
 from ..cowell import CowellPropagator
 
 
@@ -20,8 +22,10 @@ class J2J3J4Propagator:
     """
 
     model_id = "j2-j3-j4"
-    dynamics_reference_frame = "ECI"
-    ephemeris_reference_frame = "ITRF"
+    dynamics_reference_frame = FrameId.EME2000.value
+    dynamics_reference_realization = None
+    ephemeris_reference_frame = FrameId.ITRF.value
+    ephemeris_reference_realization = None
     numerical_integrator = "Fixed-step RK4"
     integration_step_seconds = CowellPropagator.integration_step_seconds
 
@@ -31,6 +35,7 @@ class J2J3J4Propagator:
         state_vector: Mapping[str, object],
         *,
         atmospheric_drag: bool = False,
+        frame_transformer: FrameTransformService | None = None,
     ) -> None:
         if atmospheric_drag:
             raise ValueError(
@@ -45,6 +50,7 @@ class J2J3J4Propagator:
             state_vector,
             gravity_model="j2-j3-j4",
             atmospheric_drag=False,
+            frame_transformer=frame_transformer,
         )
         self.epoch = self._integrator.epoch
 
@@ -53,7 +59,28 @@ class J2J3J4Propagator:
         return "j2-j3-j4"
 
     def propagate_eci_datetime(self, instant: datetime.datetime) -> tuple[float, float, float, float, float, float]:
-        return self._integrator.propagate_eci_datetime(instant)
+        """Legacy alias for the explicitly named EME2000 native state."""
+
+        return self.propagate_eme2000_datetime(instant)
+
+    def propagate_eme2000_datetime(self, instant: datetime.datetime) -> tuple[float, float, float, float, float, float]:
+        return self._integrator.propagate_eme2000_datetime(instant)
+
+    def native_state_at(self, instant: datetime.datetime) -> StateVector:
+        return self._integrator.native_state_at(instant)
+
+    def state_at(
+        self,
+        instant: datetime.datetime,
+        *,
+        target_frame: FrameId | str = FrameId.ITRF,
+        target_realization: str | None = None,
+    ) -> StateVector:
+        return self._integrator.state_at(
+            instant,
+            target_frame=target_frame,
+            target_realization=target_realization,
+        )
 
     def propagate_datetime(self, instant: datetime.datetime) -> tuple[float, float, float, float, float, float]:
         return self._integrator.propagate_datetime(instant)

@@ -1,7 +1,7 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 1,
+      "propagation_hours": 10,
       "future_show": true,
       "ground_track_show": true,
       "future_line_width": 2.5,
@@ -45,6 +45,6 @@
   "data": {
     "satellites_catalog_file": "catalog.json",
     "decay_alert_perigee_km": 200,
-    "catalog_last_refresh_attempt_at": 1784556978706
+    "catalog_last_refresh_attempt_at": 1784996119865
   }
 }

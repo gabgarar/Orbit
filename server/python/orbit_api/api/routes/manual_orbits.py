@@ -14,6 +14,7 @@ from orbit_api.application.manual_orbits import (
     canonical_manual_orbit,
 )
 from orbit_api.domain.requests import ManualOrbitRequest
+from orbit_api.frames import FrameTransformService
 
 
 DEFAULT_MANUAL_ORBIT_HORIZON_HOURS = 24.0
@@ -139,7 +140,12 @@ def _camel_propagation_options(options: dict) -> dict:
     return result
 
 
-def create_manual_orbits_router(resolve_propagator: Callable, build_ephemeris: Callable, ensure_utc: Callable) -> APIRouter:
+def create_manual_orbits_router(
+    resolve_propagator: Callable,
+    build_ephemeris: Callable,
+    ensure_utc: Callable,
+    frame_transformer: FrameTransformService | None = None,
+) -> APIRouter:
     """Build the HTTP adapter for transient manual orbit engines."""
 
     router = APIRouter(tags=["manual-orbits"])
@@ -163,6 +169,7 @@ def create_manual_orbits_router(resolve_propagator: Callable, build_ephemeris: C
                 state_vector=state_vector,
                 resolve_sgp4=resolve_propagator,
                 propagation_options=propagation_options,
+                frame_transformer=frame_transformer,
             )
         except (ManualOrbitError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

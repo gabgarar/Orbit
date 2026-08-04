@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+from orbit_api.frames import FrameTransformService
+
 from .base import OrbitPropagator
 
 
@@ -36,10 +38,19 @@ class PropagatorRegistry:
         return str(name or "").strip().lower()
 
 
-def build_default_registry() -> PropagatorRegistry:
+def build_default_registry(
+    frame_transformer: FrameTransformService | None = None,
+) -> PropagatorRegistry:
     """Create the default engine registry used by the Orbit application."""
     from .sgp4 import SGP4Propagator
 
     registry = PropagatorRegistry()
-    registry.register("sgp4", SGP4Propagator)
+    registry.register(
+        "sgp4",
+        lambda line1, line2: SGP4Propagator(
+            line1,
+            line2,
+            frame_transformer=frame_transformer,
+        ),
+    )
     return registry

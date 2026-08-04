@@ -46,7 +46,8 @@ def test_manual_request_accepts_editor_camel_case_and_generates_valid_synthetic_
     tle = build_synthetic_tle(request.name, request.epoch, keplerian)
 
     assert source == "keplerian"
-    assert state_vector["reference_frame"] == "ECI"
+    assert state_vector["reference_frame"] == "EME2000"
+    assert state_vector["legacy_reference_frame"] == "ECI"
     assert keplerian["mean_anomaly_deg"] != keplerian["true_anomaly_deg"]
     assert len(tle["line1"]) == len(tle["line2"]) == 69
     assert is_valid_tle_checksum(tle["line1"])
@@ -75,8 +76,13 @@ def test_manual_request_accepts_flat_state_vector_and_derives_keplerian():
     assert source == "state_vector"
     assert keplerian["semi_major_axis_km"] > 6378
     assert 0 <= keplerian["eccentricity"] < 1
-    assert state_vector["position_eci_km"]["x"] == 7000
-    assert state_vector["velocity_eci_km_s"]["z"] == 1.0
+    assert state_vector["reference_frame"] == "EME2000"
+    assert state_vector["position_eme2000_km"]["x"] == 7000
+    assert state_vector["velocity_eme2000_km_s"]["z"] == 1.0
+    # Keep the editor's former field names as aliases while readers migrate,
+    # but do not use them as the source-frame declaration.
+    assert state_vector["position_eci_km"] == state_vector["position_eme2000_km"]
+    assert state_vector["velocity_eci_km_s"] == state_vector["velocity_eme2000_km_s"]
 
 
 def test_manual_request_normalizes_native_propagator_aliases_and_rejects_unknown_ones():
@@ -232,19 +238,19 @@ def test_cowell_rejects_future_non_installed_force_terms():
         ))
 
 
-def test_native_manual_propagators_preserve_the_epoch_state_and_j2_precesses():
+def test_native_manual_propagators_preserve_the_eme2000_epoch_state_and_j2_precesses():
     request = ManualOrbitRequest(**keplerian_payload())
     _, keplerian, state_vector = canonical_manual_orbit(request)
     epoch = request.epoch
     two_body = TwoBodyPropagator(epoch, keplerian)
-    state_at_epoch = two_body.propagate_eci_datetime(epoch)
+    state_at_epoch = two_body.propagate_eme2000_datetime(epoch)
     expected_epoch_state = (
-        state_vector["position_eci_km"]["x"],
-        state_vector["position_eci_km"]["y"],
-        state_vector["position_eci_km"]["z"],
-        state_vector["velocity_eci_km_s"]["x"],
-        state_vector["velocity_eci_km_s"]["y"],
-        state_vector["velocity_eci_km_s"]["z"],
+        state_vector["position_eme2000_km"]["x"],
+        state_vector["position_eme2000_km"]["y"],
+        state_vector["position_eme2000_km"]["z"],
+        state_vector["velocity_eme2000_km_s"]["x"],
+        state_vector["velocity_eme2000_km_s"]["y"],
+        state_vector["velocity_eme2000_km_s"]["z"],
     )
     for actual, expected in zip(state_at_epoch, expected_epoch_state, strict=True):
         assert math.isclose(actual, expected, abs_tol=1e-8)
@@ -254,16 +260,20 @@ def test_native_manual_propagators_preserve_the_epoch_state_and_j2_precesses():
     assert j2.raan_rate_rad_s < 0
     assert not math.isclose(j2.elements_at(tomorrow).raan_rad, j2.elements.raan_rad, abs_tol=1e-9)
     assert j2.elements_at(tomorrow).semi_major_axis_km == j2.elements.semi_major_axis_km
-    j2_state = j2.propagate_eci_datetime(tomorrow)
+    j2_state = j2.propagate_eme2000_datetime(tomorrow)
     assert all(math.isfinite(value) for value in j2_state)
     half_second = timedelta(seconds=0.5)
-    before = j2.propagate_eci_datetime(tomorrow - half_second)
-    after = j2.propagate_eci_datetime(tomorrow + half_second)
+    before = j2.propagate_eme2000_datetime(tomorrow - half_second)
+    after = j2.propagate_eme2000_datetime(tomorrow + half_second)
     # The reported velocity must be the derivative of the same J2-secular
     # position, including RAAN/apsidal precession rather than merely n*r.
     for actual, previous, following in zip(j2_state[3:], before[:3], after[:3], strict=True):
         finite_difference = following - previous  # 1 second centred interval.
         assert math.isclose(actual, finite_difference, abs_tol=2e-6)
+    native_state = j2.native_state_at(tomorrow)
+    assert native_state.frame_label == "EME2000"
+    for actual, expected in zip(native_state.components()[3:], (component * 1000.0 for component in j2_state[3:]), strict=True):
+        assert math.isclose(actual, expected, abs_tol=2e-3)
     assert all(math.isfinite(value) for value in j2.propagate_datetime(tomorrow))
 
 
@@ -354,7 +364,13 @@ def test_native_manual_runtime_identity_uses_propagator_epoch_and_state_not_disp
         state_vector=state_vector,
         resolve_sgp4=resolver,
     )
-    changed_state = {**state_vector, "position_eci_km": {**state_vector["position_eci_km"], "x": 7001}}
+    changed_state = {
+        **state_vector,
+        "position_eme2000_km": {**state_vector["position_eme2000_km"], "x": 7001},
+        # Retain the compatibility alias in lockstep, because old persisted
+        # manual records still deserialize through this key.
+        "position_eci_km": {**state_vector["position_eci_km"], "x": 7001},
+    }
     second_name, _, second_tle, _ = build_manual_orbit_propagator(
         request.propagator,
         name="Same display name",
@@ -392,7 +408,7 @@ def test_native_manual_runtime_identity_uses_propagator_epoch_and_state_not_disp
     assert "Runge" in drag_metadata["integrator_label"]
     assert first_tle is second_tle is None
     assert first_metadata["id"] == "two-body"
-    assert first_metadata["dynamics_reference_frame"] == "ECI"
+    assert first_metadata["dynamics_reference_frame"] == "EME2000"
 
 
 def test_manual_route_uses_resolver_and_returns_display_named_itrf_ephemeris():
@@ -532,8 +548,9 @@ def test_manual_route_uses_native_models_without_synthetic_tle(
     metadata = response["propagator_metadata"]
     assert metadata["id"] == canonical
     assert metadata["label"] == ("Two-body" if canonical == "two-body" else "J2 (first-order secular)")
-    assert metadata["dynamics_reference_frame"] == "ECI"
-    assert metadata["input_reference_frame"] == "ECI"
+    assert metadata["dynamics_reference_frame"] == "EME2000"
+    assert metadata["input_reference_frame"] == "EME2000"
+    assert metadata["legacy_input_reference_frame"] == "ECI"
     assert metadata["ephemeris_reference_frame"] == "ITRF"
     assert metadata["uses_synthetic_tle"] is False
     assert metadata["eci_samples_available"] is True

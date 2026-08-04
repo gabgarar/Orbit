@@ -48,18 +48,20 @@ def native_only_resolver(*_args):
     raise AssertionError("Los modelos manuales nativos no deben resolver un TLE")
 
 
-def test_two_body_inspector_returns_constant_osculating_elements_in_eci():
+def test_two_body_inspector_returns_constant_osculating_elements_in_eme2000():
     response = build_orbit_parameters(
         manual_request(hours=3, samples=3),
         resolve_propagator=native_only_resolver,
     )
 
-    assert response["reference_frame"] == "ECI"
+    assert response["reference_frame"] == "EME2000"
     assert response["element_type"] == "osculating"
     assert response["model"]["id"] == "two-body"
     assert response["count"] == response["samples_requested"] == 3
     first, middle, last = response["samples"]
-    assert first["reference_frame"] == first["state"]["reference_frame"] == "ECI"
+    assert first["reference_frame"] == first["state"]["reference_frame"] == "EME2000"
+    assert response["model"]["state_reference_frame"] == "EME2000"
+    assert response["model"]["state_source"] == "native_manual_eme2000"
     assert first["elements"]["element_type"] == "osculating"
     assert math.isclose(first["elements"]["semi_major_axis_km"], 7000.0, abs_tol=1e-7)
     assert math.isclose(middle["elements"]["semi_major_axis_km"], first["elements"]["semi_major_axis_km"], abs_tol=1e-6)
@@ -97,7 +99,7 @@ def test_j2_inspector_exposes_precessing_osculating_raan():
 
     initial = response["samples"][0]["elements"]
     final = response["samples"][-1]["elements"]
-    assert response["reference_frame"] == "ECI"
+    assert response["reference_frame"] == "EME2000"
     assert response["model"]["id"] == "j2"
     assert not math.isclose(initial["raan_deg"], final["raan_deg"], abs_tol=1e-4)
     # The inspector derives *osculating* values from the full precessing
@@ -107,13 +109,13 @@ def test_j2_inspector_exposes_precessing_osculating_raan():
     assert final["semi_major_axis_km"] > 6378.0
 
 
-def test_j2_j3_j4_manual_inspection_uses_native_eci_samples():
+def test_j2_j3_j4_manual_inspection_uses_native_eme2000_samples():
     response = build_orbit_parameters(
         manual_request(propagator="j2-j3-j4", hours=1, samples=2),
         resolve_propagator=native_only_resolver,
     )
 
-    assert response["reference_frame"] == "ECI"
+    assert response["reference_frame"] == "EME2000"
     assert response["model"]["id"] == "j2-j3-j4"
     assert response["model"]["applied_engine"] == "j2-j3-j4"
     assert response["model"]["atmospheric_drag_supported"] is False

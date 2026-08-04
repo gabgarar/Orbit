@@ -1,6 +1,8 @@
 # Orbit
 
-Architecture and module conventions are documented in [docs/architecture.md](docs/architecture.md).
+La documentación oficial de Orbit está organizada para Material for MkDocs en
+[docs/wiki/](docs/wiki/index.md). La operación reproducible de tiempo, EOP e
+ITRF se documenta en [Tiempo, EOP e ITRF](docs/wiki/operations/time-eop.md).
 
 ## Ejecutar en local (recomendado: Docker)
 
@@ -43,7 +45,7 @@ Todos los accesos operativos están centralizados en `.scripts/`. Ejecútalos de
 ```
 
 La estructura y responsabilidades de cada capa de pruebas están en
-[docs/TESTING.md](docs/TESTING.md).
+[la guía de pruebas](docs/wiki/development/testing.md).
 
 ## Pruebas visuales de la interfaz
 

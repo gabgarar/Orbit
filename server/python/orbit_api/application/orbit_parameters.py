@@ -1,10 +1,10 @@
 """Propagated osculating-element inspection for catalogue and manual orbits.
 
-The renderer's normal state contract is ITRF in metres.  That is the right
+The renderer's normal state contract is ITRF in metres. That is the right
 contract for Cesium, but it is not an inertial state from which classical
-orbital elements should be inferred.  This service intentionally samples the
-native dynamics state instead: TEME for TLE/SGP4 and ECI for manual native
-engines.  The returned elements are therefore explicitly *osculating* in the
+orbital elements should be inferred. This service intentionally samples the
+native dynamics state instead: TEME for TLE/SGP4 and EME2000 for manual native
+engines. The returned elements are therefore explicitly *osculating* in the
 frame reported by the response.
 """
 
@@ -22,10 +22,12 @@ from orbit_api.application.manual_orbits import (
     canonical_manual_orbit,
 )
 from orbit_api.domain.requests import OrbitParametersRequest
+from orbit_api.frames import FrameTransformService, StateVector
 from orbit_api.orbits.propagators.classical import (
     EARTH_EQUATORIAL_RADIUS_KM,
     EARTH_MU_KM3_S2,
 )
+from orbit_api.timekeeping import ensure_utc as normalize_utc
 
 
 _TWO_PI = 2.0 * math.pi
@@ -288,8 +290,25 @@ def derive_osculating_elements(
 
 
 def _native_state_provider(propagator: Any, frame: str) -> Callable[[datetime.datetime], tuple[float, float, float, float, float, float]]:
-    method_name = "propagate_teme_datetime" if frame == "TEME" else "propagate_eci_datetime"
+    native_provider = getattr(propagator, "native_state_at", None)
+    if callable(native_provider):
+        def typed_state_at(moment: datetime.datetime) -> tuple[float, float, float, float, float, float]:
+            result = native_provider(moment)
+            if not isinstance(result, StateVector):
+                raise OrbitParametersError("El propagador no devolvió un StateVector nativo válido")
+            actual_frame = result.frame.value if hasattr(result.frame, "value") else str(result.frame)
+            if actual_frame != frame:
+                raise OrbitParametersError(
+                    f"El propagador devolvió {actual_frame} cuando el inspector esperaba {frame}"
+                )
+            components = result.components()
+            return tuple(component / 1000.0 for component in components)  # type: ignore[return-value]
+
+        return typed_state_at
+    method_name = "propagate_teme_datetime" if frame == "TEME" else "propagate_eme2000_datetime"
     provider = getattr(propagator, method_name, None)
+    if not callable(provider) and frame == "EME2000":
+        provider = getattr(propagator, "propagate_eci_datetime", None)
     if not callable(provider):
         raise OrbitParametersError(
             f"El propagador seleccionado no expone un estado {frame} para inspección orbital"
@@ -312,7 +331,7 @@ def _catalog_source(payload: OrbitParametersRequest, resolve_propagator: Callabl
     name, propagator = resolve_propagator(source.sat_id, source.line1, source.line2)
     # Catalogues in Orbit are TLE/SGP4.  Explicitly choose the raw TEME API;
     # `propagate_datetime` is ITRF and must never be inferred to be ECI.
-    frame = "TEME"
+    frame = str(getattr(propagator, "dynamics_reference_frame", "TEME"))
     sgp4_satrec = getattr(propagator, "sat", None)
     try:
         mu = float(getattr(sgp4_satrec, "mu", EARTH_MU_KM3_S2))
@@ -323,7 +342,10 @@ def _catalog_source(payload: OrbitParametersRequest, resolve_propagator: Callabl
         "label": "SGP4",
         "dynamics_reference_frame": "TEME",
         "state_reference_frame": "TEME",
-        "ephemeris_reference_frame": getattr(propagator, "ephemeris_reference_frame", "ITRF"),
+        "ephemeris_reference_frame": (
+            getattr(propagator, "ephemeris_reference_realization", None)
+            or getattr(propagator, "ephemeris_reference_frame", "ITRF")
+        ),
         "state_source": "raw_sgp4_teme",
         # Satrec owns its gravity constants (normally WGS-72 in sgp4).  Do
         # not silently derive TEME elements with the manual WGS-84 value.
@@ -338,7 +360,11 @@ def _catalog_source(payload: OrbitParametersRequest, resolve_propagator: Callabl
     return name, _native_state_provider(propagator, frame), frame, mu, model, identity
 
 
-def _manual_source(payload: OrbitParametersRequest, resolve_propagator: Callable) -> tuple[str, Callable, str, float, dict[str, Any], dict[str, Any]]:
+def _manual_source(
+    payload: OrbitParametersRequest,
+    resolve_propagator: Callable,
+    frame_transformer: FrameTransformService | None = None,
+) -> tuple[str, Callable, str, float, dict[str, Any], dict[str, Any]]:
     manual = payload.source.manual_orbit
     if manual is None:  # Defensive narrowing; the request model already rejects this.
         raise OrbitParametersError("Falta la definición de órbita manual")
@@ -353,12 +379,13 @@ def _manual_source(payload: OrbitParametersRequest, resolve_propagator: Callable
         propagation_options=manual.propagation_options.canonical(
             propagator=manual.propagator
         ),
+        frame_transformer=frame_transformer,
     )
-    frame = "TEME" if model.get("dynamics_reference_frame") == "TEME" else "ECI"
+    frame = "TEME" if model.get("dynamics_reference_frame") == "TEME" else "EME2000"
     model = {
         **model,
         "state_reference_frame": frame,
-        "state_source": "raw_sgp4_teme" if frame == "TEME" else "native_manual_eci",
+        "state_source": "raw_sgp4_teme" if frame == "TEME" else "native_manual_eme2000",
     }
     # Synthetic-TLE manual SGP4 follows its Satrec constants too; all native
     # manual engines use the WGS-84-compatible constant from `classical`.
@@ -386,14 +413,11 @@ def build_orbit_parameters(
     *,
     resolve_propagator: Callable,
     ensure_utc: Callable[[datetime.datetime], datetime.datetime] | None = None,
+    frame_transformer: FrameTransformService | None = None,
 ) -> dict[str, Any]:
     """Propagate a source at evenly spaced instants and derive its elements."""
 
-    normalise_utc = ensure_utc or (
-        lambda value: value.replace(tzinfo=datetime.UTC)
-        if value.tzinfo is None
-        else value.astimezone(datetime.UTC)
-    )
+    normalise_utc = ensure_utc or normalize_utc
     start_time = normalise_utc(payload.start_time)
     end_time = normalise_utc(payload.end_time)
     if end_time <= start_time:
@@ -402,7 +426,11 @@ def build_orbit_parameters(
         raise OrbitParametersError("end_time debe ser mayor que start_time")
 
     if payload.source.kind == "manual":
-        name, state_at, frame, mu, model, identity = _manual_source(payload, resolve_propagator)
+        name, state_at, frame, mu, model, identity = _manual_source(
+            payload,
+            resolve_propagator,
+            frame_transformer,
+        )
     else:
         name, state_at, frame, mu, model, identity = _catalog_source(payload, resolve_propagator)
 

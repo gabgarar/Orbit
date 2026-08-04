@@ -5,6 +5,8 @@ import threading
 from collections import OrderedDict
 from typing import Generic, TypeVar
 
+from orbit_api.timekeeping import utc_now
+
 
 T = TypeVar("T")
 
@@ -19,7 +21,7 @@ class TtlLruCache(Generic[T]):
         self._lock = threading.Lock()
 
     def get(self, key: str) -> T | None:
-        now = datetime.datetime.now(datetime.UTC)
+        now = utc_now()
         with self._lock:
             item = self._items.get(key)
             if item is None:
@@ -32,7 +34,7 @@ class TtlLruCache(Generic[T]):
             return value
 
     def set(self, key: str, value: T) -> None:
-        valid_until = datetime.datetime.now(datetime.UTC) + self._ttl
+        valid_until = utc_now() + self._ttl
         with self._lock:
             self._items[key] = (valid_until, value)
             self._items.move_to_end(key)

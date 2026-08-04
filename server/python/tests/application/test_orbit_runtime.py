@@ -6,6 +6,14 @@ import pytest
 from fastapi import HTTPException
 
 from orbit_api.application.orbit_runtime import OrbitRuntime
+from orbit_api.frames import FrameId, FrameTransformService, StateVector
+from orbit_api.timekeeping import (
+    EarthOrientation,
+    LeapSecondTable,
+    TimeScale,
+    configure_default_leap_second_table,
+    default_leap_second_table,
+)
 
 
 class FakePropagator:
@@ -13,8 +21,48 @@ class FakePropagator:
     def propagate_offset(self, _offset): return (1, 2, 3, 4, 5, 6)
 
 
-class NativeEciFakePropagator(FakePropagator):
-    def propagate_eci_datetime(self, _moment): return (7, 8, 9, 10, 11, 12)
+class NativeEme2000FakePropagator(FakePropagator):
+    def native_state_at(self, moment):
+        return StateVector.from_kilometres(
+            epoch=moment,
+            time_scale=TimeScale.UTC,
+            frame=FrameId.EME2000,
+            frame_realization=None,
+            center="EARTH",
+            position_km=(7, 8, 9),
+            velocity_km_s=(10, 11, 12),
+        )
+
+    def state_at(self, moment, *, target_frame):
+        assert target_frame is FrameId.ITRF
+        return StateVector(
+            epoch=moment,
+            time_scale=TimeScale.UTC,
+            frame=FrameId.ITRF,
+            frame_realization="ITRF2020",
+            center="EARTH",
+            position_m=(1.0, 2.0, 3.0),
+            velocity_m_s=(4.0, 5.0, 6.0),
+            earth_orientation_source="test IERS",
+            earth_orientation_version="fixture-1",
+            earth_orientation_quality="final",
+            transform_path=("EME2000", "CIRS", "TIRS", "ITRF"),
+        )
+
+
+class MutableEopProvider:
+    """Test double exposing a revision change without a network refresh."""
+
+    def __init__(self):
+        self.version = "fixture-r1"
+
+    def at(self, moment):
+        return EarthOrientation(
+            source="test EOP",
+            version=self.version,
+            quality="final",
+            sampled_at=moment,
+        )
 
 
 def test_runtime_resolves_loaded_and_rejects_unknown_satellites():
@@ -29,24 +77,116 @@ def test_ephemeris_contains_bounded_timestamped_points_and_is_cached():
     runtime, start = OrbitRuntime(), datetime(2026, 1, 1, tzinfo=UTC)
     result = runtime.build_ephemeris("ISS", FakePropagator(), start, start + timedelta(seconds=60), 30)
     assert result["count"] == 3 and result["points"][0]["position"]["x"] == 1
+    # A tuple-only legacy propagator has no evidence for a particular ITRF
+    # realization, so the runtime must not manufacture an `ITRF2020` label.
+    assert result["reference_frame"] == "ITRF"
+    assert result["frame"] == {"name": "ITRF", "realization": None, "center": "EARTH"}
     assert runtime.build_ephemeris("ISS", FakePropagator(), start, start + timedelta(seconds=60), 30) is result
     with pytest.raises(HTTPException):
         runtime.build_ephemeris("ISS", FakePropagator(), start, start, 0)
 
 
-def test_native_ephemeris_includes_aligned_eci_samples_for_inertial_preview():
-    runtime, start = OrbitRuntime(), datetime(2026, 1, 1, tzinfo=UTC)
-    result = runtime.build_ephemeris("Manual", NativeEciFakePropagator(), start, start + timedelta(seconds=30), 30)
+def test_ephemeris_cache_key_includes_the_versioned_eop_snapshot():
+    provider = MutableEopProvider()
+    runtime = OrbitRuntime(FrameTransformService(provider))
+    start = datetime(2026, 1, 1, tzinfo=UTC)
 
-    assert result["reference_frame"] == "ITRF"
+    first = runtime.build_ephemeris("ISS", FakePropagator(), start, start + timedelta(seconds=30), 30)
+    assert runtime.build_ephemeris("ISS", FakePropagator(), start, start + timedelta(seconds=30), 30) is first
+
+    provider.version = "fixture-r2"
+    refreshed = runtime.build_ephemeris("ISS", FakePropagator(), start, start + timedelta(seconds=30), 30)
+
+    assert refreshed is not first
+    token = refreshed["earth_orientation_cache_token"]
+    assert token[0][:4] == ("eop", "test EOP", "fixture-r2", "final")
+    assert token[0][4] == "leap_seconds"
+    assert token[0] == token[1]
+
+
+def test_ephemeris_cache_key_includes_the_active_leap_second_table():
+    provider = MutableEopProvider()
+    runtime = OrbitRuntime(FrameTransformService(provider))
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    previous = default_leap_second_table()
+    first_table = LeapSecondTable(
+        entries=((datetime(2017, 1, 1, tzinfo=UTC), 37),),
+        source="test leap seconds",
+        version="fixture-r1",
+    )
+    second_table = LeapSecondTable(
+        entries=((datetime(2017, 1, 1, tzinfo=UTC), 37),),
+        source="test leap seconds",
+        version="fixture-r2",
+    )
+    try:
+        configure_default_leap_second_table(first_table)
+        first = runtime.build_ephemeris("ISS", FakePropagator(), start, start + timedelta(seconds=30), 30)
+        configure_default_leap_second_table(second_table)
+        refreshed = runtime.build_ephemeris("ISS", FakePropagator(), start, start + timedelta(seconds=30), 30)
+    finally:
+        configure_default_leap_second_table(previous)
+
+    assert refreshed is not first
+    assert refreshed["earth_orientation_cache_token"][0][-2:] == ("fixture-r2", None)
+
+
+def test_serialized_native_epoch_keeps_its_declared_scale_while_timeline_time_is_utc():
+    runtime = OrbitRuntime()
+    utc_query = datetime(2026, 1, 1, tzinfo=UTC)
+    # This is the calendar representation of the same physical instant in
+    # GPS time. A future SP3 reader must not have it silently rewritten to
+    # UTC while still labelling it GPS.
+    gps_epoch = utc_query + timedelta(seconds=18)
+    state = StateVector(
+        epoch=gps_epoch,
+        time_scale=TimeScale.GPS,
+        frame=FrameId.ITRF,
+        frame_realization="IGS20",
+        center="EARTH",
+        position_m=(1.0, 2.0, 3.0),
+        velocity_m_s=(4.0, 5.0, 6.0),
+    )
+
+    payload = runtime.serialize_state("SP3", utc_query, state=state)
+
+    assert payload["time"] == utc_query.isoformat()
+    assert payload["epoch"] == gps_epoch.isoformat()
+    assert payload["time_scale"] == "GPS"
+    assert payload["reference_frame"] == "IGS20"
+
+
+def test_native_ephemeris_serializes_explicit_eme2000_and_itrf2020_metadata():
+    runtime, start = OrbitRuntime(), datetime(2026, 1, 1, tzinfo=UTC)
+    result = runtime.build_ephemeris("Manual", NativeEme2000FakePropagator(), start, start + timedelta(seconds=30), 30)
+
+    assert result["reference_frame"] == "ITRF2020"
+    assert result["frame"] == {"name": "ITRF", "realization": "ITRF2020", "center": "EARTH"}
+    assert result["time_scale"] == "UTC"
+    assert result["native_samples_available"] is True
     assert result["eci_samples_available"] is True
     first_point = result["points"][0]
     assert first_point["time"] == start.isoformat()
-    first_eci = first_point["eci"]
-    assert first_eci == {
-        "reference_frame": "ECI",
+    assert first_point["epoch"] == start.isoformat()
+    assert first_point["reference_frame"] == "ITRF2020"
+    assert first_point["earth_orientation"] == {
+        "source": "test IERS",
+        "version": "fixture-1",
+        "quality": "final",
+    }
+    assert first_point["transform_path"] == ["EME2000", "CIRS", "TIRS", "ITRF"]
+    first_native = first_point["native_state"]
+    assert first_native == {
+        "reference_frame": "EME2000",
+        "frame": {"name": "EME2000", "realization": None, "center": "EARTH"},
+        "epoch": start.isoformat(),
+        "time_scale": "UTC",
         "position_units": "m",
         "velocity_units": "m/s",
         "position": {"x": 7000.0, "y": 8000.0, "z": 9000.0},
         "velocity": {"x": 10000.0, "y": 11000.0, "z": 12000.0},
     }
+    # The `eci` property remains only as a labelled compatibility field for
+    # current UI consumers; it must never claim the generic ECI frame.
+    first_eci = first_point["eci"]
+    assert first_eci == {**first_native, "legacy_field": True}

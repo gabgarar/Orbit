@@ -7,11 +7,11 @@ This module is the deliberately configurable numerical path selected as
 and atmospheric drag as independent force terms. Historical gravity presets
 remain accepted only as compatibility input and normalize to that composition.
 
-States remain ECI in km and km/s internally.  The renderer contract is still
-ITRF metres/metres/s and is applied only at the public adapter boundary.  The
-integrator is a fixed-step RK4 Cowell method; it is intended for interactive
-design previews, not precision OD or a replacement for a full atmosphere / SRP
-toolkit.
+States remain in the explicit EME2000 compatibility frame in km and km/s
+internally. The renderer contract is still ITRF metres/metres/s and is
+applied only at the public adapter boundary. The integrator is a fixed-step
+RK4 Cowell method; it is intended for interactive design previews, not
+precision OD or a replacement for a full atmosphere / SRP toolkit.
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ from .classical import (
     EARTH_EQUATORIAL_RADIUS_KM,
     EARTH_MU_KM3_S2,
     EARTH_ROTATION_RATE_RAD_S,
-    eci_to_itrf,
-    ensure_utc,
 )
+from orbit_api.frames import FrameId, FrameTransformService, StateVector
+from orbit_api.timekeeping import ensure_utc, utc_now
 
 
 # WGS-84 unnormalised zonal gravity coefficients.  The gravity field's z axis
@@ -167,12 +167,14 @@ def _legacy_gravity_model(force_terms: tuple[str, ...]) -> str | None:
 
 def _state_from_mapping(state_vector: Mapping[str, object]) -> _STATE:
     try:
-        position = state_vector["position_eci_km"]
-        velocity = state_vector["velocity_eci_km_s"]
-    except (KeyError, TypeError) as exc:
-        raise ValueError("Falta el vector de estado ECI canÃ³nico") from exc
+        position = state_vector.get("position_eme2000_km", state_vector.get("position_eci_km"))
+        velocity = state_vector.get("velocity_eme2000_km_s", state_vector.get("velocity_eci_km_s"))
+    except AttributeError as exc:
+        raise ValueError("Falta el vector de estado EME2000 canÃ³nico") from exc
+    if position is None or velocity is None:
+        raise ValueError("Falta el vector de estado EME2000 canÃ³nico")
     if not isinstance(position, Mapping) or not isinstance(velocity, Mapping):
-        raise ValueError("El vector de estado ECI debe contener posiciÃ³n y velocidad")
+        raise ValueError("El vector de estado EME2000 debe contener posiciÃ³n y velocidad")
     result = (
         _finite(position.get("x"), "La posiciÃ³n X"),
         _finite(position.get("y"), "La posiciÃ³n Y"),
@@ -249,8 +251,10 @@ class CowellPropagator:
     steps), rather than reintegrating the whole history once per sample.
     """
 
-    dynamics_reference_frame = "ECI"
-    ephemeris_reference_frame = "ITRF"
+    dynamics_reference_frame = FrameId.EME2000.value
+    dynamics_reference_realization = None
+    ephemeris_reference_frame = FrameId.ITRF.value
+    ephemeris_reference_realization = None
     numerical_integrator = "Cowell RK4"
     integration_step_seconds = 60.0
 
@@ -265,6 +269,7 @@ class CowellPropagator:
         drag_coefficient: float = 2.2,
         area_m2: float = 1.0,
         mass_kg: float = 100.0,
+        frame_transformer: FrameTransformService | None = None,
     ) -> None:
         if force_terms is None:
             legacy_model = gravity_model or "two-body"
@@ -298,6 +303,7 @@ class CowellPropagator:
         if self.drag_coefficient <= 0 or self.area_m2 <= 0 or self.mass_kg <= 0:
             raise ValueError("Los parÃ¡metros de arrastre deben ser mayores que cero")
         self.ballistic_coefficient_m2_kg = self.drag_coefficient * self.area_m2 / self.mass_kg
+        self._frame_transformer = frame_transformer or FrameTransformService()
         initial = _state_from_mapping(state_vector)
         self._lock = threading.RLock()
         self._offsets: list[float] = [0.0]
@@ -306,6 +312,10 @@ class CowellPropagator:
     @property
     def applied_engine(self) -> str:
         return "cowell-rk4"
+
+    @property
+    def frame_transformer(self) -> FrameTransformService:
+        return self._frame_transformer
 
     def _acceleration(self, state: _STATE) -> tuple[float, float, float]:
         x, y, z, vx, vy, vz = state
@@ -399,16 +409,55 @@ class CowellPropagator:
             self._offsets.insert(insertion, target)
             return propagated
 
-    def propagate_eci_datetime(self, instant: datetime.datetime) -> _STATE:
+    def propagate_eme2000_datetime(self, instant: datetime.datetime) -> _STATE:
+        """Return the declared native EME2000 compatibility state in km/km/s."""
+
         utc = ensure_utc(instant)
         return self._state_at_offset((utc - self.epoch).total_seconds())
 
-    def propagate_datetime(self, instant: datetime.datetime) -> _STATE:
+    def propagate_eci_datetime(self, instant: datetime.datetime) -> _STATE:
+        """Legacy alias for :meth:`propagate_eme2000_datetime`."""
+
+        return self.propagate_eme2000_datetime(instant)
+
+    def native_state_at(self, instant: datetime.datetime) -> StateVector:
         utc = ensure_utc(instant)
-        return eci_to_itrf(*self.propagate_eci_datetime(utc), utc)
+        x, y, z, vx, vy, vz = self.propagate_eme2000_datetime(utc)
+        return StateVector.from_kilometres(
+            epoch=utc,
+            time_scale="UTC",
+            frame=FrameId.EME2000,
+            frame_realization=None,
+            center="EARTH",
+            position_km=(x, y, z),
+            velocity_km_s=(vx, vy, vz),
+            provenance={
+                "source": "manual",
+                "propagator": self.model_id,
+                "native_frame": "EME2000",
+                "legacy_input_assumption": "previous ECI manual states are interpreted as EME2000",
+                "model_limit": "Earth-fixed force terms use the compatibility inertial-axis model",
+            },
+        )
+
+    def state_at(
+        self,
+        instant: datetime.datetime,
+        *,
+        target_frame: FrameId | str = FrameId.ITRF,
+        target_realization: str | None = None,
+    ) -> StateVector:
+        return self._frame_transformer.transform(
+            self.native_state_at(instant),
+            target_frame=target_frame,
+            target_realization=target_realization,
+        )
+
+    def propagate_datetime(self, instant: datetime.datetime) -> _STATE:
+        return self.state_at(instant, target_frame=FrameId.ITRF).components()
 
     def propagate(self) -> _STATE:
-        return self.propagate_datetime(datetime.datetime.now(datetime.UTC))
+        return self.propagate_datetime(utc_now())
 
     def propagate_offset(self, seconds: float) -> _STATE:
-        return self.propagate_datetime(datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=float(seconds)))
+        return self.propagate_datetime(utc_now() + datetime.timedelta(seconds=float(seconds)))

@@ -1,9 +1,10 @@
 """Small, dependency-free classical-orbit and Earth-fixed frame helpers.
 
-Manual design starts from an ECI state at a user-selected epoch.  The native
-Two-body and J2 engines evolve that state in ECI, then convert the result to
-the ITRF/ECEF metres contract consumed by the existing renderer.  Keeping the
-conversion here avoids treating a state-vector orbit as a synthetic TLE.
+Manual design starts from an EME2000 compatibility state at a user-selected
+epoch (historical APIs called it generic ``ECI``). The native Two-body and J2
+engines evolve that EME2000 state, then use the shared frame service to obtain
+Orbit's ITRF metre contract consumed by the renderer. Keeping the legacy
+helpers here avoids treating a state-vector orbit as a synthetic TLE.
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ import datetime
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+
+from orbit_api.timekeeping import ensure_utc, gmst_rad
 
 
 EARTH_MU_KM3_S2 = 398600.4418
@@ -127,7 +130,10 @@ class ClassicalElements:
 
 
 def state_eci_from_mean_elements(elements: ClassicalElements) -> tuple[float, float, float, float, float, float]:
-    """Return ECI position/velocity in km and km/s for elliptic mean elements."""
+    """Return the legacy ECI-named EME2000 state in km and km/s.
+
+    The public ``StateVector`` boundary never exposes this generic label.
+    """
 
     eccentric_anomaly = _solve_eccentric_anomaly(elements.mean_anomaly_rad, elements.eccentricity)
     cosine, sine = math.cos(eccentric_anomaly), math.sin(eccentric_anomaly)
@@ -165,36 +171,6 @@ def state_eci_from_mean_elements(elements: ClassicalElements) -> tuple[float, fl
     return (*position, *velocity)
 
 
-def ensure_utc(moment: datetime.datetime) -> datetime.datetime:
-    """Interpret naive propagation timestamps as UTC, matching SGP4 routes."""
-
-    if not isinstance(moment, datetime.datetime):
-        raise ValueError("El instante de propagación debe ser una fecha y hora")
-    return moment.replace(tzinfo=datetime.UTC) if moment.tzinfo is None else moment.astimezone(datetime.UTC)
-
-
-def gmst_rad(moment: datetime.datetime) -> float:
-    """Greenwich mean sidereal angle for a UTC instant.
-
-    This is intentionally the same GMST convention used by the existing SGP4
-    TEME-to-ITRF adapter, so all manual engines return the renderer's common
-    Earth-fixed frame.
-    """
-
-    utc = ensure_utc(moment)
-    unix_seconds = (utc - datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)).total_seconds()
-    julian_date = 2440587.5 + (unix_seconds / 86400.0)
-    centuries = (julian_date - 2451545.0) / 36525.0
-    seconds = (
-        67310.54841
-        + (876600.0 * 3600.0 + 8640184.812866) * centuries
-        + 0.093104 * (centuries ** 2)
-        - 6.2e-6 * (centuries ** 3)
-    )
-    radians = math.fmod(math.radians(seconds / 240.0), _TWO_PI)
-    return radians + _TWO_PI if radians < 0 else radians
-
-
 def eci_to_itrf(
     x_km: float,
     y_km: float,
@@ -203,26 +179,33 @@ def eci_to_itrf(
     vy_km_s: float,
     vz_km_s: float,
     moment: datetime.datetime,
+    *,
+    dut1_seconds: float = 0.0,
 ) -> tuple[float, float, float, float, float, float]:
-    """Convert an ECI km/km/s state to ITRF metres/metres per second."""
+    """Legacy EME2000-compatible helper returning ITRF SI components via UT1.
 
-    angle = gmst_rad(moment)
+    ``dut1_seconds`` is UT1−UTC from an IERS Earth-orientation product.  The
+    default retains the prior UTC≈UT1 visual approximation; polar motion is
+    deliberately not fabricated when no EOP source is configured.
+    """
+
+    angle = gmst_rad(moment, dut1_seconds=dut1_seconds)
     cosine, sine = math.cos(angle), math.sin(angle)
-    ecef_x_km = (x_km * cosine) + (y_km * sine)
-    ecef_y_km = (-x_km * sine) + (y_km * cosine)
+    itrf_x_km = (x_km * cosine) + (y_km * sine)
+    itrf_y_km = (-x_km * sine) + (y_km * cosine)
     rotated_vx_km_s = (vx_km_s * cosine) + (vy_km_s * sine)
     rotated_vy_km_s = (-vx_km_s * sine) + (vy_km_s * cosine)
     # r_ITRF = R3(-GMST) r_ECI, therefore the rotation derivative contributes
     # (+omega*y, -omega*x) in ITRF coordinates.
     # Keeping this sign explicit matters for velocity-vector displays and
     # state-vector round-trips; position-only ground tracks are unaffected.
-    ecef_vx_km_s = rotated_vx_km_s + (EARTH_ROTATION_RATE_RAD_S * ecef_y_km)
-    ecef_vy_km_s = rotated_vy_km_s - (EARTH_ROTATION_RATE_RAD_S * ecef_x_km)
+    itrf_vx_km_s = rotated_vx_km_s + (EARTH_ROTATION_RATE_RAD_S * itrf_y_km)
+    itrf_vy_km_s = rotated_vy_km_s - (EARTH_ROTATION_RATE_RAD_S * itrf_x_km)
     return (
-        ecef_x_km * 1000.0,
-        ecef_y_km * 1000.0,
+        itrf_x_km * 1000.0,
+        itrf_y_km * 1000.0,
         z_km * 1000.0,
-        ecef_vx_km_s * 1000.0,
-        ecef_vy_km_s * 1000.0,
+        itrf_vx_km_s * 1000.0,
+        itrf_vy_km_s * 1000.0,
         vz_km_s * 1000.0,
     )

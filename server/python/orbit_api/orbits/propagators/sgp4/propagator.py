@@ -1,50 +1,69 @@
-"""SGP4 implementation that converts TEME output to Cesium-compatible ECEF."""
+"""SGP4/TLE propagation with TEME native states and a common frame adapter."""
+
+from __future__ import annotations
 
 import datetime
 import math
 
 from sgp4.api import Satrec, jday
 
+from orbit_api.frames import FrameId, FrameTransformService, StateVector
+from orbit_api.timekeeping import EarthOrientation, ensure_utc, utc_now
+
 
 _EARTH_ROTATION_RATE_RAD_S = 7.2921150e-5
 
 
 class SGP4Propagator:
-    """Propagate a two-line element set using the SGP4 model."""
+    """Propagate a two-line element set without relabelling its native TEME state."""
 
-    # SGP4 natively emits TEME.  The regular renderer adapter converts it to
-    # ITRF, but analytical tools must be able to inspect the unrotated state
-    # without pretending it is one of the ECI frames.
-    dynamics_reference_frame = "TEME"
-    ephemeris_reference_frame = "ITRF"
+    dynamics_reference_frame = FrameId.TEME.value
+    dynamics_reference_realization = None
+    ephemeris_reference_frame = FrameId.ITRF.value
+    ephemeris_reference_realization = None
     model_id = "sgp4"
 
-    def __init__(self, tle_line1: str, tle_line2: str):
+    def __init__(
+        self,
+        tle_line1: str,
+        tle_line2: str,
+        *,
+        frame_transformer: FrameTransformService | None = None,
+        dut1_seconds: float = 0.0,
+    ) -> None:
         self.sat = Satrec.twoline2rv(tle_line1, tle_line2)
+        self._frame_transformer = frame_transformer or FrameTransformService()
+        # Kept as a compatibility override for callers that previously passed
+        # DUT1 directly. New code injects a versioned EOP provider into the
+        # shared FrameTransformService instead.
+        self._legacy_earth_orientation = (
+            EarthOrientation(
+                dut1_seconds=dut1_seconds,
+                source="legacy SGP4 DUT1 override",
+                version="constructor",
+                quality="approximate",
+            )
+            if float(dut1_seconds) != 0.0 else None
+        )
+
+    @property
+    def frame_transformer(self) -> FrameTransformService:
+        return self._frame_transformer
 
     def propagate(self) -> tuple[float, float, float, float, float, float]:
-        return self.propagate_datetime(datetime.datetime.utcnow())
+        return self.propagate_datetime(utc_now())
 
     @staticmethod
     def _utc(instant: datetime.datetime) -> datetime.datetime:
-        return (
-            instant.replace(tzinfo=datetime.UTC)
-            if instant.tzinfo is None
-            else instant.astimezone(datetime.UTC)
-        )
+        return ensure_utc(instant)
 
     def _teme_state_km(
         self,
         instant: datetime.datetime,
         *,
         strict: bool,
-    ) -> tuple[float, float, float, float, float, float, float, float]:
-        """Evaluate the native SGP4 TEME state and its GMST angle.
-
-        ``strict`` is reserved for analysis endpoints: a degraded SGP4 error
-        code cannot produce trustworthy osculating parameters.  The legacy
-        renderer path retains its historical warning-and-return behaviour.
-        """
+    ) -> tuple[float, float, float, float, float, float]:
+        """Evaluate the native SGP4 TEME state at a UTC epoch."""
 
         utc = self._utc(instant)
         julian_day, julian_fraction = jday(
@@ -61,47 +80,64 @@ class SGP4Propagator:
             if strict:
                 raise ValueError(message)
             print(f"SGP4 propagation warning: code {error_code}")
-        return (*position_km, *velocity_km_s, julian_day, julian_fraction)
+        return tuple(float(value) for value in (*position_km, *velocity_km_s))  # type: ignore[return-value]
+
+    def native_state_at(self, instant: datetime.datetime, *, strict: bool = True) -> StateVector:
+        """Return the native TEME state in SI units and explicit UTC metadata."""
+
+        utc = self._utc(instant)
+        x, y, z, vx, vy, vz = self._teme_state_km(utc, strict=strict)
+        return StateVector.from_kilometres(
+            epoch=utc,
+            time_scale="UTC",
+            frame=FrameId.TEME,
+            frame_realization=None,
+            center="EARTH",
+            position_km=(x, y, z),
+            velocity_km_s=(vx, vy, vz),
+            provenance={"source": "TLE", "propagator": self.model_id, "native_frame": "TEME"},
+        )
+
+    def state_at(
+        self,
+        instant: datetime.datetime,
+        *,
+        target_frame: FrameId | str = FrameId.ITRF,
+        target_realization: str | None = None,
+    ) -> StateVector:
+        """Evaluate TEME then apply the shared explicit frame transformation."""
+
+        return self._frame_transformer.transform(
+            self.native_state_at(instant),
+            target_frame=target_frame,
+            target_realization=target_realization,
+            earth_orientation=self._legacy_earth_orientation,
+        )
 
     def propagate_teme_datetime(self, instant: datetime.datetime) -> tuple[float, float, float, float, float, float]:
-        """Return the native TEME state in kilometres and kilometres/s.
+        """Legacy adapter returning raw TEME kilometres / kilometres-per-second."""
 
-        This is deliberately separate from :meth:`propagate_datetime`, whose
-        public contract is ITRF metres / metres-per-second for Cesium.
-        """
-
-        x, y, z, vx, vy, vz, _julian_day, _julian_fraction = self._teme_state_km(instant, strict=True)
-        return float(x), float(y), float(z), float(vx), float(vy), float(vz)
+        return self._teme_state_km(instant, strict=True)
 
     def propagate_datetime(self, instant: datetime.datetime) -> tuple[float, float, float, float, float, float]:
-        x, y, z, vx, vy, vz, julian_day, julian_fraction = self._teme_state_km(instant, strict=False)
+        """Legacy renderer adapter returning ITRF SI components."""
 
-        position_m = tuple(coordinate * 1000 for coordinate in (x, y, z))
-        velocity_m_s = tuple(coordinate * 1000 for coordinate in (vx, vy, vz))
-        return self._teme_to_ecef(*position_m, *velocity_m_s, self._gmst_rad(julian_day, julian_fraction))
+        return self.state_at(instant, target_frame=FrameId.ITRF).components()
 
     def propagate_offset(self, seconds: float) -> tuple[float, float, float, float, float, float]:
-        return self.propagate_datetime(datetime.datetime.utcnow() + datetime.timedelta(seconds=seconds))
+        return self.propagate_datetime(utc_now() + datetime.timedelta(seconds=float(seconds)))
 
     @staticmethod
-    def _gmst_rad(julian_day: float, julian_fraction: float) -> float:
-        centuries = (julian_day + julian_fraction - 2451545.0) / 36525.0
-        seconds = (
-            67310.54841
-            + (876600.0 * 3600.0 + 8640184.812866) * centuries
-            + 0.093104 * centuries ** 2
-            - 6.2e-6 * centuries ** 3
-        )
-        radians = math.fmod(math.radians(seconds / 240.0), 2.0 * math.pi)
-        return radians + 2.0 * math.pi if radians < 0.0 else radians
+    def _teme_to_itrf(x, y, z, vx, vy, vz, gmst):
+        """Compatibility helper retained for callers using the old low-level API.
 
-    @staticmethod
-    def _teme_to_ecef(x, y, z, vx, vy, vz, gmst):
+        The production path now goes through :class:`FrameTransformService`,
+        which also applies polar motion and records EOP provenance.
+        """
+
         cos_gmst, sin_gmst = math.cos(gmst), math.sin(gmst)
-        ecef_x = x * cos_gmst + y * sin_gmst
-        ecef_y = -x * sin_gmst + y * cos_gmst
-        # r_ITRF = R3(-GMST) r_TEME.  The time derivative of that rotation is
-        # (+omega*y, -omega*x) in Earth-fixed coordinates.
-        ecef_vx = vx * cos_gmst + vy * sin_gmst + _EARTH_ROTATION_RATE_RAD_S * ecef_y
-        ecef_vy = -vx * sin_gmst + vy * cos_gmst - _EARTH_ROTATION_RATE_RAD_S * ecef_x
-        return ecef_x, ecef_y, z, ecef_vx, ecef_vy, vz
+        itrf_x = x * cos_gmst + y * sin_gmst
+        itrf_y = -x * sin_gmst + y * cos_gmst
+        itrf_vx = vx * cos_gmst + vy * sin_gmst + _EARTH_ROTATION_RATE_RAD_S * itrf_y
+        itrf_vy = -vx * sin_gmst + vy * cos_gmst - _EARTH_ROTATION_RATE_RAD_S * itrf_x
+        return itrf_x, itrf_y, z, itrf_vx, itrf_vy, vz

@@ -6,13 +6,15 @@ import datetime
 import math
 from collections.abc import Mapping
 
+from orbit_api.frames import FrameTransformService
+
 from ..classical import (
     EARTH_EQUATORIAL_RADIUS_KM,
     ClassicalElements,
-    ensure_utc,
     state_eci_from_mean_elements,
 )
 from ..two_body import TwoBodyPropagator
+from orbit_api.timekeeping import ensure_utc
 
 
 EARTH_J2 = 1.08262668e-3
@@ -29,8 +31,14 @@ class J2Propagator(TwoBodyPropagator):
 
     model_id = "j2"
 
-    def __init__(self, epoch: datetime.datetime, keplerian: Mapping[str, object]):
-        super().__init__(epoch, keplerian)
+    def __init__(
+        self,
+        epoch: datetime.datetime,
+        keplerian: Mapping[str, object],
+        *,
+        frame_transformer: FrameTransformService | None = None,
+    ):
+        super().__init__(epoch, keplerian, frame_transformer=frame_transformer)
         elements = self.elements
         p = elements.semi_latus_rectum_km
         n = elements.mean_motion_rad_s
@@ -54,8 +62,8 @@ class J2Propagator(TwoBodyPropagator):
             mean_anomaly_rate_rad_s=self.mean_anomaly_rate_rad_s,
         )
 
-    def propagate_eci_datetime(self, instant: datetime.datetime) -> tuple[float, float, float, float, float, float]:
-        """Return an ECI state whose velocity matches the secular position.
+    def propagate_eme2000_datetime(self, instant: datetime.datetime) -> tuple[float, float, float, float, float, float]:
+        """Return an EME2000 state whose velocity matches the secular position.
 
         ``state_eci_from_mean_elements`` returns the two-body derivative for
         its instantaneous anomaly.  J2 also rotates the orbital plane and
@@ -68,7 +76,7 @@ class J2Propagator(TwoBodyPropagator):
         elements = self.elements_at(instant)
         x, y, z, kepler_vx, kepler_vy, kepler_vz = state_eci_from_mean_elements(elements)
         mean_scale = self.mean_anomaly_rate_rad_s / elements.mean_motion_rad_s
-        # Unit orbital angular-momentum direction in the current ECI frame.
+        # Unit orbital angular-momentum direction in the current EME2000 frame.
         sin_i, cos_i = math.sin(elements.inclination_rad), math.cos(elements.inclination_rad)
         sin_raan, cos_raan = math.sin(elements.raan_rad), math.cos(elements.raan_rad)
         h_x, h_y, h_z = sin_raan * sin_i, -cos_raan * sin_i, cos_i
@@ -91,3 +99,8 @@ class J2Propagator(TwoBodyPropagator):
             + (self.raan_rate_rad_s * raan_vz)
             + (self.argument_of_perigee_rate_rad_s * argument_vz),
         )
+
+    def propagate_eci_datetime(self, instant: datetime.datetime) -> tuple[float, float, float, float, float, float]:
+        """Legacy alias for the explicitly named EME2000 native state."""
+
+        return self.propagate_eme2000_datetime(instant)

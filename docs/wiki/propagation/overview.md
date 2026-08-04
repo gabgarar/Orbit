@@ -1,0 +1,68 @@
+# Visión general de propagación
+
+[Inicio](../index.md) · [Propagación](index.md) · [Estados cartesianos](../engineering/cartesian-states.md) · [Marcos](../engineering/reference-frames.md)
+
+## Contrato común
+
+Los propagadores modernos exponen primero `native_state_at(instant)` y después
+`state_at(instant, target_frame=...)`. El primer método conserva el marco y la
+escala propios del modelo; el segundo delega el cambio de marco en el servicio
+común de transformación.
+
+Los métodos que devuelven seis números (`propagate_datetime`, `propagate` y
+`propagate_offset`) permanecen como adaptadores del renderer y devuelven el
+estado ITRF en unidades SI. No deben usarse para deducir el marco nativo.
+
+```mermaid
+flowchart LR
+    D[Definición de órbita] --> P[Propagador o lector]
+    P --> N[Estado nativo]
+    N --> F[FrameTransformService]
+    F --> V[Estado solicitado / ITRF]
+    E[EOP + tabla UTC-TAI] --> F
+```
+
+## Motores disponibles
+
+| Motor | Origen | Estado nativo | Dinámica | Disponibilidad operativa |
+| --- | --- | --- | --- | --- |
+| [SGP4](sgp4.md) | TLE | TEME, UTC | Implementación SGP4 de `sgp4.api.Satrec`. | Registro predeterminado del catálogo. |
+| [Dos cuerpos](two-body.md) | Elementos manuales | EME2000, UTC | Kepler elíptico analítico. | Órbita manual. |
+| [J2](j2.md) | Elementos manuales | EME2000, UTC | Tasas seculares analíticas de primer orden. | Compatibilidad manual. |
+| [Cowell](cowell.md) | Estado manual | EME2000, UTC | RK4 fijo, central/J2/J3/J4/drag. | Órbita manual. |
+| J2+J3+J4 | Estado manual | EME2000, UTC | Preset RK4 fijo sin drag. | Compatibilidad manual. |
+
+El registro de propagadores usado por el catálogo contiene solo `sgp4`. No hay
+selector de Cowell, dos cuerpos ni J2 para un objeto de catálogo TLE.
+
+## Marcos y unidades
+
+| Origen | Marco nativo | Unidades internas | Salida de contrato |
+| --- | --- | --- | --- |
+| SGP4 | TEME | km, km/s | `StateVector` SI. |
+| Dos cuerpos/J2 | EME2000 | km, km/s | `StateVector` SI. |
+| Cowell/J2+J3+J4 | EME2000 | km, km/s | `StateVector` SI. |
+
+La transformación a ITRF depende de los datos de orientación terrestre. Una
+configuración visual sin EOP local deja la procedencia marcada como aproximada;
+el modo estricto se describe en [Marcos de referencia](../engineering/reference-frames.md).
+
+## Selección manual
+
+Las rutas manuales aceptan elementos keplerianos para dos cuerpos y J2, un
+estado cartesiano para Cowell y el preset J2+J3+J4, y una ruta SGP4 que genera
+un TLE sintético. El resultado SGP4 sintético puede diferir de la dinámica
+analítica de dos cuerpos o J2 porque parte de otra representación y otro
+modelo.
+
+## Límites globales
+
+- No hay determinación de órbita, estimación de parámetros, maniobras ni
+  propagación de covarianza.
+- No hay integrador adaptativo, eventos de precisión, terceros cuerpos, SRP,
+  relatividad ni geopotencial completo.
+- El lector OEM/SP3 es una fuente tabulada Python; no es un propagador
+  registrado en `OrbitRuntime` ni una carga de producto UI/API.
+
+Consulte [Formatos](../formats/index.md) para fuentes de datos y
+[Modelos de fuerza](force-models.md) para las fuerzas disponibles.

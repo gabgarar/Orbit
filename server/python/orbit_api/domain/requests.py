@@ -12,6 +12,7 @@ from orbit_api.core.settings import (
     PROPAGATION_HOURS_MAX,
     PROPAGATION_HOURS_MIN,
 )
+from orbit_api.timekeeping import ensure_utc
 
 
 # These are the *new-design* manual propagation families, rather than a list
@@ -336,6 +337,7 @@ class OrbitRequest(TleSourceRequest):
 class StationInput(BaseModel):
     lat_deg: float = Field(ge=-90, le=90)
     lon_deg: float = Field(ge=-180, le=180)
+    height_m: float = Field(default=0.0, ge=-1_000, le=100_000)
     min_elevation_deg: float = Field(default=10.0, ge=0, le=90)
 
 
@@ -390,6 +392,15 @@ class ManualKeplerianInput(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    reference_frame: str = Field(
+        default="EME2000",
+        validation_alias=AliasChoices("reference_frame", "referenceFrame"),
+    )
+    time_scale: Literal["UTC"] = Field(
+        default="UTC",
+        validation_alias=AliasChoices("time_scale", "timeScale"),
+    )
+
     semi_major_axis_km: float = Field(
         validation_alias=AliasChoices("semi_major_axis_km", "semiMajorAxisKm"),
         gt=0,
@@ -436,6 +447,16 @@ class ManualKeplerianInput(BaseModel):
             raise ValueError("Los elementos keplerianos deben ser finitos")
         return value
 
+    @field_validator("reference_frame", mode="before")
+    @classmethod
+    def normalize_reference_frame(cls, value: object) -> str:
+        """Accept historical ECI input only as an explicit EME2000 migration."""
+
+        label = "".join(character for character in str(value or "EME2000").upper() if character.isalnum())
+        if label in {"EME2000", "EME2K", "J2000", "ECI"}:
+            return "EME2000"
+        raise ValueError("Los elementos manuales deben declarar EME2000; ECI genÃ©rico no es un marco nuevo vÃ¡lido")
+
     @model_validator(mode="after")
     def validate_anomaly(self):
         if self.true_anomaly_deg is None and self.mean_anomaly_deg is None:
@@ -444,7 +465,7 @@ class ManualKeplerianInput(BaseModel):
 
 
 class ManualStateVectorInput(BaseModel):
-    """ECI Cartesian state in km and km/s for a manual orbit.
+    """EME2000 Cartesian state in km and km/s for a manual orbit.
 
     Besides the canonical nested shape, this model accepts the six flat
     camelCase fields used by the editor.  Keeping the compatibility here
@@ -453,16 +474,46 @@ class ManualStateVectorInput(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    position_eci_km: CartesianVectorInput = Field(
+    reference_frame: str = Field(
+        default="EME2000",
+        validation_alias=AliasChoices("reference_frame", "referenceFrame"),
+    )
+    time_scale: Literal["UTC"] = Field(
+        default="UTC",
+        validation_alias=AliasChoices("time_scale", "timeScale"),
+    )
+    position_eme2000_km: CartesianVectorInput = Field(
         validation_alias=AliasChoices(
-            "position_eci_km", "positionEciKm", "position_km", "positionKm"
+            "position_eme2000_km", "positionEme2000Km",
+            "position_eci_km", "positionEciKm", "position_km", "positionKm",
         ),
     )
-    velocity_eci_km_s: CartesianVectorInput = Field(
+    velocity_eme2000_km_s: CartesianVectorInput = Field(
         validation_alias=AliasChoices(
-            "velocity_eci_km_s", "velocityEciKmS", "velocity_km_s", "velocityKmS"
+            "velocity_eme2000_km_s", "velocityEme2000KmS",
+            "velocity_eci_km_s", "velocityEciKmS", "velocity_km_s", "velocityKmS",
         ),
     )
+
+    @field_validator("reference_frame", mode="before")
+    @classmethod
+    def normalize_reference_frame(cls, value: object) -> str:
+        label = "".join(character for character in str(value or "EME2000").upper() if character.isalnum())
+        if label in {"EME2000", "EME2K", "J2000", "ECI"}:
+            return "EME2000"
+        raise ValueError("El vector manual debe declarar EME2000; ECI genÃ©rico no es un marco nuevo vÃ¡lido")
+
+    @property
+    def position_eci_km(self) -> CartesianVectorInput:
+        """Temporary read-only alias for persisted pre-frame-contract records."""
+
+        return self.position_eme2000_km
+
+    @property
+    def velocity_eci_km_s(self) -> CartesianVectorInput:
+        """Temporary read-only alias for persisted pre-frame-contract records."""
+
+        return self.velocity_eme2000_km_s
 
     @model_validator(mode="before")
     @classmethod
@@ -470,18 +521,22 @@ class ManualStateVectorInput(BaseModel):
         if not isinstance(value, dict):
             return value
         payload = dict(value)
-        if not any(key in payload for key in ("position_eci_km", "positionEciKm", "position_km", "positionKm")):
+        if not any(key in payload for key in (
+            "position_eme2000_km", "positionEme2000Km", "position_eci_km", "positionEciKm", "position_km", "positionKm",
+        )):
             keys = ("positionXKm", "positionYKm", "positionZKm")
             if any(key in payload for key in keys):
-                payload["positionEciKm"] = {
+                payload["positionEme2000Km"] = {
                     "x": payload.get("positionXKm"),
                     "y": payload.get("positionYKm"),
                     "z": payload.get("positionZKm"),
                 }
-        if not any(key in payload for key in ("velocity_eci_km_s", "velocityEciKmS", "velocity_km_s", "velocityKmS")):
+        if not any(key in payload for key in (
+            "velocity_eme2000_km_s", "velocityEme2000KmS", "velocity_eci_km_s", "velocityEciKmS", "velocity_km_s", "velocityKmS",
+        )):
             keys = ("velocityXKmS", "velocityYKmS", "velocityZKmS")
             if any(key in payload for key in keys):
-                payload["velocityEciKmS"] = {
+                payload["velocityEme2000KmS"] = {
                     "x": payload.get("velocityXKmS"),
                     "y": payload.get("velocityYKmS"),
                     "z": payload.get("velocityZKmS"),
@@ -898,7 +953,7 @@ class ManualOrbitRequest(BaseModel):
     def normalize_utc(cls, value: datetime.datetime | None) -> datetime.datetime | None:
         if value is None:
             return None
-        return value.replace(tzinfo=datetime.UTC) if value.tzinfo is None else value.astimezone(datetime.UTC)
+        return ensure_utc(value)
 
     @field_validator("propagator")
     @classmethod
@@ -1101,7 +1156,7 @@ class OrbitParametersRequest(BaseModel):
     @field_validator("start_time", "end_time")
     @classmethod
     def normalize_inspector_utc(cls, value: datetime.datetime) -> datetime.datetime:
-        return value.replace(tzinfo=datetime.UTC) if value.tzinfo is None else value.astimezone(datetime.UTC)
+        return ensure_utc(value)
 
     @model_validator(mode="after")
     def validate_range(self):

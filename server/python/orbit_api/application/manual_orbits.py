@@ -2,9 +2,10 @@
 
 The editor deliberately keeps this capability transient. SGP4 receives a
 synthetic TLE for the current request only; the analytical two-body and
-numerical Cowell families use the canonical ECI definition directly. Nothing
-is written to the catalogue. Classical elements and Cartesian states are
-expressed in ECI kilometres / kilometres per second at the supplied epoch.
+numerical Cowell families use the canonical EME2000 compatibility definition
+directly. Nothing is written to the catalogue. Classical elements and
+Cartesian states are expressed in EME2000 kilometres / kilometres per second
+at the supplied epoch.
 """
 
 from __future__ import annotations
@@ -22,10 +23,12 @@ from orbit_api.domain.requests import (
     ManualStateVectorInput,
     normalize_manual_orbit_propagator,
 )
+from orbit_api.frames import FrameTransformService
 from orbit_api.orbits.propagators.cowell import CowellPropagator
 from orbit_api.orbits.propagators.j2 import J2Propagator
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
+from orbit_api.timekeeping import ensure_utc
 
 
 EARTH_MU_KM3_S2 = 398600.4418
@@ -44,7 +47,8 @@ _MANUAL_PROPAGATOR_METADATA = {
     "sgp4": {
         "label": "SGP4",
         "dynamics_reference_frame": "TEME",
-        "input_reference_frame": "ECI",
+        "input_reference_frame": "EME2000",
+        "legacy_input_reference_frame": "ECI",
         "ephemeris_reference_frame": "ITRF",
         "uses_synthetic_tle": True,
         "eci_samples_available": False,
@@ -52,8 +56,9 @@ _MANUAL_PROPAGATOR_METADATA = {
     },
     "two-body": {
         "label": "Two-body",
-        "dynamics_reference_frame": "ECI",
-        "input_reference_frame": "ECI",
+        "dynamics_reference_frame": "EME2000",
+        "input_reference_frame": "EME2000",
+        "legacy_input_reference_frame": "ECI",
         "ephemeris_reference_frame": "ITRF",
         "uses_synthetic_tle": False,
         "eci_samples_available": True,
@@ -63,8 +68,9 @@ _MANUAL_PROPAGATOR_METADATA = {
     },
     "j2": {
         "label": "J2 (first-order secular)",
-        "dynamics_reference_frame": "ECI",
-        "input_reference_frame": "ECI",
+        "dynamics_reference_frame": "EME2000",
+        "input_reference_frame": "EME2000",
+        "legacy_input_reference_frame": "ECI",
         "ephemeris_reference_frame": "ITRF",
         "uses_synthetic_tle": False,
         "eci_samples_available": True,
@@ -81,8 +87,9 @@ _MANUAL_PROPAGATOR_METADATA = {
     },
     "j2-j3-j4": {
         "label": "J2 + J3 + J4",
-        "dynamics_reference_frame": "ECI",
-        "input_reference_frame": "ECI",
+        "dynamics_reference_frame": "EME2000",
+        "input_reference_frame": "EME2000",
+        "legacy_input_reference_frame": "ECI",
         "ephemeris_reference_frame": "ITRF",
         "uses_synthetic_tle": False,
         "eci_samples_available": True,
@@ -102,8 +109,9 @@ _MANUAL_PROPAGATOR_METADATA = {
     },
     "cowell-rk4": {
         "label": "Cowell numerical propagation",
-        "dynamics_reference_frame": "ECI",
-        "input_reference_frame": "ECI",
+        "dynamics_reference_frame": "EME2000",
+        "input_reference_frame": "EME2000",
+        "legacy_input_reference_frame": "ECI",
         "ephemeris_reference_frame": "ITRF",
         "uses_synthetic_tle": False,
         "eci_samples_available": True,
@@ -232,7 +240,7 @@ def _validate_clearance(semi_major_axis_km: float, eccentricity: float) -> None:
 
 
 def keplerian_to_state_vector(elements: ManualKeplerianInput) -> tuple[dict[str, float], dict[str, Any]]:
-    """Derive an ECI Cartesian state from classical elliptic elements."""
+    """Derive an EME2000 Cartesian state from classical elliptic elements."""
 
     semi_major_axis = float(elements.semi_major_axis_km)
     eccentricity = float(elements.eccentricity)
@@ -288,11 +296,17 @@ def keplerian_to_state_vector(elements: ManualKeplerianInput) -> tuple[dict[str,
         "argument_of_perigee_deg": argument_of_perigee_deg,
         "true_anomaly_deg": true_anomaly_deg,
         "mean_anomaly_deg": mean_anomaly_deg,
-        "reference_frame": "ECI",
+        "reference_frame": "EME2000",
+        "time_scale": "UTC",
+        "legacy_reference_frame": "ECI",
         **_orbit_derived_values(semi_major_axis, eccentricity),
     }
     state_vector = {
-        "reference_frame": "ECI",
+        "reference_frame": "EME2000",
+        "time_scale": "UTC",
+        "legacy_reference_frame": "ECI",
+        "position_eme2000_km": rotate(position_perifocal),
+        "velocity_eme2000_km_s": rotate(velocity_perifocal),
         "position_eci_km": rotate(position_perifocal),
         "velocity_eci_km_s": rotate(velocity_perifocal),
     }
@@ -300,10 +314,18 @@ def keplerian_to_state_vector(elements: ManualKeplerianInput) -> tuple[dict[str,
 
 
 def state_vector_to_keplerian(state: ManualStateVectorInput) -> tuple[dict[str, float], dict[str, Any]]:
-    """Derive classical elliptic elements from an ECI Cartesian state."""
+    """Derive classical elliptic elements from an EME2000 Cartesian state."""
 
-    position = _vector(state.position_eci_km.x, state.position_eci_km.y, state.position_eci_km.z)
-    velocity = _vector(state.velocity_eci_km_s.x, state.velocity_eci_km_s.y, state.velocity_eci_km_s.z)
+    position = _vector(
+        state.position_eme2000_km.x,
+        state.position_eme2000_km.y,
+        state.position_eme2000_km.z,
+    )
+    velocity = _vector(
+        state.velocity_eme2000_km_s.x,
+        state.velocity_eme2000_km_s.y,
+        state.velocity_eme2000_km_s.z,
+    )
     radius = _magnitude(position)
     velocity_magnitude = _magnitude(velocity)
     if radius <= 0 or velocity_magnitude <= 0:
@@ -365,11 +387,17 @@ def state_vector_to_keplerian(state: ManualStateVectorInput) -> tuple[dict[str, 
         "argument_of_perigee_deg": _normalize_degrees(argument_of_perigee * _RAD_TO_DEG),
         "true_anomaly_deg": true_anomaly_deg,
         "mean_anomaly_deg": _true_to_mean_anomaly_deg(true_anomaly_deg, eccentricity),
-        "reference_frame": "ECI",
+        "reference_frame": "EME2000",
+        "time_scale": "UTC",
+        "legacy_reference_frame": "ECI",
         **_orbit_derived_values(semi_major_axis, eccentricity),
     }
     state_vector = {
-        "reference_frame": "ECI",
+        "reference_frame": "EME2000",
+        "time_scale": "UTC",
+        "legacy_reference_frame": "ECI",
+        "position_eme2000_km": {"x": position[0], "y": position[1], "z": position[2]},
+        "velocity_eme2000_km_s": {"x": velocity[0], "y": velocity[1], "z": velocity[2]},
         "position_eci_km": {"x": position[0], "y": position[1], "z": position[2]},
         "velocity_eci_km_s": {"x": velocity[0], "y": velocity[1], "z": velocity[2]},
     }
@@ -414,7 +442,7 @@ def _manual_runtime_identity(
     from ``OrbitRuntime``'s cache.
     """
 
-    utc_epoch = epoch.replace(tzinfo=datetime.UTC) if epoch.tzinfo is None else epoch.astimezone(datetime.UTC)
+    utc_epoch = ensure_utc(epoch)
     material = json.dumps(
         {
             "propagator": propagator_name,
@@ -441,6 +469,7 @@ def build_manual_orbit_propagator(
     state_vector: dict[str, Any],
     resolve_sgp4: Any,
     propagation_options: dict[str, Any] | None = None,
+    frame_transformer: FrameTransformService | None = None,
 ) -> tuple[str, Any, dict[str, Any] | None, dict[str, Any]]:
     """Instantiate the selected manual propagation engine.
 
@@ -484,11 +513,11 @@ def build_manual_orbit_propagator(
 
     try:
         if canonical == "two-body":
-            propagator = TwoBodyPropagator(epoch, keplerian)
+            propagator = TwoBodyPropagator(epoch, keplerian, frame_transformer=frame_transformer)
         elif canonical == "j2":
-            propagator = J2Propagator(epoch, keplerian)
+            propagator = J2Propagator(epoch, keplerian, frame_transformer=frame_transformer)
         elif canonical == "j2-j3-j4":
-            propagator = J2J3J4Propagator(epoch, state_vector)
+            propagator = J2J3J4Propagator(epoch, state_vector, frame_transformer=frame_transformer)
         else:
             # Cowell is the configurable numerical route. The current public
             # integration algorithm is RK4, selected independently from the
@@ -501,6 +530,7 @@ def build_manual_orbit_propagator(
                 drag_coefficient=float(options["drag_coefficient"]),
                 area_m2=float(options["area_m2"]),
                 mass_kg=float(options["mass_kg"]),
+                frame_transformer=frame_transformer,
             )
     except ValueError as exc:
         raise ManualOrbitError(str(exc)) from exc
@@ -541,7 +571,7 @@ def is_valid_tle_checksum(line: str) -> bool:
 
 
 def _tle_epoch(epoch: datetime.datetime) -> str:
-    utc_epoch = epoch.replace(tzinfo=datetime.UTC) if epoch.tzinfo is None else epoch.astimezone(datetime.UTC)
+    utc_epoch = ensure_utc(epoch)
     year_start = datetime.datetime(utc_epoch.year, 1, 1, tzinfo=datetime.UTC)
     day_of_year = 1.0 + ((utc_epoch - year_start).total_seconds() / 86400.0)
     days_in_year = 366 if (datetime.date(utc_epoch.year, 12, 31).timetuple().tm_yday == 366) else 365
@@ -599,5 +629,5 @@ def build_synthetic_tle(name: str, epoch: datetime.datetime, keplerian: dict[str
         "line2": line2,
         "synthetic": True,
         "catalog_number": catalog_number,
-        "epoch": epoch.replace(tzinfo=datetime.UTC).isoformat() if epoch.tzinfo is None else epoch.astimezone(datetime.UTC).isoformat(),
+        "epoch": ensure_utc(epoch).isoformat(),
     }
