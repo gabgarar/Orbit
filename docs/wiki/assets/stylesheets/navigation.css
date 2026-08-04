@@ -75,6 +75,23 @@
   padding-left: 0.52rem;
 }
 
+/* Every node with children is a clearly interactive disclosure control. The
+ * Material checkbox underneath retains the expanded state without JavaScript. */
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link[for] {
+  border-radius: 0.2rem;
+  cursor: pointer;
+  padding-right: 0.3rem;
+}
+
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link[for] .md-nav__icon {
+  color: var(--orbit-section-color);
+  opacity: 0.9;
+}
+
+.md-sidebar--primary .md-nav__item--nested > .md-nav__link[for]:hover {
+  background-color: rgba(87, 151, 211, 0.1);
+}
+
 [data-md-color-scheme="slate"] .md-sidebar--primary .md-nav__item--nested > .md-nav {
   border-left-color: rgba(119, 196, 255, 0.22);
 }
