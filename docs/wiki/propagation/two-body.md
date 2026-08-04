@@ -17,6 +17,10 @@ elementos y resolver la ecuación de Kepler, sin historial de pasos de fuerza.
 
 ## Entradas
 
+### Variables, unidades y uso en Orbit
+
+\(\mathbf r\) se expresa en km y \(\mu\) en km³/s², por lo que \(\ddot{\mathbf r}\) es km/s². Los elementos de entrada usan km para semieje y grados en la interfaz; `TwoBodyPropagator` los convierte y resuelve Kepler para producir el estado nativo EME2000, que se publica en SI.
+
 | Campo | Requisito |
 | --- | --- |
 | Época | Instante UTC del diseño manual. |

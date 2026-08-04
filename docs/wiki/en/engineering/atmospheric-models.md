@@ -20,6 +20,10 @@ US Standard Atmosphere style altitude. The table includes layers from 0 km to
 
 ## Interaction with Cowell
 
+### Variables, units and Orbit use
+
+\(h\), \(h_0\), and \(H\) use one common length unit; \(\rho\) is kg/m³. Cowell converts quantities from its km/km·s⁻¹ internal state to remain consistent with SI drag parameters, and returns acceleration to the core in km/s².
+
 - The height is estimated with the WGS-84 ellipsoid.
 - The atmosphere is considered corrotant with the Earth.
 - Relative speed uses \(\mathbf v-\mathbf\omega\times\mathbf r\).

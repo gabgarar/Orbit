@@ -40,6 +40,10 @@ mantienen solo como adaptadores; no cambian el marco declarado.
 
 ## Uso por el modelo J2
 
+### Variables, unidades y uso en Orbit
+
+\(a\) se introduce en km, \(e\) es adimensional y las anomalías, inclinación, RAAN y argumento de periapsis se reciben en grados y se convierten a radianes. \(n\) queda en rad/s y \(M\) en radianes; estos valores alimentan únicamente los propagadores manuales de dos cuerpos y J2.
+
 El propagador J2 de compatibilidad mantiene \(a\), \(e\) e \(i\) constantes y
 aplica tasas seculares a \(\Omega\), \(\omega\) y \(M\). No es un integrador
 numérico ni incorpora pérdida de energía. Véase [J2](../propagation/j2.md).

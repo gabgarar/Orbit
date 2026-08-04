@@ -16,6 +16,10 @@ de fuerzas solo menciona perturbaciones.
 
 ## Uso
 
+### Variables, unidades y uso en Orbit
+
+\(\mathbf r\) se evalúa en km y \(\mu=398600.4418\ \mathrm{km^3/s^2}\) dentro de los propagadores clásicos; por ello \(\mathbf a_{central}\) sale en km/s². Antes de construir un `StateVector`, Orbit convierte posición y velocidad a m y m/s. El término se evalúa en cada paso RK4 de Cowell y es toda la dinámica de dos cuerpos.
+
 | Ruta | Aplicación |
 | --- | --- |
 | Dos cuerpos | Es toda la dinámica y se resuelve analíticamente. |

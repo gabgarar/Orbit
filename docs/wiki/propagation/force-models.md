@@ -29,6 +29,10 @@ incluyendo únicamente los términos seleccionados.
 
 ## Identidad del modelo
 
+### Variables, unidades y uso en Orbit
+
+Cada \(\mathbf a_i\) se calcula en km/s² en el núcleo Cowell antes de formar \(\mathbf a\). La suma no añade por defecto términos ausentes: `force_terms` define el subconjunto, mientras que `central` permanece obligatorio. La salida pública se convierte después a SI en `StateVector`.
+
 `model_id` permanece `cowell-rk4`; `force_model_id` identifica la composición
 aplicada. Los equivalentes exactos de presets heredados conservan un nombre
 conocido (`two-body`, `j2`, `j2-j3-j4`); una combinación distinta se informa

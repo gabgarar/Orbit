@@ -29,6 +29,10 @@ including only the selected terms.
 
 ## Model identity
 
+### Variables, units and Orbit use
+
+Each \(\mathbf a_i\) is calculated in km/s² in the Cowell core before forming \(\mathbf a\). The sum never adds absent terms by default: `force_terms` defines the subset, while `central` remains mandatory. Public output is then converted to SI in `StateVector`.
+
 `model_id` remains `cowell-rk4`; `force_model_id` identifies the composition
 applied. Exact equivalents of inherited presets retain a name
 known (`two-body`, `j2`, `j2-j3-j4`); a different combination is reported

@@ -70,6 +70,13 @@ P'=J P J^\mathsf{T},\qquad
 J=\begin{bmatrix}A&0\\\dot A&A\end{bmatrix}.
 $$
 
+### Variables, units and Orbit use
+
+- \(\mathrm{UTC}\), \(\mathrm{TAI}\), \(\mathrm{TT}\), and \(\mathrm{UT1}\) are instants; \(\Delta_{AT}\) and \(\mathrm{DUT1}\) are expressed in seconds.
+- \(JD_{UT1}\) is a unitless Julian day, \(T\) is Julian centuries, and GMST/ERA, \(X\), \(Y\), \(s\), \(x_p\), and \(y_p\) are angles in radians inside the transformer.
+- \(\mathbf r\), \(\mathbf v\), and \(\mathbf a\) are SI `StateVector` values: m, m/s, and m/s²; \(P\) carries the corresponding squared and mixed units. \(A\), \(W\), \(C\), and \(J\) are dimensionless, while \(\dot A\) is s⁻¹.
+- The runtime obtains \(\Delta_{AT}\) from `leap-seconds.list` and DUT1, \(x_p\), \(y_p\), dX, and dY from C04 EOP before delivering an ITRF transformation. It never estimates them in the client.
+
 ## Data and limits
 
 Strict mode requires \`final\` or \`rapid\` EOP quality, epoch coverage and a valid local leap-second table. \`ITRF\` without a realization is not relabelled as \`ITRF2020\`; an operation such as IGS20→ITRF2020 must be registered explicitly.

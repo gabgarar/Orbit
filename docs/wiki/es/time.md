@@ -70,6 +70,13 @@ P'=J P J^\mathsf{T},\qquad
 J=\begin{bmatrix}A&0\\\dot A&A\end{bmatrix}.
 $$
 
+### Variables, unidades y uso en Orbit
+
+- Las escalas \(\mathrm{UTC}\), \(\mathrm{TAI}\), \(\mathrm{TT}\) y \(\mathrm{UT1}\) son instantes; \(\Delta_{AT}\) y \(\mathrm{DUT1}\) se expresan en segundos.
+- \(JD_{UT1}\) es día juliano sin unidad, \(T\) son siglos julianos y GMST/ERA, \(X\), \(Y\), \(s\), \(x_p\) e \(y_p\) son ángulos en radianes dentro del transformador.
+- \(\mathbf r\), \(\mathbf v\) y \(\mathbf a\) son SI en `StateVector`: m, m/s y m/s²; \(P\) usa las unidades cuadradas y mixtas correspondientes. Las matrices \(A\), \(W\), \(C\), \(J\) son adimensionales y \(\dot A\) tiene s⁻¹.
+- El runtime toma \(\Delta_{AT}\) de `leap-seconds.list` y DUT1, \(x_p\), \(y_p\), dX y dY de EOP C04 antes de entregar una transformación ITRF. No estima esos valores en el cliente.
+
 ## Datos y límites
 
 El modo estricto exige EOP de calidad \`final\` o \`rapid\`, cobertura de la época y una tabla local de segundos intercalares válida. \`ITRF\` sin realización no se re-etiqueta como \`ITRF2020\`; una operación de datum como IGS20→ITRF2020 debe registrarse explícitamente.

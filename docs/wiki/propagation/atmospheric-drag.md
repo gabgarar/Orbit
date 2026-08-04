@@ -30,6 +30,10 @@ $$
 
 ## Parámetros
 
+### Variables, unidades y uso en Orbit
+
+El vector interno \(\mathbf r\) y \(\mathbf v\) usa km y km/s; para evaluar \(\mathbf v_{rel}\), \(\rho\) y \(B=C_DA/m\), Orbit convierte las magnitudes necesarias a SI. \(\rho\) es kg/m³, \(C_D\) es adimensional, \(A\) m², \(m\) kg y la aceleración vuelve a km/s² antes de sumarse en Cowell. \(h\), \(h_0\) y \(H\) se comparan en la misma unidad de longitud de la capa exponencial.
+
 | Parámetro | Unidad | Restricción |
 | --- | --- | --- |
 | `drag_coefficient` | — | Finito y mayor que cero; valor predeterminado 2,2. |
@@ -59,3 +63,5 @@ manuales, no para predicción operacional. Véase
     $$
     \rho=\rho_{\mathrm{MSIS}}(h,\phi,\lambda,t,F_{10.7},\overline{F}_{10.7},A_p).
     $$
+
+    Aquí \(h\) es altura, \(\phi\)/\(\lambda\) son radianes, \(t\) es época y los índices solares/geomagnéticos siguen las unidades del producto MSIS. No se evalúa en el runtime actual.

@@ -80,6 +80,10 @@ $$
 
 AOS y LOS se extraen de la primera y última muestra que cumplen ese umbral; no se refina el instante de cruce.
 
+### Variables, unidades y uso en Orbit
+
+\(a\), \(N\), \(h\), \(E\), \(N\), \(U\), \(\Delta\mathbf r\) y las posiciones ITRF se expresan en metros; \(e^2\) es adimensional y \(\varphi\), \(\lambda\), \(\epsilon\) y \(\epsilon_{\min}\) se convierten a radianes durante el cálculo. La interfaz recibe latitud/longitud en grados y altitud o máscara en metros/grados, pero `ground_stations.visibility` las normaliza antes de evaluar ENU y el umbral. AOS/LOS se derivan de muestras discretas, no de una raíz continua.
+
 ## Cobertura y radio
 
 El footprint y el mapa de calor son representaciones visuales asociadas a la

@@ -17,6 +17,10 @@ elements and solve Kepler's equation, without history of force steps.
 
 ## Entries
 
+### Variables, units and Orbit use
+
+\(\mathbf r\) is in km and \(\mu\) in km³/s², so \(\ddot{\mathbf r}\) is km/s². Input elements use km for semimajor axis and degrees in the UI; `TwoBodyPropagator` converts them and solves Kepler to produce the native EME2000 state, which is published in SI.
+
 | Field | Requirement |
 | --- | --- |
 | Period | UTC instant of manual design. |

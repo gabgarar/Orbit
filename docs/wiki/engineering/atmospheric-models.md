@@ -20,6 +20,10 @@ altitud estilo US Standard Atmosphere. La tabla incluye capas desde 0 km hasta
 
 ## Interacción con Cowell
 
+### Variables, unidades y uso en Orbit
+
+\(h\), \(h_0\) y \(H\) usan una misma unidad de longitud; \(\rho\) es kg/m³. Cowell convierte las magnitudes de su estado interno km/km·s⁻¹ para mantener consistencia con los parámetros SI de arrastre y devuelve la aceleración al núcleo en km/s².
+
 - La altura se estima con el elipsoide WGS-84.
 - La atmósfera se considera corrotante con la Tierra.
 - La velocidad relativa usa \(\mathbf v-\mathbf\omega\times\mathbf r\).

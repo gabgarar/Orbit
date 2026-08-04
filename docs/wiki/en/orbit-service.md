@@ -44,6 +44,10 @@ $$
 
 Hermite acceleration is derived from the polynomial, \(\mathbf a(t)=\ddot H(t)\). Orbit does not interpolate covariance: an interpolated result explicitly declares a null covariance.
 
+### Variables, units and Orbit use
+
+Samples \(\mathbf r_i\), \(\mathbf v_i\), and output \(\mathbf r(t)\) are normalised to m and m/s in `StateVector`; \(t\), \(t_i\), and \(\Delta t\) are seconds from the query epoch. Lagrange and Hermite weights are dimensionless, and derived acceleration is m/s². `TabularStateProvider` applies these equations only between samples in the selected segment; it neither interpolates covariance nor invents absent frame, scale, or units.
+
 ## Limits
 
 - High-fidelity SP3 and OEM are not reduced to TLE semantics.

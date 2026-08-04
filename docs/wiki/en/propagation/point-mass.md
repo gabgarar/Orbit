@@ -16,6 +16,10 @@ of forces only mentions disturbances.
 
 ## Usage
 
+### Variables, units and Orbit use
+
+\(\mathbf r\) is evaluated in km and \(\mu=398600.4418\ \mathrm{km^3/s^2}\) inside the classical propagators; \(\mathbf a_{central}\) is therefore km/s². Before constructing a `StateVector`, Orbit converts position and velocity to m and m/s. The term is evaluated at every Cowell RK4 step and is the entire two-body dynamics.
+
 | Route | Application |
 | --- | --- |
 | Two bodies | It is the entire dynamic and is resolved analytically. |

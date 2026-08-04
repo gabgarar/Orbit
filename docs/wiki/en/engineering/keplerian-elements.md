@@ -40,6 +40,10 @@ They remain only as adapters; they do not change the declared framework.
 
 ## Use by J2 model
 
+### Variables, units and Orbit use
+
+\(a\) is entered in km, \(e\) is dimensionless, and anomalies, inclination, RAAN, and argument of periapsis arrive in degrees and are converted to radians. \(n\) is rad/s and \(M\) radians; these values feed only the manual two-body and J2 propagators.
+
 The J2 compatibility propagator keeps \(a\), \(e\) and \(i\) constant and
 applies secular rates to \(\Omega\), \(\omega\) and \(M\). Not an integrator
 numerical nor does it incorporate energy loss. See [J2](../propagation/j2.md).

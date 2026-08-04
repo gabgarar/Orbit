@@ -80,6 +80,10 @@ $$
 
 AOS and LOS are extracted from the first and last sample that meet that threshold; the instant of crossing is not refined.
 
+### Variables, units and Orbit use
+
+\(a\), \(N\), \(h\), \(E\), \(N\), \(U\), \(\Delta\mathbf r\), and ITRF positions are expressed in metres; \(e^2\) is dimensionless and \(\varphi\), \(\lambda\), \(\epsilon\), and \(\epsilon_{\min}\) are converted to radians during calculation. The UI accepts latitude/longitude in degrees and altitude or mask in metres/degrees, but `ground_stations.visibility` normalises them before evaluating ENU and the threshold. AOS/LOS are derived from discrete samples, not a continuous root.
+
 ## Coverage and radio
 
 The footprint and the heat map are visual representations associated with the

@@ -30,6 +30,10 @@ $$
 
 ## Parameters
 
+### Variables, units and Orbit use
+
+Internal \(\mathbf r\) and \(\mathbf v\) use km and km/s; to evaluate \(\mathbf v_{rel}\), \(\rho\), and \(B=C_DA/m\), Orbit converts the required quantities to SI. \(\rho\) is kg/m³, \(C_D\) is dimensionless, \(A\) is m², \(m\) is kg, and acceleration returns to km/s² before Cowell adds it. \(h\), \(h_0\), and \(H\) use one common layer-length unit.
+
 | Parameter | Unit | Restriction |
 | --- | --- | --- |
 | `drag_coefficient` | — | Finite and greater than zero; default value 2.2. |
@@ -59,3 +63,5 @@ manuals, not for operational prediction. See
     $$
     \rho=\rho_{\mathrm{MSIS}}(h,\phi,\lambda,t,F_{10.7},\overline{F}_{10.7},A_p).
     $$
+
+    Here \(h\) is height, \(\phi\)/\(\lambda\) are radians, \(t\) is epoch, and solar/geomagnetic indices use the MSIS product units. It is not evaluated by the current runtime.

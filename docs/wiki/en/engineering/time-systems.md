@@ -49,6 +49,10 @@ second 60 is not an accepted input by the Python contract.
 
 ## UT1 and EOP
 
+### Variables, units and Orbit use
+
+Instants and offsets in these equations use seconds; \(\Delta_{AT}\) and DUT1 are seconds. `TimeScaleConverter` consults the local leap-second table and EOP provider to resolve UTC↔TAI/TT/UT1; it never uses one fixed global offset.
+
 UT1 does not have a fixed civil offset. For an anniversary that is consulted or
 declares in UT1, Orbit first gets a provisional UTC, queries EOP,
 refine with DUT1 and keep the same transformer leap seconds table.

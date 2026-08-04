@@ -44,6 +44,10 @@ $$
 
 La aceleración Hermite se deriva del polinomio, \(\mathbf a(t)=\ddot H(t)\). Orbit no interpola la covarianza: la salida interpolada declara explícitamente que la covarianza es nula.
 
+### Variables, unidades y uso en Orbit
+
+Las muestras \(\mathbf r_i\), \(\mathbf v_i\) y la salida \(\mathbf r(t)\) se normalizan a m y m/s en `StateVector`; \(t\), \(t_i\) y \(\Delta t\) son segundos respecto a la época de consulta. Los pesos de Lagrange y Hermite son adimensionales, y la aceleración derivada es m/s². `TabularStateProvider` aplica estas ecuaciones solo entre muestras del segmento seleccionado; no interpola covarianza ni inventa marco, escala o unidades ausentes.
+
 ## Límites
 
 - SP3 y OEM de alta fidelidad no se degradan a semántica TLE.
