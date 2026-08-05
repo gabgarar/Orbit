@@ -35,6 +35,12 @@ El estado que recibe Cowell es \(\mathbf y=[\mathbf r,\mathbf v]^T\). Su derivad
 
 La suma contiene solo términos seleccionados. La ecuación expresa la física del propagador; no describe el algoritmo RK4 ni impone por sí sola un paso de integración.
 
+## Formulación cartesiana y modelos analíticos
+
+Cowell es un propagador de dinámica cartesiana: integra directamente \(\mathbf r\) y \(\mathbf v\) mediante \(\ddot{\mathbf r}=\mathbf a(\mathbf r,\mathbf v,t)\) en `EME2000`. Puede recibir una órbita manual que se haya descrito originalmente con elementos, pero durante la integración no usa esos elementos como variables de estado.
+
+Por tanto, este camino no integra ecuaciones de Gauss ni de Lagrange, no resuelve Kepler perturbado y no mantiene un plano orbital o un sistema nodal como parte del estado numérico. Esas formulaciones pertenecen a propagadores analíticos o variacionales; Cowell solo necesita la aceleración cartesiana total en cada evaluación.
+
 ## Marco de evaluación de las fuerzas
 
 Durante la integración, Cowell mantiene el estado y suma las aceleraciones en `EME2000`, usando km, km/s y km/s². El paso posterior a `ITRF` pertenece al servicio de transformación de marcos y ocurre después de obtener el estado nativo integrado.

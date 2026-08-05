@@ -35,6 +35,12 @@ The state given to Cowell is \(\mathbf y=[\mathbf r,\mathbf v]^T\). Its derivati
 
 The sum contains only selected terms. The equation expresses the propagator physics; it does not describe RK4 or impose an integration step by itself.
 
+## Cartesian formulation and analytical models
+
+Cowell is a Cartesian-dynamics propagator: it integrates \(\mathbf r\) and \(\mathbf v\) directly through \(\ddot{\mathbf r}=\mathbf a(\mathbf r,\mathbf v,t)\) in `EME2000`. It may receive a manual orbit originally described with elements, but it does not use those elements as integration state variables.
+
+Consequently, this path does not integrate Gauss or Lagrange equations, solve perturbed Kepler motion, or retain an orbital plane or nodal system as part of the numerical state. Those formulations belong to analytical or variational propagators; Cowell only needs total Cartesian acceleration at each evaluation.
+
 ## Force evaluation frame
 
 During integration, Cowell keeps the state and sums accelerations in `EME2000`, using km, km/s, and km/s². The later conversion to `ITRF` belongs to the frame-transformation service and occurs after the integrated native state is produced.
