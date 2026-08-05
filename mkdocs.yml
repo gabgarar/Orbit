@@ -68,6 +68,7 @@ plugins:
                     - Workspace: user-guide/workspace.md
                     - Workspace concepts: workspace.md
                     - Layers: user-guide/layers.md
+                    - Manual orbits: user-guide/manual-orbits.md
                     - Visualisation: user-guide/visualization.md
                     - 3D view: user-guide/three-d-view.md
                     - Timeline: user-guide/timeline.md
@@ -262,6 +263,7 @@ nav:
           - Espacio de trabajo: user-guide/workspace.md
           - Conceptos de espacio de trabajo: workspace.md
           - Capas: user-guide/layers.md
+          - Órbitas manuales: user-guide/manual-orbits.md
           - Visualización: user-guide/visualization.md
           - Vista 3D: user-guide/three-d-view.md
           - Línea temporal: user-guide/timeline.md

@@ -8,6 +8,11 @@ function publishLayersPanelState(open) {
     window.dispatchEvent(new CustomEvent("orbit:layers-panel-state", { detail: { open } }));
 }
 
+function isManualOrbitDesignActive() {
+    return window.__orbitManualOrbitDesignActive === true
+        || document.documentElement.dataset.manualOrbitDesign === "true";
+}
+
 const PROJECT_ACTIONS = [
     { action: "new", label: "Nuevo proyecto", description: "Crea un espacio de trabajo vacío" },
     { action: "open", label: "Importar proyecto", description: "Abre un archivo .json de Orbit" },
@@ -50,7 +55,7 @@ function ProjectActionsMenu({ source, left, top, onSelect }) {
 
 function ProjectTimeFooter() {
     const [context, setContext] = useState({ date: new Date(), mode: "realtime", isPlaying: true });
-    const [designMode, setDesignMode] = useState(false);
+    const [designMode, setDesignMode] = useState(isManualOrbitDesignActive);
     const [modeMenuOpen, setModeMenuOpen] = useState(false);
     useEffect(() => {
         const onTimeContext = (event) => {
@@ -132,7 +137,7 @@ export default function WorkspaceSidebar() {
     const [allLayersVisible, setAllLayersVisible] = useState(true);
     const [hasActiveLayers, setHasActiveLayers] = useState(() => getLayerActionsState().hasActiveLayers);
     const [manualOrbitOpen, setManualOrbitOpen] = useState(false);
-    const [designMode, setDesignMode] = useState(false);
+    const [designMode, setDesignMode] = useState(isManualOrbitDesignActive);
     const [selectedInspectableLayer, setSelectedInspectableLayer] = useState(null);
     const [propagatedParametersOpen, setPropagatedParametersOpen] = useState(false);
     useEffect(() => {
@@ -282,14 +287,14 @@ export default function WorkspaceSidebar() {
     };
     return <>
         <aside id="leftSidebar" aria-label="Paneles del visor">
-            <button id="leftSatellitesBtn" className={`sidebar-btn${openPanel ? " active" : ""}`} type="button" title="Capas y satelites" aria-label="Capas y satelites" onClick={togglePanel}><SatelliteIcon /></button>
+            <button id="leftSatellitesBtn" className={`sidebar-btn${openPanel && !designMode ? " active" : ""}`} type="button" title="Capas y satelites" aria-label="Capas y satelites" aria-expanded={openPanel && !designMode} onClick={togglePanel} hidden={designMode}><SatelliteIcon /></button>
             <button id="leftManualOrbitBtn" className={`sidebar-btn${manualOrbitOpen ? " active" : ""}`} type="button" title={"Crear \u00f3rbita manual"} aria-label={"Crear \u00f3rbita manual"} aria-expanded={manualOrbitOpen} onClick={() => window.dispatchEvent(new CustomEvent("orbit:manual-orbit-toggle", { detail: { open: !manualOrbitOpen } }))}><ManualOrbitIcon /></button>
             <button id="leftPropagatedParametersBtn" className={`sidebar-btn${propagatedParametersOpen ? " active" : ""} disabled:!cursor-not-allowed disabled:!opacity-40`} type="button" title={propagatedParametersTitle} aria-label={propagatedParametersTitle} aria-expanded={propagatedParametersOpen} disabled={!propagatedParametersAvailable} onClick={togglePropagatedParameters}><PropagatedParametersIcon /></button>
             <div className="sidebar-spacer" />
             <SessionRecordButton />
             <CameraControls />
         </aside>
-        <aside id="leftSatellitesPanel" className={`sidebar-panel${openPanel ? " open" : ""}`}>
+        <aside id="leftSatellitesPanel" className={`sidebar-panel${openPanel && !designMode ? " open" : ""}`} aria-hidden={designMode} hidden={designMode}>
             <div className="sidebar-panel-header orbit-layers-panel-header relative z-[2] !flex !items-center !justify-between !overflow-visible after:!hidden max-[620px]:!min-h-[62px] max-[620px]:!p-[14px]">
                 <div className="orbit-layers-heading">LAYERS</div>
                 <div className="relative shrink-0">

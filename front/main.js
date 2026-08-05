@@ -69,6 +69,7 @@ import { applyAntialiasMode } from "./js/rendering/antialiasing.js";
 import { applyStarsConfig } from "./js/rendering/stars.js";
 import {
     createCelestialBodyLayerManager,
+    EARTH_LAYER_ID,
     isCelestialBodyLayerId,
     isEarthLayerId
 } from "./js/rendering/celestialLayers.js";
@@ -1057,10 +1058,16 @@ function computeStationElevationDeg(stationCartesian, satCartesian) {
     return calculateElevationDegrees(Cesium, stationCartesian, satCartesian);
 }
 
-function resetCameraView() {
+function resetCameraView({ immediate = false } = {}) {
     bodyCentricCamera.deactivate();
     viewer.trackedEntity = undefined;
-    viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(0, 20, 20_000_000), duration: 0.8 });
+    const destination = Cesium.Cartesian3.fromDegrees(0, 20, 20_000_000);
+    if (immediate && typeof viewer.camera?.setView === "function") {
+        viewer.camera.cancelFlight?.();
+        viewer.camera.setView({ destination });
+        return;
+    }
+    viewer.camera.flyTo({ destination, duration: 0.8 });
 }
 
 
@@ -3556,8 +3563,22 @@ function getManualOrbitDesignWindow() {
 }
 
 function publishManualOrbitDesignState(active) {
+    const isActive = Boolean(active);
+    // React can remount independently of the Cesium runtime (for example
+    // after a hot refresh). Persist the state outside the event so each
+    // overlay can initialise correctly instead of missing a past transition.
+    window.__orbitManualOrbitDesignActive = isActive;
+    document.documentElement.dataset.manualOrbitDesign = isActive ? "true" : "false";
+
+    // Keep the legacy/React Layers surface out of the editor even while a
+    // React update is pending. The component mirrors this from the persistent
+    // state above, so it remains hidden after subsequent re-renders as well.
+    for (const id of ["leftSatellitesBtn", "leftSatellitesPanel"]) {
+        const element = document.getElementById(id);
+        if (element) element.hidden = isActive;
+    }
     window.dispatchEvent(new CustomEvent("orbit:manual-orbit-design-state", {
-        detail: { active: Boolean(active) }
+        detail: { active: isActive }
     }));
 }
 
@@ -3615,6 +3636,14 @@ function enterManualOrbitDesignMode() {
     window.dispatchEvent(new Event("orbit:satellite-viz-close"));
     window.dispatchEvent(new Event("orbit:tle-info-close"));
 
+    // Earth is a persistent layer, but a previous "hide all" action may have
+    // left Cesium's globe disabled. Make the editor's central body explicit
+    // before taking the snapshot so it is restored exactly when design mode
+    // closes.
+    if (!celestialBodyLayers.has(EARTH_LAYER_ID)) {
+        celestialBodyLayers.add(EARTH_LAYER_ID);
+    }
+
     const layerVisibility = new Map();
     const activeLayerIds = getCompositeLayerIds().filter((layerId) => isCompositeLayerActive(layerId));
     // Take the whole snapshot before changing a single entity. Duplicated
@@ -3625,8 +3654,19 @@ function enterManualOrbitDesignMode() {
         layerVisibility.set(layerId, getCompositeLayerVisibility(layerId) === true);
     }
     for (const layerId of activeLayerIds) {
-        setCompositeLayerVisibility(layerId, false);
+        // The manual-orbit editor is Earth-centred. Keep its central body
+        // visible even when the user had hidden it before entering design
+        // mode; the snapshot above restores that original preference later.
+        setCompositeLayerVisibility(layerId, isEarthLayerId(layerId));
     }
+    // Do not rely only on the layer tree here. The Earth is Cesium's native
+    // globe rather than an ordinary entity, so assert its renderer state too.
+    // This covers a global-hide action issued before the editor was opened.
+    setCompositeLayerVisibility(EARTH_LAYER_ID, true);
+    if (viewer.scene?.globe) {
+        viewer.scene.globe.show = true;
+    }
+    viewer.scene?.requestRender?.();
 
     const legacyInfoPanel = document.getElementById("leftInfoPanel");
     const legacyInfoButton = document.getElementById("leftInfoBtn");
@@ -3661,7 +3701,10 @@ function enterManualOrbitDesignMode() {
     // camera position, which can make the newly enabled ground track look as
     // though it moved the viewport. This is intentionally done only when the
     // design session opens, never while its preview settings are toggled.
-    resetCameraView();
+    // This is deliberately immediate: a preview response can arrive while a
+    // fly-to animation is in progress, leaving the editor on the old orbit
+    // framing instead of the Earth-centred design view.
+    resetCameraView({ immediate: true });
     publishManualOrbitDesignState(true);
     try {
         applyManualOrbitDesignTimeWindow();

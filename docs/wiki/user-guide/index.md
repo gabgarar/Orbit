@@ -13,6 +13,7 @@ límites que afectan a la conservación de datos y a la interpretación técnica
 | [Proyectos](projects.md) | Crear, abrir, guardar y descargar documentos de proyecto locales. |
 | [Espacio de trabajo](workspace.md) | Identificar paneles, selección y acciones del entorno de trabajo. |
 | [Capas](layers.md) | Organizar capas y carpetas, y controlar su visibilidad. |
+| [Órbitas manuales](manual-orbits.md) | Diseñar, previsualizar y confirmar una órbita geocéntrica. |
 | [Visualización](visualization.md) | Configurar el aspecto de objetos, órbitas, mapa y escena. |
 | [Vista 3D](three-d-view.md) | Cambiar proyección, navegación, cámara y grabación local. |
 | [Línea temporal](timeline.md) | Trabajar en modo estático, tiempo real o simulación de rango. |
@@ -41,4 +42,3 @@ límites que afectan a la conservación de datos y a la interpretación técnica
 
 Use el [inicio rápido](../getting-started/quick-start.md) para iniciar una
 sesión nueva.
-

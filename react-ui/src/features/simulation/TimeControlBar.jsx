@@ -6,6 +6,8 @@ const toDateTimeInput = (value) => { const date = new Date(value); return Number
 const timelineDateLabel = (value) => new Date(value).toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
 const timelineTimeLabel = (value) => new Date(value).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false });
 const classNames = (...classes) => classes.filter(Boolean).join(" ");
+const isManualOrbitDesignActive = () => window.__orbitManualOrbitDesignActive === true
+    || document.documentElement.dataset.manualOrbitDesign === "true";
 
 const buttonClass = "h-[31px] cursor-pointer rounded-[7px] border border-[#213653] bg-[#0c1728] px-[10px] font-[inherit] text-[#b9c9df] hover:border-[#4168a3] hover:bg-[#14243d] hover:text-[#edf4ff] disabled:cursor-not-allowed disabled:opacity-[.42]";
 const activeButtonClass = "active border-[#4774ff] bg-[#17357b] text-[#dfe8ff] shadow-[inset_0_0_0_1px_rgba(114,145,255,.18)] hover:border-[#4774ff] hover:bg-[#17357b] hover:text-[#dfe8ff]";
@@ -36,7 +38,7 @@ function buildTimelineMarks(startValue, endValue, count = 6) {
 
 export default function TimeControlBar() {
     const [collapsed, setCollapsed] = useState(false); const [simulation, setSimulation] = useState(initialSimulation); const [dockLeft, setDockLeft] = useState(null); const [dockHeight, setDockHeight] = useState(null); const [dockBottom, setDockBottom] = useState(null);
-    const [speedMenuOpen, setSpeedMenuOpen] = useState(false); const [dateMenuOpen, setDateMenuOpen] = useState(false); const [designMode, setDesignMode] = useState(false);
+    const [speedMenuOpen, setSpeedMenuOpen] = useState(false); const [dateMenuOpen, setDateMenuOpen] = useState(false); const [designMode, setDesignMode] = useState(isManualOrbitDesignActive);
     const sendAction = (type, value) => window.dispatchEvent(new CustomEvent("orbit:simulation-action", { detail: { type, value } }));
 
     useEffect(() => { const sync = (event) => setSimulation((current) => ({ ...current, ...(event.detail || {}) })); window.addEventListener("orbit:simulation-state", sync); return () => window.removeEventListener("orbit:simulation-state", sync); }, []);

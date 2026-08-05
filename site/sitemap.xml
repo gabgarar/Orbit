@@ -876,6 +876,13 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/user-guide/layers/"/>
     </url>
     <url>
+        <loc>https://gabgarar.github.io/Orbit/user-guide/manual-orbits/</loc>
+        <lastmod>2026-08-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/user-guide/manual-orbits/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/user-guide/manual-orbits/"/>
+    </url>
+    <url>
         <loc>https://gabgarar.github.io/Orbit/user-guide/projects/</loc>
         <lastmod>2026-08-05</lastmod>
         <changefreq>daily</changefreq>
@@ -1784,6 +1791,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/user-guide/layers/"/>
         <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/user-guide/layers/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/user-guide/manual-orbits/</loc>
+        <lastmod>2026-08-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/user-guide/manual-orbits/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/user-guide/manual-orbits/"/>
     </url>
     <url>
         <loc>https://gabgarar.github.io/Orbit/en/user-guide/projects/</loc>

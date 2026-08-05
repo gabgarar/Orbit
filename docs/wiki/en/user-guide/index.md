@@ -13,6 +13,7 @@ limits affecting data retention and technical interpretation.
 | [Projects](projects.md) | Create, open, save and download local project documents. |
 | [Workspace](workspace.md) | Identify panels, selection and actions of the work environment. |
 | [Layers](layers.md) | Organize layers and folders, and control their visibility. |
+| [Manual orbits](manual-orbits.md) | Design, preview, and confirm an Earth-centred orbit. |
 | [Visualization](visualization.md) | Configure the appearance of objects, orbits, map and scene. |
 | [3D View](three-d-view.md) | Change projection, navigation, camera and local recording. |
 | [Timeline](timeline.md) | Work in static, real-time or range simulation mode. |
