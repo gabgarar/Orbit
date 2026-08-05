@@ -16,6 +16,10 @@ temporarily. The **Layers** panel and button disappear as well, so the form and
 3D view do not compete with the project tree. Earth is always shown as the
 visual design reference, even if it was hidden before the editor opened.
 
+The **Overview** tab explicitly identifies the central body as **Earth /
+WGS-84**. Opening the editor resets the camera to Cesium's Earth Home view;
+cancelling also restores the workspace's previous camera view.
+
 On cancellation or confirmation, Orbit restores exactly the visibility that
 layers and Earth had before entry. Design mode does not delete layers or modify
 the project until creation is confirmed.

@@ -1012,6 +1012,16 @@ test("La bienvenida queda centrada y Generate orbit abre el diseñador con sus v
     const designer = page.locator("#manualOrbitPanel");
     await expect(designer).toBeVisible();
     await expectPanelSurfaceTransparency(page, "#manualOrbitPanel");
+    // The designer owns an isolated Earth-centred scene. Layers must be
+    // genuinely hidden (not merely translated off-screen) while it is open,
+    // then restored to its prior expanded state when the draft is closed.
+    await expect(page.locator("#leftSatellitesPanel")).toBeHidden();
+    await expect(page.locator("#leftSatellitesBtn")).toBeHidden();
+    await expect(page.locator("#manualOrbitCentralBody")).toContainText("Earth");
+    await expect.poll(() => page.evaluate(() => ({
+        active: window.__orbitManualOrbitDesignActive === true,
+        dataset: document.documentElement.dataset.manualOrbitDesign
+    }))).toEqual({ active: true, dataset: "true" });
     const vectors = designer.getByRole("button", { name: "Ver ejes y vectores", exact: true });
     await expect(vectors).toBeVisible();
     await page.evaluate(() => Array.from(document.querySelectorAll("#manualOrbitPanel button"))
@@ -1026,6 +1036,16 @@ test("La bienvenida queda centrada y Generate orbit abre el diseñador con sus v
     const propagatedParameters = page.locator(".propagated-orbit-parameters-panel");
     await expect(propagatedParameters).toBeVisible();
     await expectPanelSurfaceTransparency(page, ".propagated-orbit-parameters-panel");
+
+    await designer.getByRole("button", { name: /Cerrar creador de .rbita manual/ }).click();
+    await expect(designer).toBeHidden();
+    await expect(page.locator("#leftSatellitesPanel")).toBeVisible();
+    await expect(page.locator("#leftSatellitesPanel")).toHaveClass(/open/);
+    await expect(page.locator("#leftSatellitesBtn")).toBeVisible();
+    await expect.poll(() => page.evaluate(() => ({
+        active: window.__orbitManualOrbitDesignActive === true,
+        dataset: document.documentElement.dataset.manualOrbitDesign
+    }))).toEqual({ active: false, dataset: "false" });
 });
 
 test("El visor no carga Cesium ni pako desde proveedores externos", async ({ page }, testInfo) => {

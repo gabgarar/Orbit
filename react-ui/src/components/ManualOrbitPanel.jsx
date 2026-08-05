@@ -401,6 +401,12 @@ function dispatch(name, detail) {
     window.dispatchEvent(new CustomEvent(name, { detail }));
 }
 
+function getPersistedManualOrbitState() {
+    if (typeof window === "undefined") return null;
+    const state = window.__orbitManualOrbitState;
+    return state && typeof state === "object" ? state : null;
+}
+
 function stateVectorPayload(stateVector) {
     return {
         positionEciKm: {
@@ -678,16 +684,22 @@ function ForceTermToggle({ option, checked, onChange, required = false }) {
 }
 
 export default function ManualOrbitPanel() {
-    const [open, setOpen] = useState(false);
-    const [activeTab, setActiveTab] = useState("overview");
-    const [definitionTab, setDefinitionTab] = useState("keplerian");
-    const [form, setForm] = useState(createDefaultForm);
+    const [open, setOpen] = useState(() => getPersistedManualOrbitState()?.open === true);
+    const [activeTab, setActiveTab] = useState(() => {
+        const tab = getPersistedManualOrbitState()?.activeTab ?? getPersistedManualOrbitState()?.panelTab;
+        return ["overview", "orbit", "propagation"].includes(tab) ? tab : "overview";
+    });
+    const [definitionTab, setDefinitionTab] = useState(() => getPersistedManualOrbitState()?.tab === "state-vector" ? "state-vector" : "keplerian");
+    const [form, setForm] = useState(() => mergeIncomingForm(createDefaultForm(), getPersistedManualOrbitState() || {}));
     const [status, setStatus] = useState(null);
     const [vectorsVisible, setVectorsVisible] = useState(false);
     // The runtime owns the replacement target.  Keeping only its id in the
     // UI lets the same form distinguish a new authored orbit from an edit
     // without ever making catalogue objects editable in React.
-    const [editingManualOrbitId, setEditingManualOrbitId] = useState(null);
+    const [editingManualOrbitId, setEditingManualOrbitId] = useState(() => {
+        const id = String(getPersistedManualOrbitState()?.editingManualOrbitId || "").trim();
+        return id || null;
+    });
     const openRef = useRef(open);
 
     const publishPanelState = (nextOpen) => dispatch("orbit:manual-orbit-panel-state", {
@@ -1003,6 +1015,14 @@ export default function ManualOrbitPanel() {
             </div>}
 
             {activeTab === "overview" && <section id="manual-orbit-overview" className="pt-3" role="tabpanel">
+                <section id="manualOrbitCentralBody" className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-[#31527d] bg-[#0a1a2f] px-3 py-2.5" aria-labelledby="manualOrbitCentralBodyTitle">
+                    <span className="min-w-0">
+                        <span id="manualOrbitCentralBodyTitle" className="block text-[9px] leading-none font-bold uppercase tracking-[.08em] text-[#83a8df]">Central body</span>
+                        <strong className="mt-1 block text-[12px] leading-none text-[#edf5ff]">Earth</strong>
+                    </span>
+                    <span className="shrink-0 rounded-full border border-[#2f5d9d] bg-[#102b4d] px-2 py-1 text-[9px] leading-none font-bold text-[#bad7ff]">WGS-84</span>
+                    <small className="sr-only">Manual orbit design is currently geocentric. Earth is the fixed central body.</small>
+                </section>
                 <div className="flex items-baseline justify-between gap-2">
                     <h3 className="m-0 text-[12px] leading-none font-bold text-[#e7effd]">Object record</h3>
                     <span className="text-[9px] leading-none font-semibold tracking-[.06em] text-[#7f94b4]">METADATA</span>

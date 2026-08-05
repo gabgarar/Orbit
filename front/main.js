@@ -670,7 +670,17 @@ function getSimulationModeLabel() {
     return uiText("simRealtime");
 }
 
+function isManualOrbitDesignActive() {
+    return manualOrbitDesignSession?.active === true;
+}
+
 function openLeftSatellitesPanel() {
+    // The React trigger is hidden during manual design, but several legacy
+    // command paths can still call this helper. Never let one reopen Layers
+    // over the isolated editor.
+    if (isManualOrbitDesignActive()) {
+        return false;
+    }
     const satellitesPanel = document.getElementById("leftSatellitesPanel");
     const satellitesBtn = document.getElementById("leftSatellitesBtn");
     const infoPanel = document.getElementById("leftInfoPanel");
@@ -691,6 +701,7 @@ function openLeftSatellitesPanel() {
     // React owns the rendered panel classes. Keep imperative legacy actions
     // in sync with that state so the next sidebar click always toggles once.
     window.dispatchEvent(new CustomEvent("orbit:layers-panel-state", { detail: { open: true } }));
+    return true;
 }
 
 function getDisplayedSimulationDate() {
@@ -1062,12 +1073,71 @@ function resetCameraView({ immediate = false } = {}) {
     bodyCentricCamera.deactivate();
     viewer.trackedEntity = undefined;
     const destination = Cesium.Cartesian3.fromDegrees(0, 20, 20_000_000);
+    // `setView` otherwise retains the last local-camera orientation. After
+    // following an object, that direction can point away from the Earth and
+    // show only the star field at the neutral destination.
+    const orientation = { heading: 0, pitch: -Math.PI / 2, roll: 0 };
     if (immediate && typeof viewer.camera?.setView === "function") {
         viewer.camera.cancelFlight?.();
-        viewer.camera.setView({ destination });
+        viewer.camera.setView({ destination, orientation });
         return;
     }
-    viewer.camera.flyTo({ destination, duration: 0.8 });
+    viewer.camera.flyTo({ destination, orientation, duration: 0.8 });
+}
+
+function cloneCameraVector(vector) {
+    if (!vector || typeof Cesium?.Cartesian3?.clone !== "function") {
+        return null;
+    }
+    return Cesium.Cartesian3.clone(vector);
+}
+
+function captureCameraView() {
+    const camera = viewer?.camera;
+    const destination = cloneCameraVector(camera?.positionWC || camera?.position);
+    const direction = cloneCameraVector(camera?.directionWC || camera?.direction);
+    const up = cloneCameraVector(camera?.upWC || camera?.up);
+    return destination && direction && up ? { destination, direction, up } : null;
+}
+
+function restoreCameraView(snapshot) {
+    if (!snapshot || typeof viewer?.camera?.setView !== "function") {
+        return false;
+    }
+    try {
+        bodyCentricCamera.deactivate();
+        viewer.camera.cancelFlight?.();
+        viewer.camera.setView({
+            destination: snapshot.destination,
+            orientation: { direction: snapshot.direction, up: snapshot.up }
+        });
+        return true;
+    } catch (error) {
+        logger.warn("No se pudo restaurar la vista anterior al cerrar el diseÃ±ador orbital:", error);
+        return false;
+    }
+}
+
+function focusManualOrbitDesignEarth() {
+    bodyCentricCamera.deactivate();
+    viewer.selectedEntity = undefined;
+    viewer.trackedEntity = undefined;
+
+    // Cesium's Home action is its stable, Earth-aware framing. Unlike moving
+    // a camera position alone, it also resets the viewing direction after a
+    // satellite/local-body camera session.
+    const centered = centerViewOnEarth({
+        viewer,
+        entity: celestialBodyLayers.getEntity(EARTH_LAYER_ID),
+        duration: 0,
+        logger
+    });
+    viewer.selectedEntity = undefined;
+    viewer.trackedEntity = undefined;
+    if (!centered) {
+        resetCameraView({ immediate: true });
+    }
+    viewer.scene?.requestRender?.();
 }
 
 
@@ -3272,14 +3342,21 @@ function firstPersonSatellite(entity) {
 }
 
 function publishManualOrbitState(extra = {}) {
+    const detail = {
+        ...manualOrbitEditorState,
+        ...getManualOrbitDesignSettings(),
+        designMode: Boolean(manualOrbitDesignSession?.active),
+        // Keep the panel contract self-contained. A React remount can recover
+        // from this latest state without waiting for a new editor event.
+        open: typeof extra.open === "boolean"
+            ? extra.open
+            : Boolean(manualOrbitDesignSession?.active),
+        editingManualOrbitId: manualOrbitEditingTarget?.id || null,
+        ...extra
+    };
+    window.__orbitManualOrbitState = detail;
     window.dispatchEvent(new CustomEvent("orbit:manual-orbit-state", {
-        detail: {
-            ...manualOrbitEditorState,
-            ...getManualOrbitDesignSettings(),
-            designMode: Boolean(manualOrbitDesignSession?.active),
-            editingManualOrbitId: manualOrbitEditingTarget?.id || null,
-            ...extra
-        }
+        detail
     }));
 }
 
@@ -3636,6 +3713,10 @@ function enterManualOrbitDesignMode() {
     window.dispatchEvent(new Event("orbit:satellite-viz-close"));
     window.dispatchEvent(new Event("orbit:tle-info-close"));
 
+    // Capture before hiding a focused layer: hiding it can release a local
+    // body camera, which would otherwise overwrite the view to restore.
+    const cameraBeforeDesign = captureCameraView();
+
     // Earth is a persistent layer, but a previous "hide all" action may have
     // left Cesium's globe disabled. Make the editor's central body explicit
     // before taking the snapshot so it is restored exactly when design mode
@@ -3670,12 +3751,16 @@ function enterManualOrbitDesignMode() {
 
     const legacyInfoPanel = document.getElementById("leftInfoPanel");
     const legacyInfoButton = document.getElementById("leftInfoBtn");
+    const layersPanel = document.getElementById("leftSatellitesPanel");
+    const layersButton = document.getElementById("leftSatellitesBtn");
     manualOrbitDesignSession = {
         active: true,
         layerVisibility,
+        camera: cameraBeforeDesign,
         selectedSatelliteId,
         selectedEntity: viewer.selectedEntity,
         trackedEntity: viewer.trackedEntity,
+        layersPanelWasOpen: layersPanel?.classList.contains("open") === true && layersPanel.hidden !== true,
         legacyInfoPanelWasOpen: legacyInfoPanel?.classList.contains("open") === true,
         legacyInfoButtonWasActive: legacyInfoButton?.classList.contains("active") === true,
         simulation: {
@@ -3692,20 +3777,18 @@ function enterManualOrbitDesignMode() {
 
     viewer.selectedEntity = undefined;
     viewer.trackedEntity = undefined;
+    layersPanel?.classList.remove("open");
+    layersButton?.classList.remove("active");
     legacyInfoPanel?.classList.remove("open");
     legacyInfoButton?.classList.remove("active");
     setCurrentSelectedSatellite(null);
     setSelectedOrbitSatelliteId(null);
-    // Design mode must always start from the neutral Earth view. Releasing a
-    // tracked satellite alone leaves Cesium at the previous close-follow
-    // camera position, which can make the newly enabled ground track look as
-    // though it moved the viewport. This is intentionally done only when the
-    // design session opens, never while its preview settings are toggled.
-    // This is deliberately immediate: a preview response can arrive while a
-    // fly-to animation is in progress, leaving the editor on the old orbit
-    // framing instead of the Earth-centred design view.
-    resetCameraView({ immediate: true });
+    // Design mode always starts from Cesium's Earth-aware Home framing.
+    // Releasing a tracked satellite alone is not enough: its old orientation
+    // may continue looking into space after the camera moves.
+    focusManualOrbitDesignEarth();
     publishManualOrbitDesignState(true);
+    window.dispatchEvent(new CustomEvent("orbit:layers-panel-state", { detail: { open: false } }));
     try {
         applyManualOrbitDesignTimeWindow();
         scheduleManualOrbitPreview({ immediate: true });
@@ -3765,6 +3848,7 @@ function restoreManualOrbitDesignMode({
         applySimulationDateToViewer(getDisplayedSimulationDate());
         refreshSimulationControlsUi();
         updateTopToolbarTime();
+        restoreCameraView(session.camera);
         viewer.selectedEntity = session.selectedEntity;
         viewer.trackedEntity = session.trackedEntity;
         setCurrentSelectedSatellite(session.selectedSatelliteId);
@@ -3776,6 +3860,14 @@ function restoreManualOrbitDesignMode({
     }
 
     publishManualOrbitDesignState(false);
+    const layersPanel = document.getElementById("leftSatellitesPanel");
+    const layersButton = document.getElementById("leftSatellitesBtn");
+    const restoreLayersPanelOpen = session.layersPanelWasOpen === true;
+    layersPanel?.classList.toggle("open", restoreLayersPanelOpen);
+    layersButton?.classList.toggle("active", restoreLayersPanelOpen);
+    window.dispatchEvent(new CustomEvent("orbit:layers-panel-state", {
+        detail: { open: restoreLayersPanelOpen }
+    }));
     objectSidebar?.renderList?.();
 }
 
@@ -5199,11 +5291,22 @@ function setupPropagatedParametersInspector() {
         getObjectTelemetry: (id) => getCompositeLayerTelemetry(id),
         getObjectTimeRange: (id, telemetry) => getObjectTimeRange(id, telemetry),
         getObjectVisibility: (id) => getCompositeLayerVisibility(id),
-        onToggleObjectVisibility: (id, visible) => setCompositeLayerVisibility(id, visible),
+        onToggleObjectVisibility: (id, visible) => {
+            if (isManualOrbitDesignActive()) return false;
+            setCompositeLayerVisibility(id, visible);
+            return true;
+        },
         getObjectLayerActive: (id) => isCompositeLayerActive(id),
-        onToggleObjectLayer: (id, active) => setCompositeLayerActive(id, active),
-        onAddAllLayers: () => setAllSatelliteLayersActive(true),
+        onToggleObjectLayer: (id, active) => {
+            if (isManualOrbitDesignActive()) return false;
+            return setCompositeLayerActive(id, active);
+        },
+        onAddAllLayers: () => {
+            if (isManualOrbitDesignActive()) return false;
+            return setAllSatelliteLayersActive(true);
+        },
         onRemoveAllLayers: () => {
+            if (isManualOrbitDesignActive()) return false;
             bodyCentricCamera.deactivate();
             setAllSatelliteLayersActive(false);
             for (const stationId of [...groundStationLayers.keys()]) {
@@ -5215,8 +5318,10 @@ function setupPropagatedParametersInspector() {
             satelliteDuplicateLayers.clear();
             layerDisplayNameOverrides.clear();
             objectSidebar?.clearProjectTree?.();
+            return true;
         },
         onShowAllObjects: () => {
+            if (isManualOrbitDesignActive()) return false;
             setAllSatellitesVisible(true);
             for (const stationId of groundStationLayers.keys()) {
                 setCompositeLayerVisibility(stationId, true);
@@ -5224,8 +5329,10 @@ function setupPropagatedParametersInspector() {
             for (const bodyId of celestialBodyLayers.getIds()) {
                 setCompositeLayerVisibility(bodyId, true);
             }
+            return true;
         },
         onHideAllObjects: () => {
+            if (isManualOrbitDesignActive()) return false;
             bodyCentricCamera.deactivate();
             setAllSatellitesVisible(false);
             for (const stationId of groundStationLayers.keys()) {
@@ -5234,26 +5341,32 @@ function setupPropagatedParametersInspector() {
             for (const bodyId of celestialBodyLayers.getIds()) {
                 setCompositeLayerVisibility(bodyId, false);
             }
+            return true;
         },
         onFocusObject: (id) => {
+            if (isManualOrbitDesignActive()) return false;
             const entity = getCompositeLayerEntity(id);
             if (!entity) {
-                return;
+                return false;
             }
             setCurrentSelectedSatellite(id);
             syncSelectedOrbitLayer(id);
             centerViewOnObject(id);
+            return true;
         },
         onSelectObject: (id) => {
+            if (isManualOrbitDesignActive()) return false;
             const entity = getCompositeLayerEntity(id);
             if (!entity) {
-                return;
+                return false;
             }
             setCurrentSelectedSatellite(id);
             syncSelectedOrbitLayer(id);
             viewer.selectedEntity = entity;
+            return true;
         },
         onOpenVisualizationOptions: (id) => {
+            if (isManualOrbitDesignActive()) return;
             if (!id) {
                 return;
             }

@@ -2685,10 +2685,16 @@ export function setupObjectSidebar({
     toggleAllVisibilityBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         if (globalLayersVisible) {
-            onHideAllObjects();
+            const changed = onHideAllObjects?.();
+            // A caller can lock layer controls temporarily (for example while
+            // the manual-orbit designer owns an isolated Earth scene). Do not
+            // flip the global eye icon when the underlying scene was not
+            // changed.
+            if (changed === false) return;
             setGlobalVisibility(false);
         } else {
-            onShowAllObjects();
+            const changed = onShowAllObjects?.();
+            if (changed === false) return;
             setGlobalVisibility(true);
         }
         renderList();

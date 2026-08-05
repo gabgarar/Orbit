@@ -17,6 +17,11 @@ el formulario y la vista 3D no compitan con el árbol del proyecto. La Tierra
 se muestra siempre como referencia visual del diseño, aunque estuviera oculta
 antes de abrir el editor.
 
+La pestaña **Overview** identifica explícitamente el cuerpo central como
+**Earth / WGS-84**. Al abrir el editor, la cámara vuelve a la vista Home de
+la Tierra; al cancelar, también se recupera la vista anterior del espacio de
+trabajo.
+
 Al cancelar o confirmar la órbita, Orbit restaura exactamente la visibilidad
 que tenían las capas y la Tierra antes de entrar. El diseño no borra capas ni
 modifica el proyecto hasta que se confirma la creación.

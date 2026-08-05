@@ -6,6 +6,20 @@
 html, body, #root, #cesiumContainer { width: 100%; height: 100%; margin: 0; }
 html, body, #root { background: #000; overflow: hidden; }
 
+/* `#leftSatellitesPanel` is a flex container in the legacy theme, whose
+   selector wins over the browser's default `[hidden] { display: none }` rule.
+   Honour the semantic hidden state explicitly so the Layers workspace cannot
+   leak into the isolated manual-orbit designer. */
+#leftSatellitesPanel[hidden],
+html[data-manual-orbit-design="true"] #leftSatellitesPanel {
+    display: none !important;
+}
+
+#leftSidebar #leftSatellitesBtn[hidden],
+html[data-manual-orbit-design="true"] #leftSidebar #leftSatellitesBtn {
+    display: none !important;
+}
+
 #topToolbar .toolbar-nav-icon { display: inline-flex; }
 #topToolbar .toolbar-nav-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 

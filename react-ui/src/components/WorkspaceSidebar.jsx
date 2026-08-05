@@ -13,6 +13,10 @@ function isManualOrbitDesignActive() {
         || document.documentElement.dataset.manualOrbitDesign === "true";
 }
 
+function isManualOrbitPanelOpen() {
+    return window.__orbitManualOrbitState?.open === true;
+}
+
 const PROJECT_ACTIONS = [
     { action: "new", label: "Nuevo proyecto", description: "Crea un espacio de trabajo vacío" },
     { action: "open", label: "Importar proyecto", description: "Abre un archivo .json de Orbit" },
@@ -136,7 +140,7 @@ export default function WorkspaceSidebar() {
     const [searchOptions, setSearchOptions] = useState({ matchCase: false, wholeWord: false, regex: false });
     const [allLayersVisible, setAllLayersVisible] = useState(true);
     const [hasActiveLayers, setHasActiveLayers] = useState(() => getLayerActionsState().hasActiveLayers);
-    const [manualOrbitOpen, setManualOrbitOpen] = useState(false);
+    const [manualOrbitOpen, setManualOrbitOpen] = useState(isManualOrbitPanelOpen);
     const [designMode, setDesignMode] = useState(isManualOrbitDesignActive);
     const [selectedInspectableLayer, setSelectedInspectableLayer] = useState(null);
     const [propagatedParametersOpen, setPropagatedParametersOpen] = useState(false);
@@ -160,6 +164,10 @@ export default function WorkspaceSidebar() {
     }, []);
     useEffect(() => {
         const onLayersPanelState = (event) => {
+            if (isManualOrbitDesignActive()) {
+                setOpenPanel(false);
+                return;
+            }
             if (typeof event.detail?.open === "boolean") setOpenPanel(event.detail.open);
         };
         window.addEventListener("orbit:layers-panel-state", onLayersPanelState);
@@ -236,6 +244,7 @@ export default function WorkspaceSidebar() {
         };
     }, [projectActionsMenu]);
     const togglePanel = () => {
+        if (designMode) return;
         const next = !openPanel;
         setOpenPanel(next);
         publishLayersPanelState(next);
