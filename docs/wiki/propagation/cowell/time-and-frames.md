@@ -37,7 +37,7 @@ explicación operativa completa está en [Tiempo, EOP e ITRF](../../operations/t
 
 La transformación de salida no rota solo la posición: la velocidad incluye la
 derivada de la matriz de rotación, cuyo término principal corresponde a
-\(\boldsymbol\omega\times\mathbf r\). Las derivadas también se emplean para
+\(\omega\times\mathbf r\). Las derivadas también se emplean para
 aceleración y covarianza cuando están presentes. Véanse las ecuaciones de
 [Estados cartesianos](../../engineering/cartesian-states.md).
 

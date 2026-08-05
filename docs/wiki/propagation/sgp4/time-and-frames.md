@@ -58,7 +58,7 @@ para llegar a ITRF. Véase también [Marcos de referencia](../../engineering/ref
 La posición se rota con la matriz de la ruta anterior. La velocidad no puede
 rotarse como un vector estático: Orbit incluye la derivada temporal de la
 matriz de rotación, cuyo término dominante corresponde a la velocidad de
-rotación terrestre \(\boldsymbol\omega\times\mathbf r\). Cuando hay
+rotación terrestre \(\omega\times\mathbf r\). Cuando hay
 aceleración o covarianza, el servicio incorpora también las derivadas que
 corresponden. La explicación general y las ecuaciones están en
 [Estados cartesianos](../../engineering/cartesian-states.md).

@@ -37,7 +37,7 @@ complete operational explanation is in [Time, EOP, and ITRF](../../operations/ti
 
 Output transformation does not rotate position alone: velocity includes the
 time derivative of the rotation matrix, whose leading term is
-\(\boldsymbol\omega\times\mathbf r\). Derivatives are also used for
+\(\omega\times\mathbf r\). Derivatives are also used for
 acceleration and covariance when present. See the equations in
 [Cartesian states](../../engineering/cartesian-states.md).
 

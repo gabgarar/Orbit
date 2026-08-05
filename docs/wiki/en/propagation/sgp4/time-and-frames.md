@@ -57,7 +57,7 @@ polar motion to reach ITRF. See also [Reference frames](../../engineering/refere
 Position is rotated with the matrix of the route above. Velocity cannot be
 rotated as a static vector: Orbit includes the time derivative of the rotation
 matrix, whose leading term is Earth's rotational velocity
-\(\boldsymbol\omega\times\mathbf r\). When acceleration or covariance is
+\(\omega\times\mathbf r\). When acceleration or covariance is
 present, the service also carries the corresponding derivatives. The general
 explanation and equations are in [Cartesian states](../../engineering/cartesian-states.md).
 

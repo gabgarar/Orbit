@@ -51,7 +51,7 @@ During integration, Cowell keeps the state and sums accelerations in `EME2000`, 
 | --- | --- | --- |
 | Central gravity | `EME2000`. | It is invariant under a rotation of the coordinate system. |
 | J2, J3, and J4 | `EME2000`. | They are zonal \(m=0\) terms; the compatibility implementation treats the `EME2000` \(Z\) axis as Earth's rotation axis. |
-| Atmospheric drag | `EME2000`. | It computes \(\mathbf v_{rel}=\mathbf v-\boldsymbol\omega_\oplus\times\mathbf r\) for a co-rotating atmosphere and estimates WGS-84 altitude from the same coordinates. |
+| Atmospheric drag | `EME2000`. | It computes \(\mathbf v_{rel}=\mathbf v-\omega_\oplus\times\mathbf r\) for a co-rotating atmosphere and estimates WGS-84 altitude from the same coordinates. |
 
 This choice keeps one derivative in the native frame and is sufficient for the current interactive-design scope. It is not equivalent to evaluating every Earth-bound term in an instantaneous ITRF realization: precession, nutation, Earth rotation, and polar motion are not applied within each force evaluation.
 

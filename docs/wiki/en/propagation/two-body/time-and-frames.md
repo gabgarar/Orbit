@@ -38,7 +38,7 @@ The chain and data policy are described in [Time, EOP, and ITRF](../../operation
 
 Position is transformed with the frame matrix. Velocity includes the time
 derivative of that matrix; in particular, it contains the dominant kinematic
-term from Earth rotation \(\boldsymbol\omega\times\mathbf r\). The derivatives
+term from Earth rotation \(\omega\times\mathbf r\). The derivatives
 are also used when carrying acceleration or covariance. See
 [Cartesian states](../../engineering/cartesian-states.md) for details.
 

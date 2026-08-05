@@ -38,7 +38,7 @@ La cadena y la política de datos se detallan en [Tiempo, EOP e ITRF](../../oper
 
 La posición se transforma con la matriz de marcos. La velocidad incorpora la
 derivada temporal de esa matriz; en particular, recoge el término cinemático
-dominante de la rotación terrestre \(\boldsymbol\omega\times\mathbf r\). Las
+dominante de la rotación terrestre \(\omega\times\mathbf r\). Las
 derivadas también se usan al transportar aceleración o covarianza. Consulte
 [Estados cartesianos](../../engineering/cartesian-states.md) para el detalle.
 

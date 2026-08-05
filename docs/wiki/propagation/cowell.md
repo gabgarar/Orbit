@@ -51,7 +51,7 @@ Durante la integración, Cowell mantiene el estado y suma las aceleraciones en `
 | --- | --- | --- |
 | Gravedad central | `EME2000`. | Es invariante ante una rotación del sistema de coordenadas. |
 | J2, J3 y J4 | `EME2000`. | Son términos zonales \(m=0\); la implementación de compatibilidad trata el eje \(Z\) de `EME2000` como eje de giro terrestre. |
-| Arrastre atmosférico | `EME2000`. | Calcula \(\mathbf v_{rel}=\mathbf v-\boldsymbol\omega_\oplus\times\mathbf r\) para una atmósfera corrotante y estima la altura WGS-84 con esas mismas coordenadas. |
+| Arrastre atmosférico | `EME2000`. | Calcula \(\mathbf v_{rel}=\mathbf v-\omega_\oplus\times\mathbf r\) para una atmósfera corrotante y estima la altura WGS-84 con esas mismas coordenadas. |
 
 Esta elección mantiene una única derivada en el marco nativo y es suficiente para el alcance de diseño interactivo actual. No equivale a evaluar cada término terrestre en una realización ITRF instantánea: no aplica precesión, nutación, rotación terrestre ni movimiento polar dentro de cada evaluación de fuerza.
 
