@@ -12,13 +12,21 @@ document.addEventListener("DOMContentLoaded", () => {
     item = item.parentElement?.closest(".md-nav__item") ?? null;
   }
 
-  // Opening a documentation area should reveal its entire tree, rather than
-  // making the reader expand every intermediate level. These are ordinary
-  // Material checkboxes: after the initial expansion the reader can collapse
-  // any branch with its chevron and the script will not override that action.
+  // Reveal a useful overview of the area without flooding the sidebar with
+  // every leaf: the active section and its first two nested levels (three
+  // levels in total). The active page path above remains open even when it is
+  // deeper. These are ordinary Material checkboxes, so readers can still
+  // collapse any branch with its chevron afterwards.
+  const sectionNav = section?.querySelector(":scope > .md-nav");
+  const sectionLevel = Number(sectionNav?.dataset.mdLevel ?? 1);
+  const maximumOverviewLevel = sectionLevel + 2;
+
   section?.querySelectorAll(":scope .md-nav__item--nested > .md-nav__toggle")
     .forEach((toggle) => {
-      if (toggle instanceof HTMLInputElement) {
+      const nestedNav = toggle.parentElement?.querySelector(":scope > .md-nav");
+      const nestedLevel = Number(nestedNav?.dataset.mdLevel);
+
+      if (toggle instanceof HTMLInputElement && nestedLevel <= maximumOverviewLevel) {
         toggle.checked = true;
       }
     });
