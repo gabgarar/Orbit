@@ -1,54 +1,48 @@
 # Propagación de dos cuerpos
 
-[Inicio](../index.md) · [Propagación](index.md) · [Elementos keplerianos](../engineering/keplerian-elements.md) · [Masa puntual](point-mass.md)
+[Inicio](../index.md) · [Propagación](index.md) · [Propagadores](overview.md)
 
-## Modelo
+## Visión general
 
-`TwoBodyPropagator` evoluciona una órbita manual elíptica bajo gravedad central
-ideal. El modelo resuelve la ecuación de Kepler y genera el estado cartesiano
-nativo en `EME2000`.
+`TwoBodyPropagator` es el propagador analítico de Kepler para una órbita
+manual alrededor de la Tierra. Parte de elementos keplerianos en una época,
+avanza la anomalía media y resuelve la ecuación de Kepler para obtener un
+estado cartesiano nativo en `EME2000`.
+
+Es el modelo más sencillo para entender una órbita ligada: solo existe la
+gravedad central. No usa RK4, no conserva una caché de pasos y no incorpora
+J2, arrastre, maniobras ni otros efectos.
 
 $$
 \ddot{\mathbf r}=-\mu\frac{\mathbf r}{\lVert\mathbf r\rVert^3}.
 $$
 
-No integra el movimiento numéricamente. El coste por época es el de avanzar
-elementos y resolver la ecuación de Kepler, sin historial de pasos de fuerza.
+Aquí \(\mathbf r\) es la posición respecto al centro de la Tierra en km,
+\(\mu=398600.4418\ \mathrm{km^3\,s^{-2}}\) es el parámetro gravitatorio
+terrestre y la aceleración queda en \(\mathrm{km\,s^{-2}}\).
 
-## Entradas
+## Por qué usar dos cuerpos
 
-### Variables, unidades y uso en Orbit
+- Es determinista, rápido y fácil de interpretar.
+- Ofrece una referencia base para comparar SGP4 y Cowell.
+- Es útil para verificar elementos keplerianos, marcos y conversiones de
+  estado antes de añadir física adicional.
+- Para una misma época y los mismos elementos, no depende de un tamaño de paso
+  ni de tolerancias numéricas.
 
-\(\mathbf r\) se expresa en km y \(\mu\) en km³/s², por lo que \(\ddot{\mathbf r}\) es km/s². Los elementos de entrada usan km para semieje y grados en la interfaz; `TwoBodyPropagator` los convierte y resuelve Kepler para producir el estado nativo EME2000, que se publica en SI.
+## Guía del módulo
 
-| Campo | Requisito |
+| Tema | Qué aprenderá |
 | --- | --- |
-| Época | Instante UTC del diseño manual. |
-| Elementos | `semi_major_axis_km`, `eccentricity`, `inclination_deg`, `raan_deg`, `argument_of_perigee_deg`, `mean_anomaly_deg`. |
-| Excentricidad | Solo \(0\le e<1\). |
-| Perigeo | Debe quedar por encima del radio ecuatorial terrestre. |
+| [Elementos y movimiento kepleriano](two-body/keplerian-motion.md) | Cómo Orbit avanza una órbita elíptica y las unidades de cada variable. |
+| [Salida y marcos](two-body/frames-output.md) | Qué estado es nativo, cómo se solicita ITRF y qué significa la procedencia. |
+| [Uso recomendado y límites](two-body/recommended-use.md) | Cuándo el modelo es una buena aproximación y cuándo debe elegir Cowell u otra fuente. |
 
-La especificación completa de los elementos está en
-[Elementos keplerianos](../engineering/keplerian-elements.md).
+## Idea clave
 
-## Salida
+Dos cuerpos describe una elipse ideal que no cambia de orientación ni de forma.
+Es excelente como modelo de referencia, pero no debe interpretarse como una
+predicción operacional de un satélite real durante arcos largos.
 
-| Método | Resultado |
-| --- | --- |
-| `native_state_at` | Estado SI `EME2000`, UTC, centro `EARTH`. |
-| `state_at` | Estado nativo transformado al marco pedido. |
-| Adaptadores heredados | Seis componentes ITRF SI para renderer. |
-
-Los nombres históricos de métodos `propagate_eci_datetime` se conservan como
-alias de `propagate_eme2000_datetime`; no autorizan el uso de `ECI` como marco
-del contrato.
-
-## Hipótesis y límites
-
-- Solo órbitas terrestres, elípticas y ligadas.
-- Sin oblaticidad, arrastre, terceros cuerpos, SRP, relatividad ni maniobras.
-- Sin propagación de covarianza, detección de eventos ni integración adaptativa.
-- La salida ITRF requiere la transformación de marcos y su política EOP.
-
-Use [Cowell](cowell.md) cuando sea necesario componer los términos de fuerza
-disponibles; no interprete esa ruta como un modelo de alta fidelidad.
+Consulte [Cowell](cowell.md) cuando necesite integrar una dinámica cartesiana
+con las fuerzas que Orbit tiene disponibles.

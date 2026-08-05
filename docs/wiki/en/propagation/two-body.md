@@ -1,54 +1,48 @@
 # Two-body propagation
 
-[Start](../index.md) · [Propagation](index.md) · [Keplerian elements](../engineering/keplerian-elements.md) · [Point mass](point-mass.md)
+[Home](../index.md) · [Propagation](index.md) · [Propagators](overview.md)
 
-## Model
+## Overview
 
-`TwoBodyPropagator` evolves an elliptical manual orbit under central gravity
-ideal. The model solves the Kepler equation and generates the Cartesian state
-native in `EME2000`.
+`TwoBodyPropagator` is Orbit's analytical Kepler propagator for a manual
+Earth orbit. It starts with Keplerian elements at an epoch, advances mean
+anomaly, and solves Kepler's equation to obtain a native Cartesian state in
+`EME2000`.
+
+It is the simplest model for understanding a bound orbit: central gravity is
+the only acceleration. It does not use RK4, retain a step cache, or include
+J2, drag, manoeuvres, or any other effect.
 
 $$
 \ddot{\mathbf r}=-\mu\frac{\mathbf r}{\lVert\mathbf r\rVert^3}.
 $$
 
-It does not integrate the movement numerically. The cost per epoch is that of advancing
-elements and solve Kepler's equation, without history of force steps.
+Here \(\mathbf r\) is position from Earth's centre in km,
+\(\mu=398600.4418\ \mathrm{km^3\,s^{-2}}\) is Earth's gravitational
+parameter, and acceleration is in \(\mathrm{km\,s^{-2}}\).
 
-## Entries
+## Why use two-body
 
-### Variables, units and Orbit use
+- It is deterministic, fast, and easy to interpret.
+- It is a baseline for comparing SGP4 and Cowell.
+- It helps validate Keplerian elements, frames, and state conversions before
+  additional physics is introduced.
+- For one epoch and one set of elements, it does not depend on a step size or
+  numerical tolerances.
 
-\(\mathbf r\) is in km and \(\mu\) in km³/s², so \(\ddot{\mathbf r}\) is km/s². Input elements use km for semimajor axis and degrees in the UI; `TwoBodyPropagator` converts them and solves Kepler to produce the native EME2000 state, which is published in SI.
+## Module guide
 
-| Field | Requirement |
+| Topic | What you will learn |
 | --- | --- |
-| Period | UTC instant of manual design. |
-| Elements | `semi_major_axis_km`, `eccentricity`, `inclination_deg`, `raan_deg`, `argument_of_perigee_deg`, `mean_anomaly_deg`. |
-| Eccentricity | \(0\le e<1\) only. |
-| Perigee | It must be above the Earth's equatorial radius. |
+| [Keplerian elements and motion](two-body/keplerian-motion.md) | How Orbit advances an elliptic orbit and the unit of each variable. |
+| [Output and frames](two-body/frames-output.md) | Which state is native, how to request ITRF, and what provenance means. |
+| [Recommended use and limits](two-body/recommended-use.md) | When the model is a useful approximation and when to choose Cowell or another source. |
 
-The complete specification of the elements is in
-[Keplerian elements](../engineering/keplerian-elements.md).
+## Key idea
 
-## Output
+Two-body describes an ideal ellipse whose orientation and shape do not change.
+It is excellent as a reference model, but should not be read as an operational
+prediction of a real satellite over long arcs.
 
-| Method | Result |
-| --- | --- |
-| `native_state_at` | State IF `EME2000`, UTC, center `EARTH`. |
-| `state_at` | Native state transformed to the requested framework. |
-| Legacy Adapters | Six ITRF SI components for renderer. |
-
-Historical `propagate_eci_datetime` method names are preserved as
-`propagate_eme2000_datetime` alias; do not authorize the use of `ECI` as a framework
-of the contract.
-
-## Hypotheses and limits
-
-- Only terrestrial, elliptical and linked orbits.
-- Without oblateness, drag, third bodies, SRP, relativity or maneuvers.
-- No covariance propagation, event detection or adaptive integration.
-- ITRF output requires frame transformation and its EOP policy.
-
-Use [Cowell](cowell.md) when it is necessary to compose force terms
-available; do not interpret that route as a high fidelity model.
+See [Cowell](cowell.md) when you need Cartesian dynamics with Orbit's
+available force terms.

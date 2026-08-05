@@ -118,8 +118,16 @@ plugins:
                 - Overview: propagation/index.md
                 - Propagators:
                     - Overview: propagation/overview.md
-                    - SGP4: propagation/sgp4.md
-                    - Two body: propagation/two-body.md
+                    - SGP4:
+                        - Overview: propagation/sgp4.md
+                        - TLE and state contract: propagation/sgp4/tle-and-contract.md
+                        - Time and frames: propagation/sgp4/time-and-frames.md
+                        - Recommended use and limits: propagation/sgp4/validity-and-use.md
+                    - Two body:
+                        - Overview: propagation/two-body.md
+                        - Keplerian elements and motion: propagation/two-body/keplerian-motion.md
+                        - Output and frames: propagation/two-body/frames-output.md
+                        - Recommended use and limits: propagation/two-body/recommended-use.md
                     - Cowell:
                         - Overview: propagation/cowell.md
                         - Input and forces: propagation/cowell/input-and-forces.md
@@ -302,8 +310,16 @@ nav:
       - Visión general: propagation/index.md
       - Propagadores:
           - Visión general: propagation/overview.md
-          - SGP4: propagation/sgp4.md
-          - Dos cuerpos: propagation/two-body.md
+          - SGP4:
+              - Visión general: propagation/sgp4.md
+              - TLE y contrato de estado: propagation/sgp4/tle-and-contract.md
+              - Tiempo y marcos: propagation/sgp4/time-and-frames.md
+              - Uso recomendado y límites: propagation/sgp4/validity-and-use.md
+          - Dos cuerpos:
+              - Visión general: propagation/two-body.md
+              - Elementos y movimiento kepleriano: propagation/two-body/keplerian-motion.md
+              - Salida y marcos: propagation/two-body/frames-output.md
+              - Uso recomendado y límites: propagation/two-body/recommended-use.md
           - Cowell:
               - Visión general: propagation/cowell.md
               - Entrada y fuerzas: propagation/cowell/input-and-forces.md
