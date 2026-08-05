@@ -125,6 +125,7 @@ plugins:
                         - Input and forces: propagation/cowell/input-and-forces.md
                         - Integration and cache: propagation/cowell/integration.md
                         - Output and provenance: propagation/cowell/output.md
+                        - Recommended use: propagation/cowell/recommended-use.md
                         - Failures and limits: propagation/cowell/limits.md
                 - Numerical integrators:
                     - Overview: propagation/numerical-integrators.md
@@ -230,6 +231,7 @@ markdown_extensions:
 extra_javascript:
   - assets/javascripts/mathjax.js
   - assets/javascripts/shortcuts.js
+  - assets/javascripts/navigation-tree.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 extra_css:
@@ -307,6 +309,7 @@ nav:
               - Entrada y fuerzas: propagation/cowell/input-and-forces.md
               - Integración y caché: propagation/cowell/integration.md
               - Salida y procedencia: propagation/cowell/output.md
+              - Uso recomendado: propagation/cowell/recommended-use.md
               - Fallos y límites: propagation/cowell/limits.md
       - Integradores numéricos:
           - Visión general: propagation/numerical-integrators.md

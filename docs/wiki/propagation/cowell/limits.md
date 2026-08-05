@@ -71,6 +71,7 @@ En estos casos, use una efeméride externa validada cuando esté disponible o un
 ## Referencias relacionadas
 
 - [Dinámica cartesiana de Cowell](../cowell.md)
+- [Uso recomendado](recommended-use.md)
 - [Integradores numéricos](../numerical-integrators.md)
 - [Geopotencial completo](../full-geopotential.md)
 - [Terceros cuerpos](../third-bodies.md)

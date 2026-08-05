@@ -71,6 +71,7 @@ For these cases, use a validated external ephemeris when available or a higher-f
 ## Related references
 
 - [Cowell Cartesian dynamics](../cowell.md)
+- [Recommended use](recommended-use.md)
 - [Numerical integrators](../numerical-integrators.md)
 - [Full geopotential](../full-geopotential.md)
 - [Third bodies](../third-bodies.md)

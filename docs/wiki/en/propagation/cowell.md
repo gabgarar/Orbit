@@ -13,6 +13,7 @@ native `EME2000`. It is designed for limited manual views and studies.
 | [Input and forces](cowell/input-and-forces.md) | Initial state, supported terms and presets. |
 | [Integration and cache](cowell/integration.md) | RK4 fixed pitch and state reuse. |
 | [Departure and origin](cowell/output.md) | Query methods, frameworks and metadata. |
+| [Recommended use](cowell/recommended-use.md) | Suitable use cases and situations that require another tool. |
 | [Faults and limits](cowell/limits.md) | Boundaries of fidelity and conditions of rejection. |
 
 $$
