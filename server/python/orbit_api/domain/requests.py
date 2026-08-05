@@ -85,6 +85,10 @@ _COWELL_FORCE_TERM_ALIASES = {
 }
 _LEGACY_GRAVITY_MODEL_FORCE_TERMS = {
     "two-body": ("central",),
+    # This is a Cowell force-model preset, not the removed standalone
+    # analytical J2 propagator. Keep it so legacy Cowell payloads such as
+    # ``cowellGravityModel: j2`` expand to the equivalent explicit terms.
+    "j2": ("central", "j2"),
     "j2-j3-j4": ("central", "j2", "j3", "j4"),
 }
 
@@ -95,7 +99,6 @@ _LEGACY_GRAVITY_MODEL_FORCE_TERMS = {
 _FIXED_MANUAL_PROPAGATOR_FORCE_TERMS = {
     "sgp4": ("central",),
     "two-body": ("central",),
-    "j2": ("central", "j2"),
     "j2-j3-j4": ("central", "j2", "j3", "j4"),
 }
 

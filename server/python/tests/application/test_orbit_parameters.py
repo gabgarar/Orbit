@@ -91,16 +91,23 @@ def test_inspector_reports_only_forces_applied_by_a_fixed_manual_engine():
     }
 
 
-def test_j2_inspector_exposes_precessing_osculating_raan():
+def test_cowell_j2_inspector_exposes_precessing_osculating_raan():
     response = build_orbit_parameters(
-        manual_request(propagator="j2", hours=24, samples=2),
+        manual_request(
+            propagator="cowell-rk4",
+            options={"forceTerms": ["central", "j2"]},
+            hours=24,
+            samples=2,
+        ),
         resolve_propagator=native_only_resolver,
     )
 
     initial = response["samples"][0]["elements"]
     final = response["samples"][-1]["elements"]
     assert response["reference_frame"] == "EME2000"
-    assert response["model"]["id"] == "j2"
+    assert response["model"]["id"] == "cowell-rk4"
+    assert response["model"]["applied_engine"] == "cowell-rk4"
+    assert response["model"]["force_terms"] == ["central", "j2"]
     assert not math.isclose(initial["raan_deg"], final["raan_deg"], abs_tol=1e-4)
     # The inspector derives *osculating* values from the full precessing
     # state, so its instantaneous a is not required to equal the analytic

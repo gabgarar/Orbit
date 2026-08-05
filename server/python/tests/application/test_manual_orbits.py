@@ -200,7 +200,6 @@ def test_clean_defaults_and_legacy_drag_only_payloads_keep_their_distinct_physic
     [
         ("two-body", ["central"]),
         ("sgp4", ["central"]),
-        ("j2", ["central", "j2"]),
         ("j2-j3-j4", ["central", "j2", "j3", "j4"]),
     ],
 )
