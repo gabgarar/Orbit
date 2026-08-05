@@ -16,6 +16,9 @@ La procedencia declara que los términos terrestres usan el modelo compatible
 de ejes inerciales de primer orden. Esto evita presentar el resultado como una
 fuerza terrestre completa transformada en cada paso.
 
+La cadena temporal y de marcos de `EME2000` a `ITRF` se explica por separado
+en [Tiempo y marcos](time-and-frames.md).
+
 ## Referencias relacionadas
 
 - [Estados cartesianos](../../engineering/cartesian-states.md)

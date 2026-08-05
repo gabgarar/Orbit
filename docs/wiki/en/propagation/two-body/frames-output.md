@@ -24,7 +24,8 @@ in `EME2000` first and transformed afterwards.
 
 ITRF output quality depends on the Earth-orientation policy (EOP). In
 particular, UTC, UT1, and polar motion belong to the frame transformation, not
-to the Keplerian equation.
+to the Keplerian equation. See [Time and frames](time-and-frames.md) for the
+complete explanation, including TT, EOP, and velocity.
 
 ## Historical compatibility
 

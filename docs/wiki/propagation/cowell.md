@@ -12,7 +12,8 @@ nativos `EME2000`. Está pensada para vistas y estudios manuales acotados.
 | --- | --- |
 | [Entrada y fuerzas](cowell/input-and-forces.md) | Estado inicial, términos admitidos y presets. |
 | [Integración y caché](cowell/integration.md) | RK4 de paso fijo y reutilización de estados. |
-| [Salida y procedencia](cowell/output.md) | Métodos de consulta, marcos y metadatos. |
+| [Tiempo y marcos](cowell/time-and-frames.md) | UTC, TT, UT1, EOP y transformación de EME2000 a ITRF. |
+| [Salida y procedencia](cowell/output.md) | Métodos de consulta y metadatos del estado publicado. |
 | [Uso recomendado](cowell/recommended-use.md) | Casos de uso adecuados y situaciones que requieren otra herramienta. |
 | [Fallos y límites](cowell/limits.md) | Fronteras de fidelidad y condiciones de rechazo. |
 

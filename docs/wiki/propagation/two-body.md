@@ -35,7 +35,8 @@ terrestre y la aceleración queda en \(\mathrm{km\,s^{-2}}\).
 | Tema | Qué aprenderá |
 | --- | --- |
 | [Elementos y movimiento kepleriano](two-body/keplerian-motion.md) | Cómo Orbit avanza una órbita elíptica y las unidades de cada variable. |
-| [Salida y marcos](two-body/frames-output.md) | Qué estado es nativo, cómo se solicita ITRF y qué significa la procedencia. |
+| [Tiempo y marcos](two-body/time-and-frames.md) | Cómo intervienen UTC, TT, UT1 y EOP al pasar de EME2000 a ITRF. |
+| [Salida y marcos](two-body/frames-output.md) | Qué estado se publica, qué métodos lo entregan y qué significa la procedencia. |
 | [Uso recomendado y límites](two-body/recommended-use.md) | Cuándo el modelo es una buena aproximación y cuándo debe elegir Cowell u otra fuente. |
 
 ## Idea clave

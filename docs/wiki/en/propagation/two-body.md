@@ -35,7 +35,8 @@ parameter, and acceleration is in \(\mathrm{km\,s^{-2}}\).
 | Topic | What you will learn |
 | --- | --- |
 | [Keplerian elements and motion](two-body/keplerian-motion.md) | How Orbit advances an elliptic orbit and the unit of each variable. |
-| [Output and frames](two-body/frames-output.md) | Which state is native, how to request ITRF, and what provenance means. |
+| [Time and frames](two-body/time-and-frames.md) | How UTC, TT, UT1, and EOP participate in the EME2000-to-ITRF route. |
+| [Output and frames](two-body/frames-output.md) | Which state is published, which methods provide it, and what provenance means. |
 | [Recommended use and limits](two-body/recommended-use.md) | When the model is a useful approximation and when to choose Cowell or another source. |
 
 ## Key idea

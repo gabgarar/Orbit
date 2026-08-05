@@ -22,8 +22,8 @@ Tierra. `state_at(..., target_frame=ITRF)` solicita esa transformación al
 `FrameTransformService`. La propagación no pasa a ser terrestre: el estado se
 calcula primero en `EME2000` y solo después se transforma.
 
-La calidad de una salida ITRF depende de la política de orientación terrestre
-(EOP). En particular, UTC, UT1 y el movimiento polar pertenecen a la
+La explicación de UTC, TT, UT1, EOP y velocidad está en
+[Tiempo y marcos](time-and-frames.md). Esos conceptos pertenecen a la
 transformación de marcos, no a la ecuación kepleriana.
 
 ## Compatibilidad histórica

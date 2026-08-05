@@ -126,12 +126,14 @@ plugins:
                     - Two body:
                         - Overview: propagation/two-body.md
                         - Keplerian elements and motion: propagation/two-body/keplerian-motion.md
+                        - Time and frames: propagation/two-body/time-and-frames.md
                         - Output and frames: propagation/two-body/frames-output.md
                         - Recommended use and limits: propagation/two-body/recommended-use.md
                     - Cowell:
                         - Overview: propagation/cowell.md
                         - Input and forces: propagation/cowell/input-and-forces.md
                         - Integration and cache: propagation/cowell/integration.md
+                        - Time and frames: propagation/cowell/time-and-frames.md
                         - Output and provenance: propagation/cowell/output.md
                         - Recommended use: propagation/cowell/recommended-use.md
                         - Failures and limits: propagation/cowell/limits.md
@@ -318,12 +320,14 @@ nav:
           - Dos cuerpos:
               - Visión general: propagation/two-body.md
               - Elementos y movimiento kepleriano: propagation/two-body/keplerian-motion.md
+              - Tiempo y marcos: propagation/two-body/time-and-frames.md
               - Salida y marcos: propagation/two-body/frames-output.md
               - Uso recomendado y límites: propagation/two-body/recommended-use.md
           - Cowell:
               - Visión general: propagation/cowell.md
               - Entrada y fuerzas: propagation/cowell/input-and-forces.md
               - Integración y caché: propagation/cowell/integration.md
+              - Tiempo y marcos: propagation/cowell/time-and-frames.md
               - Salida y procedencia: propagation/cowell/output.md
               - Uso recomendado: propagation/cowell/recommended-use.md
               - Fallos y límites: propagation/cowell/limits.md

@@ -743,6 +743,13 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/cowell/recommended-use/"/>
     </url>
     <url>
+        <loc>https://gabgarar.github.io/Orbit/propagation/cowell/time-and-frames/</loc>
+        <lastmod>2026-08-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/cowell/time-and-frames/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/cowell/time-and-frames/"/>
+    </url>
+    <url>
         <loc>https://gabgarar.github.io/Orbit/propagation/sgp4/time-and-frames/</loc>
         <lastmod>2026-08-05</lastmod>
         <changefreq>daily</changefreq>
@@ -783,6 +790,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/two-body/recommended-use/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/two-body/recommended-use/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/propagation/two-body/time-and-frames/</loc>
+        <lastmod>2026-08-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/two-body/time-and-frames/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/two-body/time-and-frames/"/>
     </url>
     <url>
         <loc>https://gabgarar.github.io/Orbit/reference/</loc>
@@ -1639,6 +1653,13 @@
         <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/cowell/recommended-use/"/>
     </url>
     <url>
+        <loc>https://gabgarar.github.io/Orbit/en/propagation/cowell/time-and-frames/</loc>
+        <lastmod>2026-08-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/cowell/time-and-frames/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/cowell/time-and-frames/"/>
+    </url>
+    <url>
         <loc>https://gabgarar.github.io/Orbit/en/propagation/sgp4/time-and-frames/</loc>
         <lastmod>2026-08-05</lastmod>
         <changefreq>daily</changefreq>
@@ -1679,6 +1700,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/two-body/recommended-use/"/>
         <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/two-body/recommended-use/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/propagation/two-body/time-and-frames/</loc>
+        <lastmod>2026-08-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/propagation/two-body/time-and-frames/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/propagation/two-body/time-and-frames/"/>
     </url>
     <url>
         <loc>https://gabgarar.github.io/Orbit/en/reference/</loc>
