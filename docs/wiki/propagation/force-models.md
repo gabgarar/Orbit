@@ -2,22 +2,22 @@
 
 [Inicio](../index.md) · [Propagación](index.md) · [Cowell](cowell.md) · [Modelos de gravedad](../engineering/gravity-models.md)
 
-## Composición implementada
+## Clasificación
 
 La composición de fuerzas está disponible solo para `cowell-rk4`. La gravedad
 central es obligatoria; los demás términos se seleccionan de forma explícita.
 
-| Término | Identificador | Estado |
-| --- | --- | --- |
-| Gravedad central | `central` | Disponible y siempre activo. |
-| J2 | `j2` | Disponible. |
-| J3 | `j3` | Disponible. |
-| J4 | `j4` | Disponible. |
-| Arrastre atmosférico | `drag` | Disponible con modelo exponencial. |
-| Terceros cuerpos | — | No disponible. |
-| Presión de radiación solar | — | No disponible. |
-| Relatividad | — | No disponible. |
-| Geopotencial completo | — | No disponible. |
+| Grupo | Término | Identificador | Estado |
+| --- | --- | --- | --- |
+| Gravitacional | [Kepler / gravedad central](point-mass.md) | `central` | Disponible y siempre activo. |
+| Gravitacional | [Geopotencial zonal J2, J3 y J4](j2.md) | `j2`, `j3`, `j4` | Disponible. |
+| Gravitacional | [Geopotencial completo](full-geopotential.md) | — | Previsto. |
+| Gravitacional | [Perturbaciones lunisolares](third-bodies.md) | — | Previsto. |
+| Gravitacional | [Mareas](tides.md) | — | Previsto. |
+| No gravitacional | [Arrastre atmosférico](atmospheric-drag.md) | `drag` | Disponible con modelo exponencial. |
+| No gravitacional | [Presión de radiación solar](solar-radiation-pressure.md) | — | Previsto. |
+| No gravitacional | [Albedo terrestre](albedo.md) | — | Previsto. |
+| No gravitacional | [Relatividad y otros efectos](relativity.md) | — | Previsto. |
 
 La fuerza total de Cowell es:
 
@@ -55,7 +55,4 @@ lista `force_terms`, la presencia o ausencia de `drag` es autoritativa.
 SGP4 acepta un TLE y tiene su propio modelo. Los términos Cowell no se aplican
 a un objeto de catálogo SGP4 ni se usan para corregir un TLE.
 
-Véanse [Masa puntual](point-mass.md), [J2](j2.md), [J3](j3.md), [J4](j4.md)
-y [Arrastre atmosférico](atmospheric-drag.md), además de las páginas de
-capacidades no disponibles para [terceros cuerpos](third-bodies.md),
-[SRP](solar-radiation-pressure.md) y [relatividad](relativity.md).
+Consulte las secciones [gravitacionales](point-mass.md) y [no gravitacionales](atmospheric-drag.md) para el detalle de cada modelo.

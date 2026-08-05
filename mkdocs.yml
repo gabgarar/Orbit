@@ -132,15 +132,20 @@ plugins:
                     - RK4: propagation/rk4.md
                 - Force models:
                     - Overview: propagation/force-models.md
-                    - Point mass: propagation/point-mass.md
-                    - J2: propagation/j2.md
-                    - J3: propagation/j3.md
-                    - J4: propagation/j4.md
-                    - Full geopotential: propagation/full-geopotential.md
-                    - Third bodies: propagation/third-bodies.md
-                    - Atmospheric drag: propagation/atmospheric-drag.md
-                    - Solar radiation pressure: propagation/solar-radiation-pressure.md
-                    - Relativity: propagation/relativity.md
+                    - Gravitational:
+                        - Kepler / central gravity: propagation/point-mass.md
+                        - Geopotential:
+                            - J2: propagation/j2.md
+                            - J3: propagation/j3.md
+                            - J4: propagation/j4.md
+                            - Full geopotential: propagation/full-geopotential.md
+                        - Lunisolar perturbations: propagation/third-bodies.md
+                        - Tides: propagation/tides.md
+                    - Non-gravitational:
+                        - Atmospheric drag: propagation/atmospheric-drag.md
+                        - Solar radiation pressure: propagation/solar-radiation-pressure.md
+                        - Albedo: propagation/albedo.md
+                        - Relativity and other effects: propagation/relativity.md
                 - Future dynamics:
                     - Attitude: propagation/attitude.md
                     - Resonances: propagation/resonances.md
@@ -310,15 +315,20 @@ nav:
           - RK4: propagation/rk4.md
       - Modelos de fuerzas:
           - Visión general: propagation/force-models.md
-          - Punto masa: propagation/point-mass.md
-          - J2: propagation/j2.md
-          - J3: propagation/j3.md
-          - J4: propagation/j4.md
-          - Geopotencial completo: propagation/full-geopotential.md
-          - Terceros cuerpos: propagation/third-bodies.md
-          - Arrastre atmosférico: propagation/atmospheric-drag.md
-          - Presión de radiación solar: propagation/solar-radiation-pressure.md
-          - Relatividad: propagation/relativity.md
+          - Gravitacionales:
+              - Kepler / gravedad central: propagation/point-mass.md
+              - Geopotencial:
+                  - J2: propagation/j2.md
+                  - J3: propagation/j3.md
+                  - J4: propagation/j4.md
+                  - Geopotencial completo: propagation/full-geopotential.md
+              - Perturbaciones lunisolares: propagation/third-bodies.md
+              - Mareas: propagation/tides.md
+          - No gravitacionales:
+              - Arrastre atmosférico: propagation/atmospheric-drag.md
+              - Presión de radiación solar: propagation/solar-radiation-pressure.md
+              - Albedo: propagation/albedo.md
+              - Relatividad y otros efectos: propagation/relativity.md
       - Dinámica futura:
           - Actitud: propagation/attitude.md
           - Resonancias: propagation/resonances.md

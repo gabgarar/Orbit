@@ -2,22 +2,22 @@
 
 [Home](../index.md) · [Propagation](index.md) · [Cowell](cowell.md) · [Gravity Models](../engineering/gravity-models.md)
 
-## Composition implemented
+## Classification
 
 Force composition is available only for `cowell-rk4`. gravity
 central is mandatory; the other terms are selected explicitly.
 
-| Term | Identifier | State |
-| --- | --- | --- |
-| Core Gravity | `central` | Available and always active. |
-| J2 | `j2` | Available. |
-| J3 | `j3` | Available. |
-| J4 | `j4` | Available. |
-| Atmospheric drag | `drag` | Available with exponential model. |
-| Third bodies | — | Not available. |
-| Solar radiation pressure | — | Not available. |
-| Relativity | — | Not available. |
-| Full geopotential | — | Not available. |
+| Group | Term | Identifier | Status |
+| --- | --- | --- | --- |
+| Gravitational | [Kepler / central gravity](point-mass.md) | `central` | Available and always active. |
+| Gravitational | [J2, J3, and J4 zonal geopotential](j2.md) | `j2`, `j3`, `j4` | Available. |
+| Gravitational | [Full geopotential](full-geopotential.md) | — | Planned. |
+| Gravitational | [Lunisolar perturbations](third-bodies.md) | — | Planned. |
+| Gravitational | [Tides](tides.md) | — | Planned. |
+| Non-gravitational | [Atmospheric drag](atmospheric-drag.md) | `drag` | Available with exponential model. |
+| Non-gravitational | [Solar radiation pressure](solar-radiation-pressure.md) | — | Planned. |
+| Non-gravitational | [Earth albedo](albedo.md) | — | Planned. |
+| Non-gravitational | [Relativity and other effects](relativity.md) | — | Planned. |
 
 The total Cowell force is:
 
@@ -55,7 +55,4 @@ list `force_terms`, the presence or absence of `drag` is authoritative.
 SGP4 accepts a TLE and has its own model. Cowell terms do not apply
 to an SGP4 catalog object nor are they used to correct a TLE.
 
-See [Point mass](point-mass.md), [J2](j2.md), [J3](j3.md), [J4](j4.md) and
-[atmospheric drag](atmospheric-drag.md), plus the unsupported capability pages
-for [third bodies](third-bodies.md),
-[SRP](solar-radiation-pressure.md) and [relativity](relativity.md).
+See the [gravitational](point-mass.md) and [non-gravitational](atmospheric-drag.md) sections for the detail of each model.
