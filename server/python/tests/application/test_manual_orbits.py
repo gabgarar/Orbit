@@ -16,7 +16,6 @@ from orbit_api.application.manual_orbits import (
 )
 from orbit_api.domain.requests import MANUAL_ORBIT_PROPAGATORS, ManualOrbitRequest
 from orbit_api.orbits.propagators.cowell import CowellPropagator
-from orbit_api.orbits.propagators.j2 import J2Propagator
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
 from orbit_api.orbits.propagators.sgp4.propagator import SGP4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
@@ -85,23 +84,22 @@ def test_manual_request_accepts_flat_state_vector_and_derives_keplerian():
     assert state_vector["velocity_eci_km_s"] == state_vector["velocity_eme2000_km_s"]
 
 
-def test_manual_request_normalizes_native_propagator_aliases_and_rejects_unknown_ones():
-    # These are the only choices a new manual-design UI should present. J2
-    # variants below are accepted exclusively to keep old project records
-    # physically stable.
+def test_manual_request_normalizes_native_propagator_aliases_and_rejects_unsupported_ones():
     assert MANUAL_ORBIT_PROPAGATORS == ("sgp4", "two-body", "cowell-rk4")
     default_payload = keplerian_payload()
     default_payload.pop("propagator")
     assert ManualOrbitRequest(**default_payload).propagator == "two-body"
     assert ManualOrbitRequest(**keplerian_payload(propagator="kepler")).propagator == "two-body"
     assert ManualOrbitRequest(**keplerian_payload(propagator="two_body")).propagator == "two-body"
-    assert ManualOrbitRequest(**keplerian_payload(propagator="J2")).propagator == "j2"
-    assert ManualOrbitRequest(**keplerian_payload(propagator="j2-secular")).propagator == "j2"
     assert ManualOrbitRequest(**keplerian_payload(propagator="J2 + J3 + J4")).propagator == "j2-j3-j4"
     assert ManualOrbitRequest(**keplerian_payload(propagator="cowell")).propagator == "cowell-rk4"
     assert ManualOrbitRequest(**keplerian_payload(propagator="Cowell / RK4")).propagator == "cowell-rk4"
     with pytest.raises(ValidationError, match="Propagador manual no compatible"):
         ManualOrbitRequest(**keplerian_payload(propagator="gauss-jackson"))
+    with pytest.raises(ValidationError, match="Propagador manual no compatible"):
+        ManualOrbitRequest(**keplerian_payload(propagator="j2"))
+    with pytest.raises(ValidationError, match="Propagador manual no compatible"):
+        ManualOrbitRequest(**keplerian_payload(propagator="j2-secular"))
 
 
 def test_manual_request_normalizes_metadata_and_cowell_drag_options_and_restricts_other_models():
@@ -238,7 +236,7 @@ def test_cowell_rejects_future_non_installed_force_terms():
         ))
 
 
-def test_native_manual_propagators_preserve_the_eme2000_epoch_state_and_j2_precesses():
+def test_two_body_preserves_the_eme2000_epoch_state():
     request = ManualOrbitRequest(**keplerian_payload())
     _, keplerian, state_vector = canonical_manual_orbit(request)
     epoch = request.epoch
@@ -254,64 +252,6 @@ def test_native_manual_propagators_preserve_the_eme2000_epoch_state_and_j2_prece
     )
     for actual, expected in zip(state_at_epoch, expected_epoch_state, strict=True):
         assert math.isclose(actual, expected, abs_tol=1e-8)
-
-    j2 = J2Propagator(epoch, keplerian)
-    tomorrow = datetime(2026, 7, 21, 12, 0, tzinfo=UTC)
-    assert j2.raan_rate_rad_s < 0
-    assert not math.isclose(j2.elements_at(tomorrow).raan_rad, j2.elements.raan_rad, abs_tol=1e-9)
-    assert j2.elements_at(tomorrow).semi_major_axis_km == j2.elements.semi_major_axis_km
-    j2_state = j2.propagate_eme2000_datetime(tomorrow)
-    assert all(math.isfinite(value) for value in j2_state)
-    half_second = timedelta(seconds=0.5)
-    before = j2.propagate_eme2000_datetime(tomorrow - half_second)
-    after = j2.propagate_eme2000_datetime(tomorrow + half_second)
-    # The reported velocity must be the derivative of the same J2-secular
-    # position, including RAAN/apsidal precession rather than merely n*r.
-    for actual, previous, following in zip(j2_state[3:], before[:3], after[:3], strict=True):
-        finite_difference = following - previous  # 1 second centred interval.
-        assert math.isclose(actual, finite_difference, abs_tol=2e-6)
-    native_state = j2.native_state_at(tomorrow)
-    assert native_state.frame_label == "EME2000"
-    for actual, expected in zip(native_state.components()[3:], (component * 1000.0 for component in j2_state[3:]), strict=True):
-        assert math.isclose(actual, expected, abs_tol=2e-3)
-    assert all(math.isfinite(value) for value in j2.propagate_datetime(tomorrow))
-
-
-def test_legacy_j2_record_keeps_its_original_engine_instead_of_becoming_cowell():
-    """A saved J2 record must not change physics merely by being reopened."""
-
-    request = ManualOrbitRequest(**keplerian_payload(
-        propagator="j2",
-        propagationOptions={
-            # A current client may round-trip its generic controls alongside
-            # an old record. They must not implicitly migrate the record.
-            "forceTerms": ["central", "j2", "j3", "j4"],
-            "numericalIntegrator": "rk4",
-        },
-    ))
-    _, keplerian, state_vector = canonical_manual_orbit(request)
-
-    def resolver(*_args):
-        raise AssertionError("A legacy native J2 record must not synthesize a TLE")
-
-    runtime_name, propagator, tle, metadata = build_manual_orbit_propagator(
-        request.propagator,
-        name=request.name,
-        epoch=request.epoch,
-        keplerian=keplerian,
-        state_vector=state_vector,
-        resolve_sgp4=resolver,
-        propagation_options=request.propagation_options.canonical(
-            propagator=request.propagator
-        ),
-    )
-
-    assert runtime_name.startswith("manual:j2:")
-    assert isinstance(propagator, J2Propagator)
-    assert not isinstance(propagator, CowellPropagator)
-    assert tle is None
-    assert metadata["legacy_propagator"] is True
-    assert metadata["force_model_id"] == "j2"
 
 
 def test_direct_builder_projects_stale_cowell_terms_onto_fixed_engines():
@@ -508,7 +448,6 @@ def test_manual_route_prefers_an_explicit_end_time_over_horizon_hours():
     ("requested_propagator", "expected_type", "canonical", "expected_force_terms"),
     [
         ("two_body", TwoBodyPropagator, "two-body", ["central"]),
-        ("j2", J2Propagator, "j2", ["central", "j2"]),
     ],
 )
 def test_manual_route_uses_native_models_without_synthetic_tle(
@@ -547,7 +486,7 @@ def test_manual_route_uses_native_models_without_synthetic_tle(
     assert response["reference_frame"] == "ITRF"
     metadata = response["propagator_metadata"]
     assert metadata["id"] == canonical
-    assert metadata["label"] == ("Two-body" if canonical == "two-body" else "J2 (first-order secular)")
+    assert metadata["label"] == "Two-body"
     assert metadata["dynamics_reference_frame"] == "EME2000"
     assert metadata["input_reference_frame"] == "EME2000"
     assert metadata["legacy_input_reference_frame"] == "ECI"
@@ -559,10 +498,6 @@ def test_manual_route_uses_native_models_without_synthetic_tle(
         "force_terms": expected_force_terms,
         "atmospheric_drag": False,
     }
-    if canonical == "j2":
-        assert metadata["legacy_propagator"] is True
-        assert metadata["force_model_id"] == "j2"
-        assert metadata["integrator_id"] == "secular-analytic"
 
 
 def test_manual_route_keeps_j2_j3_j4_as_a_fixed_no_drag_preset():

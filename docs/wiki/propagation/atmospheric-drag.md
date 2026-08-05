@@ -5,7 +5,7 @@
 ## Disponibilidad
 
 El arrastre está disponible únicamente como término `drag` de `cowell-rk4`.
-No está disponible en dos cuerpos, J2 analítico, el preset fijo J2+J3+J4 ni
+No está disponible en dos cuerpos, el preset fijo J2+J3+J4 ni
 SGP4 configurable desde Orbit.
 
 ## Modelo aplicado

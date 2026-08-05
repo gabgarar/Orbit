@@ -10,7 +10,6 @@ usa SGP4 y no acepta esta composición como selector operativo.
 | Modelo | Implementación | Uso |
 | --- | --- | --- |
 | Central | \(-\mu\mathbf r/r^3\) | Dos cuerpos y término obligatorio de Cowell. |
-| J2 analítico | Tasas seculares de elementos | Propagador manual J2 de compatibilidad. |
 | J2, J3, J4 numéricos | Armónicos zonales no normalizados WGS-84 | Términos independientes de Cowell o preset histórico. |
 | Geopotencial completo | No disponible | No hay coeficientes \(C_{nm},S_{nm}\) ni grado/orden configurable. |
 
@@ -35,7 +34,6 @@ una transformación dinámica completa de las fuerzas al marco terrestre.
 | Ruta | Selección disponible |
 | --- | --- |
 | Dos cuerpos | Solo gravedad central. |
-| J2 manual | J2 secular analítico, sin drag. |
 | `cowell-rk4` | `central`, `j2`, `j3`, `j4` y `drag` como términos explícitos. |
 | `j2-j3-j4` | Preset histórico fijo J2+J3+J4, sin drag. |
 

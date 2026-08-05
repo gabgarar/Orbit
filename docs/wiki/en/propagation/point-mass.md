@@ -23,7 +23,6 @@ of forces only mentions disturbances.
 | Route | Application |
 | --- | --- |
 | Two bodies | It is the entire dynamic and is resolved analytically. |
-| Analytical J2 | Base on which secular rates are added. |
 | Cowell | Acceleration calculated in each RK4 evaluation. |
 | J2+J3+J4 | Base of numerical preset. |
 

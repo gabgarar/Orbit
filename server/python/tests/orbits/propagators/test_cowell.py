@@ -11,7 +11,6 @@ from orbit_api.application.manual_orbits import keplerian_to_state_vector
 from orbit_api.domain.requests import ManualKeplerianInput
 from orbit_api.orbits.propagators.classical import EARTH_MU_KM3_S2
 from orbit_api.orbits.propagators.cowell import CowellPropagator
-from orbit_api.orbits.propagators.j2 import J2Propagator
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
 
@@ -102,12 +101,10 @@ def test_j2_j3_j4_produces_finite_and_distinguishable_higher_order_state():
         true_anomaly_deg=45.0,
     )
     keplerian, state_vector = keplerian_to_state_vector(elements)
-    analytical_j2 = J2Propagator(EPOCH, keplerian)
     numerical_j2 = CowellPropagator(EPOCH, state_vector, gravity_model="j2")
     higher_order = J2J3J4Propagator(EPOCH, state_vector)
     target = EPOCH + timedelta(days=3)
 
-    j2_state = analytical_j2.propagate_eci_datetime(target)
     numerical_j2_state = numerical_j2.propagate_eci_datetime(target)
     higher_order_state = higher_order.propagate_eci_datetime(target)
 
@@ -115,9 +112,6 @@ def test_j2_j3_j4_produces_finite_and_distinguishable_higher_order_state():
     # A matching fixed-step numerical reference with gravity truncated at J2
     # proves that the J3/J4 force contribution itself changes the trajectory.
     assert distance_km(higher_order_state, numerical_j2_state) > 0.001
-    # It must also not collapse into the existing first-order secular J2
-    # preview used by the lightweight model.
-    assert distance_km(higher_order_state, j2_state) > 0.01
 
 
 def test_j2_j3_j4_preset_is_not_cowell_and_rejects_drag_configuration():

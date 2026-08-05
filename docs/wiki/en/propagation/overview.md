@@ -32,7 +32,6 @@ the [RK4](rk4.md) integrator solves the numerical system.
 | --- | --- | --- | --- | --- |
 | [SGP4](sgp4.md) | TLE | TEME, UTC | SGP4 implementation of `sgp4.api.Satrec`. | Default catalog record. |
 | [Two bodies](two-body.md) | Manual elements | EME2000, UTC | Analytical elliptical Kepler. | Manual orbit. |
-| [Secular J2](j2-analytical.md) | Manual elements | EME2000, UTC | First-order analytical secular rates. | Manual compatibility. |
 | [Cowell](cowell.md) | Manual status | EME2000, UTC | RK4 fixed, center/J2/J3/J4/drag. | Manual orbit. |
 | J2+J3+J4 | Manual status | EME2000, UTC | Fixed RK4 preset without drag. | Manual compatibility. |
 
@@ -44,7 +43,7 @@ Cowell selector, two bodies nor J2 for a TLE catalog object.
 | Origin | Native framework | Internal units | Contract exit |
 | --- | --- | --- | --- |
 | SGP4 | FEAR | km, km/s | `StateVector` YES. |
-| Two bodies/J2 | EME2000 | km, km/s | `StateVector` YES. |
+| Two bodies | EME2000 | km, km/s | `StateVector` YES. |
 | Cowell/J2+J3+J4 | EME2000 | km, km/s | `StateVector` YES. |
 
 The transformation to ITRF depends on the ground orientation data. one
@@ -53,11 +52,10 @@ strict mode is described in [Frameworks](../engineering/reference-frames.md).
 
 ## Manual selection
 
-Manual routes accept Keplerian elements for two bodies and J2, a
-Cartesian state for Cowell and the J2+J3+J4 preset, and an SGP4 route that generates
-a synthetic TLE. Synthetic SGP4 result may differ from dynamic
-two-body analysis or J2 because it starts from another representation and another
-model.
+Manual routes accept Keplerian elements for two bodies, a Cartesian state for
+Cowell and the J2+J3+J4 preset, and an SGP4 route that generates a synthetic
+TLE. A synthetic SGP4 result may differ from analytical two-body dynamics
+because it starts from another representation and model.
 
 ## Global limits
 

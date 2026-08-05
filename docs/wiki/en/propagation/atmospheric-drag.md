@@ -5,7 +5,7 @@
 ## Availability
 
 Drag is only available as `drag` term of `cowell-rk4`.
-Not available in two bodies, analytical J2, the fixed preset J2+J3+J4 or
+Not available in two bodies, the fixed J2+J3+J4 preset, or
 SGP4 configurable from Orbit.
 
 ## Model applied
@@ -84,4 +84,12 @@ manuals, not for operational prediction. See
     \rho=\rho_{\mathrm{MSIS}}(h,\phi,\lambda,t,F_{10.7},\overline{F}_{10.7},A_p).
     $$
 
-    Here \(h\) is height, \(\phi\)/\(\lambda\) are radians, \(t\) is epoch, and solar/geomagnetic indices use the MSIS product units. It is not evaluated by the current runtime.
+    | Symbol | Meaning | Unit |
+    | --- | --- | --- |
+    | \(\rho_{\mathrm{MSIS}}\) | Density estimated by the MSIS model. | kg/m³. |
+    | \(h\) | Geodetic height. | km or m, depending on the MSIS adapter. |
+    | \(\phi\), \(\lambda\) | Geodetic latitude and longitude. | rad. |
+    | \(t\) | Evaluation epoch. | Explicit UTC/UT1. |
+    | \(F_{10.7}\), \(\overline{F}_{10.7}\), \(A_p\) | Solar and geomagnetic indices. | MSIS product units. |
+
+    It is not evaluated by the current runtime; a future adapter must convert its output to kg/m³ before applying Cowell's drag equation.

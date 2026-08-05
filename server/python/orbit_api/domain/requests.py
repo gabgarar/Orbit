@@ -22,11 +22,10 @@ from orbit_api.timekeeping import ensure_utc
 # family: its numerical integrator and force model are separate options.
 MANUAL_ORBIT_PROPAGATORS = ("sgp4", "two-body", "cowell-rk4")
 
-# Existing projects may contain the former J2 presets in their ``propagator``
-# field.  They stay accepted and keep their original execution path so opening
-# a project never silently changes its physical model. New editors must offer
-# J2/J3/J4 under the Cowell force-model selector instead.
-LEGACY_MANUAL_ORBIT_PROPAGATORS = ("j2", "j2-j3-j4")
+# Existing projects may contain the former fixed J2+J3+J4 preset in their
+# ``propagator`` field. It remains accepted as a compatibility route. New
+# editors expose J2/J3/J4 exclusively under the Cowell force-model selector.
+LEGACY_MANUAL_ORBIT_PROPAGATORS = ("j2-j3-j4",)
 _MANUAL_ORBIT_PROPAGATOR_ALIASES = {
     "sgp4": "sgp4",
     "sgp-4": "sgp4",
@@ -35,11 +34,6 @@ _MANUAL_ORBIT_PROPAGATOR_ALIASES = {
     "twobody": "two-body",
     "kepler": "two-body",
     "keplerian": "two-body",
-    "j2": "j2",
-    "j2-analytic": "j2",
-    "j2_analytic": "j2",
-    "j2-secular": "j2",
-    "j2_secular": "j2",
     "j2-j3-j4": "j2-j3-j4",
     "j2_j3_j4": "j2-j3-j4",
     "j2j3j4": "j2-j3-j4",
@@ -91,7 +85,6 @@ _COWELL_FORCE_TERM_ALIASES = {
 }
 _LEGACY_GRAVITY_MODEL_FORCE_TERMS = {
     "two-body": ("central",),
-    "j2": ("central", "j2"),
     "j2-j3-j4": ("central", "j2", "j3", "j4"),
 }
 
@@ -119,9 +112,9 @@ def normalize_manual_orbit_propagator(value: str) -> str:
     """Return the persisted manual-orbit propagator ID.
 
     ``sgp4``, ``two-body`` and ``cowell-rk4`` are the selectable families for
-    new designs. Legacy J2 presets remain accepted and are returned unchanged
-    so their previous analytical/numerical semantics are preserved. Editor
-    friendly spellings such as ``kepler`` still normalize at the HTTP boundary.
+    new designs. The fixed J2+J3+J4 compatibility preset remains accepted.
+    Editor-friendly spellings such as ``kepler`` still normalize at the HTTP
+    boundary.
     """
 
     normalized = re.sub(r"-+", "-", re.sub(r"[\s_+/]+", "-", str(value or "").strip().lower())).strip("-")

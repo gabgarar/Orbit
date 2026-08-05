@@ -10,7 +10,6 @@ uses SGP4 and does not accept this composition as an operational selector.
 | Model | Implementation | Usage |
 | --- | --- | --- |
 | Center | \(-\mu\mathbf r/r^3\) | Two bodies and mandatory term from Cowell. |
-| Analytical J2 | Secular rates of elements | Compatibility J2 manual propagator. |
 | J2, J3, J4 numeric | Non-normalized zonal harmonics WGS-84 | Cowell independent terms or historical preset. |
 | Full geopotential | Not available | There are no \(C_{nm},S_{nm}\) coefficients or configurable degree/order. |
 
@@ -35,7 +34,6 @@ a complete dynamic transformation of forces to the earth frame.
 | Route | Selection available |
 | --- | --- |
 | Two bodies | Central gravity only. |
-| J2 manual | J2 secular analytical, no drag. |
 | `cowell-rk4` | `central`, `j2`, `j3`, `j4` and `drag` as explicit terms. |
 | `j2-j3-j4` | Fixed historical preset J2+J3+J4, without drag. |
 

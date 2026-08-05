@@ -25,7 +25,6 @@ from orbit_api.domain.requests import (
 )
 from orbit_api.frames import FrameTransformService
 from orbit_api.orbits.propagators.cowell import CowellPropagator
-from orbit_api.orbits.propagators.j2 import J2Propagator
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
 from orbit_api.timekeeping import ensure_utc
@@ -65,25 +64,6 @@ _MANUAL_PROPAGATOR_METADATA = {
         # Native samples live alongside their ITRF counterpart rather than in
         # a second array, so timestamps cannot drift out of alignment.
         "eci_samples_field": "ephemeris.points[].eci",
-    },
-    "j2": {
-        "label": "J2 (first-order secular)",
-        "dynamics_reference_frame": "EME2000",
-        "input_reference_frame": "EME2000",
-        "legacy_input_reference_frame": "ECI",
-        "ephemeris_reference_frame": "ITRF",
-        "uses_synthetic_tle": False,
-        "eci_samples_available": True,
-        "eci_samples_field": "ephemeris.points[].eci",
-        # Kept only to reproduce the physics of saved projects that chose
-        # the pre-refactor J2 propagator. New designs select J2 as a Cowell
-        # force model instead of as a propagation-family option.
-        "legacy_propagator": True,
-        "force_terms": ["central", "j2"],
-        "force_model_id": "j2",
-        "integrator_id": "secular-analytic",
-        "integrator_label": "First-order secular analytical solution",
-        "atmospheric_drag_supported": False,
     },
     "j2-j3-j4": {
         "label": "J2 + J3 + J4",
@@ -514,8 +494,6 @@ def build_manual_orbit_propagator(
     try:
         if canonical == "two-body":
             propagator = TwoBodyPropagator(epoch, keplerian, frame_transformer=frame_transformer)
-        elif canonical == "j2":
-            propagator = J2Propagator(epoch, keplerian, frame_transformer=frame_transformer)
         elif canonical == "j2-j3-j4":
             propagator = J2J3J4Propagator(epoch, state_vector, frame_transformer=frame_transformer)
         else:

@@ -32,7 +32,6 @@ compone y el integrador [RK4](rk4.md) resuelve el sistema numérico.
 | --- | --- | --- | --- | --- |
 | [SGP4](sgp4.md) | TLE | TEME, UTC | Implementación SGP4 de `sgp4.api.Satrec`. | Registro predeterminado del catálogo. |
 | [Dos cuerpos](two-body.md) | Elementos manuales | EME2000, UTC | Kepler elíptico analítico. | Órbita manual. |
-| [J2 secular](j2-analytical.md) | Elementos manuales | EME2000, UTC | Tasas seculares analíticas de primer orden. | Compatibilidad manual. |
 | [Cowell](cowell.md) | Estado manual | EME2000, UTC | RK4 fijo, central/J2/J3/J4/drag. | Órbita manual. |
 | J2+J3+J4 | Estado manual | EME2000, UTC | Preset RK4 fijo sin drag. | Compatibilidad manual. |
 
@@ -44,7 +43,7 @@ selector de Cowell, dos cuerpos ni J2 para un objeto de catálogo TLE.
 | Origen | Marco nativo | Unidades internas | Salida de contrato |
 | --- | --- | --- | --- |
 | SGP4 | TEME | km, km/s | `StateVector` SI. |
-| Dos cuerpos/J2 | EME2000 | km, km/s | `StateVector` SI. |
+| Dos cuerpos | EME2000 | km, km/s | `StateVector` SI. |
 | Cowell/J2+J3+J4 | EME2000 | km, km/s | `StateVector` SI. |
 
 La transformación a ITRF depende de los datos de orientación terrestre. Una
@@ -53,11 +52,10 @@ el modo estricto se describe en [Marcos de referencia](../engineering/reference-
 
 ## Selección manual
 
-Las rutas manuales aceptan elementos keplerianos para dos cuerpos y J2, un
-estado cartesiano para Cowell y el preset J2+J3+J4, y una ruta SGP4 que genera
-un TLE sintético. El resultado SGP4 sintético puede diferir de la dinámica
-analítica de dos cuerpos o J2 porque parte de otra representación y otro
-modelo.
+Las rutas manuales aceptan elementos keplerianos para dos cuerpos, un estado
+cartesiano para Cowell y el preset J2+J3+J4, y una ruta SGP4 que genera un TLE
+sintético. El resultado SGP4 sintético puede diferir de la dinámica analítica
+de dos cuerpos porque parte de otra representación y otro modelo.
 
 ## Límites globales
 
