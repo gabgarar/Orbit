@@ -13,13 +13,13 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Reveal a useful overview of the area without flooding the sidebar with
-  // every leaf: the active section and its first two nested levels (three
-  // levels in total). The active page path above remains open even when it is
+  // every leaf: the active section and its first nested level (two levels in
+  // total). The active page path above remains open even when it is
   // deeper. These are ordinary Material checkboxes, so readers can still
   // collapse any branch with its chevron afterwards.
   const sectionNav = section?.querySelector(":scope > .md-nav");
   const sectionLevel = Number(sectionNav?.dataset.mdLevel ?? 1);
-  const maximumOverviewLevel = sectionLevel + 2;
+  const maximumOverviewLevel = sectionLevel + 1;
 
   section?.querySelectorAll(":scope .md-nav__item--nested > .md-nav__toggle")
     .forEach((toggle) => {
