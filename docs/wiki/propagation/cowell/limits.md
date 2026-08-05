@@ -43,9 +43,30 @@ Actualmente solo puede componer gravedad central, J2, J3, J4 y arrastre atmosfé
 
 Cowell propaga un único estado inicial. No propaga covarianza ni matriz de transición de estado, así que no puede responder «cuánto puede desviarse esta posición» ni producir una elipse de error. Su salida debe leerse como una trayectoria nominal.
 
-## Uso adecuado
+## Uso recomendado de Cowell
 
-Use Cowell para diseño manual, visualización y estudios acotados dentro de los modelos documentados. Valide fuera de Orbit los casos de alta excentricidad, arcos largos, cercanía a la Tierra o requisitos de precisión. No use esta ruta como sustituto de detección de impacto, determinación de órbita o análisis de riesgo.
+Cowell es apropiado cuando se quiere comprender el efecto de una composición de fuerzas sobre un arco acotado, no certificar una trayectoria operacional. Resulta especialmente útil para:
+
+- órbitas LEO o MEO de estudio con un arco moderado y requisitos de precisión compatibles con el paso fijo;
+- estudios preliminares de dinámica y visualización de trayectorias manuales;
+- pruebas de integración y comprobación de que una fuerza individual cambia la trayectoria en la dirección esperada;
+- comparar una propagación numérica con dos cuerpos u otro modelo analítico sencillo;
+- validar configuraciones de `force_terms`, por ejemplo gravedad central frente a central más J2;
+- explorar cualitativamente el arrastre en LEO, sabiendo que el modelo atmosférico actual no sirve para predicción de decaimiento o reentrada.
+
+## Cuándo no usar Cowell
+
+No use la ruta Cowell/RK4 actual como resultado final para:
+
+- órbitas muy excéntricas, donde el perigeo puede requerir pasos mucho menores que 60 s;
+- órbitas GEO realistas, porque sin SRP, terceros cuerpos y otros efectos el comportamiento a largo plazo no es representativo;
+- órbitas resonantes o dinámicas con escalas temporales rápidas;
+- trayectorias con drag fuerte, predicción de reentrada o análisis detallado de la atmósfera;
+- propagación de largo periodo, donde el error de paso fijo y los efectos omitidos se acumulan;
+- precisión GNSS, OD, covarianza, evaluación de riesgo o ventanas que requieran localización precisa de eventos;
+- maniobras complejas, ya que Cowell no incluye un modelo de maniobra ni estimación de parámetros.
+
+En estos casos, use una efeméride externa validada cuando esté disponible o un propagador de mayor fidelidad fuera del alcance actual de Orbit.
 
 ## Referencias relacionadas
 

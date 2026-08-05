@@ -43,9 +43,30 @@ Today it can compose only central gravity, J2, J3, J4, and exponential atmospher
 
 Cowell propagates one initial state. It does not propagate covariance or a state-transition matrix, so it cannot answer “how far might this position drift?” or produce an error ellipse. Its output must be read as a nominal trajectory.
 
-## Appropriate use
+## Recommended use of Cowell
 
-Use Cowell for manual design, visualization, and bounded studies within the documented models. Validate outside Orbit cases with high eccentricity, long arcs, close Earth approaches, or accuracy requirements. Do not use this path as a replacement for impact detection, orbit determination, or risk analysis.
+Cowell is appropriate when the goal is to understand how a force composition affects a bounded arc, not to certify an operational trajectory. It is particularly useful for:
+
+- LEO or MEO study orbits with a moderate arc and accuracy requirements compatible with the fixed step;
+- preliminary dynamics studies and visualisation of manual trajectories;
+- integration tests and checking that an individual force changes the trajectory in the expected direction;
+- comparing numerical propagation with two-body or another simple analytical model;
+- validating `force_terms` configurations, for example central gravity versus central gravity plus J2;
+- qualitatively exploring LEO drag, while recognising that the current atmosphere model is not suitable for decay or re-entry prediction.
+
+## When not to use Cowell
+
+Do not use the current Cowell/RK4 path as a final result for:
+
+- highly eccentric orbits, where perigee can require steps much shorter than 60 s;
+- realistic GEO orbits, because without SRP, third bodies, and other effects the long-term behaviour is not representative;
+- resonant or fast-time-scale dynamics;
+- trajectories with strong drag, re-entry prediction, or detailed atmospheric analysis;
+- long-period propagation, where fixed-step error and omitted effects accumulate;
+- GNSS precision, orbit determination, covariance, risk assessment, or windows that require precise event location;
+- complex manoeuvres, because Cowell includes no manoeuvre model or parameter estimation.
+
+For these cases, use a validated external ephemeris when available or a higher-fidelity propagator outside Orbit's current scope.
 
 ## Related references
 

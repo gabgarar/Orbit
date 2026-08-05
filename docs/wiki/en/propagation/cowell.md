@@ -69,6 +69,21 @@ This choice keeps one derivative in the native frame and is sufficient for the c
 
     This flow is not executed by Cowell yet. Full geopotential, tides, and albedo are also not implemented; their documentation does not enable those terms.
 
+## How Cowell fits into Orbit
+
+Cowell is not a single formula, and RK4 is not an orbit model. Each component has a separate responsibility:
+
+| Component | Responsibility |
+| --- | --- |
+| `EME2000` state | Defines where the object is and how it moves in the inertial integration frame. |
+| Force model | Defines total acceleration: mandatory central gravity plus selected terms. |
+| Cowell | Converts the state and forces into the Cartesian derivative \(\mathbf f(t,\mathbf y)\). It is the physical propagator. |
+| RK4 | Evaluates that derivative four times to advance one step. It is the numerical integrator. |
+| State cache | Reuses the nearest integrated state so successive queries do not repeat the entire arc. It does not alter physics or improve accuracy. |
+| Frame transformation | Converts the integrated native state to `ITRF` or another requested frame for consumption. |
+
+For a query, Orbit starts from the manual `EME2000` state, Cowell builds acceleration from the force model, RK4 advances the state, and the native result is stored in cache. Only then is the state transformed to the frame requested by the renderer, API, or export. Keeping these responsibilities separate prevents confusing a force with an integrator or a coordinate transformation with physical propagation.
+
 See also [Force Models](force-models.md),
 [Atmospheric drag](atmospheric-drag.md) and
 [Gravity models](../engineering/gravity-models.md).

@@ -69,6 +69,21 @@ Esta elección mantiene una única derivada en el marco nativo y es suficiente p
 
     Este flujo todavía no se ejecuta en Cowell. Tampoco están implementados geopotencial completo, mareas ni albedo; su presencia en la documentación no habilita esos términos.
 
+## Cómo encaja Cowell en Orbit
+
+Cowell no es una única fórmula ni RK4 es un modelo de órbita. Cada componente tiene una responsabilidad separada:
+
+| Pieza | Responsabilidad |
+| --- | --- |
+| Estado en `EME2000` | Define dónde está el objeto y cómo se mueve en el marco inercial de integración. |
+| Modelo de fuerzas | Define la aceleración total: gravedad central obligatoria y los términos seleccionados. |
+| Cowell | Convierte el estado y las fuerzas en la derivada cartesiana \(\mathbf f(t,\mathbf y)\). Es el propagador físico. |
+| RK4 | Evalúa cuatro veces esa derivada para avanzar un paso. Es el integrador numérico. |
+| Caché de estados | Reutiliza el estado integrado más cercano para no repetir todo el arco en consultas sucesivas. No modifica la física ni mejora la precisión. |
+| Transformación de marcos | Convierte el estado nativo integrado a `ITRF` u otro marco solicitado para su consumo. |
+
+En una consulta, Orbit parte del estado manual en `EME2000`, Cowell construye la aceleración con el modelo de fuerzas, RK4 avanza el estado y el resultado nativo se guarda en caché. Solo después se transforma el estado al marco que pide el renderer, la API o una exportación. Separar estas responsabilidades evita confundir una fuerza con un integrador o una transformación de coordenadas con propagación física.
+
 Consulte también [Modelos de fuerza](force-models.md),
 [Arrastre atmosférico](atmospheric-drag.md) y
 [Modelos de gravedad](../engineering/gravity-models.md).
