@@ -6,7 +6,7 @@ import { buildObjectDetails } from "../../../react-ui/src/features/objectDetails
 const labels = (rows) => rows.map(([label]) => label);
 const valueFor = (rows, label) => rows.find(([rowLabel]) => rowLabel === label)?.[1];
 
-test("orbit labels a catalogue state with its declared ITRF frame and omits inert rows", () => {
+test("orbit reports Cartesian state only in the declared frame", () => {
     const details = buildObjectDetails({
         id: "SAT-1",
         sourceFormat: "TLE",
@@ -27,26 +27,21 @@ test("orbit labels a catalogue state with its declared ITRF frame and omits iner
         }
     });
 
-    const orbitLabels = labels(details.rows.orbit);
-    assert.ok(orbitLabels.includes("Position ITRF"));
-    assert.ok(orbitLabels.includes("Velocity ITRF"));
-    assert.ok(orbitLabels.includes("Earth center distance"));
-    assert.ok(orbitLabels.includes("Ground track"));
-    assert.equal(valueFor(details.rows.orbit, "Position ITRF"), "(6500.0, 1200.0, 1800.0) km");
-    assert.equal(valueFor(details.rows.orbit, "Velocity ITRF"), "(-1400.0, 7200.0, 2100.0) m/s");
-    assert.equal(valueFor(details.rows.orbit, "Reference frame"), "ITRF");
-    assert.equal(valueFor(details.rows.orbit, "Orbital period"), "92.90 min");
-    for (const unusedLabel of [
-        "Position ECI", "Velocity ECI", "Position ECEF", "Velocity ECEF",
-        "True anomaly", "Argument of latitude", "Station distance",
-        "Elevation / azimuth", "AOS / LOS", "Footprint", "Footprint radius",
-        "Velocity vector display"
-    ]) {
-        assert.equal(orbitLabels.includes(unusedLabel), false, `${unusedLabel} must not be rendered without a real value`);
+    const orbit = details.rows.orbit;
+    assert.equal(valueFor(orbit, "Marco de referencia"), "ITRF");
+    assert.equal(valueFor(orbit, "Posición ITRF"), "(6500.0, 1200.0, 1800.0) km");
+    assert.equal(valueFor(orbit, "Velocidad ITRF"), "(-1400.0, 7200.0, 2100.0) m/s");
+    assert.equal(valueFor(orbit, "Latitud"), "40.2000 deg");
+    assert.equal(valueFor(orbit, "Longitud"), "-3.7000 deg");
+    assert.equal(valueFor(orbit, "Altitud"), "550.0 km");
+    assert.equal(valueFor(orbit, "Ground track"), "Desactivado");
+    assert.equal(valueFor(orbit, "Radio de huella"), "No activo");
+    for (const inventedLabel of ["Position ECI", "Velocity ECI", "Position ECEF", "Velocity ECEF"]) {
+        assert.equal(labels(orbit).includes(inventedLabel), false, `${inventedLabel} must never be invented`);
     }
 });
 
-test("orbit preserves a non-terrestrial state frame instead of inventing ECI or ECEF aliases", () => {
+test("a non-terrestrial state never gets false geographic coordinates", () => {
     const details = buildObjectDetails({
         id: "OEM-TEME",
         sourceFormat: "OEM",
@@ -60,17 +55,17 @@ test("orbit preserves a non-terrestrial state frame instead of inventing ECI or 
             earth_center_distance_m: 7112000
         }
     });
+    const orbit = details.rows.orbit;
 
-    const orbitLabels = labels(details.rows.orbit);
-    assert.equal(valueFor(details.rows.orbit, "Reference frame"), "TEME");
-    assert.equal(valueFor(details.rows.orbit, "Position TEME"), "(7000.0, -1200.0, 400.0) km");
-    assert.equal(valueFor(details.rows.orbit, "Velocity TEME"), "(1200.0, 7100.0, -800.0) m/s");
-    for (const absentLabel of ["Position ECI", "Velocity ECI", "Position ECEF", "Velocity ECEF", "Latitude", "Longitude", "Altitude"]) {
-        assert.equal(orbitLabels.includes(absentLabel), false, `${absentLabel} does not describe a TEME state`);
-    }
+    assert.equal(valueFor(orbit, "Marco de referencia"), "TEME");
+    assert.equal(valueFor(orbit, "Posición TEME"), "(7000.0, -1200.0, 400.0) km");
+    assert.equal(valueFor(orbit, "Velocidad TEME"), "(1200.0, 7100.0, -800.0) m/s");
+    assert.equal(valueFor(orbit, "Latitud"), "No aplicable: TEME no es terrestre");
+    assert.equal(valueFor(orbit, "Longitud"), "No aplicable: TEME no es terrestre");
+    assert.equal(valueFor(orbit, "Altitud"), "No aplicable: TEME no es terrestre");
 });
 
-test("telemetry contains frame-by-frame values without orbital/geographic rows", () => {
+test("telemetry is restricted to values that can change frame by frame", () => {
     const details = buildObjectDetails({
         id: "SAT-2",
         telemetry: {
@@ -79,7 +74,9 @@ test("telemetry contains frame-by-frame values without orbital/geographic rows",
             speed_m_s: 7601.2,
             velocity_ecef_m_s: { x: -1400, y: 7200, z: 2100 },
             acceleration_ecef_m_s2: { x: 0.2, y: -0.1, z: 0.05 },
-            distance_to_camera_m: 1234,
+            doppler_shift_hz: -245,
+            signal_delay_ms: 18.3,
+            path_loss_db: 151.2,
             runtime_state: "ACTIVE",
             telemetry_age_ms: 241,
             simulation: {
@@ -90,14 +87,37 @@ test("telemetry contains frame-by-frame values without orbital/geographic rows",
             }
         }
     });
+    const telemetry = details.rows.telemetry;
 
-    const telemetryLabels = labels(details.rows.telemetry);
-    for (const dynamicLabel of ["Velocity vector", "Acceleration", "Acceleration vector", "Satellite state", "Simulation frame", "Simulation mode", "Time scale"]) {
-        assert.ok(telemetryLabels.includes(dynamicLabel), `${dynamicLabel} must be visible in telemetry`);
+    for (const dynamicLabel of ["Velocidad", "Vector velocidad", "Aceleración", "Vector aceleración", "Doppler", "Retardo de señal", "Pérdida de trayecto", "Estado del satélite", "Modo temporal", "Escala temporal", "Edad de telemetría"]) {
+        assert.ok(labels(telemetry).includes(dynamicLabel), `${dynamicLabel} must be visible in telemetry`);
     }
-    assert.equal(valueFor(details.rows.telemetry, "Simulation mode"), "Simulated");
-    assert.equal(valueFor(details.rows.telemetry, "Time scale"), "10×");
-    for (const orbitalLabel of ["Latitude", "Longitude", "Altitude", "Propagation", "Recommended window", "Position ECEF"]) {
-        assert.equal(telemetryLabels.includes(orbitalLabel), false, `${orbitalLabel} does not belong to telemetry`);
+    assert.equal(valueFor(telemetry, "Modo temporal"), "Simulated");
+    assert.equal(valueFor(telemetry, "Escala temporal"), "10×");
+    assert.equal(valueFor(telemetry, "Doppler"), "-245.0 Hz");
+    for (const staticLabel of ["Época", "Línea TLE 1", "Modelo de fuerzas", "Marco de integración"]) {
+        assert.equal(labels(telemetry).includes(staticLabel), false, `${staticLabel} does not belong to telemetry`);
     }
+});
+
+test("orbit keeps visibility and station information separate from source input", () => {
+    const details = buildObjectDetails({
+        id: "SAT-3",
+        sourceFormat: "TLE",
+        telemetry: {
+            id: "SAT-3",
+            position_frame: "ITRF",
+            station_distance_m: 1204000,
+            aos: "2026-07-19T11:45:00.000Z",
+            los: "2026-07-19T11:51:00.000Z",
+            ground_track_enabled: true,
+            ground_track_visible: true,
+            footprint_radius_m: 2085200
+        }
+    });
+    const orbit = details.rows.orbit;
+    assert.equal(valueFor(orbit, "Distancia a estación"), "1204.0 km");
+    assert.equal(valueFor(orbit, "AOS / LOS"), "2026-07-19 11:45 UTC · 2026-07-19 11:51 UTC");
+    assert.equal(valueFor(orbit, "Ground track"), "Activo");
+    assert.equal(valueFor(orbit, "Radio de huella"), "2085.2 km");
 });

@@ -319,6 +319,12 @@ function createCatalogEntryMeta(entry = {}, fallbackName = "") {
         launchSite: catalogMetadataText(entry, ["launchSite", "launch_site", "site"]),
         tleSource: catalogMetadataText(entry, ["tleSource", "tle_source", "sourceProvider", "source_provider", "sourceName", "source_name", "provider", "providerName"]),
         updatedAt: catalogMetadataText(entry, ["updatedAt", "updated_at", "lastUpdated", "last_updated", "tleUpdatedAt", "tle_updated_at"]),
+        epoch: catalogMetadataText(entry, ["epoch", "epochUtc", "epoch_utc", "epochTime", "epoch_time"]),
+        dataQuality: catalogMetadataText(entry, ["dataQuality", "data_quality", "quality", "precision", "accuracy"]),
+        // Keep format-specific source metadata intact when the catalogue API
+        // provides it. The details inspector can then expose OMM/OEM/SP3
+        // fields without pretending that a generic TLE record contains them.
+        inputMetadata: entry?.inputMetadata ?? entry?.input_metadata ?? entry?.sourceMetadata ?? entry?.source_metadata ?? null,
         perigee_km: Number.isFinite(Number(entry?.perigee_km)) ? Number(entry.perigee_km) : null,
         decayRisk: entry?.decayRisk === true
     };
