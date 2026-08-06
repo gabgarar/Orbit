@@ -31,6 +31,27 @@ function vectorWithUnit(input, unit, digits = 1, divisor = 1) {
     return `(${number(Number(input.x) / divisor, digits)}, ${number(Number(input.y) / divisor, digits)}, ${number(Number(input.z) / divisor, digits)}) ${unit}`;
 }
 
+function hasVector(input) {
+    return Boolean(input && [input.x, input.y, input.z].every(hasNumber));
+}
+
+function firstVector(...inputs) {
+    return inputs.find(hasVector) || null;
+}
+
+function frameLabel(input) {
+    if (typeof input === "string") return input.trim() || null;
+    if (!input || typeof input !== "object") return null;
+    const name = String(input.name || input.frame || "").trim();
+    const realization = String(input.realization || "").trim();
+    if (!name) return realization || null;
+    return realization && realization !== name ? `${name} / ${realization}` : name;
+}
+
+function optionalRow(label, data, tone) {
+    return data === "-" || data === null || data === undefined || data === "" ? [] : [[label, data, tone]];
+}
+
 function vectorMagnitude(input) {
     if (!input || ![input.x, input.y, input.z].every(hasNumber)) return null;
     return Math.hypot(Number(input.x), Number(input.y), Number(input.z));
@@ -193,13 +214,23 @@ export function buildObjectDetails(detail) {
     const generalAltitudeKm = hasNumber(orbit.altitudeKm) ? orbit.altitudeKm : (hasNumber(geo.altitude_m) ? Number(geo.altitude_m) / 1000 : null);
     const status = detail.active === false ? "Inactive" : (visible ? "Operational" : "Hidden");
     const statusTone = status === "Operational" ? "is-operational" : (status === "Hidden" ? "is-hidden" : undefined);
-    const velocityVector = telemetry.velocity_ecef_m_s || telemetry.velocity;
+    const positionVector = firstVector(telemetry.position, telemetry.position_ecef_m, telemetry.position_eci_m);
+    const velocityVector = firstVector(telemetry.velocity, telemetry.velocity_ecef_m_s, telemetry.velocity_eci_m_s);
     const accelerationVector = telemetry.acceleration_ecef_m_s2;
+    const positionFrame = frameLabel(telemetry.position_frame || telemetry.reference_frame || telemetry.frame);
+    const velocityFrame = frameLabel(telemetry.velocity_frame) || positionFrame;
+    const stateFrame = positionFrame || velocityFrame;
     const simulation = telemetry.simulation || {};
     const manualKeplerian = manualOrbit.keplerian || {};
     const manualStateVector = manualOrbit.stateVector || manualOrbit.state_vector || {};
     const manualPosition = manualStateVector.positionEciKm || manualStateVector.position_eci_km || manualStateVector.position || {};
     const manualVelocity = manualStateVector.velocityEciKmS || manualStateVector.velocity_eci_km_s || manualStateVector.velocity || {};
+    const manualStateFrame = frameLabel(
+        manualStateVector.referenceFrame
+        || manualStateVector.reference_frame
+        || manualOrbit.referenceFrame
+        || manualOrbit.reference_frame
+    ) || "EME2000";
     const manualSummary = manualOrbit.summary || manualOrbit.orbitSummary || manualOrbit.orbit_summary || {};
     const manualPropagationOptions = manualOrbit.propagationOptions || manualOrbit.propagation_options || {};
     const manualObjectType = metadataValue([manualObjectMetadata], ["objectType", "object_type"]);
@@ -239,6 +270,24 @@ export function buildObjectDetails(detail) {
             ] : [])
         ]
         : [];
+    const orbitRows = [
+        ...optionalRow("Type", value(orbit.label)),
+        ...optionalRow("Latitude", numberWithUnit(geo.latitude_deg, "deg", 4)),
+        ...optionalRow("Longitude", numberWithUnit(geo.longitude_deg, "deg", 4)),
+        ...optionalRow("Altitude", convertedNumberWithUnit(geo.altitude_m, 1000, "km")),
+        ...optionalRow(stateFrame ? `Instant speed (${stateFrame})` : "Instant speed", numberWithUnit(telemetry.speed_m_s, "m/s")),
+        ...optionalRow("Orbital period", numberWithUnit(tlePeriodMinutes(tleSummary), "min", 2)),
+        ...optionalRow("Earth center distance", convertedNumberWithUnit(telemetry.earth_center_distance_m, 1000, "km")),
+        ...optionalRow("Reference frame", stateFrame || "-"),
+        ...optionalRow(stateFrame ? `Position ${stateFrame}` : "Position", vectorWithUnit(positionVector, "km", 1, 1000)),
+        ...optionalRow((velocityFrame || stateFrame) ? `Velocity ${velocityFrame || stateFrame}` : "Velocity", vectorWithUnit(velocityVector, "m/s")),
+        ...optionalRow("Ground track", onOff(telemetry.ground_track_enabled)),
+        ...(telemetry.ground_track_enabled === true
+            ? optionalRow("Footprint radius", convertedNumberWithUnit(telemetry.footprint_radius_m, 1000, "km"))
+            : []),
+        ...optionalRow("Recommended window", value(orbit.recommendedWindow)),
+        ...(!manual ? optionalRow("Propagation", oem ? "OEM ephemeris" : "SGP4") : [])
+    ];
     if (celestial) {
         const body = value(telemetry.celestial_body || catalogMeta.celestialBody, "Cuerpo");
         const state = visible ? "Visible" : "Hidden";
@@ -256,10 +305,10 @@ export function buildObjectDetails(detail) {
                     ["Physical radius", numberWithUnit(telemetry.body_radius_m || catalogMeta.bodyRadiusMeters, "m", 0)]
                 ],
                 orbit: [
-                    ["Reference frame", value(telemetry.position_frame)],
-                    ["Earth center distance", convertedNumberWithUnit(telemetry.earth_center_distance_m, 1000, "km", 1)],
-                    ["Position ECEF", vectorWithUnit(telemetry.position_ecef_m, "km", 1, 1000)],
-                    ["Clock instant", simulationFrame(telemetry.simulation?.current_time || telemetry.timestamp_ms)]
+                    ...optionalRow("Reference frame", stateFrame || "-"),
+                    ...optionalRow("Earth center distance", convertedNumberWithUnit(telemetry.earth_center_distance_m, 1000, "km", 1)),
+                    ...optionalRow(stateFrame ? `Position ${stateFrame}` : "Position", vectorWithUnit(positionVector, "km", 1, 1000)),
+                    ...optionalRow("Clock instant", simulationFrame(telemetry.simulation?.current_time || telemetry.timestamp_ms))
                 ],
                 telemetry: [
                     ["Scene state", value(telemetry.runtime_state)],
@@ -275,10 +324,10 @@ export function buildObjectDetails(detail) {
         overview: [["Nombre", title], ["Object type", manual ? manualObjectType : "-"], ["Misión", mission], ["Operador / agencia", operator], ["País", country], ["Source", source], ["Fuente TLE", sourceOrigin], ["Status", status, statusTone], ["Orbit type", value(orbit.label)], ["Altitude", numberWithUnit(generalAltitudeKm, "km")], ["NORAD", value(noradId)], ["Object ID", objectId], ["Fecha de lanzamiento", launchDate], ["Vehículo lanzador", launchVehicle], ["Sitio de lanzamiento", launchSite], ["Estado TLE", oem ? "-" : tleStatus(ageHours, orbit)], ["Edad TLE", oem ? "-" : numberWithUnit(ageHours, "h")], ["Última actualización", lastUpdated], ["Fecha inicio", utcDate(timeRange.startDate)], ["Fecha fin", utcDate(timeRange.endDate)], ["Rango OEM", oemRange(timeRange)]],
         // Orbit holds instantaneous geographic/reference-frame state. TLE
         // elements deliberately stay in the dedicated TLE dialog.
-        orbit: [["Type", value(orbit.label)], ["Latitude", numberWithUnit(geo.latitude_deg, "deg", 4)], ["Longitude", numberWithUnit(geo.longitude_deg, "deg", 4)], ["Altitude", convertedNumberWithUnit(geo.altitude_m, 1000, "km")], ["Instant speed", numberWithUnit(telemetry.speed_m_s, "m/s")], ["Orbital period", numberWithUnit(tlePeriodMinutes(tleSummary), "min", 2)], ["True anomaly", "-"], ["Argument of latitude", "-"], ["Earth center distance", convertedNumberWithUnit(telemetry.earth_center_distance_m, 1000, "km")], ["Station distance", convertedNumberWithUnit(telemetry.station_distance_m, 1000, "km")], ["Elevation / azimuth", "-"], ["AOS / LOS", "-"], ["Position ECI", vectorWithUnit(telemetry.position_eci_m, "km", 1, 1000)], ["Velocity ECI", vectorWithUnit(telemetry.velocity_eci_m_s, "m/s")], ["Position ECEF", vectorWithUnit(telemetry.position_ecef_m, "km", 1, 1000)], ["Velocity ECEF", vectorWithUnit(telemetry.velocity_ecef_m_s, "m/s")], ["Reference frame", value(telemetry.position_frame)], ["Ground track", onOff(telemetry.ground_track_enabled)], ["Footprint", onOff(telemetry.footprint_enabled)], ["Footprint radius", convertedNumberWithUnit(telemetry.footprint_radius_m, 1000, "km")], ["Velocity vector display", onOff(telemetry.velocity_vector_enabled)], ["Recommended window", value(orbit.recommendedWindow)], ["Propagation", oem ? "OEM ephemeris" : "SGP4"]],
+        orbit: orbitRows,
         // Telemetry is intentionally limited to values that vary per state
         // sample or simulation frame; it contains no TLE/static orbit fields.
         telemetry: [["Speed", numberWithUnit(telemetry.speed_km_h, "km/h")], ["Velocity", numberWithUnit(telemetry.speed_m_s, "m/s")], ["Velocity vector", vectorWithUnit(velocityVector, "m/s")], ["Acceleration", numberWithUnit(vectorMagnitude(accelerationVector), "m/s²", 3)], ["Acceleration vector", vectorWithUnit(accelerationVector, "m/s²", 3)], ["Camera distance", numberWithUnit(telemetry.distance_to_camera_m, "m")], ["Station distance", convertedNumberWithUnit(telemetry.station_distance_m, 1000, "km")], ["Doppler shift", numberWithUnit(telemetry.doppler_shift_hz, "Hz")], ["Signal delay", numberWithUnit(telemetry.signal_delay_ms, "ms")], ["Path loss", numberWithUnit(telemetry.path_loss_db, "dB")], ["Satellite state", value(telemetry.runtime_state)], ["Simulation frame", simulationFrame(simulation.current_time || telemetry.timestamp_ms)], ["Simulation mode", simulationMode(simulation.mode)], ["Time scale", hasNumber(simulation.time_scale) ? `${number(simulation.time_scale, 0)}×` : "-"], ["Playback", simulation.is_playing === true ? "Playing" : simulation.is_playing === false ? "Paused" : "-"], ["Telemetry age", numberWithUnit(telemetry.telemetry_age_ms, "ms", 0)]],
-        manual: manual ? [["Definition", value(manualOrbit.definitionSource || manualOrbit.definition_source)], ["Propagation engine", manualPropagationEngineLabel(manualOrbit.propagator)], ...(manualUsesCowell ? [["Numerical integrator", value(manualNumericalIntegrator, "RK4").toUpperCase()], ["Force terms", manualForceTermsLabel(manualForceTerms)]] : manualUsesLegacyForcePreset ? [["Force terms", manualForceTermsLabel(manualForceTerms)]] : []), ...manualDragRows, ["Epoch", utcDate(manualOrbit.epochUtc || manualOrbit.epoch)], ["Start", utcDate(manualOrbit.startTime || manualOrbit.start_time)], ["End", utcDate(manualOrbit.endTime || manualOrbit.end_time)], ["Ground track", onOff(manualOrbit.groundTrackEnabled ?? manualOrbit.ground_track_enabled)], ["Semi-major axis", numberWithUnit(manualKeplerian.semiMajorAxisKm ?? manualKeplerian.semi_major_axis_km, "km", 3)], ["Eccentricity", number(manualKeplerian.eccentricity, 6)], ["Inclination", numberWithUnit(manualKeplerian.inclinationDeg ?? manualKeplerian.inclination_deg, "deg", 4)], ["RAAN", numberWithUnit(manualKeplerian.raanDeg ?? manualKeplerian.raan_deg, "deg", 4)], ["Arg. periapsis", numberWithUnit(manualKeplerian.argumentOfPeriapsisDeg ?? manualKeplerian.argument_of_periapsis_deg ?? manualKeplerian.argument_of_perigee_deg, "deg", 4)], ["True anomaly", numberWithUnit(manualKeplerian.trueAnomalyDeg ?? manualKeplerian.true_anomaly_deg, "deg", 4)], ["Position ECI", vectorWithUnit(manualPosition, "km", 3)], ["Velocity ECI", vectorWithUnit(manualVelocity, "km/s", 5)], ["Perigee", numberWithUnit(manualSummary.perigeeAltitudeKm ?? manualSummary.perigee_altitude_km ?? manualSummary.perigeeKm ?? manualSummary.perigee_km, "km", 3)], ["Apogee", numberWithUnit(manualSummary.apogeeAltitudeKm ?? manualSummary.apogee_altitude_km ?? manualSummary.perigeeKm ?? manualSummary.apogee_km, "km", 3)], ["Period", numberWithUnit(manualSummary.periodMinutes ?? manualSummary.period_minutes ?? (hasNumber(manualSummary.orbitalPeriodSeconds ?? manualSummary.orbital_period_seconds) ? Number(manualSummary.orbitalPeriodSeconds ?? manualSummary.orbital_period_seconds) / 60 : null), "min", 3)]] : []
+        manual: manual ? [["Definition", value(manualOrbit.definitionSource || manualOrbit.definition_source)], ["Propagation engine", manualPropagationEngineLabel(manualOrbit.propagator)], ...(manualUsesCowell ? [["Numerical integrator", value(manualNumericalIntegrator, "RK4").toUpperCase()], ["Force terms", manualForceTermsLabel(manualForceTerms)]] : manualUsesLegacyForcePreset ? [["Force terms", manualForceTermsLabel(manualForceTerms)]] : []), ...manualDragRows, ["Epoch", utcDate(manualOrbit.epochUtc || manualOrbit.epoch)], ["Start", utcDate(manualOrbit.startTime || manualOrbit.start_time)], ["End", utcDate(manualOrbit.endTime || manualOrbit.end_time)], ["Ground track", onOff(manualOrbit.groundTrackEnabled ?? manualOrbit.ground_track_enabled)], ["Semi-major axis", numberWithUnit(manualKeplerian.semiMajorAxisKm ?? manualKeplerian.semi_major_axis_km, "km", 3)], ["Eccentricity", number(manualKeplerian.eccentricity, 6)], ["Inclination", numberWithUnit(manualKeplerian.inclinationDeg ?? manualKeplerian.inclination_deg, "deg", 4)], ["RAAN", numberWithUnit(manualKeplerian.raanDeg ?? manualKeplerian.raan_deg, "deg", 4)], ["Arg. periapsis", numberWithUnit(manualKeplerian.argumentOfPeriapsisDeg ?? manualKeplerian.argument_of_periapsis_deg ?? manualKeplerian.argument_of_perigee_deg, "deg", 4)], ["True anomaly", numberWithUnit(manualKeplerian.trueAnomalyDeg ?? manualKeplerian.true_anomaly_deg, "deg", 4)], [`Position ${manualStateFrame}`, vectorWithUnit(manualPosition, "km", 3)], [`Velocity ${manualStateFrame}`, vectorWithUnit(manualVelocity, "km/s", 5)], ["Perigee", numberWithUnit(manualSummary.perigeeAltitudeKm ?? manualSummary.perigee_altitude_km ?? manualSummary.perigeeKm ?? manualSummary.perigee_km, "km", 3)], ["Apogee", numberWithUnit(manualSummary.apogeeAltitudeKm ?? manualSummary.apogee_altitude_km ?? manualSummary.perigeeKm ?? manualSummary.apogee_km, "km", 3)], ["Period", numberWithUnit(manualSummary.periodMinutes ?? manualSummary.period_minutes ?? (hasNumber(manualSummary.orbitalPeriodSeconds ?? manualSummary.orbital_period_seconds) ? Number(manualSummary.orbitalPeriodSeconds ?? manualSummary.orbital_period_seconds) / 60 : null), "min", 3)]] : []
     } };
 }

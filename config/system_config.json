@@ -34,8 +34,8 @@
       "earth_basemap": "esri-world-imagery"
     },
     "recording": {
-      "quality": "medium",
-      "output_format": "webm"
+      "quality": "high",
+      "output_format": "mp4"
     },
     "ui": {
       "language": "es",

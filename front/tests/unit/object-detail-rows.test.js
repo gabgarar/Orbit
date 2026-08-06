@@ -183,6 +183,10 @@ test("a confirmed manual orbit exposes only its authored definition in Manual Pa
     assert.equal(manual.Apogee, "568.700 km");
     assert.equal(manual.Period, "94.600 min");
     assert.equal(manual["Arg. periapsis"], "70.0000 deg");
+    assert.equal(manual["Position EME2000"], "(6800.000, 20.000, 15.000) km");
+    assert.equal(manual["Velocity EME2000"], "(0.10000, 7.60000, 0.20000) km/s");
+    assert.equal("Position ECI" in manual, false);
+    assert.equal("Velocity ECI" in manual, false);
     assert.equal(overview["Object type"], "satellite");
     assert.equal(overview["Misión"], "Earth observation");
     assert.equal(overview["Operador / agencia"], "Orbit Agency");
