@@ -57,6 +57,7 @@ function stationRows(detail) {
         ],
         configuration: [
             ["Máscara de elevación", `${number(station.min_elevation_deg, 1)}°`],
+            ["Zona horaria", station.time_zone || "UTC"],
             ["Frecuencia", `${number(station.frequency_mhz, 3)} MHz`],
             ["Potencia TX", `${number(station.tx_power_dbm, 1)} dBm`],
             ["Ganancia TX", `${number(station.tx_gain_dbi, 1)} dBi`],

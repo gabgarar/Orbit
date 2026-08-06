@@ -11,6 +11,7 @@ estaciones se guardan dentro del documento de proyecto.
 | Grupo | Campos |
 | --- | --- |
 | General | Nombre, latitud, longitud, altitud, máscara de elevación y radio de cobertura. |
+| Tiempo | Zona horaria IANA de la estación, por ejemplo `Europe/Madrid` o `UTC`. |
 | Radio | Frecuencia, potencia de transmisión, ganancia de transmisión y ganancia de recepción. |
 | Visual | Tamaño y color del símbolo. |
 | Cobertura | Visibilidad de cobertura y mapa de calor, cuando se habilitan. |
@@ -33,6 +34,12 @@ simulada y la tabla de pases puede exportarse como CSV. El perfil de elevación
 del panel representa las muestras calculadas cada 30 s: azul para toda la
 trayectoria y verde únicamente donde supera la máscara. No representa todavía
 crepúsculo, Sol, Luna ni restricciones astronómicas.
+
+Cada par estación–satélite monitorizado dibuja automáticamente una línea verde
+en la escena mientras la elevación instantánea supera la máscara de esa
+estación. La línea desaparece al perder visibilidad; no se dibuja para capas
+que la estación no monitoriza. El eje temporal de la carta usa la zona horaria
+IANA de la estación y conserva el desfase UTC en cada etiqueta.
 
 Actualmente el cálculo operativo de pases está habilitado para las capas con
 TLE/SGP4. Las capas OEM, SP3 y los diseños manuales conservan su visualización,

@@ -299,6 +299,7 @@ const bodyCentricCamera = createBodyCentricCameraController({
 let groundStationSequence = 1;
 let stationHeatMapTimer = null;
 let groundStationAnalysisLink = null;
+const groundStationVisibilityLinks = new Map();
 let currentProjectFileHandle = null;
 let currentProjectName = null;
 let objectSidebar = null;
@@ -1275,6 +1276,7 @@ function removeGroundStationLayer(layerId) {
     if (station.coverageEntity) viewer.entities.remove(station.coverageEntity);
     groundStationHeatMaps.clear(layerId);
     groundStationLayers.delete(layerId);
+    syncGroundStationVisibilityLinks();
     layerDisplayNameOverrides.delete(layerId);
     emitObjectStateChanged({ layerId, sourceId: layerId, reason: "activation" });
 }
@@ -1344,6 +1346,9 @@ function setCompositeLayerActive(layerId, active) {
             detail: { satelliteId: layerId, satelliteName: getLayerDisplayName(layerId) }
         }));
     }
+    if (changed) {
+        syncGroundStationVisibilityLinks();
+    }
     return changed;
 }
 
@@ -1384,6 +1389,15 @@ function createStationSymbolImage(symbol = "circle", color = "#3cc4ff", size = 1
     return createGroundStationSymbol(symbol, color, size);
 }
 
+function calculateGroundStationRadioRangeKm(station) {
+    const frequencyMhz = Number(station?.frequency_mhz);
+    const budgetDbm = Number(station?.tx_power_dbm) + Number(station?.tx_gain_dbi) + Number(station?.rx_gain_dbi);
+    const minimumReceivedDbm = Number.isFinite(Number(station?.min_link_power_dbm)) ? Number(station.min_link_power_dbm) : -80;
+    if (!Number.isFinite(frequencyMhz) || frequencyMhz <= 0 || !Number.isFinite(budgetDbm)) return 1;
+    const rangeKm = 10 ** ((budgetDbm - minimumReceivedDbm - 32.44 - (20 * Math.log10(frequencyMhz))) / 20);
+    return Math.max(1, Math.min(5000, rangeKm));
+}
+
 function applyGroundStationVisuals(station) {
     if (!station || !station.entity) {
         return;
@@ -1399,8 +1413,9 @@ function applyGroundStationVisuals(station) {
     station.entity.point = undefined;
 
     if (station.coverageEntity?.ellipse) {
-        station.coverageEntity.ellipse.semiMajorAxis = station.coverage_radius_km * 1000;
-        station.coverageEntity.ellipse.semiMinorAxis = station.coverage_radius_km * 1000;
+        station.radio_range_km = calculateGroundStationRadioRangeKm(station);
+        station.coverageEntity.ellipse.semiMajorAxis = station.radio_range_km * 1000;
+        station.coverageEntity.ellipse.semiMinorAxis = station.radio_range_km * 1000;
         station.coverageEntity.ellipse.height = Math.max(3000, Number(station.altitude_m) + 3000);
         station.coverageEntity.ellipse.material = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.11);
         station.coverageEntity.ellipse.outlineColor = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.74);
@@ -1417,11 +1432,13 @@ function createGroundStationLayer(params = {}) {
 
     const stationId = `gst:${groundStationSequence++}`;
     const altitudeM = Number.isFinite(Number(params.altitude_m)) ? Number(params.altitude_m) : 0;
+    const timeZone = String(params.time_zone || "UTC").trim() || "UTC";
     const minElevationDeg = Number.isFinite(Number(params.min_elevation_deg)) ? Number(params.min_elevation_deg) : 10;
     const frequencyMhz = Number.isFinite(Number(params.frequency_mhz)) ? Number(params.frequency_mhz) : 2200;
     const txPowerDbm = Number.isFinite(Number(params.tx_power_dbm)) ? Number(params.tx_power_dbm) : 38;
     const txGainDbi = Number.isFinite(Number(params.tx_gain_dbi)) ? Number(params.tx_gain_dbi) : 18;
     const rxGainDbi = Number.isFinite(Number(params.rx_gain_dbi)) ? Number(params.rx_gain_dbi) : 21;
+    const minLinkPowerDbm = Number.isFinite(Number(params.min_link_power_dbm)) ? Number(params.min_link_power_dbm) : -80;
     const coverageRadiusKm = Number.isFinite(Number(params.coverage_radius_km)) ? Number(params.coverage_radius_km) : 1200;
     const pointSizePx = Number.isFinite(Number(params.point_size_px)) ? Number(params.point_size_px) : 11;
     const pointColor = String(params.point_color || "#3cc4ff").trim() || "#3cc4ff";
@@ -1476,11 +1493,13 @@ function createGroundStationLayer(params = {}) {
         latitude_deg: lat,
         longitude_deg: lon,
         altitude_m: altitudeM,
+        time_zone: timeZone,
         min_elevation_deg: minElevationDeg,
         frequency_mhz: frequencyMhz,
         tx_power_dbm: txPowerDbm,
         tx_gain_dbi: txGainDbi,
         rx_gain_dbi: rxGainDbi,
+        min_link_power_dbm: minLinkPowerDbm,
         coverage_radius_km: coverageRadiusKm,
         point_size_px: pointSizePx,
         point_color: pointColor,
@@ -1497,6 +1516,7 @@ function createGroundStationLayer(params = {}) {
 
     applyGroundStationVisuals(groundStationLayers.get(stationId));
     groundStationHeatMaps.update(stationId);
+    syncGroundStationVisibilityLinks();
 
     layerDisplayNameOverrides.set(stationId, displayName);
     return stationId;
@@ -1512,11 +1532,14 @@ function getGroundStationParams(layerId) {
         latitude_deg: station.latitude_deg,
         longitude_deg: station.longitude_deg,
         altitude_m: station.altitude_m,
+        time_zone: station.time_zone || "UTC",
         min_elevation_deg: station.min_elevation_deg,
         frequency_mhz: station.frequency_mhz,
         tx_power_dbm: station.tx_power_dbm,
         tx_gain_dbi: station.tx_gain_dbi,
         rx_gain_dbi: station.rx_gain_dbi,
+        min_link_power_dbm: station.min_link_power_dbm ?? -80,
+        radio_range_km: station.radio_range_km,
         coverage_radius_km: station.coverage_radius_km,
         point_size_px: station.point_size_px,
         point_symbol: station.point_symbol,
@@ -1543,11 +1566,13 @@ function updateGroundStationLayer(layerId, patch = {}) {
     station.latitude_deg = nextLat;
     station.longitude_deg = nextLon;
     station.altitude_m = nextAlt;
+    station.time_zone = String(patch.time_zone || station.time_zone || "UTC").trim() || "UTC";
     station.min_elevation_deg = Number.isFinite(Number(patch.min_elevation_deg)) ? Number(patch.min_elevation_deg) : station.min_elevation_deg;
     station.frequency_mhz = Number.isFinite(Number(patch.frequency_mhz)) ? Number(patch.frequency_mhz) : station.frequency_mhz;
     station.tx_power_dbm = Number.isFinite(Number(patch.tx_power_dbm)) ? Number(patch.tx_power_dbm) : station.tx_power_dbm;
     station.tx_gain_dbi = Number.isFinite(Number(patch.tx_gain_dbi)) ? Number(patch.tx_gain_dbi) : station.tx_gain_dbi;
     station.rx_gain_dbi = Number.isFinite(Number(patch.rx_gain_dbi)) ? Number(patch.rx_gain_dbi) : station.rx_gain_dbi;
+    station.min_link_power_dbm = Number.isFinite(Number(patch.min_link_power_dbm)) ? Number(patch.min_link_power_dbm) : (station.min_link_power_dbm ?? -80);
     station.coverage_radius_km = Number.isFinite(Number(patch.coverage_radius_km)) ? Number(patch.coverage_radius_km) : station.coverage_radius_km;
     station.point_size_px = Number.isFinite(Number(patch.point_size_px)) ? Number(patch.point_size_px) : station.point_size_px;
     station.point_symbol = String(patch.point_symbol || station.point_symbol || "circle").trim() || "circle";
@@ -1574,7 +1599,9 @@ function updateGroundStationLayer(layerId, patch = {}) {
     layerDisplayNameOverrides.set(layerId, station.name);
     applyGroundStationVisuals(station);
     groundStationHeatMaps.update(layerId);
+    syncGroundStationVisibilityLinks();
     emitObjectStateChanged({ layerId, sourceId: layerId, reason: "configuration" });
+    publishGroundStationsState();
     return true;
 }
 
@@ -1992,6 +2019,49 @@ function clearGroundStationAnalysisVisuals() {
     }
 }
 
+// Monitored pairs own a lightweight callback polyline. The callback returns
+// no positions below the station mask, so Cesium shows an antenna link only
+// while that satellite is actually accessible from that station.
+function syncGroundStationVisibilityLinks() {
+    const desired = new Set();
+    for (const station of groundStationLayers.values()) {
+        if (!station?.visible) continue;
+        for (const satelliteLayerId of station.monitor_satellite_ids || []) {
+            if (!isCompositeLayerActive(satelliteLayerId)) continue;
+            const satellite = getCompositeLayerEntity(satelliteLayerId);
+            if (!satellite?.position) continue;
+            const key = `${station.id}:${satelliteLayerId}`;
+            desired.add(key);
+            if (groundStationVisibilityLinks.has(key)) continue;
+            const entity = viewer.entities.add({
+                id: `ground-station-visibility:${key}`,
+                polyline: {
+                    positions: new Cesium.CallbackProperty((time) => {
+                        const currentStation = groundStationLayers.get(station.id);
+                        const satellitePosition = satellite.position?.getValue?.(time);
+                        if (!currentStation?.visible || !isCompositeLayerActive(satelliteLayerId) || !satellitePosition) return [];
+                        const stationPosition = Cesium.Cartesian3.fromDegrees(currentStation.longitude_deg, currentStation.latitude_deg, currentStation.altitude_m);
+                        const withinRadioEnvelope = (Cesium.Cartesian3.distance(stationPosition, satellitePosition) / 1000) <= calculateGroundStationRadioRangeKm(currentStation);
+                        return withinRadioEnvelope && computeStationElevationDeg(stationPosition, satellitePosition) >= currentStation.min_elevation_deg
+                            ? [stationPosition, satellitePosition]
+                            : [];
+                    }, false),
+                    width: 1.7,
+                    material: Cesium.Color.fromCssColorString("#69f0a5").withAlpha(0.9)
+                },
+                properties: { layerType: "GROUND_STATION_VISIBILITY", stationId: station.id, satelliteLayerId }
+            });
+            groundStationVisibilityLinks.set(key, entity);
+        }
+    }
+    for (const [key, entity] of groundStationVisibilityLinks) {
+        if (!desired.has(key)) {
+            viewer.entities.remove(entity);
+            groundStationVisibilityLinks.delete(key);
+        }
+    }
+}
+
 function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElevationDeg) {
     clearGroundStationAnalysisVisuals();
     const satellite = getCompositeLayerEntity(satelliteLayerId);
@@ -2019,7 +2089,14 @@ function publishGroundStationsState() {
         latitude_deg: station.latitude_deg,
         longitude_deg: station.longitude_deg,
         altitude_m: station.altitude_m,
+        time_zone: station.time_zone || "UTC",
         min_elevation_deg: station.min_elevation_deg,
+        frequency_mhz: station.frequency_mhz,
+        tx_power_dbm: station.tx_power_dbm,
+        tx_gain_dbi: station.tx_gain_dbi,
+        rx_gain_dbi: station.rx_gain_dbi,
+        min_link_power_dbm: station.min_link_power_dbm ?? -80,
+        radio_range_km: station.radio_range_km,
         monitor_satellite_ids: [...(station.monitor_satellite_ids || [])]
     }));
     const satellites = getCompositeLayerIds()
@@ -2037,6 +2114,7 @@ function setGroundStationMonitoring(stationId, satelliteIds) {
     station.monitor_satellite_ids = Array.isArray(satelliteIds)
         ? satelliteIds.map((id) => String(id || "").trim()).filter(Boolean)
         : [];
+    syncGroundStationVisibilityLinks();
     emitObjectStateChanged({ layerId: station.id, sourceId: station.id, reason: "monitoring" });
     publishGroundStationsState();
     return true;
@@ -2047,7 +2125,10 @@ async function analyzeGroundStationPasses(detail = {}) {
     const satelliteLayerId = String(detail.satelliteId || "").trim();
     const station = groundStationLayers.get(stationId);
     const satelliteId = getSatelliteSourceIdFromLayerId(satelliteLayerId);
-    const minElevationDeg = Math.max(0, Math.min(90, Number(detail.minElevationDeg)));
+    // Visibility is defined by the station contract. Never accept a separate
+    // analysis threshold, otherwise a stale panel can disagree with the
+    // station shown in Layers and with the live antenna links.
+    const minElevationDeg = Math.max(0, Math.min(90, Number(station?.min_elevation_deg)));
     if (!station || !satelliteId || !Number.isFinite(minElevationDeg)) {
         window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", { detail: { error: "Selecciona una estación, satélite y máscara válidos.", passes: [] } }));
         return;
@@ -2073,11 +2154,16 @@ async function analyzeGroundStationPasses(detail = {}) {
         const satelliteEntity = getCompositeLayerEntity(satelliteLayerId);
         const stationPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
         const satellitePosition = satelliteEntity?.position?.getValue?.(viewer.clock.currentTime);
+        const rangeKm = satellitePosition ? Cesium.Cartesian3.distance(stationPosition, satellitePosition) / 1000 : Number.NaN;
         const currentElevation = satellitePosition
             ? computeStationElevationDeg(stationPosition, satellitePosition)
             : Number.NaN;
+        const pathLossDb = Number.isFinite(rangeKm) ? computeFreeSpacePathLossDb(station.frequency_mhz, rangeKm) : Number.NaN;
+        const linkBudgetDbm = Number.isFinite(pathLossDb)
+            ? station.tx_power_dbm + station.tx_gain_dbi + station.rx_gain_dbi - pathLossDb
+            : Number.NaN;
         window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
-            detail: { ...result, referenceFrame: "ITRF", visibleNow: Number.isFinite(currentElevation) ? currentElevation >= minElevationDeg : false }
+            detail: { ...result, stationTimeZone: station.time_zone || "UTC", referenceFrame: "ITRF", rangeKm, linkBudgetDbm, visibleNow: Number.isFinite(currentElevation) ? currentElevation >= minElevationDeg : false }
         }));
     } catch (error) {
         logger.warn("No se pudo calcular la visibilidad de la estación:", error);
@@ -5192,6 +5278,10 @@ function setupPropagatedParametersInspector() {
     });
     window.addEventListener("orbit:ground-stations-analyze", (event) => {
         void analyzeGroundStationPasses(event.detail || {});
+    });
+    window.addEventListener("orbit:ground-stations-update", (event) => {
+        const detail = event.detail || {};
+        updateGroundStationLayer(String(detail.stationId || ""), detail.patch || {});
     });
     window.addEventListener("orbit:ground-stations-monitoring-save", (event) => {
         const detail = event.detail || {};

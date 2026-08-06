@@ -1417,6 +1417,10 @@ export function setupObjectSidebar({
                         <input id="gsAltInput" type="number" step="1" min="0" value="667" />
                     </label>
                     <label class="catalog-filter-field">
+                        <span>Zona horaria IANA</span>
+                        <input id="gsTimeZoneInput" type="text" value="UTC" placeholder="Europe/Madrid" />
+                    </label>
+                    <label class="catalog-filter-field">
                         <span>Mascara elevacion (deg)</span>
                         <input id="gsMaskInput" type="number" step="0.1" min="0" max="90" value="10" />
                     </label>
@@ -1443,6 +1447,10 @@ export function setupObjectSidebar({
                     <label class="catalog-filter-field">
                         <span>Ganancia RX (dBi)</span>
                         <input id="gsRxGainInput" type="number" step="0.1" value="21" />
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span>Potencia mínima RX (dBm)</span>
+                        <input id="gsMinLinkPowerInput" type="number" step="0.1" value="-80" />
                     </label>
                 </div>
             </div>
@@ -1646,11 +1654,13 @@ export function setupObjectSidebar({
     const gsLatInput = groundStationModal.querySelector("#gsLatInput");
     const gsLonInput = groundStationModal.querySelector("#gsLonInput");
     const gsAltInput = groundStationModal.querySelector("#gsAltInput");
+    const gsTimeZoneInput = groundStationModal.querySelector("#gsTimeZoneInput");
     const gsMaskInput = groundStationModal.querySelector("#gsMaskInput");
     const gsFreqInput = groundStationModal.querySelector("#gsFreqInput");
     const gsTxPowerInput = groundStationModal.querySelector("#gsTxPowerInput");
     const gsTxGainInput = groundStationModal.querySelector("#gsTxGainInput");
     const gsRxGainInput = groundStationModal.querySelector("#gsRxGainInput");
+    const gsMinLinkPowerInput = groundStationModal.querySelector("#gsMinLinkPowerInput");
     const gsCoverageRadiusInput = groundStationModal.querySelector("#gsCoverageRadiusInput");
     const gsPointSizeInput = groundStationModal.querySelector("#gsPointSizeInput");
     const gsPointSymbolInput = groundStationModal.querySelector("#gsPointSymbolInput");
@@ -1991,11 +2001,13 @@ export function setupObjectSidebar({
             gsLatInput.value = String(Number(current.latitude_deg ?? 0));
             gsLonInput.value = String(Number(current.longitude_deg ?? 0));
             gsAltInput.value = String(Number(current.altitude_m ?? 0));
+            gsTimeZoneInput.value = String(current.time_zone || "UTC");
             gsMaskInput.value = String(Number(current.min_elevation_deg ?? 10));
             gsFreqInput.value = String(Number(current.frequency_mhz ?? 2200));
             gsTxPowerInput.value = String(Number(current.tx_power_dbm ?? 38));
             gsTxGainInput.value = String(Number(current.tx_gain_dbi ?? 18));
             gsRxGainInput.value = String(Number(current.rx_gain_dbi ?? 21));
+            gsMinLinkPowerInput.value = String(Number(current.min_link_power_dbm ?? -80));
             gsCoverageRadiusInput.value = String(Number(current.coverage_radius_km ?? 1200));
             gsPointSizeInput.value = String(Number(current.point_size_px ?? 11));
             gsPointSymbolInput.value = String(current.point_symbol || "circle");
@@ -2008,11 +2020,13 @@ export function setupObjectSidebar({
             gsLatInput.value = "40.4168";
             gsLonInput.value = "-3.7038";
             gsAltInput.value = "667";
+            gsTimeZoneInput.value = "UTC";
             gsMaskInput.value = "10";
             gsFreqInput.value = "2200";
             gsTxPowerInput.value = "38";
             gsTxGainInput.value = "18";
             gsRxGainInput.value = "21";
+            gsMinLinkPowerInput.value = "-80";
             gsCoverageRadiusInput.value = "1200";
             gsPointSizeInput.value = "11";
             gsPointSymbolInput.value = "circle";
@@ -2027,9 +2041,9 @@ export function setupObjectSidebar({
         groundStationModal.classList.add("open");
         window.dispatchEvent(new CustomEvent("orbit:ground-station-open", {
             detail: { editing: isEditing, values: {
-                name: gsNameInput.value, latitude_deg: gsLatInput.value, longitude_deg: gsLonInput.value, altitude_m: gsAltInput.value,
+                name: gsNameInput.value, latitude_deg: gsLatInput.value, longitude_deg: gsLonInput.value, altitude_m: gsAltInput.value, time_zone: gsTimeZoneInput.value,
                 min_elevation_deg: gsMaskInput.value, frequency_mhz: gsFreqInput.value, tx_power_dbm: gsTxPowerInput.value, tx_gain_dbi: gsTxGainInput.value,
-                rx_gain_dbi: gsRxGainInput.value, coverage_radius_km: gsCoverageRadiusInput.value, point_size_px: gsPointSizeInput.value,
+                rx_gain_dbi: gsRxGainInput.value, min_link_power_dbm: gsMinLinkPowerInput.value, coverage_radius_km: gsCoverageRadiusInput.value, point_size_px: gsPointSizeInput.value,
                 point_symbol: gsPointSymbolInput.value, point_color: gsPointColorInput.value, coverage_visible: gsCoverageVisibleInput.checked,
                 heatmap_enabled: gsHeatEnabledInput.checked, heatmap_density: gsHeatDensityInput.value
             } }
@@ -2049,11 +2063,13 @@ export function setupObjectSidebar({
             latitude_deg: Number(gsLatInput?.value),
             longitude_deg: Number(gsLonInput?.value),
             altitude_m: Number(gsAltInput?.value),
+            time_zone: String(gsTimeZoneInput?.value || "UTC").trim() || "UTC",
             min_elevation_deg: Number(gsMaskInput?.value),
             frequency_mhz: Number(gsFreqInput?.value),
             tx_power_dbm: Number(gsTxPowerInput?.value),
             tx_gain_dbi: Number(gsTxGainInput?.value),
             rx_gain_dbi: Number(gsRxGainInput?.value),
+            min_link_power_dbm: Number(gsMinLinkPowerInput?.value),
             coverage_radius_km: Number(gsCoverageRadiusInput?.value),
             point_size_px: Number(gsPointSizeInput?.value),
             point_symbol: String(gsPointSymbolInput?.value || "circle").trim(),
@@ -3949,7 +3965,7 @@ export function setupObjectSidebar({
 
     window.addEventListener("orbit:ground-station-submit", (event) => {
         const values = event.detail || {};
-        const inputs = { name: gsNameInput, latitude_deg: gsLatInput, longitude_deg: gsLonInput, altitude_m: gsAltInput, min_elevation_deg: gsMaskInput, frequency_mhz: gsFreqInput, tx_power_dbm: gsTxPowerInput, tx_gain_dbi: gsTxGainInput, rx_gain_dbi: gsRxGainInput, coverage_radius_km: gsCoverageRadiusInput, point_size_px: gsPointSizeInput, point_symbol: gsPointSymbolInput, point_color: gsPointColorInput, heatmap_density: gsHeatDensityInput };
+        const inputs = { name: gsNameInput, latitude_deg: gsLatInput, longitude_deg: gsLonInput, altitude_m: gsAltInput, time_zone: gsTimeZoneInput, min_elevation_deg: gsMaskInput, frequency_mhz: gsFreqInput, tx_power_dbm: gsTxPowerInput, tx_gain_dbi: gsTxGainInput, rx_gain_dbi: gsRxGainInput, min_link_power_dbm: gsMinLinkPowerInput, coverage_radius_km: gsCoverageRadiusInput, point_size_px: gsPointSizeInput, point_symbol: gsPointSymbolInput, point_color: gsPointColorInput, heatmap_density: gsHeatDensityInput };
         Object.entries(inputs).forEach(([key, input]) => { if (input && values[key] !== undefined) input.value = values[key]; });
         gsCoverageVisibleInput.checked = values.coverage_visible !== false;
         gsHeatEnabledInput.checked = values.heatmap_enabled === true;

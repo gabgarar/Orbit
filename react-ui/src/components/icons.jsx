@@ -64,6 +64,14 @@ export function ManualOrbitIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="9" ry="4.7" transform="rotate(-32 12 12)" /><circle cx="16.9" cy="6.2" r="1.75" /><path d="M4 18.5h5M6.5 16v5" /></svg>;
 }
 
+export function GroundStationIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16M8 20l2.1-8.5h3.8L16 20M8.5 8a3.5 3.5 0 0 1 7 0" /><path d="M5 5a10 10 0 0 1 14 0M7 7a7 7 0 0 1 10 0" /></svg>;
+}
+
+export function PassTableIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2" /><path d="M3.5 9h17M8.5 4v16M13.8 13h3M15.3 11.5v3" /></svg>;
+}
+
 export function PropagatedParametersIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V4.5M4 19.5h16" /><path d="m6.5 15.5 4-4 3 2.25 4-6.25" /><circle cx="6.5" cy="15.5" r="1" /><circle cx="10.5" cy="11.5" r="1" /><circle cx="13.5" cy="13.75" r="1" /><circle cx="17.5" cy="7.5" r="1" /></svg>;
 }

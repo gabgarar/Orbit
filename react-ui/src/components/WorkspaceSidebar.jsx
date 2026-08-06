@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CalendarIcon, ChevronDownIcon, EyeIcon, EyeOffIcon, FolderIcon, ManualOrbitIcon, PlusIcon, PropagatedParametersIcon, SatelliteIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons.jsx";
+import { CalendarIcon, ChevronDownIcon, EyeIcon, EyeOffIcon, FolderIcon, GroundStationIcon, ManualOrbitIcon, PassTableIcon, PlusIcon, PropagatedParametersIcon, SatelliteIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons.jsx";
 import CameraControls from "../features/camera/CameraControls.jsx";
 import { getLayerActionsState, LAYER_ACTIONS_STATE_EVENT } from "../../../front/js/runtime/layerActionsState.js";
 import { emitPropagatedParametersClose, emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
@@ -144,6 +144,17 @@ export default function WorkspaceSidebar() {
     const [designMode, setDesignMode] = useState(isManualOrbitDesignActive);
     const [selectedInspectableLayer, setSelectedInspectableLayer] = useState(null);
     const [propagatedParametersOpen, setPropagatedParametersOpen] = useState(false);
+    const [groundStationsOpen, setGroundStationsOpen] = useState(false);
+    useEffect(() => {
+        const open = () => setGroundStationsOpen(true);
+        const close = () => setGroundStationsOpen(false);
+        window.addEventListener("orbit:ground-stations-open", open);
+        window.addEventListener("orbit:ground-stations-close", close);
+        return () => {
+            window.removeEventListener("orbit:ground-stations-open", open);
+            window.removeEventListener("orbit:ground-stations-close", close);
+        };
+    }, []);
     useEffect(() => {
         const onProjectTitle = (event) => setProjectName(String(event.detail || "MY PROJECT").toUpperCase());
         window.addEventListener("orbit:project-title", onProjectTitle);
@@ -297,8 +308,10 @@ export default function WorkspaceSidebar() {
     return <>
         <aside id="leftSidebar" aria-label="Paneles del visor">
             <button id="leftSatellitesBtn" className={`sidebar-btn${openPanel && !designMode ? " active" : ""}`} type="button" title="Capas y satelites" aria-label="Capas y satelites" aria-expanded={openPanel && !designMode} onClick={togglePanel} hidden={designMode}><SatelliteIcon /></button>
-            <button id="leftManualOrbitBtn" className={`sidebar-btn${manualOrbitOpen ? " active" : ""}`} type="button" title={"Crear \u00f3rbita manual"} aria-label={"Crear \u00f3rbita manual"} aria-expanded={manualOrbitOpen} onClick={() => window.dispatchEvent(new CustomEvent("orbit:manual-orbit-toggle", { detail: { open: !manualOrbitOpen } }))}><ManualOrbitIcon /></button>
-            <button id="leftPropagatedParametersBtn" className={`sidebar-btn${propagatedParametersOpen ? " active" : ""} disabled:!cursor-not-allowed disabled:!opacity-40`} type="button" title={propagatedParametersTitle} aria-label={propagatedParametersTitle} aria-expanded={propagatedParametersOpen} disabled={!propagatedParametersAvailable} onClick={togglePropagatedParameters}><PropagatedParametersIcon /></button>
+            {!groundStationsOpen && <button id="leftManualOrbitBtn" className={`sidebar-btn${manualOrbitOpen ? " active" : ""}`} type="button" title={"Crear \u00f3rbita manual"} aria-label={"Crear \u00f3rbita manual"} aria-expanded={manualOrbitOpen} onClick={() => window.dispatchEvent(new CustomEvent("orbit:manual-orbit-toggle", { detail: { open: !manualOrbitOpen } }))}><ManualOrbitIcon /></button>}
+            {groundStationsOpen && <button id="leftGroundStationsBtn" className="sidebar-btn" type="button" title="Crear estación terrestre" aria-label="Crear estación terrestre" onClick={() => window.dispatchEvent(new Event("orbit:ground-stations-create-request"))}><GroundStationIcon /></button>}
+            {groundStationsOpen && <button id="leftPassTablesBtn" className="sidebar-btn" type="button" title="Tablas AOS / LOS" aria-label="Tablas AOS / LOS" onClick={() => window.dispatchEvent(new CustomEvent("orbit:ground-station-passes-open", { detail: {} }))}><PassTableIcon /></button>}
+            {!groundStationsOpen && <button id="leftPropagatedParametersBtn" className={`sidebar-btn${propagatedParametersOpen ? " active" : ""} disabled:!cursor-not-allowed disabled:!opacity-40`} type="button" title={propagatedParametersTitle} aria-label={propagatedParametersTitle} aria-expanded={propagatedParametersOpen} disabled={!propagatedParametersAvailable} onClick={togglePropagatedParameters}><PropagatedParametersIcon /></button>}
             <div className="sidebar-spacer" />
             <SessionRecordButton />
             <CameraControls />
@@ -323,7 +336,7 @@ export default function WorkspaceSidebar() {
                         {allLayersVisible ? <EyeIcon /> : <EyeOffIcon />}
                     </button>
                     <button className="object-global-remove-btn inline-flex !size-[33px] !cursor-pointer !items-center !justify-center !rounded-[7px] !border !border-[#542637] !bg-[#1c111a] !p-0 !text-[#f1a8b6] hover:!border-[#d15c74] hover:!bg-[#371421] hover:!text-[#ffe3e8] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-4 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="removeAllLayersHeaderBtn" type="button" title={designMode ? "Las capas no se pueden eliminar durante el diseño orbital" : "Quitar todas las capas"} aria-label="Quitar todas las capas" disabled={designMode} hidden={!hasActiveLayers}><TrashIcon /></button>
-                    <button className="object-add-btn !inline-flex !h-[33px] !min-w-[76px] !cursor-pointer !items-center !justify-center !gap-[5px] !rounded-[7px] !border !border-[#4167ff] !bg-[#3d5cf4] !px-[9px] !text-[11px] !font-bold !text-white !shadow-[0_6px_14px_rgba(54,84,238,.3)] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-[15px] [&>svg]:shrink-0 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="openCatalogBtn" type="button" title={designMode ? "El catálogo se bloquea durante el diseño orbital" : "Añadir capa"} aria-label="Añadir capa" disabled={designMode}><PlusIcon /><span>Añadir</span></button>
+                    {!groundStationsOpen && <button className="object-add-btn !inline-flex !h-[33px] !min-w-[76px] !cursor-pointer !items-center !justify-center !gap-[5px] !rounded-[7px] !border !border-[#4167ff] !bg-[#3d5cf4] !px-[9px] !text-[11px] !font-bold !text-white !shadow-[0_6px_14px_rgba(54,84,238,.3)] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-[15px] [&>svg]:shrink-0 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="openCatalogBtn" type="button" title={designMode ? "El catálogo se bloquea durante el diseño orbital" : "Añadir capa"} aria-label="Añadir capa" disabled={designMode}><PlusIcon /><span>Añadir</span></button>}
                 </div>
             </div>
             <div className="mt-[8px] grid h-[38px] grid-cols-[36px_minmax(0,1fr)_42px] items-center rounded-lg border border-[#1a2a47] bg-[#0a1221] mx-[14px] mb-[12px] font-[system-ui,sans-serif] text-sm leading-none font-medium text-[#a5b2c9] [&>svg]:m-auto [&>svg]:size-[18px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-width:1.8]" role="search">

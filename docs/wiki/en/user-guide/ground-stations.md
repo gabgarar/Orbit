@@ -11,6 +11,7 @@ Stations are saved within the project document.
 | Group | Fields |
 | --- | --- |
 | General | Name, latitude, longitude, altitude, elevation mask and coverage radius. |
+| Time | Station IANA time zone, for example `Europe/Madrid` or `UTC`. |
 | Radio | Frequency, transmit power, transmit gain and receive gain. |
 | Visual | Symbol size and color. |
 | Coverage | Coverage visibility and heat map, when enabled. |
@@ -33,6 +34,12 @@ markers appear on the simulated timeline and the pass table can be exported as
 CSV. The elevation profile uses the calculated 30 s samples: blue is the full
 trajectory and green is only the segment above the station mask. It does not
 yet model twilight, Sun, Moon, or astronomical constraints.
+
+Each monitored station–satellite pair automatically draws a green line in the
+scene while its instantaneous elevation is above that station's mask. The line
+vanishes when visibility is lost and is not drawn for layers the station does
+not monitor. The pass chart time axis uses the station IANA time zone and keeps
+the UTC offset in every label.
 
 The operational pass calculation currently supports TLE/SGP4 layers. OEM, SP3,
 and manual designs retain their visualization, but need a general access
