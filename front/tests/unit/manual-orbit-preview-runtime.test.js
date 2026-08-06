@@ -5,6 +5,7 @@ import {
     clearManualOrbitPreview,
     getManualOrbitPreviewSnapshot,
     hideManualOrbitPreview,
+    refreshSatelliteOverlays,
     renderManualOrbitPreview,
     setManualOrbitPreviewVectorVisualization,
     setManualOrbitPreviewGroundTrack,
@@ -335,10 +336,11 @@ test("manual orbit design preview renders one epoch-anchored inertial ellipse, n
         const positions = added[0].polyline.positions;
         assert.equal(positions.length, 721);
         assert.equal(added[0].polyline.arcType, "none");
-        // The ground track remains in the selected ECI preview geometry; it
-        // is the static epoch ellipse projected onto the Earth, not a second
-        // raw ECEF path mixed into the same design view.
-        assert.equal(added[2].polyline.positions.length, 721);
+        // The visual orbit remains the epoch-anchored ECI ellipse, while the
+        // ground path deliberately uses the physical ITRF samples returned
+        // by the propagation service. That lets the 2D map stay a real Earth
+        // projection instead of flattening an inertial ellipse.
+        assert.equal(added[2].polyline.positions.length, 3);
         assert.equal(added[2].polyline.arcType, "geodesic");
         const first = positions[0];
         const last = positions[positions.length - 1];
@@ -620,6 +622,114 @@ test("manual orbit preview toggles its ground track immediately without re-propa
         const hidden = setManualOrbitPreviewGroundTrack(false, { viewer });
         assert.equal(hidden.showGroundTrack, false);
         assert.equal(removed.at(-1).id, "__manual-orbit-preview__-ground-track");
+    } finally {
+        clearManualOrbitPreview();
+        if (previousCesium === undefined) {
+            delete globalThis.Cesium;
+        } else {
+            globalThis.Cesium = previousCesium;
+        }
+    }
+});
+
+test("manual preview replaces the spatial orbit with its ITRF projection in 2D and uses Ground Track for the visibility circle", () => {
+    const previousCesium = globalThis.Cesium;
+    const makeColor = (value) => ({ value, withAlpha: (alpha) => makeColor(`${value}:${alpha}`) });
+    const added = [];
+    const removed = [];
+    const earthRadius = 6_378_137;
+    globalThis.Cesium = {
+        Cartesian3: class Cartesian3 {
+            constructor(x, y, z) {
+                this.x = x;
+                this.y = y;
+                this.z = z;
+            }
+
+            static fromRadians(longitude, latitude, height) {
+                return new this(longitude, latitude, height);
+            }
+        },
+        SceneMode: { SCENE2D: "2d" },
+        ArcType: { NONE: "none", GEODESIC: "geodesic" },
+        Math: { TWO_PI: 2 * Math.PI },
+        Ellipsoid: { WGS84: { maximumRadius: earthRadius } },
+        PolygonHierarchy: class PolygonHierarchy {
+            constructor(positions) { this.positions = positions; }
+        },
+        Cartographic: {
+            fromCartesian: ({ x, y, z }) => {
+                const radius = Math.hypot(x, y, z);
+                return {
+                    longitude: Math.atan2(y, x),
+                    latitude: Math.atan2(z, Math.hypot(x, y)),
+                    height: radius - earthRadius
+                };
+            }
+        },
+        Color: { WHITE: makeColor("white"), fromCssColorString: (value) => makeColor(value) },
+        PolylineGlowMaterialProperty: class PolylineGlowMaterialProperty {
+            constructor(options) { Object.assign(this, options); }
+        }
+    };
+    const viewer = {
+        scene: { mode: "2d" },
+        entities: {
+            add(entity) {
+                added.push(entity);
+                return entity;
+            },
+            remove(entity) {
+                removed.push(entity);
+                return true;
+            }
+        }
+    };
+    const payload = {
+        ...previewPayload,
+        propagator: "two-body",
+        ephemeris: {
+            points: previewPayload.ephemeris.points.map((point, index) => ({
+                ...point,
+                eci: {
+                    reference_frame: "EME2000",
+                    position_units: "m",
+                    position: index === 0
+                        ? { x: 0, y: 7_200_000, z: 0 }
+                        : index === 1
+                            ? { x: 7_300_000, y: 0, z: 0 }
+                            : { x: 0, y: -7_400_000, z: 0 }
+                }
+            }))
+        }
+    };
+
+    try {
+        clearManualOrbitPreview();
+        const preview = renderManualOrbitPreview(payload, { viewer, showGroundTrack: false });
+        assert.equal(preview.hasSurfaceEphemeris, true);
+        assert.deepEqual(added.map((entity) => entity.id), [
+            "__manual-orbit-preview__-path",
+            "__manual-orbit-preview__-epoch",
+            "__manual-orbit-preview__-ground-track"
+        ]);
+        assert.equal(added[0].show, false);
+        // The epoch marker and map trace use the real ITRF ephemeris, not
+        // the ECI path selected for the 3D design preview.
+        assert.equal(added[1].position.x, 7_010_000);
+        assert.equal(added[1].position.y, 50_000);
+        assert.equal(added[1].position.z, 0);
+        assert.ok(Math.abs(added[2].polyline.positions[0].x) < 1e-12);
+        assert.equal(added.some((entity) => entity.id.endsWith("-footprint")), false);
+
+        setManualOrbitPreviewGroundTrack(true, { viewer });
+        assert.equal(added.at(-1).id, "__manual-orbit-preview__-footprint");
+        assert.ok(added.at(-1).polygon.hierarchy.positions.length > 100);
+
+        viewer.scene.mode = "3d";
+        refreshSatelliteOverlays(viewer);
+        assert.equal(added[0].show, true);
+        assert.equal(removed.at(-1).id, "__manual-orbit-preview__-footprint");
     } finally {
         clearManualOrbitPreview();
         if (previousCesium === undefined) {

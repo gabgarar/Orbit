@@ -21,6 +21,27 @@ Las transiciones entre proyecciones son animadas por Cesium. Cambiar de
 proyección altera la navegación y la apariencia de la escena, no el marco,
 escala temporal ni datos de las capas.
 
+### Órbitas en vista 2D
+
+En **Vista 2D**, Orbit no dibuja la trayectoria espacial elevada. La opción
+**Mostrar futuro** se representa como la trayectoria reproyectada sobre la
+Tierra a partir de las muestras ITRF/ECEF de la efeméride. Por tanto, la línea
+del mapa conserva el movimiento relativo a la Tierra y no es una elipse ECI
+aplanada por el visor.
+
+**Ground Track** controla en 2D el círculo de visibilidad geométrica del
+satélite. Con el control activado, Orbit dibuja el horizonte de elevación cero
+en torno al punto subsatelital; con el control desactivado, la trayectoria
+reproyectada puede seguir visible, pero no se muestra ese círculo. La huella
+no representa una máscara de estación, un enlace de radio ni la cobertura de
+un sensor.
+
+En Vista 3D y Columbus, **Mostrar futuro** recupera la trayectoria espacial;
+Ground Track conserva su función de mostrar u ocultar la traza de suelo y la
+huella. Esta misma regla se aplica al editor de órbitas manuales: aunque se
+inspeccione el diseño en ECI, la proyección 2D usa las muestras ITRF
+propagadas.
+
 ## Navegación
 
 | Modo | Comportamiento |
@@ -64,4 +85,3 @@ de salida solicitados.
    use [Exportar](export.md) para elementos y efemérides.
 4. Mantenga habilitada la visualización sólo de las capas relevantes para
    reducir ruido y coste gráfico.
-

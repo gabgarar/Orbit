@@ -61,7 +61,7 @@ const SECTION_TITLES = {
 const FIELD_HELP = {
     "orbit.propagation_hours": "Horas de proyeccion de la orbita futura. Si se configura un rango temporal grande, puede impactar en el rendimiento.",
     "orbit.future_show": "Muestra u oculta la orbita futura.",
-    "orbit.ground_track_show": "Muestra u oculta la traza de suelo y footprint del satelite en 2D y 3D.",
+    "orbit.ground_track_show": "En 2D muestra u oculta el circulo de visibilidad geometrica. En 3D y Columbus controla la traza de suelo y su huella.",
     "orbit.future_line_width": "Grosor visual fijo de la linea de orbita futura (2 a 5 px).",
     "orbit.future_color": "Color de la orbita futura.",
     "orbit.selected_color": "Color de la orbita del satelite seleccionado.",

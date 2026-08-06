@@ -42,6 +42,7 @@ const GROUND_TRACK_WIDTH_FACTOR = 0.85;
 const FOOTPRINT_FILL_ALPHA = 0.32;
 const FOOTPRINT_OUTLINE_ALPHA = 0.95;
 const FOOTPRINT_CIRCLE_SEGMENTS = 128;
+const FOOTPRINT_REFRESH_INTERVAL_MS = 250;
 // Altura sobre el elipsoide a la que se dibuja la huella. Suficiente para evitar
 // el z-fighting con la textura de la Tierra sin que el círculo parezca flotar
 // (la huella mide miles de km, unos pocos km de altura son imperceptibles).
@@ -246,11 +247,14 @@ let manualOrbitPreviewState = {
     pathEntity: null,
     epochMarkerEntity: null,
     groundTrackEntity: null,
+    footprintEntity: null,
     points: [],
-    // `points` always use the selected preview frame. The optional ground
-    // track intentionally projects those same points, so ECI and ECEF remain
-    // directly comparable while designing an orbit.
+    // `points` use the frame selected in the manual editor. `surfacePoints`
+    // always retain the propagated ITRF samples so a 2D view is a physical
+    // Earth projection rather than an ECI ellipse flattened by Cesium.
+    surfacePoints: [],
     epochPoint: null,
+    surfaceEpochPoint: null,
     epochTimeMs: null,
     startTimeMs: null,
     endTimeMs: null,
@@ -638,16 +642,17 @@ function applySatelliteVisibility(id, state) {
     const isActiveLayer = activeLayerSatelliteIds.has(id);
     const outOfTime = state.isOutOfTimeVisualState === true;
     const visible = isActiveLayer && !hiddenSatelliteIds.has(id) && !outOfTime;
+    const overlayMode = resolveOrbitOverlayMode(currentViewer, id);
     state.entity.show = visible;
 
     if (state.orbitEntity) {
-        state.orbitEntity.show = visible && shouldShowFutureOrbit(id) && !isViewerIn2D(currentViewer);
+        state.orbitEntity.show = visible && overlayMode.showSpatialOrbit;
     }
     if (state.groundTrackEntity) {
-        state.groundTrackEntity.show = visible && shouldShowGroundTrack(id);
+        state.groundTrackEntity.show = visible && overlayMode.showProjectedOrbit;
     }
     if (state.footprintEntity) {
-        state.footprintEntity.show = visible && shouldShowGroundTrack(id);
+        state.footprintEntity.show = visible && overlayMode.showFootprint;
     }
 
     return visible;
@@ -721,7 +726,7 @@ export function setOrbitConfig(config) {
                 }
             }
 
-            if (state && !shouldShowGroundTrack(id)) {
+            if (state && !hasVisibleSatelliteSurfaceOverlay(entityPool.viewer, id)) {
                 remove2DOverlays(entityPool.viewer, state);
             }
 
@@ -850,7 +855,45 @@ function applyVisualStyle(entity) {
 }
 
 function isViewerIn2D(viewer) {
-    return viewer?.scene?.mode === Cesium.SceneMode.SCENE2D;
+    return Boolean(
+        viewer?.scene
+        && typeof Cesium !== "undefined"
+        && Cesium.SceneMode
+        && viewer.scene.mode === Cesium.SceneMode.SCENE2D
+    );
+}
+
+/**
+ * Keep the meaning of the two orbit controls stable across projections.
+ *
+ * In a globe view, the future-orbit control owns the spatial trajectory and
+ * Ground Track owns the optional surface trace plus its geometric visibility
+ * footprint. In a map view there is no useful elevated trajectory: the
+ * future-orbit line becomes its projection on the Earth, while Ground Track
+ * becomes the independent visibility-footprint control.
+ */
+function resolveOrbitOverlayMode(viewer, id) {
+    const futureOrbitVisible = shouldShowFutureOrbit(id);
+    const groundTrackVisible = shouldShowGroundTrack(id);
+
+    if (isViewerIn2D(viewer)) {
+        return {
+            showSpatialOrbit: false,
+            showProjectedOrbit: futureOrbitVisible,
+            showFootprint: groundTrackVisible
+        };
+    }
+
+    return {
+        showSpatialOrbit: futureOrbitVisible,
+        showProjectedOrbit: groundTrackVisible,
+        showFootprint: groundTrackVisible
+    };
+}
+
+function hasVisibleSatelliteSurfaceOverlay(viewer, id) {
+    const mode = resolveOrbitOverlayMode(viewer, id);
+    return mode.showProjectedOrbit || mode.showFootprint;
 }
 
 function remove2DOverlays(viewer, state) {
@@ -858,12 +901,12 @@ function remove2DOverlays(viewer, state) {
         return;
     }
 
-    if (state.groundTrackEntity) {
+    if (state.groundTrackEntity && typeof viewer.entities?.remove === "function") {
         viewer.entities.remove(state.groundTrackEntity);
         state.groundTrackEntity = null;
     }
 
-    if (state.footprintEntity) {
+    if (state.footprintEntity && typeof viewer.entities?.remove === "function") {
         viewer.entities.remove(state.footprintEntity);
         state.footprintEntity = null;
     }
@@ -970,7 +1013,12 @@ function getSurfaceGroundTrackArcType() {
 }
 
 function computeFootprintAngularRadius(position) {
-    if (!position) {
+    if (!position
+        || typeof Cesium === "undefined"
+        || !Cesium.Cartographic
+        || typeof Cesium.Cartographic.fromCartesian !== "function"
+        || !Cesium.Ellipsoid?.WGS84
+        || !Number.isFinite(Cesium.Ellipsoid.WGS84.maximumRadius)) {
         return 0;
     }
 
@@ -990,7 +1038,11 @@ function computeFootprintAngularRadius(position) {
 }
 
 function computeFootprintCirclePositions(centerCartographic, angularRadius, segments = FOOTPRINT_CIRCLE_SEGMENTS) {
-    if (!centerCartographic || !(angularRadius > 0)) {
+    if (!centerCartographic
+        || !(angularRadius > 0)
+        || typeof Cesium === "undefined"
+        || !Cesium.Cartesian3
+        || typeof Cesium.Cartesian3.fromRadians !== "function") {
         return [];
     }
 
@@ -1000,12 +1052,13 @@ function computeFootprintCirclePositions(centerCartographic, angularRadius, segm
     const cosLat1 = Math.cos(lat1);
     const sinR = Math.sin(angularRadius);
     const cosR = Math.cos(angularRadius);
+    const twoPi = Number(Cesium.Math?.TWO_PI) || (2 * Math.PI);
 
     const positions = [];
     for (let i = 0; i <= segments; i += 1) {
-        const bearing = (i / segments) * Cesium.Math.TWO_PI;
+        const bearing = (i / segments) * twoPi;
         const sinLat2 = sinLat1 * cosR + cosLat1 * sinR * Math.cos(bearing);
-        const lat2 = Math.asin(Cesium.Math.clamp(sinLat2, -1, 1));
+        const lat2 = Math.asin(Math.max(-1, Math.min(1, sinLat2)));
         const y = Math.sin(bearing) * sinR * cosLat1;
         const x = cosR - sinLat1 * sinLat2;
         const lon2 = lon1 + Math.atan2(y, x);
@@ -1015,77 +1068,65 @@ function computeFootprintCirclePositions(centerCartographic, angularRadius, segm
     return positions;
 }
 
-function updateGroundTrackAndFootprint(viewer, id, state, visibleOrbit) {
-    if (!viewer || !state) {
+function removeFootprintEntity(viewer, state) {
+    if (!state?.footprintEntity) {
         return;
     }
+    if (typeof viewer?.entities?.remove === "function") {
+        viewer.entities.remove(state.footprintEntity);
+    }
+    state.footprintEntity = null;
+}
 
-    if (!shouldShowGroundTrack(id) || hiddenSatelliteIds.has(id) || !activeLayerSatelliteIds.has(id)) {
-        remove2DOverlays(viewer, state);
-        return;
+/**
+ * Draw the geometric horizon of an Earth-fixed satellite position.
+ *
+ * This is intentionally a visibility footprint, not a station mask or a
+ * radio-link calculation: the edge is the zero-elevation geometric horizon.
+ */
+function updateVisibilityFootprint(viewer, state, {
+    ownerId,
+    center,
+    color,
+    visible
+} = {}) {
+    if (!visible
+        || !viewer?.entities
+        || typeof viewer.entities.add !== "function"
+        || !center
+        || typeof Cesium === "undefined"
+        || !Cesium.PolygonHierarchy
+        || !Cesium.Ellipsoid?.WGS84
+        || !Cesium.Cartographic
+        || typeof Cesium.Cartographic.fromCartesian !== "function") {
+        removeFootprintEntity(viewer, state);
+        return false;
     }
 
-    const trackPositions = toSurfaceGroundTrack(visibleOrbit);
-    if (trackPositions.length < 2) {
-        remove2DOverlays(viewer, state);
-        return;
-    }
-
-    const baseColor = getFutureOrbitColor(id);
-    const trackColor = baseColor.withAlpha(0.95);
-    const trackWidth = Math.max(
-        ORBIT_MIN_PIXEL_WIDTH,
-        Number(state.orbitBaseWidth || ORBIT_MIN_PIXEL_WIDTH) * GROUND_TRACK_WIDTH_FACTOR
-    );
-
-    if (!state.groundTrackEntity) {
-        state.groundTrackEntity = viewer.entities.add({
-            id: `${id}-ground-track`,
-            polyline: {
-                positions: trackPositions,
-                width: trackWidth,
-                material: createOrbitMaterial(trackColor),
-                arcType: Cesium.ArcType.NONE,
-                clampToGround: false
-            }
-        });
-    } else {
-        state.groundTrackEntity.polyline.positions = trackPositions;
-        state.groundTrackEntity.polyline.width = trackWidth;
-        state.groundTrackEntity.polyline.material = createOrbitMaterial(trackColor);
-        state.groundTrackEntity.show = true;
-    }
-
-    const center = state.renderPosition
-        || state.targetPosition
-        || resolveCartesianPosition(state.entity?.position);
     const footprintAngularRadius = computeFootprintAngularRadius(center);
     const footprintRadiusMeters = Cesium.Ellipsoid.WGS84.maximumRadius * footprintAngularRadius;
-    if (!(footprintRadiusMeters > 10) || !center) {
-        if (state.footprintEntity) {
-            viewer.entities.remove(state.footprintEntity);
-            state.footprintEntity = null;
-        }
-        return;
+    if (!(footprintRadiusMeters > 10)) {
+        removeFootprintEntity(viewer, state);
+        return false;
     }
 
     const cartographic = Cesium.Cartographic.fromCartesian(center);
     const footprintPositions = computeFootprintCirclePositions(cartographic, footprintAngularRadius);
     if (footprintPositions.length < 3) {
-        if (state.footprintEntity) {
-            viewer.entities.remove(state.footprintEntity);
-            state.footprintEntity = null;
-        }
-        return;
+        removeFootprintEntity(viewer, state);
+        return false;
     }
 
+    const baseColor = color && typeof color.withAlpha === "function"
+        ? color
+        : getOpaqueColor(MANUAL_ORBIT_PREVIEW_COLOR, MANUAL_ORBIT_PREVIEW_COLOR);
     const fillColor = baseColor.withAlpha(FOOTPRINT_FILL_ALPHA);
     const outlineColor = baseColor.withAlpha(FOOTPRINT_OUTLINE_ALPHA);
     const footprintHierarchy = new Cesium.PolygonHierarchy(footprintPositions);
 
     if (!state.footprintEntity) {
         state.footprintEntity = viewer.entities.add({
-            id: `${id}-footprint`,
+            id: `${ownerId}-footprint`,
             polygon: {
                 hierarchy: footprintHierarchy,
                 material: fillColor,
@@ -1093,7 +1134,7 @@ function updateGroundTrackAndFootprint(viewer, id, state, visibleOrbit) {
                 outline: true,
                 outlineColor,
                 outlineWidth: 2,
-                arcType: Cesium.ArcType.GEODESIC
+                arcType: Cesium.ArcType?.GEODESIC
             }
         });
     } else {
@@ -1103,6 +1144,102 @@ function updateGroundTrackAndFootprint(viewer, id, state, visibleOrbit) {
         state.footprintEntity.polygon.height = FOOTPRINT_SURFACE_HEIGHT;
         state.footprintEntity.show = true;
     }
+
+    return true;
+}
+
+function updateGroundTrackAndFootprint(viewer, id, state, visibleOrbit) {
+    if (!viewer || !state) {
+        return;
+    }
+
+    const overlayMode = resolveOrbitOverlayMode(viewer, id);
+    const isVisible = !hiddenSatelliteIds.has(id)
+        && activeLayerSatelliteIds.has(id)
+        && state.isOutOfTimeVisualState !== true;
+    if (!isVisible || (!overlayMode.showProjectedOrbit && !overlayMode.showFootprint)) {
+        remove2DOverlays(viewer, state);
+        return;
+    }
+
+    const baseColor = getFutureOrbitColor(id);
+    if (overlayMode.showProjectedOrbit) {
+        const trackPositions = toSurfaceGroundTrack(visibleOrbit);
+        if (trackPositions.length >= 2) {
+            const trackColor = baseColor.withAlpha(0.95);
+            const trackWidth = Math.max(
+                ORBIT_MIN_PIXEL_WIDTH,
+                Number(state.orbitBaseWidth || ORBIT_MIN_PIXEL_WIDTH) * GROUND_TRACK_WIDTH_FACTOR
+            );
+
+            if (!state.groundTrackEntity) {
+                state.groundTrackEntity = viewer.entities.add({
+                    id: `${id}-ground-track`,
+                    polyline: {
+                        positions: trackPositions,
+                        width: trackWidth,
+                        material: createOrbitMaterial(trackColor),
+                        arcType: getSurfaceGroundTrackArcType(),
+                        clampToGround: false
+                    }
+                });
+            } else {
+                state.groundTrackEntity.polyline.positions = trackPositions;
+                state.groundTrackEntity.polyline.width = trackWidth;
+                state.groundTrackEntity.polyline.material = createOrbitMaterial(trackColor);
+                state.groundTrackEntity.polyline.arcType = getSurfaceGroundTrackArcType();
+                state.groundTrackEntity.show = true;
+            }
+        } else if (state.groundTrackEntity) {
+            viewer.entities.remove(state.groundTrackEntity);
+            state.groundTrackEntity = null;
+        }
+    } else if (state.groundTrackEntity) {
+        viewer.entities.remove(state.groundTrackEntity);
+        state.groundTrackEntity = null;
+    }
+
+    const center = state.renderPosition
+        || state.targetPosition
+        || resolveCartesianPosition(state.entity?.position);
+    updateVisibilityFootprint(viewer, state, {
+        ownerId: id,
+        center,
+        color: baseColor,
+        visible: overlayMode.showFootprint
+    });
+    state.lastFootprintRefreshAtMs = Date.now();
+}
+
+function refreshSatelliteFootprint(viewer, id, state, nowMs = Date.now(), force = false) {
+    if (!viewer || !state) {
+        return;
+    }
+
+    const overlayMode = resolveOrbitOverlayMode(viewer, id);
+    const visible = !hiddenSatelliteIds.has(id)
+        && activeLayerSatelliteIds.has(id)
+        && state.isOutOfTimeVisualState !== true;
+    if (!visible || !overlayMode.showFootprint) {
+        removeFootprintEntity(viewer, state);
+        return;
+    }
+
+    const lastRefreshMs = Number(state.lastFootprintRefreshAtMs) || 0;
+    if (!force && (nowMs - lastRefreshMs) < FOOTPRINT_REFRESH_INTERVAL_MS) {
+        return;
+    }
+
+    const center = state.renderPosition
+        || state.targetPosition
+        || resolveCartesianPosition(state.entity?.position);
+    updateVisibilityFootprint(viewer, state, {
+        ownerId: id,
+        center,
+        color: getFutureOrbitColor(id),
+        visible: true
+    });
+    state.lastFootprintRefreshAtMs = nowMs;
 }
 
 export function initSatelliteReceiver(viewer) {
@@ -1206,6 +1343,7 @@ function startSmoothUpdate(viewer) {
                         state.entity.orientation = state.lastOrientation;
                     }
                     state.entity.position = position;
+                    refreshSatelliteFootprint(viewer, id, state, now);
                     continue;
                 }
             }
@@ -1215,6 +1353,7 @@ function startSmoothUpdate(viewer) {
                 if (sampled) {
                     state.renderPosition = sampled;
                     state.entity.position = sampled;
+                    refreshSatelliteFootprint(viewer, id, state, now);
                     continue;
                 }
                 if (outsideTrackWindow) {
@@ -1259,6 +1398,8 @@ function startSmoothUpdate(viewer) {
 
                 state.entity.position = state.renderPosition;
             }
+
+            refreshSatelliteFootprint(viewer, id, state, now);
         }
         
         animationFrameId = requestAnimationFrame(smoothUpdateFrame);
@@ -1524,6 +1665,10 @@ function updateSatelliteState(viewer, satData) {
     if (!isVisible) {
         return;
     }
+
+    // Update immediately when a new telemetry state arrives, then let the
+    // render loop keep the circle aligned with interpolated/range positions.
+    refreshSatelliteFootprint(viewer, id, state, receivedAtMs, true);
 }
 
 export function getSatelliteIds() {
@@ -2113,6 +2258,7 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
 
     const futureOrbitVisible = shouldShowFutureOrbit(id);
     const groundTrackVisible = shouldShowGroundTrack(id);
+    const overlayMode = resolveOrbitOverlayMode(viewer, id);
     if ((!futureOrbitVisible && !groundTrackVisible) || !activeLayerSatelliteIds.has(id) || hiddenSatelliteIds.has(id)) {
         if (state.orbitEntity) {
             viewer.entities.remove(state.orbitEntity);
@@ -2158,7 +2304,7 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
     }
 
     if (state.orbitEntity) {
-        state.orbitEntity.show = !isViewerIn2D(viewer);
+        state.orbitEntity.show = overlayMode.showSpatialOrbit;
     }
 
     updateGroundTrackAndFootprint(viewer, id, state, visibleOrbit);
@@ -2179,6 +2325,12 @@ export function refreshSatelliteOverlays(viewer = currentViewer) {
         } else {
             remove2DOverlays(viewer, state);
         }
+    }
+
+    // The manual designer is intentionally outside `satelliteState`, so it
+    // needs its own refresh when Cesium finishes morphing between 3D and 2D.
+    if (manualOrbitPreviewState.visible && manualOrbitPreviewState.points.length >= 2) {
+        renderManualOrbitPreviewEntities(viewer);
     }
 }
 
@@ -2302,7 +2454,7 @@ export function setSatelliteVisualizationConfig(id, patch = {}) {
 
     applySatelliteVisibility(satId, state);
 
-    if (!shouldShowGroundTrack(satId)) {
+    if (!hasVisibleSatelliteSurfaceOverlay(currentViewer, satId)) {
         remove2DOverlays(currentViewer, state);
     }
 
@@ -3647,7 +3799,8 @@ function manualOrbitPreviewSnapshot() {
         endTimeMs: preview.endTimeMs,
         visible: preview.visible,
         rendered: Boolean(preview.pathEntity && preview.epochMarkerEntity),
-        showGroundTrack: preview.showGroundTrack
+        showGroundTrack: preview.showGroundTrack,
+        hasSurfaceEphemeris: preview.surfacePoints.length >= 2
     };
 }
 
@@ -3668,7 +3821,13 @@ function removeManualOrbitPreviewEntities() {
     const preview = manualOrbitPreviewState;
     const viewer = preview.viewer;
     if (viewer?.entities && typeof viewer.entities.remove === "function") {
-        for (const entity of [preview.pathEntity, preview.epochMarkerEntity, preview.groundTrackEntity, ...(preview.vectorEntities || [])]) {
+        for (const entity of [
+            preview.pathEntity,
+            preview.epochMarkerEntity,
+            preview.groundTrackEntity,
+            preview.footprintEntity,
+            ...(preview.vectorEntities || [])
+        ]) {
             if (!entity) {
                 continue;
             }
@@ -3683,12 +3842,23 @@ function removeManualOrbitPreviewEntities() {
     preview.pathEntity = null;
     preview.epochMarkerEntity = null;
     preview.groundTrackEntity = null;
+    preview.footprintEntity = null;
     preview.vectorEntities = [];
     preview.viewer = null;
 }
 
 function manualPreviewPosition(preview) {
     const point = preview?.epochPoint
+        || findNearestManualOrbitPoint(preview?.points || [], preview?.epochTimeMs)
+        || preview?.points?.[0];
+    return point && Number.isFinite(point.x) ? new Cesium.Cartesian3(point.x, point.y, point.z) : null;
+}
+
+function manualPreviewSurfacePosition(preview) {
+    const point = preview?.surfaceEpochPoint
+        || findNearestManualOrbitPoint(preview?.surfacePoints || [], preview?.epochTimeMs)
+        || preview?.surfacePoints?.[0]
+        || preview?.epochPoint
         || findNearestManualOrbitPoint(preview?.points || [], preview?.epochTimeMs)
         || preview?.points?.[0];
     return point && Number.isFinite(point.x) ? new Cesium.Cartesian3(point.x, point.y, point.z) : null;
@@ -3742,6 +3912,7 @@ function hideManualOrbitPreviewEntities() {
         manualOrbitPreviewState.pathEntity,
         manualOrbitPreviewState.epochMarkerEntity,
         manualOrbitPreviewState.groundTrackEntity,
+        manualOrbitPreviewState.footprintEntity,
         ...(manualOrbitPreviewState.vectorEntities || [])
     ]) {
         if (entity) {
@@ -3771,6 +3942,7 @@ function renderManualOrbitPreviewEntities(viewer = currentViewer) {
     }
     preview.viewer = viewer;
 
+    const in2D = isViewerIn2D(viewer);
     const positions = preview.points.map((point) => new Cesium.Cartesian3(point.x, point.y, point.z));
     const previewColor = getOpaqueColor(preview.color, MANUAL_ORBIT_PREVIEW_COLOR);
     const lineWidth = Math.max(ORBIT_MIN_PIXEL_WIDTH, Math.min(ORBIT_MAX_PIXEL_WIDTH, MANUAL_ORBIT_PREVIEW_LINE_WIDTH_PX));
@@ -3783,19 +3955,19 @@ function renderManualOrbitPreviewEntities(viewer = currentViewer) {
                 material: createOrbitMaterial(previewColor),
                 arcType: Cesium.ArcType.NONE,
                 clampToGround: false
-            }
+            },
+            show: !in2D
         });
     } else {
         preview.pathEntity.polyline.positions = positions;
         preview.pathEntity.polyline.width = lineWidth;
         preview.pathEntity.polyline.material = createOrbitMaterial(previewColor);
-        preview.pathEntity.show = true;
+        preview.pathEntity.show = !in2D;
     }
 
-    const epochPoint = preview.epochPoint
-        || findNearestManualOrbitPoint(preview.points, preview.epochTimeMs)
-        || preview.points[0];
-    const epochPosition = new Cesium.Cartesian3(epochPoint.x, epochPoint.y, epochPoint.z);
+    const epochPosition = in2D
+        ? manualPreviewSurfacePosition(preview)
+        : manualPreviewPosition(preview);
     if (!preview.epochMarkerEntity) {
         preview.epochMarkerEntity = viewer.entities.add({
             id: `${MANUAL_ORBIT_PREVIEW_ID}-epoch`,
@@ -3815,11 +3987,14 @@ function renderManualOrbitPreviewEntities(viewer = currentViewer) {
         preview.epochMarkerEntity.show = true;
     }
 
-    if (preview.showGroundTrack) {
-        // Keep the projected line in the same frame as the orbit currently
-        // being inspected: the epoch-anchored ECI ellipse in ECI mode, or the
-        // raw propagated ITRF/ECEF ephemeris in ECEF mode.
-        const groundTrackPositions = toSurfaceGroundTrack(preview.points);
+    // A 2D viewer always replaces the spatial line with the real ground
+    // projection. In 3D the same trace remains an optional design overlay.
+    const showProjectedOrbit = in2D || preview.showGroundTrack;
+    if (showProjectedOrbit) {
+        const surfacePoints = preview.surfacePoints.length >= 2
+            ? preview.surfacePoints
+            : preview.points;
+        const groundTrackPositions = toSurfaceGroundTrack(surfacePoints);
         if (groundTrackPositions.length >= 2) {
             const groundTrackColor = previewColor.withAlpha(0.72);
             if (!preview.groundTrackEntity) {
@@ -3857,7 +4032,20 @@ function renderManualOrbitPreviewEntities(viewer = currentViewer) {
         preview.groundTrackEntity = null;
     }
 
+    // Ground Track controls the geometric horizon circle in map view. The
+    // circle is deliberately based on ITRF samples even when the editor is
+    // inspecting the orbit itself in an inertial frame.
+    updateVisibilityFootprint(viewer, preview, {
+        ownerId: MANUAL_ORBIT_PREVIEW_ID,
+        center: manualPreviewSurfacePosition(preview),
+        color: previewColor,
+        visible: in2D && preview.showGroundTrack
+    });
+
     renderManualOrbitPreviewVectors(preview, viewer);
+    for (const entity of preview.vectorEntities || []) {
+        entity.show = !in2D;
+    }
 
     return manualOrbitPreviewSnapshot();
 }
@@ -3913,15 +4101,26 @@ export function renderManualOrbitPreview(payload = {}, options = {}) {
     const { startTimeMs, endTimeMs } = resolveManualOrbitRange(payload, ephemeris, ephemerisPoints.length ? ephemerisPoints : points);
     const requestedColor = String(options?.color || MANUAL_ORBIT_PREVIEW_COLOR).trim();
     manualOrbitPreviewState.points = points;
+    // Keep the physical Earth-fixed samples even when the visual preview is
+    // an epoch-anchored ECI ellipse. They are the authoritative source for
+    // the 2D reprojection and for its horizon footprint.
+    manualOrbitPreviewState.surfacePoints = ephemerisPoints.length >= 2
+        ? ephemerisPoints
+        : points;
     manualOrbitPreviewState.epochPoint = inertialPreview?.epochPoint || null;
+    manualOrbitPreviewState.surfaceEpochPoint = findNearestManualOrbitPoint(
+        manualOrbitPreviewState.surfacePoints,
+        epochTimeMs
+    ) || null;
     manualOrbitPreviewState.epochTimeMs = epochTimeMs;
     manualOrbitPreviewState.startTimeMs = startTimeMs;
     manualOrbitPreviewState.endTimeMs = endTimeMs;
     manualOrbitPreviewState.name = String(payload?.name || ephemeris?.satellite || "Manual Orbit preview").trim() || "Manual Orbit preview";
     manualOrbitPreviewState.visible = options?.visible !== false;
     manualOrbitPreviewState.previewReferenceFrame = previewReferenceFrame;
-    // The ground track is an opt-in design aid and follows the preview frame
-    // selected above instead of mixing ECI and ECEF geometry in one view.
+    // In 3D this remains an opt-in design aid. In 2D the orbit itself is
+    // always shown as the ITRF ground projection; this toggle then controls
+    // the geometric visibility footprint.
     manualOrbitPreviewState.showGroundTrack = options?.showGroundTrack === true;
     manualOrbitPreviewState.color = requestedColor || MANUAL_ORBIT_PREVIEW_COLOR;
     manualOrbitPreviewState.geometryMode = inertialPreview?.geometryMode || MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS;
@@ -3968,8 +4167,11 @@ export function clearManualOrbitPreview() {
         pathEntity: null,
         epochMarkerEntity: null,
         groundTrackEntity: null,
+        footprintEntity: null,
         points: [],
+        surfacePoints: [],
         epochPoint: null,
+        surfaceEpochPoint: null,
         epochTimeMs: null,
         startTimeMs: null,
         endTimeMs: null,

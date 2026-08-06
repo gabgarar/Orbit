@@ -21,6 +21,24 @@ Transitions between projections are animated by Cesium. change
 projection alters the navigation and appearance of the scene, not the frame,
 time scale or layer data.
 
+### Orbits in 2D view
+
+In **2D View**, Orbit does not draw the elevated spatial trajectory. The
+**Show future** option becomes the trajectory projected onto Earth from the
+ephemeris ITRF/ECEF samples. The map line therefore preserves Earth-relative
+motion; it is not an ECI ellipse flattened by the viewer.
+
+In 2D, **Ground Track** controls the satellite's geometric visibility circle.
+When enabled, Orbit draws the zero-elevation horizon around the sub-satellite
+point. When disabled, the reprojected trajectory may remain visible, but that
+circle is not shown. The footprint is not a station mask, a radio link, or a
+sensor-coverage calculation.
+
+In 3D View and Columbus, **Show future** restores the spatial trajectory;
+Ground Track continues to show or hide the surface trace and footprint. The
+same rule applies to the manual-orbit editor: even when a design is inspected
+in ECI, its 2D projection uses the propagated ITRF samples.
+
 ## Navigation
 
 | Mode | Behavior |
