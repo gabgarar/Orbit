@@ -86,7 +86,7 @@ export default function TimeControlBar() {
     return <>
         <section
             className={classNames(
-                "react-simulation-dock fixed right-[14px] bottom-[6px] grid box-border h-[56px] grid-cols-[max-content_minmax(300px,1fr)] items-stretch gap-x-[14px] overflow-visible rounded-[10px] border border-[rgba(72,103,151,.45)] bg-[linear-gradient(120deg,rgba(10,22,39,.97),rgba(5,13,24,.97))] px-[12px] py-[3px] font-sans text-[11px] leading-none font-semibold shadow-[0_16px_38px_rgba(0,0,0,.38),inset_0_1px_rgba(255,255,255,.035)] backdrop-blur-[10px] transition-[opacity,transform] duration-[180ms] ease-out [grid-template-rows:minmax(0,1fr)] max-[1100px]:grid-cols-1",
+                "react-simulation-dock fixed right-[14px] bottom-[6px] grid box-border h-[65px] grid-cols-[max-content_minmax(300px,1fr)] items-stretch gap-x-[14px] overflow-visible rounded-[10px] border border-[rgba(72,103,151,.45)] bg-[linear-gradient(120deg,rgba(10,22,39,.97),rgba(5,13,24,.97))] px-[12px] py-[5px] font-sans text-[11px] leading-none font-semibold shadow-[0_16px_38px_rgba(0,0,0,.38),inset_0_1px_rgba(255,255,255,.035)] backdrop-blur-[10px] transition-[opacity,transform] duration-[180ms] ease-out [grid-template-rows:minmax(0,1fr)] max-[1100px]:grid-cols-1",
                 dateMenuOpen ? "z-[10131]" : "z-[10110]",
                 collapsed && "is-collapsed pointer-events-none translate-y-[14px] opacity-0"
             )}
@@ -127,7 +127,7 @@ export default function TimeControlBar() {
                 <div className="relative h-full min-w-0" style={{ "--timeline-progress": progress + "%" }}>
                     <output
                         className={classNames(
-                            "pointer-events-none absolute z-[3] top-[-1px] rounded-[5px] border border-[#4777e9] bg-[#2459d9] px-[6px] py-[4px] font-sans text-[9px] leading-none font-bold whitespace-nowrap text-white shadow-[0_5px_12px_rgba(21,71,198,.34)] after:absolute after:bottom-[-5px] after:size-2 after:rotate-45 after:border-r after:border-b after:border-[#4777e9] after:bg-[#2459d9] after:content-['']",
+                            "pointer-events-none absolute z-[3] top-[5px] rounded-[5px] border border-[#4777e9] bg-[#2459d9] px-[6px] py-[4px] font-sans text-[9px] leading-none font-bold whitespace-nowrap text-white shadow-[0_5px_12px_rgba(21,71,198,.34)] after:absolute after:bottom-[-5px] after:size-2 after:rotate-45 after:border-r after:border-b after:border-[#4777e9] after:bg-[#2459d9] after:content-['']",
                             markerPositionClass
                         )}
                         style={{ left: progress + "%" }}
@@ -135,7 +135,7 @@ export default function TimeControlBar() {
                         {timelineTimeLabel(simulation.currentDate)}
                     </output>
                     <input
-                        className="absolute top-[17px] left-0 z-[3] h-3 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-[4px] [&::-webkit-slider-runnable-track]:bg-[linear-gradient(to_right,#4779ff_0_var(--timeline-progress),#253a57_var(--timeline-progress)_100%)] [&::-webkit-slider-runnable-track]:shadow-[inset_0_0_0_1px_rgba(113,141,181,.18)] [&::-webkit-slider-thumb]:mt-[-5px] [&::-webkit-slider-thumb]:size-[13px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[#6f98ff] [&::-webkit-slider-thumb]:bg-[#2860ed] [&::-webkit-slider-thumb]:shadow-[0_0_0_3px_rgba(54,99,239,.2)] [&::-moz-range-track]:h-[3px] [&::-moz-range-track]:rounded-[4px] [&::-moz-range-track]:bg-[#253a57] [&::-moz-range-track]:shadow-[inset_0_0_0_1px_rgba(113,141,181,.18)] [&::-moz-range-progress]:h-[3px] [&::-moz-range-progress]:rounded-[4px] [&::-moz-range-progress]:bg-[#4779ff] [&::-moz-range-thumb]:size-[10px] [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-[#6f98ff] [&::-moz-range-thumb]:bg-[#2860ed] [&::-moz-range-thumb]:shadow-[0_0_0_3px_rgba(54,99,239,.2)]"
+                        className="absolute top-[20px] left-0 z-[3] h-3 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-[4px] [&::-webkit-slider-runnable-track]:bg-[linear-gradient(to_right,#4779ff_0_var(--timeline-progress),#253a57_var(--timeline-progress)_100%)] [&::-webkit-slider-runnable-track]:shadow-[inset_0_0_0_1px_rgba(113,141,181,.18)] [&::-webkit-slider-thumb]:mt-[-5px] [&::-webkit-slider-thumb]:size-[13px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[#6f98ff] [&::-webkit-slider-thumb]:bg-[#2860ed] [&::-webkit-slider-thumb]:shadow-[0_0_0_3px_rgba(54,99,239,.2)] [&::-moz-range-track]:h-[3px] [&::-moz-range-track]:rounded-[4px] [&::-moz-range-track]:bg-[#253a57] [&::-moz-range-track]:shadow-[inset_0_0_0_1px_rgba(113,141,181,.18)] [&::-moz-range-progress]:h-[3px] [&::-moz-range-progress]:rounded-[4px] [&::-moz-range-progress]:bg-[#4779ff] [&::-moz-range-thumb]:size-[10px] [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-[#6f98ff] [&::-moz-range-thumb]:bg-[#2860ed] [&::-moz-range-thumb]:shadow-[0_0_0_3px_rgba(54,99,239,.2)]"
                         aria-label="Linea temporal de simulacion"
                         type="range"
                         min="0"
@@ -144,13 +144,13 @@ export default function TimeControlBar() {
                         value={simulation.timelineStep || 0}
                         onChange={(event) => sendAction("timeline", Number(event.target.value))}
                     />
-                    <div className="pointer-events-none absolute top-[17px] right-0 left-0 z-[2] h-[33px]" aria-hidden="true">
+                    <div className="pointer-events-none absolute top-[20px] right-0 left-0 z-[2] h-[33px]" aria-hidden="true">
                         {Array.from({ length: 21 }, (_, index) => {
                             const mark = Number.isInteger(index / 4) ? marks[index / 4] : null;
                             const labelPositionClass = index === 0 ? "translate-x-0 text-left" : index === 20 ? "-translate-x-full text-right" : "-translate-x-1/2 text-center";
                             return <span className={classNames("absolute top-0 h-full w-px -translate-x-1/2", index === 0 && "translate-x-0", index === 20 && "-translate-x-full", mark && "is-major")} key={index} style={{ left: index * 5 + "%" }}>
                                 <i className={classNames("absolute top-[1px] left-0 h-[7px] w-px bg-[#64738a] opacity-[.56]", mark && "top-[-2px] h-[12px] bg-[#9aa8ba] opacity-[.88]")} />
-                                {mark && <time className={classNames("absolute top-[15px] left-0 grid gap-0 whitespace-nowrap text-[8px] leading-[1.1] font-medium tracking-[.01em] text-[#7890ad]", labelPositionClass)}>{timelineDateLabel(mark.value)}<b className="font-semibold text-[9px] leading-[1.1] tabular-nums text-[#c7d7eb]">{timelineTimeLabel(mark.value)}</b></time>}
+                                {mark && <time className={classNames("absolute top-[13px] left-0 grid gap-0 whitespace-nowrap text-[8px] leading-[1.1] font-medium tracking-[.01em] text-[#7890ad]", labelPositionClass)}>{timelineDateLabel(mark.value)}<b className="font-semibold text-[9px] leading-[1.1] tabular-nums text-[#c7d7eb]">{timelineTimeLabel(mark.value)}</b></time>}
                             </span>;
                         })}
                     </div>

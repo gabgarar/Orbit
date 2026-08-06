@@ -141,8 +141,8 @@ body.with-toolbars #cesiumContainer {
    footer rather than a second card: the upper rule separates it from Layers,
    while the lower inset leaves a little breathing room above the panel edge. */
 #projectTimeFooter {
-    flex: 0 0 52px;
-    height: 52px;
+    flex: 0 0 65px;
+    height: 65px;
     margin: auto 14px 12px;
     padding: 8px 10px 0;
     border: 0;
