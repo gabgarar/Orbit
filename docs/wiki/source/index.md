@@ -163,9 +163,10 @@ inferirse de la arquitectura extensible de Orbit:
   autenticación, autorización, almacenamiento remoto de proyectos o
   colaboración en tiempo real.
 
-El host de plugins actual admite únicamente módulos ES locales registrados por
-la aplicación. No existe un registro, manifiesto, mecanismo de instalación ni
-extensibilidad backend publicados para terceros.
+No existe actualmente un host de plugins en Orbit. La modularidad del código
+fuente no crea una API de extensiones ni permite registrar paquetes de terceros.
+Consulte la [hoja de ruta de plugins](../integrations/plugins.md) para los
+requisitos de una futura arquitectura de extensibilidad.
 
 ## Mapa documental
 

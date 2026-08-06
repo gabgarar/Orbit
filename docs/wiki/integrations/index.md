@@ -11,7 +11,7 @@ runtime; no debe exponerse ni tratarse como una segunda API pública.
 | [REST API](rest-api.md) | Disponible localmente | Catálogo, propagación, efemérides, ventanas de visibilidad, exportación y configuración. |
 | [WebSocket](websocket.md) | Disponible localmente | Estados y órbitas de las suscripciones activas de un cliente. |
 | [OpenAPI](openapi.md) | Disponible localmente | Inspección del contrato FastAPI generado durante la ejecución. |
-| [Plugins](plugins.md) | Contrato interno, no distribuible | Módulos ES locales incluidos y revisados junto con el código fuente. |
+| [Plugins](plugins.md) | Hoja de ruta; no disponible | No existe host ni runtime de plugins en la aplicación actual. |
 | [SDK Python](python-sdk.md) | No disponible | No existe paquete, versión ni contrato de compatibilidad de SDK. |
 | [CLI](cli.md) | No disponible como producto | Hay scripts operativos y comandos de desarrollo, no una interfaz de línea de comandos pública. |
 

@@ -48,7 +48,7 @@ export function inferOwner(name) {
     return OWNER_BY_OPERATOR[inferOperator(name)] || "unknown";
 }
 
-export function estimatePerigeeKmFromLine2(line2) {
+function estimatePerigeeKmFromLine2(line2) {
     const cleanLine = String(line2 || "");
     const meanMotion = Number(cleanLine.slice(52, 63).trim());
     const eccentricity = Number(`0.${cleanLine.slice(26, 33).trim() || "0"}`);

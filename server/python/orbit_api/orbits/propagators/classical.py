@@ -1,4 +1,4 @@
-"""Small, dependency-free classical-orbit and Earth-fixed frame helpers.
+"""Small, dependency-free classical-orbit helpers.
 
 Manual design starts from an EME2000 compatibility state at a user-selected
 epoch (historical APIs called it generic ``ECI``). The native Two-body and J2
@@ -9,16 +9,13 @@ helpers here avoids treating a state-vector orbit as a synthetic TLE.
 
 from __future__ import annotations
 
-import datetime
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
-from orbit_api.timekeeping import ensure_utc, gmst_rad
-
-
 EARTH_MU_KM3_S2 = 398600.4418
 EARTH_EQUATORIAL_RADIUS_KM = 6378.137
+# Shared by Cowell's corotating-atmosphere drag model.
 EARTH_ROTATION_RATE_RAD_S = 7.2921150e-5
 _TWO_PI = 2.0 * math.pi
 
@@ -169,43 +166,3 @@ def state_eci_from_mean_elements(elements: ClassicalElements) -> tuple[float, fl
     position = rotate(position_perifocal)
     velocity = rotate(velocity_perifocal)
     return (*position, *velocity)
-
-
-def eci_to_itrf(
-    x_km: float,
-    y_km: float,
-    z_km: float,
-    vx_km_s: float,
-    vy_km_s: float,
-    vz_km_s: float,
-    moment: datetime.datetime,
-    *,
-    dut1_seconds: float = 0.0,
-) -> tuple[float, float, float, float, float, float]:
-    """Legacy EME2000-compatible helper returning ITRF SI components via UT1.
-
-    ``dut1_seconds`` is UT1−UTC from an IERS Earth-orientation product.  The
-    default retains the prior UTC≈UT1 visual approximation; polar motion is
-    deliberately not fabricated when no EOP source is configured.
-    """
-
-    angle = gmst_rad(moment, dut1_seconds=dut1_seconds)
-    cosine, sine = math.cos(angle), math.sin(angle)
-    itrf_x_km = (x_km * cosine) + (y_km * sine)
-    itrf_y_km = (-x_km * sine) + (y_km * cosine)
-    rotated_vx_km_s = (vx_km_s * cosine) + (vy_km_s * sine)
-    rotated_vy_km_s = (-vx_km_s * sine) + (vy_km_s * cosine)
-    # r_ITRF = R3(-GMST) r_ECI, therefore the rotation derivative contributes
-    # (+omega*y, -omega*x) in ITRF coordinates.
-    # Keeping this sign explicit matters for velocity-vector displays and
-    # state-vector round-trips; position-only ground tracks are unaffected.
-    itrf_vx_km_s = rotated_vx_km_s + (EARTH_ROTATION_RATE_RAD_S * itrf_y_km)
-    itrf_vy_km_s = rotated_vy_km_s - (EARTH_ROTATION_RATE_RAD_S * itrf_x_km)
-    return (
-        itrf_x_km * 1000.0,
-        itrf_y_km * 1000.0,
-        z_km * 1000.0,
-        itrf_vx_km_s * 1000.0,
-        itrf_vy_km_s * 1000.0,
-        vz_km_s * 1000.0,
-    )

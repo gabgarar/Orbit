@@ -54,9 +54,14 @@ download adapters, keeping DOM and Blob APIs out of the project domain.
 
 The existing files are kept stable while functionality moves gradually. The first extracted runtime module is `runtime/adaptiveDisplay.js`.
 
-## Plugin boundary
+## Future plugin boundary
 
-Feature plugins will be local ES modules managed by `front/js/plugins/pluginHost.js`. This keeps a future ground-stations or satellites plugin independent without allowing arbitrary remote browser code. See [plugins.md](plugins.md) for the lifecycle contract and migration rules.
+Orbit does not currently contain a plugin host, plugin registry, or extension
+runtime. Features are ordinary repository modules loaded by their frontend,
+gateway, or backend entry point. A future extension boundary must define an
+explicit lifecycle, a versioned dependency context, compatibility, persistence,
+security, and tests before it is exposed. See [plugins.md](plugins.md) for the
+roadmap and current limits.
 
 ## Server boundaries
 

@@ -7,9 +7,6 @@ from collections.abc import Callable
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from orbit_api.application.exporters import ephemeris_csv_text, ephemeris_oem_text, normalize_source_format, ocm_json_from_entry, omm_json_from_entry, omm_xml_from_entry, safe_filename
-from orbit_api.domain.requests import EphemerisRequest
-
-
 def create_exports_router(find_catalog_entry: Callable, resolve_propagator: Callable, build_ephemeris: Callable, ensure_utc: Callable) -> APIRouter:
     router = APIRouter(tags=["exports"])
 

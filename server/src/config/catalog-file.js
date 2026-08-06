@@ -1,4 +1,4 @@
-export const DEFAULT_CATALOG_FILE = "catalog.json";
+const DEFAULT_CATALOG_FILE = "catalog.json";
 
 // This file holds the system configuration itself. A catalogue replacement
 // must never be allowed to target it, even though it lives in the same volume.

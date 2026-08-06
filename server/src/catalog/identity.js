@@ -1,5 +1,5 @@
 /** Return the raw five-character NORAD field contained in TLE line 1. */
-export function getTleNoradField(line1) {
+function getTleNoradField(line1) {
     return String(line1 || "").slice(2, 7);
 }
 

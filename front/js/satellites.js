@@ -340,8 +340,6 @@ let satelliteLabelSizePx = 14;
 let satelliteModelScale = 1.0;
 let satelliteUse3DModel = true;
 let satelliteSizeMode = "visual";
-let lastUpdateTime = Date.now();
-let animationFrameId = null;
 let simulationTimelineProvider = null;
 let sourceFutureOrbitHours = null;
 let selectedOrbitSatelliteId = null;
@@ -1408,7 +1406,7 @@ function startSmoothUpdate(viewer) {
             refreshSatelliteFootprint(viewer, id, state, now);
         }
         
-        animationFrameId = requestAnimationFrame(smoothUpdateFrame);
+        requestAnimationFrame(smoothUpdateFrame);
     }
     
     smoothUpdateFrame();
@@ -1451,7 +1449,7 @@ function toCartesianArray(points) {
 function getColor(colorString, defaultColor) {
     try {
         return Cesium.Color.fromCssColorString(colorString || defaultColor);
-    } catch (e) {
+    } catch {
         return Cesium.Color.fromCssColorString(defaultColor);
     }
 }
@@ -1516,7 +1514,7 @@ export function setSelectedOrbitSatelliteId(id) {
 function createOrbitEntity(viewer, id, positions, color, width) {
     try {
         logger.debug(`createOrbitEntity: id=${id} points=${Array.isArray(positions)?positions.length:0} width=${width}`);
-    } catch (e) {
+    } catch {
         // ignore logging errors
     }
     return viewer.entities.add({
@@ -1617,7 +1615,7 @@ function updateSatelliteState(viewer, satData) {
 
     try {
         logger.debug(`updateSatelliteState: id=${id} active=${activeLayerSatelliteIds.has(id)} hidden=${hiddenSatelliteIds.has(id)} hasPos=${Boolean(satData.position)}`);
-    } catch (e) {
+    } catch {
         // ignore
     }
 
@@ -1694,10 +1692,6 @@ export function getActiveSatelliteLayerIds() {
     }
 
     return cachedActiveLayerIds;
-}
-
-export function isCatalogLoaded() {
-    return catalogLoaded;
 }
 
 export async function fetchCatalogPage({

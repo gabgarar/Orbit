@@ -169,11 +169,6 @@ function callbackProperty(Cesium, callback, initialValue) {
         : initialValue;
 }
 
-function setEntityName(entity, name) {
-    if (!entity) return;
-    entity.name = name;
-}
-
 function normalizeSnapshot(snapshot) {
     const values = Array.isArray(snapshot) ? snapshot : [];
     const seen = new Set();

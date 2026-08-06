@@ -5,7 +5,6 @@ import {
     refreshSatelliteCatalog,
     setOrbitConfig,
     getSatelliteIds,
-    isCatalogLoaded,
     getSatelliteTle,
     getSatelliteTleAsync,
     getCatalogEntryMeta,
@@ -57,11 +56,10 @@ import { createGroundStationTelemetryService } from "./js/features/groundStation
 import { createProjectLifecycle } from "./js/runtime/projectLifecycle.js";
 import { setupCameraActions } from "./js/runtime/camera/actions.js";
 import { createFreeCameraKeyboardControls } from "./js/runtime/camera/freeKeyboardControls.js";
-import { formatDurationCompact, formatTimeHudDate, parseTleEpochDate } from "./js/runtime/simulation/timeFormatting.js";
-import { advanceSimulation, createSimulationState, setSimulationRange, SIMULATION_MODE_RANGE, SIMULATION_MODE_REALTIME, SIMULATION_MODE_STATIC } from "./js/runtime/simulation/simulationState.js";
+import { formatDurationCompact, parseTleEpochDate } from "./js/runtime/simulation/timeFormatting.js";
+import { createSimulationState, setSimulationRange, SIMULATION_MODE_RANGE, SIMULATION_MODE_REALTIME, SIMULATION_MODE_STATIC } from "./js/runtime/simulation/simulationState.js";
 import { createSimulationController } from "./js/runtime/simulation/simulationController.js";
 import { clamp, getDateAtTimelineRatio, getRangeHours, getTimelineRatio } from "./js/runtime/simulation/timeline.js";
-import { createWelcomeScene } from "./js/rendering/welcomeScene.js";
 import { createTychoSkyDome } from "./js/rendering/tychoSkyDome.js";
 import { createNightImageryLayer } from "./js/rendering/nightImageryLayer.js";
 import { createEarthBasemapManager } from "./js/rendering/earthBasemap.js";
@@ -203,11 +201,7 @@ let runtimeRecordingConfig = {
     quality: "medium",
     output_format: "webm"
 };
-let satelliteContextMenuTargetId = null;
 let timeHudTimer = null;
-const welcomeScene = createWelcomeScene({ viewer, Cesium, updateGlobeLighting: updateAdaptiveGlobeLighting });
-const setupWelcomeCesiumScene = welcomeScene.setup;
-const teardownWelcomeCesiumScene = welcomeScene.teardown;
 const tychoSkyDome = createTychoSkyDome({ viewer, Cesium, textureUrl: tychoSkyDomeTextureUrl, radius: tychoSkyDomeRadius });
 const nightImageryLayer = createNightImageryLayer({
     viewer,
@@ -280,13 +274,10 @@ let topSearchSuggestions = [];
 let topSearchSelectedIndex = -1;
 let topSearchDebounceId = null;
 let topSearchRequestToken = 0;
-let topSearchLastQuery = "";
 const catalogSearch = createCatalogSearch({});
 const tleEpochCacheBySatelliteId = new Map();
 let simulationTickTimer = null;
 let simulationUiBusy = false;
-let simulationDockOpen = false;
-let simulationLayoutObserver = null;
 let topSearchInitialized = false;
 const groundStationLayers = new Map();
 const satelliteDuplicateLayers = new Map();
@@ -344,7 +335,6 @@ function requestProjectActionDialog(mode) {
     window.dispatchEvent(new CustomEvent("orbit:project-dialog-request", { detail: mode }));
 }
 
-const SIMULATION_SPEED_VALUES = [1, 10, 100, 1000];
 const SIMULATION_TIMELINE_STEPS = 10000;
 const SIMULATION_LONG_RANGE_WARNING_HOURS = 24 * 7;
 const PROPAGATED_PARAMETERS_DEFAULT_HOURS = 24;
@@ -658,16 +648,6 @@ async function confirmLargeSimulationRangeIfNeeded(startDate, endDate) {
     }
     const message = formatSimulationRangeWarning(startDate, endDate);
     return showAppConfirm(message, uiText("confirmTitle"));
-}
-
-function getSimulationModeLabel() {
-    if (simulationState.mode === SIMULATION_MODE_RANGE) {
-        return uiText("simRange");
-    }
-    if (simulationState.mode === SIMULATION_MODE_STATIC) {
-        return uiText("simStatic");
-    }
-    return uiText("simRealtime");
 }
 
 function isManualOrbitDesignActive() {
@@ -1149,10 +1129,6 @@ function normalizeGroundStationHeatDensity(value) {
     return normalizeHeatMapDensity(value);
 }
 
-function approxGeoDistanceKm(latA, lonA, latB, lonB) {
-    return calculateGeoDistanceKm(latA, lonA, latB, lonB);
-}
-
 function updateGroundStationHeatLegendVisibility() {
     const hasAnyVisibleHeatMap = [...groundStationLayers.values()].some((station) => {
         if (!station || station.heatmap_enabled !== true) {
@@ -1604,127 +1580,6 @@ function toggleGroundStationHeatMap(layerId, enabled) {
     return true;
 }
 
-function clearGroundStationHeatMap(layerId) {
-    const entities = groundStationHeatMapEntities.get(layerId) || [];
-    for (const entity of entities) {
-        viewer.entities.remove(entity);
-    }
-    groundStationHeatMapEntities.delete(layerId);
-    updateGroundStationHeatLegendVisibility();
-}
-
-function updateGroundStationHeatMap(layerId) {
-    const station = groundStationLayers.get(layerId);
-    if (!station || station.visible !== true) {
-        clearGroundStationHeatMap(layerId);
-        return;
-    }
-    if (station.heatmap_enabled === false) {
-        clearGroundStationHeatMap(layerId);
-        return;
-    }
-
-    const satIds = getActiveSatelliteLayerIds().slice(0, 80);
-
-    const existing = groundStationHeatMapEntities.get(layerId) || [];
-    for (const entity of existing) {
-        viewer.entities.remove(entity);
-    }
-
-    const entities = [];
-    const latCenter = station.latitude_deg;
-    const lonCenter = station.longitude_deg;
-    const coverageRadiusKm = Math.max(100, Number(station.coverage_radius_km) || 1200);
-    const density = normalizeGroundStationHeatDensity(station.heatmap_density);
-    const densityFactor = density === "high" ? 0.4 : (density === "low" ? 2.2 : 1.0);
-    const stepDegBase = Math.max(0.22, Math.min(1.2, coverageRadiusKm / 1700));
-    const stepDeg = Math.max(0.08, Math.min(2.2, stepDegBase * densityFactor));
-    const radiusDeg = Math.max(stepDeg, coverageRadiusKm / 111);
-    const gridRadius = Math.max(4, Math.min(26, Math.ceil(radiusDeg / stepDeg)));
-
-    const heatPointHeight = Math.max(12000, Number(station.altitude_m) + 12000);
-    const heatPointSize = density === "high" ? 7 : (density === "low" ? 4 : 5);
-
-    for (let yi = -gridRadius; yi <= gridRadius; yi += 1) {
-        for (let xi = -gridRadius; xi <= gridRadius; xi += 1) {
-            const lat = latCenter + (yi * stepDeg);
-            const lon = lonCenter + (xi * stepDeg);
-
-            if (lat < -89.9 || lat > 89.9) {
-                continue;
-            }
-
-            const wrappedLon = lon > 180 ? lon - 360 : (lon < -180 ? lon + 360 : lon);
-            const pointDistanceKm = approxGeoDistanceKm(latCenter, lonCenter, lat, wrappedLon);
-            if (pointDistanceKm > coverageRadiusKm) {
-                continue;
-            }
-            const groundPos = Cesium.Cartesian3.fromDegrees(wrappedLon, lat, 0);
-            let covered = false;
-
-            for (const satId of satIds) {
-                const telemetry = getSatelliteTelemetry(satId);
-                const g = telemetry?.geo;
-                if (!g) {
-                    continue;
-                }
-
-                const satPos = Cesium.Cartesian3.fromDegrees(Number(g.longitude_deg) || 0, Number(g.latitude_deg) || 0, Number(g.altitude_m) || 0);
-                const el = computeStationElevationDeg(groundPos, satPos);
-                if (el >= station.min_elevation_deg) {
-                    covered = true;
-                    break;
-                }
-            }
-
-            const key = `${lat.toFixed(3)}:${wrappedLon.toFixed(3)}`;
-            const sample = station.heatmap_samples.get(key) || { hits: 0, total: 0 };
-            sample.total += 1;
-            if (covered) {
-                sample.hits += 1;
-            }
-            station.heatmap_samples.set(key, sample);
-
-            const ratio = sample.total > 0 ? sample.hits / sample.total : 0;
-            const color = ratio > 0.8
-                ? Cesium.Color.fromCssColorString("#3af27a")
-                : ratio > 0.55
-                    ? Cesium.Color.fromCssColorString("#f7d34d")
-                    : ratio > 0.3
-                        ? Cesium.Color.fromCssColorString("#f29a3a")
-                        : Cesium.Color.fromCssColorString("#cc3d55");
-
-            const pointEntity = viewer.entities.add({
-                id: `${layerId}-heat-${lat.toFixed(3)}-${lon.toFixed(3)}`,
-                position: Cesium.Cartesian3.fromDegrees(wrappedLon, lat, heatPointHeight),
-                point: {
-                    pixelSize: heatPointSize,
-                    color: color.withAlpha(0.86),
-                    outlineColor: Cesium.Color.BLACK.withAlpha(0.35),
-                    outlineWidth: 1,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY
-                },
-                show: station.visible === true,
-                properties: {
-                    orbitLayerId: layerId,
-                    layerType: "GROUND_STATION_HEAT"
-                }
-            });
-            entities.push(pointEntity);
-        }
-    }
-
-    groundStationHeatMapEntities.set(layerId, entities);
-    updateGroundStationHeatLegendVisibility();
-}
-
-function refreshAllGroundStationHeatMaps() {
-    for (const layerId of groundStationLayers.keys()) {
-        updateGroundStationHeatMap(layerId);
-    }
-    updateGroundStationHeatLegendVisibility();
-}
-
 function buildGroundStationTelemetry(layerId) {
     const station = groundStationLayers.get(layerId);
     if (!station) {
@@ -1884,7 +1739,6 @@ function setupTopSearchAutocomplete() {
 
     const runSearch = async (rawQuery) => {
         const query = String(rawQuery || "").trim();
-        topSearchLastQuery = query;
         if (!query) {
             topSearchSuggestions = [];
             closeTopSearchSuggestions();
@@ -1987,17 +1841,6 @@ function updateSimulationTimelineUi() {
             timelineSteps: SIMULATION_TIMELINE_STEPS
         }
     }));
-}
-
-function setSimulationDockOpen(open) {
-    simulationDockOpen = Boolean(open);
-}
-
-// Kept as a layout callback for the resizable React sidebar; the React dock
-// observes that layout itself.
-function toggleSimulationDock() {
-    setSimulationDockOpen(!simulationDockOpen);
-    updateTopToolbarState();
 }
 
 function refreshSimulationControlsUi() {
@@ -2278,22 +2121,6 @@ window.addEventListener("orbit:simulation-action", async (event) => {
     }
 });
 
-function updateTimeHudWidget() {
-    window.dispatchEvent(new CustomEvent("orbit:time-hud-state", {
-        detail: {
-            value: getDisplayedSimulationDate().toISOString(),
-            mode: simulationState.mode,
-            isPaused: simulationState.isPlaying === false
-        }
-    }));
-}
-
-function applyTimeHudVisibilityConfig(systemConfig) {
-    window.dispatchEvent(new CustomEvent("orbit:time-hud-visibility", {
-        detail: systemConfig.log_show_top_clock !== false
-    }));
-}
-
 function updateSessionRecordButtonLabel(options = {}) {
     if (typeof options.processing === "boolean") {
         isSessionRecordingProcessing = options.processing;
@@ -2331,36 +2158,6 @@ function persistSystemSectionPatch(sectionName, patch) {
     if (typeof updatePersistedSystemConfig === "function") {
         updatePersistedSystemConfig(sectionName, patch);
     }
-}
-
-function getOrbitToggleState(kind) {
-    const selectedConfig = selectedSatelliteId ? getSatelliteVisualizationConfig(selectedSatelliteId) : null;
-    const effectiveKey = kind === "ground" ? "orbit_ground_track_show" : "orbit_future_show";
-
-    if (selectedConfig) {
-        return Boolean(selectedConfig.effective[effectiveKey]);
-    }
-
-    return Boolean(runtimeSystemConfig?.[effectiveKey]);
-}
-
-function setOrbitVisibilityFromToolbar(kind) {
-    const currentValue = getOrbitToggleState(kind);
-    const nextValue = !currentValue;
-    const overrideKey = kind === "ground" ? "orbit_ground_track_show" : "orbit_future_show";
-    const globalKey = kind === "ground" ? "ground_track_show" : "future_show";
-
-    if (selectedSatelliteId) {
-        setSatelliteVisualizationConfig(selectedSatelliteId, {
-            [overrideKey]: nextValue
-        });
-    } else {
-        persistSystemSectionPatch("orbit", {
-            [globalKey]: nextValue
-        });
-    }
-
-    updateTopToolbarState();
 }
 
 function initUiTheme() {
@@ -2406,40 +2203,6 @@ function ensureTopToolbar() {
     const toolbar = document.createElement("div");
     toolbar.id = "topToolbar";
     toolbar.innerHTML = `
-        <div class="toolbar-brand"><img src="assets/icon/favicon.svg" alt="Orbit"></div>
-        <div class="toolbar-file-menu"><button id="topFileBtn" class="toolbar-btn" type="button">File</button><div class="toolbar-file-dropdown"><button id="projectNewBtn" type="button">New project</button><button id="projectOpenBtn" type="button">Open project</button><button id="projectSaveBtn" type="button">Save project</button><button id="projectExportBtn" type="button">Export project</button></div></div>
-        <button id="topConfigBtn" class="toolbar-btn" type="button" title="Configuración">
-            <span>⚙</span>
-            <span>Config</span>
-        </button>
-        <button id="topCameraModeBtn" class="toolbar-btn" type="button" title="Modo de cámara">
-            <span>🎥</span>
-            <span>Camera</span>
-        </button>
-        <div class="toolbar-separator"></div>
-        <button id="topGroundBtn" class="toolbar-btn" type="button" title="Traza de suelo">Ground</button>
-        <button id="topSimCtrlBtn" class="toolbar-btn" type="button" title="Panel temporal">
-            <span>⏱</span>
-            <span>Tiempo</span>
-        </button>
-        <div class="toolbar-separator"></div>
-        <button id="topRecordBtn" class="toolbar-btn" type="button" title="Grabar sesión">
-            <span>●</span>
-            <span>Grabar</span>
-        </button>
-        <div class="toolbar-spacer"></div>
-        <div class="toolbar-search-wrap">
-            <span class="toolbar-search-icon">🔍</span>
-            <input id="objectSearch" class="toolbar-search" type="text" placeholder="Buscar satélite..." autocomplete="off" spellcheck="false" />
-            <div id="topSearchSuggestions"></div>
-        </div>
-        <div class="toolbar-spacer"></div>
-        <div class="toolbar-time-wrap">
-            <div id="topTimeInfo" class="toolbar-info">--/--/---- --:--:--</div>
-        </div>
-    `;
-
-    toolbar.innerHTML = `
         <a class="toolbar-brand" href="#" aria-label="Orbit">
             <img src="assets/icon/favicon.svg" alt="">
             <span>ORBIT</span>
@@ -2468,27 +2231,6 @@ function ensureTopToolbar() {
     toolbar.querySelector("#topSettingsBtn")?.addEventListener("click", () => runtimeConfigPanelApi?.toggle?.());
     toolbar.querySelector("#topHelpBtn")?.addEventListener("click", () => showAppAlert("La ayuda contextual estará disponible próximamente.", "Ayuda"));
 
-    toolbar.querySelector("#topConfigBtn")?.remove();
-    toolbar.querySelector("#topCameraModeBtn")?.remove();
-    toolbar.querySelector("#topGroundBtn")?.remove();
-    toolbar.querySelector("#topSimCtrlBtn")?.remove();
-    [...toolbar.querySelectorAll(".toolbar-separator")].forEach((separator, index) => { if (index > 0) separator.remove(); });
-    const fileMenu = toolbar.querySelector(".toolbar-file-menu");
-    toolbar.querySelector("#topFileBtn")?.addEventListener("click", () => fileMenu?.classList.toggle("open"));
-    fileMenu?.addEventListener("mouseenter", () => fileMenu.classList.add("open"));
-    fileMenu?.addEventListener("mouseleave", () => fileMenu.classList.remove("open"));
-    document.addEventListener("pointerdown", (event) => {
-        if (!toolbar.querySelector(".toolbar-file-menu")?.contains(event.target)) toolbar.querySelector(".toolbar-file-menu")?.classList.remove("open");
-    });
-    toolbar.querySelector("#projectExportBtn")?.addEventListener("click", exportProject);
-    toolbar.querySelector("#projectOpenBtn")?.addEventListener("click", () => requestProjectActionDialog("open"));
-    toolbar.querySelector("#projectSaveBtn")?.addEventListener("click", async () => {
-        try {
-            if (!currentProjectFileHandle && window.showSaveFilePicker) currentProjectFileHandle = await window.showSaveFilePicker({ suggestedName: "orbit-project.json", types: [{ description: "Orbit project", accept: { "application/json": [".json"] } }] });
-            if (currentProjectFileHandle) await projectLifecycle.saveToHandle(currentProjectFileHandle); else await projectLifecycle.exportProject();
-        } catch (error) { if (error?.name !== "AbortError") console.error("Could not save project", error); }
-    });
-    toolbar.querySelector("#projectNewBtn")?.addEventListener("click", () => requestProjectActionDialog("new"));
     if (!document.getElementById("projectWelcome")) {
         const welcome = document.createElement("div");
         welcome.id = "projectWelcome";
@@ -2498,27 +2240,7 @@ function ensureTopToolbar() {
         document.body.appendChild(welcome);
     }
     document.body.appendChild(toolbar);
-    toolbar.querySelector(".toolbar-time-wrap")?.addEventListener("click", () => toggleSimulationDock());
     document.body.classList.add("with-toolbars");
-
-    toolbar.querySelector("#topCameraModeBtn")?.addEventListener("click", () => {
-        const nextMode = cameraNavigationMode === "centered" ? "free" : "centered";
-        applyCameraNavigationMode(nextMode);
-        updateTopToolbarState();
-    });
-
-    toolbar.querySelector("#topGroundBtn")?.addEventListener("click", () => {
-        setOrbitVisibilityFromToolbar("ground");
-        updateTopToolbarState();
-    });
-
-    toolbar.querySelector("#topSimCtrlBtn")?.addEventListener("click", () => {
-        toggleSimulationDock();
-    });
-
-    toolbar.querySelector("#topRecordBtn")?.addEventListener("click", () => {
-        toggleSessionRecording();
-    });
 
     setupTopSearchAutocomplete();
 
@@ -2528,54 +2250,12 @@ function ensureTopToolbar() {
 }
 
 function updateTopToolbarState() {
-    const toolbar = document.getElementById("topToolbar");
-    if (!toolbar) return;
-
-    const groundBtn = toolbar.querySelector("#topGroundBtn");
-    const simCtrlBtn = toolbar.querySelector("#topSimCtrlBtn");
-    const recordBtn = toolbar.querySelector("#topRecordBtn");
-    const cameraModeBtn = toolbar.querySelector("#topCameraModeBtn");
-
-    if (groundBtn) {
-        groundBtn.classList.toggle("active", getOrbitToggleState("ground"));
-    }
-    if (simCtrlBtn) {
-        simCtrlBtn.classList.toggle("active", simulationDockOpen);
-        simCtrlBtn.title = uiText("simPanelToggle");
-    }
-    if (recordBtn) {
-        recordBtn.classList.toggle("recording", isSessionRecording);
-        const recordIcon = recordBtn.querySelector("span:first-child");
-        const recordText = recordBtn.querySelector("span:last-child");
-        if (isSessionRecording) {
-            if (recordIcon) recordIcon.textContent = "⏸";
-            if (recordText) recordText.textContent = "Detener";
-        } else {
-            if (recordIcon) recordIcon.textContent = "●";
-            if (recordText) recordText.textContent = "Grabar";
-        }
-    }
-    if (cameraModeBtn) {
-        const modeText = cameraModeBtn.querySelector("span:last-child");
-        if (modeText) {
-            modeText.textContent = cameraNavigationMode === "free" ? "Libre" : "Centrado";
-        }
-    }
     window.dispatchEvent(new CustomEvent("orbit:recording-state", {
         detail: { active: isSessionRecording, processing: isSessionRecordingProcessing }
     }));
 }
 
 function updateTopToolbarTime() {
-    const timeInfo = document.getElementById("topTimeInfo");
-    if (timeInfo) {
-        const current = getDisplayedSimulationDate();
-        const speedLabel = simulationState.mode === SIMULATION_MODE_REALTIME
-            ? (simulationState.isPlaying === false ? " · Paused" : "")
-            : ` · x${simulationState.speed}${simulationState.isPlaying ? "" : " (pausa)"}`;
-        timeInfo.textContent = `${formatTimeHudDate(current)} · ${getSimulationModeLabel()}${speedLabel}`;
-    }
-
     updateSimulationTimelineUi();
     window.dispatchEvent(new CustomEvent("orbit:time-context", {
         detail: {
@@ -2807,12 +2487,9 @@ function showAppConfirm(message, title = uiText("confirmTitle"), confirmLabel) {
 
 function hideSatelliteContextMenu() {
     window.dispatchEvent(new Event("orbit:satellite-context-close"));
-    satelliteContextMenuTargetId = null;
 }
 
 function showSatelliteContextMenuAt(satelliteId, x, y) {
-    satelliteContextMenuTargetId = satelliteId;
-
     const sourceId = getSatelliteSourceIdFromLayerId(String(satelliteId || "").trim());
     const layerType = String(getLayerType(satelliteId) || "SATELLITE").toUpperCase();
     const isCelestialBody = layerType === "CELESTIAL_BODY" || layerType === "EARTH";
@@ -3146,13 +2823,6 @@ function applyCameraNavigationMode(mode, options = {}) {
     }
 
     cameraNavigationMode = nextMode;
-    const cameraToggle = document.querySelector("#cameraTools .camera-tools-main");
-    if (cameraToggle) {
-        const isFree = nextMode === "free";
-        cameraToggle.title = isFree ? "Cámara libre" : "Cámara centrada";
-        cameraToggle.setAttribute("aria-label", cameraToggle.title);
-        cameraToggle.classList.toggle("is-free", isFree);
-    }
     updateCameraModeButtonLabel();
     updateTopToolbarState();
     logger.info(`Modo de navegacion de camara: ${nextMode}`);
@@ -3234,7 +2904,6 @@ function applySystemRuntimeConfig(systemConfigRaw) {
 
     configureLogger(systemConfig);
     setOrbitConfig(systemConfig);
-    applyTimeHudVisibilityConfig(systemConfig);
     applyUiTheme(systemConfig.ui_theme || currentUiTheme);
     applyUiLanguage(systemConfig.ui_language || currentUiLanguage);
 
@@ -3320,25 +2989,6 @@ function focusSatellite(entity) {
         flyToOptions.cancel = () => bodyCentricCamera.cancelFocus(bodyCameraTicket);
     }
     viewer.flyTo(entity, flyToOptions);
-}
-
-function firstPersonSatellite(entity) {
-    if (!entity) {
-        return;
-    }
-
-    if (cameraNavigationMode === "free") {
-        applyCameraNavigationMode("centered", { keepTrackedEntity: true });
-    }
-
-    bodyCentricCamera.deactivate();
-    viewer.trackedEntity = entity;
-    // Offsets muy pequeños para sensación de cámara embarcada.
-    entity.viewFrom = new Cesium.Cartesian3(0, 0, 2.5);
-    viewer.flyTo(entity, {
-        duration: 0.55,
-        offset: new Cesium.HeadingPitchRange(0, 0, 8)
-    });
 }
 
 function publishManualOrbitState(extra = {}) {
@@ -4515,9 +4165,6 @@ function setupManualOrbitEditorBridge() {
     window.addEventListener("orbit:manual-orbit-create", (event) => {
         void createManualOrbitFromEditor(event.detail || {});
     });
-    window.addEventListener("orbit:manual-orbit-edit", (event) => {
-        editManualOrbitFromWorkspace(event.detail?.id);
-    });
 }
 
 function propagatedParametersIso(value) {
@@ -5291,7 +4938,6 @@ function setupPropagatedParametersInspector() {
         rangeStart: simulationState.startDate,
         rangeEnd: simulationState.endDate
     }));
-    setSimulationDockOpen(false);
     refreshSimulationControlsUi();
     
     // Timer para actualizar la toolbar superior
@@ -5480,7 +5126,6 @@ function setupPropagatedParametersInspector() {
             ? String(id || "")
             : getSatelliteSourceIdFromLayerId(id),
         getGroundStationParams: (id) => getGroundStationParams(id),
-        isCatalogReady: () => isCatalogLoaded(),
         getObjectTle: (id) => isCelestialBodyLayerId(id) ? null : getSatelliteTle(getSatelliteSourceIdFromLayerId(id)),
         getObjectTleAsync: (id) => isCelestialBodyLayerId(id) ? Promise.resolve(null) : getSatelliteTleAsync(getSatelliteSourceIdFromLayerId(id)),
         getCatalogEntryMeta: (id) => getCompositeLayerMeta(id),
@@ -5493,7 +5138,6 @@ function setupPropagatedParametersInspector() {
             }
             applySimulationRange(new Date(bounds.startTimeMs), new Date(bounds.endTimeMs));
             setSimulationMode(SIMULATION_MODE_RANGE);
-            setSimulationDockOpen(true);
             return true;
         },
         onImportOemEphemeris: (content, fileName) => {
@@ -5503,7 +5147,6 @@ function setupPropagatedParametersInspector() {
                 applySimulationRange(new Date(bounds.startTimeMs), new Date(bounds.endTimeMs));
             }
             setSimulationMode(SIMULATION_MODE_RANGE);
-            setSimulationDockOpen(true);
             return imported;
         },
         getUiText: () => uiText,
@@ -5684,7 +5327,4 @@ function setupPropagatedParametersInspector() {
 })().catch((error) => {
     logger.error("Orbit runtime initialization failed:", error);
     markOrbitRuntimeFailed(error);
-    window.dispatchEvent(new CustomEvent("orbit:runtime-failed", {
-        detail: error instanceof Error ? error.message : String(error)
-    }));
 });

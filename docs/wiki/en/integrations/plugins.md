@@ -1,98 +1,57 @@
 # Plugins
 
-## Plugin system status
+## Current status
 
-Orbit contains an internal class `PluginHost` to organize local ES modules
-which are part of the application code. There is no plugin system
-installable by users or third parties.
+Orbit **does not have a plugin host or a plugin runtime**. There is no active
+`PluginHost` class, extension registry, manifest, or API through which external
+code can participate in the application process.
 
-| Capacity | State |
+Current features are integrated as ordinary repository modules, reviewed with
+the rest of the codebase, and loaded by the appropriate frontend, gateway, or
+backend entry point. That is not an extension system.
+
+| Capability | Current status |
 | --- | --- |
-| Lifecycle host for local ES modules | Implemented in `front/js/plugins/pluginHost.js`. |
-| Registering distributed plugins in the current runtime | Not implemented. |
-| Manifesto, marketplace, signature or resolution of dependencies | Not implemented. |
-| Dynamic remote code loading | Deliberately not implemented. |
-| Backend API for plugins | Not published. |
-| Plugin versioning/compatibility | Not defined. |
+| Plugin host and lifecycle | Not implemented. |
+| Runtime plugin registry | Not implemented. |
+| Public frontend or backend plugin API | Not published. |
+| Manifest, versioning, compatibility, or marketplace | Not implemented. |
+| Installation through UI, CLI, npm, or pip | Not available. |
+| Remote code loading in the browser | Not available. |
 
-!!! warning "This is not a public extension API"
+!!! warning "There is no extension API"
 
-    `PluginHost` is an internal architecture utility. Import modules
-    internals from an external application does not create a supported integration and
-    may break without compatibility notice.
+    Internal modules must not be imported as if they were supported plugins.
+    Internal routes, events, configuration structures, and contracts can
+    change without an extension compatibility guarantee.
 
-## Current internal contract
+## Extensibility roadmap
 
-A registered local module must provide a unique string identifier and a
-`activate` function. `deactivate` is optional.
+A plugin system will only be considered after a product decision and at least
+the following contracts have been defined:
 
-```js
-export const examplePlugin = {
-  id: "orbit.example",
-  async activate(context) {
-    // Inicialización propiedad del módulo.
-  },
-  async deactivate() {
-    // Liberación de recursos propiedad del módulo.
-  }
-};
-```
+1. A host integrated with runtime startup and shutdown, with deterministic
+   activation and cleanup.
+2. An explicit, versioned context for dependencies such as Cesium, services,
+   events, and UI slots.
+3. Identity, manifest, compatibility, and upgrade policy for each extension.
+4. Security boundaries: arbitrary code will not be downloaded or executed in
+   the browser.
+5. Project persistence, migrations, observability, and lifecycle tests before
+   exposing any extension point.
 
-| Member | Proven requirement |
-| --- | --- |
-| `id` | Non-empty, unique string within the host. A duplicate produces an error. |
-| `activate(context)` | Mandatory; it is invoked by the host in record order each time `PluginHost.start()` is called. |
-| `deactivate()` | Optional; the host invokes it in reverse order for the plugins that were activated. |
-| `context` | Arbitrary object delivered by the caller. The host does not define or validate a service schema. |
+Until then, extracting a domain into a tested module is an internal
+architecture improvement, not an installable plugin.
 
-The host retains active plugins after successful activation.
-`PluginHost.start()` is not idempotent - a subsequent call re-executes
-`activate`. Does not include error isolation, permissions, sandbox,
-State serialization nor automatic rollback if a subsequent activation
-fails.
+## Available alternatives today
 
-## Property rules for embedded code
-
-The following rules describe the separation necessary to convert a
-local functionality in maintainable module; They are not an installation mechanism:
-
-1. The module must have its Cesium entities, listeners, interface nodes and
-   life cycle state.
-2. Activation must receive dependencies explicitly, not seek state
-   global nor traverse the DOM outside of its property area.
-3. Deactivation should remove listeners and resources created by the module.
-4. Changes to routes, configuration keys, and WebSocket payloads must be
-   maintain compatibility or document your migration.
-5. The module must be accompanied by evidence of the behavior it extracts.
-
-## Internal onboarding flow
-
-```mermaid
-flowchart LR
-    A[Extraer dominio con pruebas] --> B[Definir dependencias explícitas]
-    B --> C[Registrar módulo local en el código de la aplicación]
-    C --> D[Activar mediante PluginHost]
-    D --> E[Revisar build y pruebas]
-```
-
-The check-in occurs in the repository and in the Orbit image. there is no
-downloading or executing third-party code during browser startup.
-
-## Limits and unpublished work
-
-None of the following capabilities should be documented as available:
-
-- Install a package using UI, npm, pip or Orbit CLI.
-- Resolve plugins from the Internet, a private registry or a directory
-  user.
-- Grant permissions per plugin or isolate it from the browser process.
-- Add FastAPI/Node routes, propagation models or transformations
-  frames from an external plugin.
-- Load standalone versions of Cesium, React or dependencies
-  runtime.
+- Use the local [REST API](rest-api.md), [WebSocket](websocket.md), and
+  [OpenAPI](openapi.md) interfaces to interoperate with Orbit.
+- To contribute to the product, add code to the appropriate repository domain
+  and validate it with the relevant tests.
 
 ## Related references
 
 - [Architecture](../development/architecture.md)
-- [Contribute](../development/contributing.md)
-- [Validation](../development/validation.md)
+- [Contributing](../development/contributing.md)
+- [Roadmap](../reference/roadmap.md)

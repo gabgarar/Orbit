@@ -15,7 +15,6 @@ from .scales import (
     BUILTIN_LEAP_SECOND_TABLE,
     LeapSecondTable,
     LeapSecondTableError,
-    configure_default_leap_second_table,
 )
 
 
@@ -61,15 +60,3 @@ def load_leap_second_table_from_environment(
     if require_unexpired:
         table.require_current(now)
     return table
-
-
-def configure_timekeeping_from_environment(
-    environment: Mapping[str, str] | None = None,
-    *,
-    now: datetime.datetime | None = None,
-) -> LeapSecondTable:
-    """Install the startup table used by legacy-compatible conversion helpers."""
-
-    return configure_default_leap_second_table(
-        load_leap_second_table_from_environment(environment, now=now)
-    )

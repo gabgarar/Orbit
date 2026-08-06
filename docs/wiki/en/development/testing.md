@@ -57,15 +57,35 @@ npm run test:integration --prefix server
 `server/requirements.txt` dependencies. The equivalent Windows script
 uses Docker to run the same test tree on the Orbit image.
 
+## Static audit
+
+The code audit finds unused imports, variables, exports, and files before code
+is removed. It runs Knip for Node, React, and the legacy runtime; ESLint for
+JavaScript; and Ruff/Vulture for the Python backend:
+
+```powershell
+.\.scripts\audit-code.ps1
+```
+
+On the first run, install the Python tools in the virtual environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r server\requirements-dev.txt
+```
+
+These tools provide review signals; they do not by themselves authorize removal
+of an API, since an export may be consumed by another layer or be a documented
+contract.
+
 ## Interface tests
 
-Playwright uses by default `http://127.0.0.1:8100`, two workers and a timeout of
+Playwright uses by default `http://127.0.0.1:8100`, one worker and a timeout of
 60 seconds per test. You can change the target instance using
-`ORBIT_UI_BASE_URL` and the number of workers using `ORBIT_UI_WORKERS`.
+`ORBIT_UI_BASE_URL`. The suite is serial because its project and catalogue
+flows share persistent state.
 
 ```powershell
 $env:ORBIT_UI_BASE_URL = "http://127.0.0.1:18100"
-$env:ORBIT_UI_WORKERS = "3"
 npm run test:ui --prefix server
 ```
 

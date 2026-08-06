@@ -9,9 +9,14 @@ export default defineConfig({
         screenshot: "only-on-failure",
         trace: "retain-on-failure"
     },
-    timeout: 60_000,
-    // Each test has its own browser context and only inspects UI state, so a
-    // small worker pool shortens feedback without overloading Cesium/Docker.
-    fullyParallel: true,
-    workers: Number(process.env.ORBIT_UI_WORKERS) || 2
+    // These checks boot the full Cesium runtime and deliberately exercise
+    // several responsive transitions in one browser session.  The runtime
+    // readiness assertion remains 15 s, while this wider per-test budget
+    // avoids treating a healthy but GPU-constrained CI worker as a failure.
+    timeout: 120_000,
+    // Browser contexts are isolated, but their project actions share Orbit's
+    // persisted workspace and catalogue service. Keep the suite serial so a
+    // project created by one test cannot replace the state inspected by another.
+    fullyParallel: false,
+    workers: 1
 });

@@ -98,7 +98,7 @@ flowchart LR
 | **Backend Python** | Proceso FastAPI privado para cálculo orbital y WebSocket. |
 | **OpenAPI** | Documento generado por FastAPI en `/openapi.json` y publicado por el gateway. No describe por completo las rutas propias Node. |
 | **WebSocket** | Canal `/ws` de snapshots de catálogo, estado y órbitas para suscripciones de un cliente. |
-| **PluginHost** | Utilidad interna de ciclo de vida para módulos ES locales. No es un sistema de plugins distribuibles. |
+| **Arquitectura de plugins (futura)** | Límite de extensibilidad planificado. Orbit no distribuye actualmente un `PluginHost` ni un runtime de plugins. |
 | **Modo EOP estricto** | Política que exige snapshots locales y cobertura/identidad adecuadas en transformaciones dependientes de orientación terrestre. |
 
 ## Referencias relacionadas

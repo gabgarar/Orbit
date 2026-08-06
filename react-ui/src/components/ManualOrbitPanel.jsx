@@ -21,7 +21,6 @@ import { emitPropagatedParametersOpen } from "../../../front/js/runtime/propagat
  * Events emitted by this component:
  * - `orbit:manual-orbit-panel-state` ({ open, mode: "design" })
  * - `orbit:manual-orbit-change` ({ source, field?, value?, ...payload })
- * - `orbit:manual-orbit-tab-change` ({ tab, ...payload })
  * - `orbit:manual-orbit-sync-request` ({ source, target, ...payload })
  * - `orbit:manual-orbit-create` (full payload)
  * - `orbit:manual-orbit-reset` (the restored payload)
@@ -918,7 +917,6 @@ export default function ManualOrbitPanel() {
         if (nextTab === definitionTab) return;
         setDefinitionTab(nextTab);
         const source = nextTab === "state-vector" ? "keplerian" : "state-vector";
-        dispatch("orbit:manual-orbit-tab-change", { tab: nextTab, ...payloadFor(form) });
         dispatch("orbit:manual-orbit-sync-request", { source, target: nextTab, ...payloadFor(form) });
     };
     const reset = () => {

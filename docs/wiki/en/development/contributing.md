@@ -100,4 +100,4 @@ promises.
 - [Architecture](architecture.md)
 - [Testing](testing.md)
 - [Validation](validation.md)
-- [Internal plugins](../integrations/plugins.md)
+- [Plugin roadmap](../integrations/plugins.md)

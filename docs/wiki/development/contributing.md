@@ -100,4 +100,4 @@ promesas.
 - [Arquitectura](architecture.md)
 - [Testing](testing.md)
 - [Validación](validation.md)
-- [Plugins internos](../integrations/plugins.md)
+- [Hoja de ruta de plugins](../integrations/plugins.md)

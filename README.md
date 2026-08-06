@@ -42,6 +42,7 @@ Todos los accesos operativos están centralizados en `.scripts/`. Ejecútalos de
 .\.scripts\test-react-build.cmd # Compilacion de React y runtime Cesium
 .\.scripts\test-backend.cmd   # Pruebas de server/python/ dentro de Docker
 .\.scripts\test-all.cmd       # Frontend + backend + integración completa
+.\.scripts\audit-code.ps1     # Detecta código, imports y variables no usados
 ```
 
 La estructura y responsabilidades de cada capa de pruebas están en
@@ -57,7 +58,7 @@ Con Orbit arrancado en Docker, genera capturas y valida el catÃ¡logo en cinco 
 
 Las capturas y el informe HTML se guardan en `tests/artifacts/`. Puedes usar otra instancia o puerto con `ORBIT_UI_BASE_URL`, por ejemplo `ORBIT_UI_BASE_URL=http://localhost:8100 npm run test:ui`.
 
-Las pruebas se ejecutan con dos workers en paralelo. En un equipo potente puedes aumentar el número temporalmente, por ejemplo: `.\.scripts\test-ui.cmd -Workers 3`.
+Las pruebas UI se ejecutan de forma serial. Aunque cada caso usa su propio navegador, comparten el estado persistente de proyecto y catálogo de Orbit; serializarlas evita que una prueba reemplace el estado que otra está comprobando.
 
 ## Ejecutar sin Docker
 

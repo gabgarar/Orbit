@@ -238,14 +238,6 @@ function normalizedKeplerianElements(elements, options = {}) {
     };
 }
 
-/**
- * Validate and normalize classical Keplerian elements. The returned object
- * uses km, degrees, and includes both true and mean anomaly.
- */
-export function validateKeplerianElements(elements, options = {}) {
-    return normalizedKeplerianElements(elements, options);
-}
-
 function normalizedStateVector(stateVector, options = {}) {
     if (!stateVector || typeof stateVector !== "object") {
         throw new OrbitalElementsValidationError("State vector must be an object.");
@@ -271,13 +263,6 @@ function normalizedStateVector(stateVector, options = {}) {
         muKm3S2: resolveMu(options),
         eccentricityTolerance: resolveEccentricityTolerance(options)
     };
-}
-
-/**
- * Validate a Cartesian ECI state vector. Units are km and km/s.
- */
-export function validateEciStateVector(stateVector, options = {}) {
-    return normalizedStateVector(stateVector, options);
 }
 
 function orbitalDerivedValues(semiMajorAxisKm, eccentricity, muKm3S2) {

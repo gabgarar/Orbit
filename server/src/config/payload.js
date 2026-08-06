@@ -1,7 +1,5 @@
 import { sanitizeCatalogFileName } from "./catalog-file.js";
 
-export { sanitizeCatalogFileName } from "./catalog-file.js";
-
 export function isPlainObject(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }

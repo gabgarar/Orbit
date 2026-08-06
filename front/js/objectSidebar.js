@@ -822,7 +822,6 @@ export function setupObjectSidebar({
     getLayerType,
     getObjectSourceId = (id) => id,
     getGroundStationParams,
-    isCatalogReady,
     getObjectTle,
     getObjectTleAsync,
     getCatalogEntryMeta,
@@ -1149,41 +1148,6 @@ export function setupObjectSidebar({
     `;
     document.body.appendChild(catalogFilterModal);
 
-    const confirmModal = document.createElement("div");
-    confirmModal.id = "sidebarConfirmModal";
-    confirmModal.innerHTML = `
-        <div class="sidebar-confirm-panel" role="dialog" aria-modal="true" aria-label="Confirmacion">
-            <h3 id="sidebarConfirmTitle">Confirmacion</h3>
-            <p id="sidebarConfirmMessage"></p>
-            <div class="sidebar-confirm-actions">
-                <button class="sidebar-confirm-btn secondary" id="sidebarConfirmCancelBtn" type="button">Cancelar</button>
-                <button class="sidebar-confirm-btn" id="sidebarConfirmAcceptBtn" type="button">Aceptar</button>
-            </div>
-        </div>
-    `;
-    // React owns the visible confirmation dialog; this detached node is kept
-    // only while the rest of the catalog modal is still migrated.
-
-    const catalogLoadingModal = document.createElement("div");
-    catalogLoadingModal.id = "catalogLoadingModal";
-    catalogLoadingModal.innerHTML = `
-        <div class="catalog-loading-panel" role="status" aria-live="polite" aria-label="Cargando catalogo">
-            <h3>Cargando catalogo</h3>
-            <p>Esperando datos del servidor...</p>
-        </div>
-    `;
-    document.body.appendChild(catalogLoadingModal);
-
-    const globalDropOverlay = document.createElement("div");
-    globalDropOverlay.id = "globalCatalogDropOverlay";
-    globalDropOverlay.innerHTML = `
-        <div class="global-drop-overlay-panel">
-            <h3>Soltar para importar</h3>
-            <p>Se importara al catalogo y se intentara anadir a la vista.</p>
-        </div>
-    `;
-    // React owns the visible global drop overlay.
-
     const contextMenu = document.createElement("div");
     contextMenu.id = "catalogContextMenu";
     contextMenu.innerHTML = `
@@ -1230,33 +1194,6 @@ export function setupObjectSidebar({
         <button class="catalog-context-action" data-folder-action="bodies-hide" type="button" role="menuitem">Ocultar todos los cuerpos</button>`;
     document.body.appendChild(folderContextMenu);
 
-    const folderNameModal = document.createElement("div");
-    folderNameModal.id = "folderNameModal";
-    folderNameModal.innerHTML = `
-        <form class="folder-name-dialog" aria-labelledby="folderNameDialogTitle">
-            <h3 id="folderNameDialogTitle">Nueva carpeta</h3>
-            <label>
-                <span id="folderNameDialogLabel">Nombre de la carpeta</span>
-                <input id="folderNameDialogInput" type="text" maxlength="80" autocomplete="off" required />
-            </label>
-            <div>
-                <button type="button" data-folder-dialog="cancel">Cancelar</button>
-                <button type="submit" data-folder-dialog="confirm">Crear carpeta</button>
-            </div>
-        </form>`;
-    // React owns the visible folder-name dialog.
-    const folderNameDialogTitle = folderNameModal.querySelector("#folderNameDialogTitle");
-    const folderNameDialogLabel = folderNameModal.querySelector("#folderNameDialogLabel");
-    const folderNameDialogInput = folderNameModal.querySelector("#folderNameDialogInput");
-    let resolveFolderNameDialog = null;
-
-    function closeFolderNameDialog(value = null) {
-        folderNameModal.classList.remove("open");
-        const resolve = resolveFolderNameDialog;
-        resolveFolderNameDialog = null;
-        resolve?.(value);
-    }
-
     function requestFolderName({ title, label, initialValue = "" }) {
         return new Promise((resolve) => {
             const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1270,17 +1207,6 @@ export function setupObjectSidebar({
         });
     }
 
-    folderNameModal.addEventListener("click", (event) => {
-        if (event.target === folderNameModal || event.target.closest('[data-folder-dialog="cancel"]')) {
-            closeFolderNameDialog();
-        }
-    });
-    folderNameModal.querySelector("form").addEventListener("submit", (event) => {
-        event.preventDefault();
-        const name = folderNameDialogInput.value.trim();
-        if (name) closeFolderNameDialog(name);
-        else folderNameDialogInput.focus();
-    });
     let folderContextTarget = null;
     let pendingFolderAssignment = null;
     let pendingFolderImportAssignment = null;
@@ -1425,7 +1351,6 @@ export function setupObjectSidebar({
         closeContextMenu();
         folderContextMenu.classList.remove("open");
         folderContextTarget = null;
-        closeFolderNameDialog();
     });
 
     const addMenu = document.createElement("div");
@@ -1440,7 +1365,7 @@ export function setupObjectSidebar({
         <button class="catalog-context-action" type="button">Add layer <span>›</span></button>
         <div class="folder-add-submenu">
             <div class="folder-add-menu">
-                <button class="catalog-context-action" type="button">Add satellite <span>›</span></button>
+                <button class="catalog-context-action" id="addSatelliteBtn" data-add-kind="satellite" type="button">Add satellite <span>›</span></button>
                 <div class="folder-add-submenu">
                     <button class="catalog-context-action" id="addTleFromCatalogBtn" type="button">Add TLE from catalog</button>
                     <button class="catalog-context-action" id="importSatelliteBtn" type="button">Import satellite</button>
@@ -1448,13 +1373,13 @@ export function setupObjectSidebar({
                 </div>
             </div>
             <div class="folder-add-menu">
-                <button class="catalog-context-action" type="button">Add body <span>›</span></button>
+                <button class="catalog-context-action" data-add-kind="body" type="button">Add body <span>›</span></button>
                 <div class="folder-add-submenu">
                     <button class="catalog-context-action" id="addMoonBtn" type="button">Add Moon</button>
                     <button class="catalog-context-action" id="addSunBtn" type="button">Add Sun</button>
                 </div>
             </div>
-            <button class="catalog-context-action" id="addGroundStationBtn" type="button">Ground station</button>
+            <button class="catalog-context-action" id="addGroundStationBtn" data-add-kind="station" type="button">Ground station</button>
         </div>
     `;
     addMenu.prepend(addLayerEntry);
@@ -1691,13 +1616,6 @@ export function setupObjectSidebar({
     const catalogDecayOnlyFilter = catalogFilterModal.querySelector("#catalogDecayOnlyFilter");
     const catalogFilterClearBtn = catalogFilterModal.querySelector("#catalogFilterClearBtn");
 
-    const confirmTitle = confirmModal.querySelector("#sidebarConfirmTitle");
-    const confirmMessage = confirmModal.querySelector("#sidebarConfirmMessage");
-    const confirmCancelBtn = confirmModal.querySelector("#sidebarConfirmCancelBtn");
-    const confirmAcceptBtn = confirmModal.querySelector("#sidebarConfirmAcceptBtn");
-
-    const catalogLoadingText = catalogLoadingModal.querySelector("p");
-
     const contextExplainBtn = contextMenu.querySelector("#contextExplainBtn");
     const contextVizBtn = contextMenu.querySelector("#contextVizBtn");
     const contextGroundTrackBtn = contextMenu.querySelector("#contextGroundTrackBtn");
@@ -1708,6 +1626,7 @@ export function setupObjectSidebar({
     const contextRemoveLayerBtn = contextMenu.querySelector("#contextRemoveLayerBtn");
 
     const addTleFromCatalogBtn = addMenu.querySelector("#addTleFromCatalogBtn");
+    const addSatelliteBtn = addMenu.querySelector("#addSatelliteBtn");
     const generateOrbitBtn = addMenu.querySelector("#generateOrbitBtn");
     const addMoonBtn = addMenu.querySelector("#addMoonBtn");
     const addSunBtn = addMenu.querySelector("#addSunBtn");
@@ -1767,24 +1686,6 @@ export function setupObjectSidebar({
     const exportEphemPropagatorSelect = exportModal.querySelector("#exportEphemPropagator");
     const exportEphemerisBtn = exportModal.querySelector("#exportEphemerisBtn");
 
-    const notificationCenter = document.createElement("div");
-    notificationCenter.id = "sidebarNotificationCenter";
-    notificationCenter.innerHTML = `
-        <button id="sidebarNotificationToggle" type="button">Alertas (0)</button>           
-        <div id="sidebarNotificationPanel" hidden>
-            <div class="sidebar-notification-actions">
-                <button id="sidebarNotificationClearAll" type="button">Limpiar todo</button>
-            </div>
-            <div id="sidebarNotificationList"></div>
-        </div>
-    `;
-    // React renders the notification center. Keep this detached during the
-    // transition so the runtime can continue publishing the same event data.
-
-    const notificationToggle = notificationCenter.querySelector("#sidebarNotificationToggle");
-    const notificationPanel = notificationCenter.querySelector("#sidebarNotificationPanel");
-    const notificationList = notificationCenter.querySelector("#sidebarNotificationList");
-    const notificationClearAll = notificationCenter.querySelector("#sidebarNotificationClearAll");
     const notificationState = {
         sequence: 1,
         entries: []
@@ -1795,19 +1696,6 @@ export function setupObjectSidebar({
             detail: notificationState.entries.map((entry) => ({ ...entry }))
         }));
 
-        notificationList.innerHTML = "";
-        for (const entry of notificationState.entries) {
-            const item = document.createElement("article");
-            item.className = `sidebar-notification-item ${entry.type === "error" ? "is-error" : "is-info"}`;
-            item.innerHTML = `
-                <div class="sidebar-notification-head">
-                    <strong>${entry.type === "error" ? "Error" : "Info"}</strong>
-                    <button type="button" data-dismiss-id="${entry.id}" aria-label="Cerrar alerta">✕</button>
-                </div>
-                <pre>${escapeHtml(entry.message)}</pre>
-            `;
-            notificationList.appendChild(item);
-        }
     }
 
     function dismissNotification(id) {
@@ -2580,7 +2468,6 @@ export function setupObjectSidebar({
     }
 
     function waitAndOpenCatalog() {
-        catalogLoadingModal.classList.remove("open");
         openCatalogModal();
     }
 
@@ -2625,6 +2512,7 @@ export function setupObjectSidebar({
     }
 
     addTleFromCatalogBtn?.addEventListener("click", openCatalogSatelliteFlow);
+    addSatelliteBtn?.addEventListener("click", openCatalogSatelliteFlow);
     generateOrbitBtn?.addEventListener("click", () => {
         closeAddMenu();
         window.dispatchEvent(new Event("orbit:manual-orbit-open"));
@@ -3619,6 +3507,7 @@ export function setupObjectSidebar({
         catalogSelectAllBtn.disabled = isBusy;
         catalogRefreshBtn.disabled = isBusy;
         addTleFromCatalogBtn.disabled = isBusy;
+        addSatelliteBtn.disabled = isBusy;
         importSatelliteBtn.disabled = isBusy;
         catalogFiltersBtn.disabled = isBusy;
         catalogCloseBtn.disabled = isBusy;
@@ -4578,7 +4467,6 @@ export function setupObjectSidebar({
             window.removeEventListener(OBJECT_STATE_CHANGED_EVENT, onObjectStateChanged);
             sidebar.remove();
             catalogModal.remove();
-            catalogLoadingModal.remove();
             contextMenu.remove();
             addMenu.remove();
             groundStationModal.remove();

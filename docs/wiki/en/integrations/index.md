@@ -11,7 +11,7 @@ runtime; It should not be exposed or treated as a second public API.
 | [REST API](rest-api.md) | Available locally | Catalog, propagation, anniversaries, visibility windows, export and configuration. |
 | [WebSocket](websocket.md) | Available locally | States and orbits of a client's active subscriptions. |
 | [OpenAPI](openapi.md) | Available locally | Inspection of the FastAPI contract generated during execution. |
-| [Plugins](plugins.md) | Internal contract, not distributable | Local ES modules included and reviewed along with source code. |
+| [Plugins](plugins.md) | Roadmap; not available | The current application has no plugin host or plugin runtime. |
 | [Python SDK](python-sdk.md) | Not available | There is no SDK compatibility package, version, or contract. |
 | [CLI](cli.md) | Not available as a product | There are operational scripts and development commands, not a public command line interface. |
 

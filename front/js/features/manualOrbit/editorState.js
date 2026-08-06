@@ -541,11 +541,6 @@ function normalizeDefinitionSource(value) {
     return DEFINITION_SOURCE_ALIASES[normalized] || null;
 }
 
-/** Normalize the UI/runtime aliases for a definition source. */
-export function normalizeManualOrbitSource(value) {
-    return normalizeDefinitionSource(value);
-}
-
 function getKeplerianInput(payload) {
     const source = unwrapPayload(payload);
     return safeObject(source.keplerian);

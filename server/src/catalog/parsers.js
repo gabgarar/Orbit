@@ -93,7 +93,7 @@ export function parseTleCatalog(text) {
     return entries;
 }
 
-export function parseOmmJsonCatalog(text) {
+function parseOmmJsonCatalog(text) {
     const payload = JSON.parse(String(text || "{}"));
     const entries = [];
     let skipped = 0;
@@ -137,7 +137,7 @@ export function parseOmmXmlCatalog(text) {
     return { entries, skipped };
 }
 
-export function parseOemCatalog(text, fileName = "") {
+function parseOemCatalog(text, fileName = "") {
     const content = String(text || "");
     const name = /OBJECT_NAME\s*=\s*(.+)/i.exec(content)?.[1]?.trim()
         || path.parse(fileName).name
@@ -152,7 +152,7 @@ export function parseOemCatalog(text, fileName = "") {
     };
 }
 
-export function detectImportFormat(fileName, content) {
+function detectImportFormat(fileName, content) {
     const name = String(fileName || "").toLowerCase();
     const trimmed = String(content || "").trim();
     const isOemXml = /<oem|<ephemeris/i.test(trimmed);

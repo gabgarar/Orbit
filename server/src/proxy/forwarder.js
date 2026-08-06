@@ -10,13 +10,13 @@ function appendQueryParameters(target, query = {}) {
     }
 }
 
-export function buildPythonPath(pythonPath, query) {
+function buildPythonPath(pythonPath, query) {
     const target = new URL(pythonPath, PROXY_ORIGIN);
     appendQueryParameters(target, query);
     return `${target.pathname}${target.search}`;
 }
 
-export function buildPythonRequestOptions(request, timeoutMs = PYTHON_PROXY_TIMEOUT_MS) {
+function buildPythonRequestOptions(request, timeoutMs = PYTHON_PROXY_TIMEOUT_MS) {
     const requestHeaders = request.headers || {};
     const headers = { Accept: requestHeaders.accept || "application/json" };
     const contentType = requestHeaders["content-type"];

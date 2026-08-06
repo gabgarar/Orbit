@@ -325,22 +325,6 @@ body.with-toolbars #objectSidebar.collapsed {
     display: flex;
 }
 
-#catalogLoadingModal {
-    position: fixed;
-    inset: 0;
-    z-index: 10130;
-    background: var(--orbit-bg-overlay);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    padding: 16px;
-    box-sizing: border-box;
-}
-
-#catalogLoadingModal.open {
-    display: flex;
-}
-
 #tleInfoModal {
     position: fixed;
     inset: 0;

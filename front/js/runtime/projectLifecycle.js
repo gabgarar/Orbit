@@ -31,7 +31,7 @@ export function createProjectLifecycle(deps) {
             celestialBodies: getCelestialBodies(),
             layerNames: Object.fromEntries(getLayerNameOverrides()),
             layerTree: getObjectSidebar()?.getProjectTree?.(),
-            groundStations: [...getGroundStationLayers().values()].map(({ entity, coverageEntity, ...station }) => station),
+            groundStations: [...getGroundStationLayers().values()].map(({ entity: _entity, coverageEntity: _coverageEntity, ...station }) => station),
             simulation: {
                 mode: simulation.mode,
                 startDate: simulation.startDate,
@@ -65,7 +65,7 @@ export function createProjectLifecycle(deps) {
     const startNew = (name = "Untitled project") => {
         try {
             clearContents();
-        } catch (error) {
+        } catch {
             // Starting a blank project must not leave the user trapped behind
             // the welcome screen if stale render state cannot be cleaned up.
             showAlert("No se pudo limpiar completamente el proyecto anterior. Se ha creado uno nuevo vacio.", getAlertTitle());

@@ -42,7 +42,7 @@ function parseTrustedCatalogUrl(value, baseUrl) {
 }
 
 /** Only allow the official HTTPS catalogue providers from persisted settings. */
-export function normalizeCatalogSourceUrl(value) {
+function normalizeCatalogSourceUrl(value) {
     return parseTrustedCatalogUrl(value)?.toString() || "";
 }
 

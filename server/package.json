@@ -18,6 +18,9 @@
     "express": "^4.19.2"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.1"
+    "@playwright/test": "^1.61.1",
+    "eslint": "^10.8.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "knip": "^6.32.0"
   }
 }

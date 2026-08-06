@@ -1,6 +1,5 @@
 fastapi>=0.115,<1
 pydantic>=2.7,<3
-requests>=2.31,<3
 sgp4>=2.23,<3
 # IAU SOFA/ERFA routines for the GCRF/CIRS/TIRS/ITRF transformation chain.
 pyerfa>=2.0,<3

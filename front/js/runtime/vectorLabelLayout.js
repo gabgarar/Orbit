@@ -4,7 +4,6 @@
 // still overlap from the current camera angle.
 
 const DEFAULT_OFFSET = Object.freeze({ x: 0, y: -7 });
-const LABEL_HEIGHT = 18;
 const LABEL_CHAR_WIDTH = 6.1;
 const LABEL_HORIZONTAL_PADDING = 10;
 const LABEL_GAP = 4;
@@ -109,4 +108,3 @@ export function layoutVectorLabelOffsets(entries, viewport = null) {
 
     return offsets;
 }
-

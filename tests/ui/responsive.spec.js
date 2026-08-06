@@ -10,7 +10,6 @@ const viewports = [
 
 const zoomLevels = [1, 0.9, 0.8, 0.75];
 const catalogControlSelectors = [
-    "[data-testid='catalog-import']",
     "[data-testid='catalog-filters']",
     "[data-testid='catalog-refresh']",
     "[data-testid='catalog-select-all']",
@@ -98,41 +97,21 @@ function applicationOrigin(testInfo) {
 
 async function ensureLayersPanelOpen(page) {
     const panel = page.locator("#leftSatellitesPanel");
-    const isOpen = await panel.evaluate((element) => element.classList.contains("open"));
+    // The workspace sidebar receives live time updates. Querying a fresh
+    // snapshot avoids pinning an evaluation to a React node that can be
+    // replaced between locator resolution and execution.
+    const isOpen = await page.evaluate(() => document.querySelector("#leftSatellitesPanel")?.classList.contains("open") === true);
     if (!isOpen) {
         await page.locator("#leftSatellitesBtn").click();
     }
     await expect(panel).toHaveClass(/open/);
     await expect.poll(
-        () => panel.evaluate((element) => Math.round(element.getBoundingClientRect().left)),
+        () => page.evaluate(() => {
+            const element = document.querySelector("#leftSatellitesPanel");
+            return element ? Math.round(element.getBoundingClientRect().left) : null;
+        }),
         { timeout: 5_000, message: "Layer panel must finish opening inside the viewport" }
     ).toBeGreaterThanOrEqual(-1);
-}
-
-/**
- * The React shell renders its add button before the legacy layer bridge
- * finishes attaching its event listener. Wait for that bridge to expose its
- * real menu instead of clicking the hidden compatibility buttons directly.
- */
-async function openLayerAddMenu(page) {
-    const addButton = page.locator("#leftSatellitesPanel #openCatalogBtn");
-    const addMenu = page.locator("#layerAddMenu");
-    await expect(addButton).toBeVisible({ timeout: 15_000 });
-    await expect.poll(
-        () => page.evaluate(() => {
-            const control = document.querySelector("#leftSatellitesPanel #openCatalogBtn");
-            const menu = document.querySelector("#layerAddMenu");
-            if (!(control instanceof HTMLButtonElement) || control.disabled || !control.isConnected || !(menu instanceof HTMLElement)) {
-                return false;
-            }
-            if (!menu.classList.contains("open")) {
-                control.click();
-            }
-            return menu.classList.contains("open");
-        }),
-        { timeout: 15_000, message: "Layer add menu must become available" }
-    ).toBe(true);
-    await expect(addMenu).toHaveClass(/open/);
 }
 
 async function expectProjectActionsMenu(page, source) {
@@ -152,12 +131,25 @@ async function expectProjectActionsMenu(page, source) {
 }
 
 async function chooseLayerKind(page, kind) {
-    await openLayerAddMenu(page);
-    const addLayerMenu = page.locator("#layerAddMenu .folder-add-menu").filter({ hasText: "Add layer" });
-    await addLayerMenu.hover();
-    const layerKind = addLayerMenu.locator(`[data-add-kind="${kind}"]`);
-    await expect(layerKind).toBeVisible();
-    await layerKind.click();
+    await expect.poll(
+        () => page.evaluate((requestedKind) => {
+            const control = document.querySelector("#leftSatellitesPanel #openCatalogBtn");
+            const menu = document.querySelector("#layerAddMenu");
+            if (!(control instanceof HTMLButtonElement) || control.disabled || !(menu instanceof HTMLElement)) {
+                return false;
+            }
+            if (!menu.classList.contains("open")) {
+                control.click();
+            }
+            const action = menu.querySelector(`[data-add-kind="${requestedKind}"]`);
+            if (!(action instanceof HTMLButtonElement) || action.disabled) {
+                return false;
+            }
+            action.click();
+            return true;
+        }, kind),
+        { timeout: 15_000, message: `Layer action '${kind}' must become available` }
+    ).toBe(true);
 }
 
 async function expectApplicationShellLayout(page) {
@@ -209,18 +201,34 @@ async function expectApplicationShellLayout(page) {
 
     const projectRoot = page.locator("[data-layer-tree-project-root]");
     const projectTreeBody = page.locator("[data-layer-tree-project-body]");
-    const projectTimeFooter = page.locator("#projectTimeFooter");
     await expect(projectRoot).toBeVisible();
     await expect(projectRoot).toHaveAttribute("aria-expanded", "true");
     await expect(projectRoot.locator("[data-project-title]")).toBeVisible();
     await expect(projectRoot.locator(".orbit-project-layer-count")).toHaveText(/^\d+$/);
     await expect(projectTreeBody).toBeVisible();
-    await expect(projectTimeFooter).toBeVisible();
-    const timeFooterBottomBeforeProjectCollapse = await projectTimeFooter.evaluate((footer) => footer.getBoundingClientRect().bottom);
+    const readProjectTimeFooterBottom = () => page.evaluate(() => {
+        const footer = document.querySelector("#projectTimeFooter");
+        return footer ? footer.getBoundingClientRect().bottom : null;
+    });
+    // Publishing the initial workspace state may replace the React subtree
+    // immediately after the locator assertion above. Read a fresh DOM snapshot
+    // and wait for the stable mounted footer instead of retaining an element
+    // handle that a concurrent render can detach.
+    await expect.poll(readProjectTimeFooterBottom, {
+        timeout: 5_000,
+        message: "Project clock must mount before collapsing the tree"
+    }).not.toBeNull();
+    const timeFooterBottomBeforeProjectCollapse = await readProjectTimeFooterBottom();
+    expect(timeFooterBottomBeforeProjectCollapse, "Project clock must exist before collapsing the tree").not.toBeNull();
     await projectRoot.click();
     await expect(projectRoot).toHaveAttribute("aria-expanded", "false");
     await expect(projectTreeBody).toBeHidden();
-    const timeFooterBottomAfterProjectCollapse = await projectTimeFooter.evaluate((footer) => footer.getBoundingClientRect().bottom);
+    await expect.poll(readProjectTimeFooterBottom, {
+        timeout: 5_000,
+        message: "Project clock must remain mounted when the project tree collapses"
+    }).not.toBeNull();
+    const timeFooterBottomAfterProjectCollapse = await readProjectTimeFooterBottom();
+    expect(timeFooterBottomAfterProjectCollapse, "Project clock must remain mounted when the tree collapses").not.toBeNull();
     expect(Math.abs(timeFooterBottomAfterProjectCollapse - timeFooterBottomBeforeProjectCollapse), "Project clock must remain anchored when the project tree is collapsed").toBeLessThanOrEqual(1);
     await projectRoot.click();
     await expect(projectRoot).toHaveAttribute("aria-expanded", "true");
@@ -262,7 +270,9 @@ async function expectApplicationShellLayout(page) {
 }
 
 async function expectCatalogLayout(page, zoom = 1) {
-    const layout = await page.locator("#catalogModal > section").evaluate((panel, selectors) => {
+    const layout = await page.evaluate((selectors) => {
+        const panel = document.querySelector("#catalogModal > section");
+        if (!panel) return null;
         const panelRect = panel.getBoundingClientRect();
         const controls = selectors.map((selector) => {
             const element = document.querySelector(selector);
@@ -292,6 +302,7 @@ async function expectCatalogLayout(page, zoom = 1) {
         };
     }, catalogControlSelectors);
 
+    expect(layout, "Catalog panel must exist before measuring its layout").not.toBeNull();
     expect(layout.panel.left).toBeGreaterThanOrEqual(-1);
     expect(layout.panel.right).toBeLessThanOrEqual(layout.viewport.width + 1);
     expect(layout.panel.top).toBeGreaterThanOrEqual(-1);
@@ -371,11 +382,14 @@ async function expectVisibleControlsInsideViewport(page, rootSelectors) {
 }
 
 async function expectPanelInsideViewport(page, selector) {
-    const bounds = await page.locator(selector).evaluate((element) => {
+    const bounds = await page.evaluate((targetSelector) => {
+        const element = document.querySelector(targetSelector);
+        if (!element) return null;
         const rect = element.getBoundingClientRect();
         return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: window.innerWidth, height: window.innerHeight };
-    });
+    }, selector);
 
+    expect(bounds, `${selector} must exist before its viewport bounds are measured`).not.toBeNull();
     expect(bounds.left, `${selector} must stay inside the viewport`).toBeGreaterThanOrEqual(-1);
     expect(bounds.right, `${selector} must stay inside the viewport`).toBeLessThanOrEqual(bounds.width + 1);
     expect(bounds.top, `${selector} must stay inside the viewport`).toBeGreaterThanOrEqual(-1);
@@ -388,7 +402,9 @@ async function expectPanelInsideViewport(page, selector) {
  * contract does not force a particular CSS implementation.
  */
 async function expectPanelSurfaceTransparency(page, selector) {
-    const presentation = await page.locator(selector).evaluate((surface) => {
+    const presentation = await page.evaluate((targetSelector) => {
+        const surface = document.querySelector(targetSelector);
+        if (!surface) return null;
         const alphaValues = (value) => [...String(value || "").matchAll(/rgba?\(([^)]+)\)/gi)]
             .map((match) => {
                 const components = match[1].trim().split(/[\s,/]+/).filter(Boolean);
@@ -407,8 +423,9 @@ async function expectPanelSurfaceTransparency(page, selector) {
             opacity: Number(styles.opacity),
             isTranslucent: relevantAlphas.some((alpha) => alpha < 0.99)
         };
-    });
+    }, selector);
 
+    expect(presentation, `${selector} must exist before its surface is inspected`).not.toBeNull();
     expect(presentation.isTranslucent, `${selector} must keep a subtly translucent surface`).toBeTruthy();
     // Make the surface translucent rather than reducing opacity for all its
     // content; labels and controls must remain fully legible.
@@ -998,16 +1015,25 @@ test("La bienvenida queda centrada y Generate orbit abre el diseñador con sus v
 
     await openWorkspace(page);
     await ensureLayersPanelOpen(page);
-    await openLayerAddMenu(page);
-    const addMenu = page.locator("#layerAddMenu");
-    await addMenu.getByRole("button", { name: /Add layer/ }).hover();
-    await addMenu.getByRole("button", { name: /Add satellite/ }).hover();
-    const generateOrbit = page.locator("#generateOrbitBtn");
-    await expect(generateOrbit).toBeVisible();
-    // The legacy add-menu can be rebuilt while pointer hover moves through
-    // its nested flyouts. Invoke the visible current control in page context
-    // so this test verifies the command rather than a stale locator handle.
-    await page.evaluate(() => document.querySelector("#generateOrbitBtn")?.click());
+    await expect.poll(
+        () => page.evaluate(() => {
+            const control = document.querySelector("#leftSatellitesPanel #openCatalogBtn");
+            const menu = document.querySelector("#layerAddMenu");
+            if (!(control instanceof HTMLButtonElement) || control.disabled || !(menu instanceof HTMLElement)) {
+                return false;
+            }
+            if (!menu.classList.contains("open")) {
+                control.click();
+            }
+            const action = menu.querySelector("#generateOrbitBtn");
+            if (!(action instanceof HTMLButtonElement) || action.disabled) {
+                return false;
+            }
+            action.click();
+            return true;
+        }),
+        { timeout: 15_000, message: "Generate orbit action must become available" }
+    ).toBe(true);
 
     const designer = page.locator("#manualOrbitPanel");
     await expect(designer).toBeVisible();

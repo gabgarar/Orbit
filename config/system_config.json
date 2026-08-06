@@ -1,7 +1,7 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 1.9833333333333334,
+      "propagation_hours": 5,
       "future_show": true,
       "ground_track_show": false,
       "future_line_width": 2.5,
@@ -21,8 +21,7 @@
     },
     "logging": {
       "enabled": true,
-      "level": "info",
-      "show_top_clock": true
+      "level": "info"
     },
     "rendering": {
       "antialias_mode": "msaa",

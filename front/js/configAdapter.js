@@ -37,7 +37,6 @@ export function normalizeSystemConfig(rawSystem = {}) {
 
         log_enabled: logging.enabled ?? rawSystem.log_enabled,
         log_level: logging.level ?? rawSystem.log_level,
-        log_show_top_clock: logging.show_top_clock ?? rawSystem.log_show_top_clock,
 
         ui_language: ui.language ?? rawSystem.ui_language,
         ui_theme: ui.theme ?? rawSystem.ui_theme
@@ -68,8 +67,7 @@ export function toSectionedSystemConfig(rawSystem = {}) {
         },
         logging: {
             enabled: flat.log_enabled ?? true,
-            level: flat.log_level ?? "info",
-            show_top_clock: flat.log_show_top_clock ?? true
+            level: flat.log_level ?? "info"
         },
         rendering: {
             antialias_mode: flat.antialias_mode ?? (flat.antialias_enabled ? "fxaa" : "off"),

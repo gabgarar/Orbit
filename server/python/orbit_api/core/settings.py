@@ -7,7 +7,6 @@ BASE_DIR = Path(__file__).resolve().parents[4]
 CONFIG_DIR = BASE_DIR / "config"
 SYSTEM_CONFIG_PATH = CONFIG_DIR / "system_config.json"
 
-MAX_CACHED_ORBITS = 50
 AUTO_MIN_ORBIT_SAMPLES = 24
 # Enough for a 12-hour low-Earth path at the angular tessellation used by the
 # renderer.  The shared batch budget in sampling.py still protects large layer

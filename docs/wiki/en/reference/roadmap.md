@@ -27,7 +27,7 @@ prevent extensible architecture from being interpreted as a promise.
 | --- | --- | --- |
 | Distributed Python SDK | There is no package or public contract. | Make `orbit_api` a supported SDK. |
 | Product CLI | There is no executable or command specification. | Make Windows scripts a stable CLI. |
-| Installable plugins | There is no installation, manifest or marketplace. | That `PluginHost` allows third-party extensions. |
+| Plugin architecture | There is no plugin host, registry, or plugin API in the runtime. | That internal modules are extensions or that an operational `PluginHost` exists. |
 | Authentication and authorization | Not implemented. | That an exposed API is secure by default. |
 | Collaboration/multitenancy | Not implemented. | That projects are synchronized between users. |
 | Orbit determination | Not implemented. | Let osculating elements be an OD solution. |

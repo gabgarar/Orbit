@@ -91,50 +91,6 @@
     --orbit-ui-scale: 1;
 }
 
-[data-theme="dark"] .quick-toolbar-panel,
-[data-theme="dark"] .quick-toolbar-toggle,
-[data-theme="dark"] .quick-tool-btn,
-[data-theme="dark"] #quickToolbar #sessionRecordBtn {
-    border-color: var(--orbit-border-accent);
-    background: var(--orbit-bg-tertiary);
-    color: var(--orbit-text-primary);
-}
-
-[data-theme="dark"] .quick-tool-btn.active,
-[data-theme="dark"] .quick-tool-btn.enabled {
-    border-color: var(--orbit-border-success);
-    background: #143629;
-    color: var(--orbit-text-success);
-}
-
-[data-theme="dark"] .quick-tool-btn.blocked {
-    border-color: var(--orbit-border-danger);
-    background: #3d141d;
-    color: #ffdbe1;
-}
-
-[data-theme="light"] .quick-toolbar-panel,
-[data-theme="light"] .quick-toolbar-toggle,
-[data-theme="light"] .quick-tool-btn,
-[data-theme="light"] #quickToolbar #sessionRecordBtn {
-    border-color: var(--orbit-border-secondary);
-    background: var(--orbit-bg-tertiary);
-    color: var(--orbit-text-primary);
-}
-
-[data-theme="light"] .quick-tool-btn.active,
-[data-theme="light"] .quick-tool-btn.enabled {
-    border-color: var(--orbit-border-success);
-    background: #dff8ee;
-    color: var(--orbit-text-success);
-}
-
-[data-theme="light"] .quick-tool-btn.blocked {
-    border-color: var(--orbit-border-danger);
-    background: #ffe5e9;
-    color: var(--orbit-text-error);
-}
-
 /* Top Toolbar Horizontal */
 #topToolbar {
     position: fixed;
@@ -159,51 +115,8 @@
     letter-spacing: 0.02em;
 }
 
-#topToolbar .toolbar-separator {
-    width: 1px;
-    height: calc(24px * var(--orbit-ui-scale));
-    background: var(--orbit-border-primary);
-    margin: 0 calc(4px * var(--orbit-ui-scale));
-}
-
-#topToolbar .toolbar-btn {
-    height: calc(32px * var(--orbit-ui-scale));
-    padding: 0 calc(14px * var(--orbit-ui-scale));
-    border: none;
-    background: transparent;
-    color: var(--orbit-text-secondary);
-    font: 600 calc(12px * var(--orbit-ui-scale))/1 sans-serif;
-    cursor: pointer;
-    border-radius: calc(4px * var(--orbit-ui-scale));
-    display: inline-flex;
-    align-items: center;
-    gap: calc(6px * var(--orbit-ui-scale));
-    transition: background 0.15s ease, color 0.15s ease;
-}
-
-#topToolbar .toolbar-btn:hover {
-    background: var(--orbit-bg-hover);
-    color: var(--orbit-text-primary);
-}
-
-#topToolbar .toolbar-btn.active {
-    background: var(--orbit-bg-active);
-    color: var(--orbit-text-accent);
-}
-
-#topToolbar .toolbar-btn.recording {
-    color: var(--orbit-text-error);
-    animation: pulse-recording 2s ease-in-out infinite;
-}
-
 #topToolbar .toolbar-spacer {
     flex: 1;
-}
-
-#topToolbar .toolbar-info {
-    font: 600 calc(13px * var(--orbit-ui-scale))/1 sans-serif;
-    color: var(--orbit-text-tertiary);
-    padding: 0 calc(8px * var(--orbit-ui-scale));
 }
 
 #topToolbar .toolbar-search-wrap {
@@ -212,21 +125,6 @@
     align-items: center;
     width: calc(460px * var(--orbit-ui-scale));
     max-width: 46vw;
-}
-
-#topToolbar .toolbar-time-wrap {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 2px;
-    min-width: calc(260px * var(--orbit-ui-scale));
-    cursor: pointer;
-}
-
-#topToolbar .toolbar-subinfo {
-    font: 500 calc(10px * var(--orbit-ui-scale))/1 sans-serif;
-    color: var(--orbit-text-muted);
-    padding: 0 calc(8px * var(--orbit-ui-scale));
 }
 
 #topToolbar .toolbar-search-icon {
@@ -322,173 +220,6 @@
     font-size: 11px;
 }
 
-#simulationControlDock {
-    position: fixed;
-    left: 62px;
-    right: calc(14px * var(--orbit-ui-scale));
-    bottom: calc(14px * var(--orbit-ui-scale));
-    border: 1px solid var(--orbit-border-primary);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--orbit-bg-toolbar) 92%, transparent);
-    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
-    padding: 10px 12px;
-    z-index: 10075;
-    backdrop-filter: blur(6px);
-    display: grid;
-    gap: 8px;
-    transform-origin: left bottom;
-    transition: opacity 0.18s ease, transform 0.18s ease;
-}
-
-#simulationControlDock.collapsed {
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(12px) scale(0.98);
-}
-
-#simulationControlDock.open {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(0) scale(1);
-}
-
-#simulationControlDock .sim-controls-row,
-#simulationControlDock .sim-timeline-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
-#simulationControlDock button,
-#simulationControlDock input[type="datetime-local"] {
-    height: 30px;
-    border: 1px solid var(--orbit-border-primary);
-    border-radius: 8px;
-    background: var(--orbit-bg-tertiary);
-    color: var(--orbit-text-primary);
-    padding: 0 10px;
-    font: 600 11px/1 sans-serif;
-}
-
-#simulationControlDock button {
-    cursor: pointer;
-}
-
-#simulationControlDock button:hover {
-    background: var(--orbit-bg-hover);
-}
-
-#simulationControlDock button.active {
-    border-color: var(--orbit-border-focus);
-    background: var(--orbit-bg-active);
-    color: var(--orbit-text-accent);
-}
-
-#simulationControlDock .sim-mode-group,
-#simulationControlDock .sim-actions-group,
-#simulationControlDock .sim-speed-group,
-#simulationControlDock .sim-range-group {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-#simulationControlDock .sim-domain-indicator {
-    display: inline-flex;
-    align-items: center;
-    height: 30px;
-    padding: 0 10px;
-    border: 1px solid var(--orbit-border-primary);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--orbit-bg-tertiary) 88%, transparent);
-    color: var(--orbit-text-tertiary);
-    font: 700 11px/1 sans-serif;
-    letter-spacing: 0.2px;
-}
-
-#simulationControlDock .sim-domain-indicator.is-oem {
-    border-color: color-mix(in srgb, #ffb36b 70%, var(--orbit-border-focus));
-    color: #ffd4a8;
-    background: color-mix(in srgb, #6a3a12 26%, var(--orbit-bg-tertiary));
-}
-
-#simulationControlDock .sim-actions-group {
-    margin-inline: auto;
-}
-
-#simulationControlDock .sim-icon-btn {
-    width: 32px;
-    min-width: 32px;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-}
-
-#simulationControlDock [hidden] {
-    display: none !important;
-}
-
-#simulationControlDock[data-mode="realtime"] .sim-range-group,
-#simulationControlDock[data-mode="realtime"] .sim-actions-group,
-#simulationControlDock[data-mode="realtime"] .sim-timeline-row {
-    display: none;
-}
-
-#simulationControlDock .sim-range-group label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--orbit-text-tertiary);
-    font: 600 11px/1 sans-serif;
-}
-
-#simulationControlDock #simTimeline {
-    flex: 1;
-    min-width: 240px;
-    accent-color: var(--orbit-text-accent);
-}
-
-#simulationControlDock .sim-timeline-info {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--orbit-text-tertiary);
-    font: 600 11px/1.2 sans-serif;
-}
-
-@media (max-width: 1200px) {
-    #topToolbar .toolbar-time-wrap {
-        min-width: calc(180px * var(--orbit-ui-scale));
-    }
-
-    #simulationControlDock {
-        left: 54px;
-        right: calc(10px * var(--orbit-ui-scale));
-        padding: 8px;
-    }
-
-    #simulationControlDock .sim-range-group {
-        width: 100%;
-    }
-
-    #simulationControlDock .sim-range-group label {
-        flex: 1;
-    }
-
-    #simulationControlDock input[type="datetime-local"] {
-        width: 100%;
-        min-width: 130px;
-    }
-}
-
-@keyframes pulse-recording {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
-}
-
 /* Left Sidebar Vertical */
 #leftSidebar {
     position: fixed;
@@ -560,12 +291,6 @@
     object-fit: contain;
 }
 
-.toolbar-file-menu { position: relative; }
-.toolbar-file-dropdown { display: none; position: absolute; top: 100%; left: 0; min-width: 150px; padding: 5px 0; border: 1px solid var(--orbit-border-primary); border-radius: 7px; background: var(--orbit-bg-modal); z-index: 10200; }
-.toolbar-file-menu.open .toolbar-file-dropdown { display: grid; }
-.toolbar-file-dropdown button { padding: 8px 10px; border: 0; background: transparent; color: var(--orbit-text-primary); text-align: left; cursor: pointer; }
-.toolbar-file-dropdown button:hover { background: var(--orbit-bg-hover); }
-
 #projectWelcome { position: fixed; inset: 0; z-index: 10500; display: grid; place-items: center end; overflow: hidden; padding-right: clamp(60px, 9vw, 156px); background: linear-gradient(90deg, rgba(2, 8, 17, .06), rgba(2, 8, 17, .22)), url("../fonts/fondo.png") center/cover no-repeat; }
 #projectWelcome .project-welcome-card { position: relative; z-index: 2; width: min(510px, calc(100vw - 40px)); padding: 54px 42px 44px; border: 1px solid rgba(113, 169, 230, .58); border-radius: 30px; transform: translateX(clamp(-180px, -8vw, -90px)); background: linear-gradient(135deg, rgba(9, 40, 77, .91), rgba(3, 13, 27, .88)); box-shadow: 0 32px 90px rgba(0,0,0,.58), inset 0 1px rgba(255,255,255,.06); text-align: center; }
 .project-welcome-orbit { width: 104px; height: 80px; margin: 0 auto; background: url("../icon/favicon.svg") center/112% no-repeat; font-size: 0; filter: saturate(1.15) drop-shadow(0 0 18px rgba(23,155,255,.5)); }
@@ -603,19 +328,6 @@
 .project-file-picker:hover { border-color: #78b9ff; background: rgba(18, 70, 130, .42); }
 .project-file-picker small { color: var(--orbit-text-tertiary); }
 
-/* Settings are available from the left sidebar, avoiding duplicate controls. */
-#topConfigBtn { display: none; }
-
-/* Keep playback controls centred in the wide range-time control dock. */
-@media (min-width: 1201px) {
-    #simulationControlDock .sim-controls-row { position: relative; }
-    #simulationControlDock .sim-actions-group {
-        position: absolute;
-        left: 50%;
-        transform: translateX(-50%);
-    }
-}
-
 /* Keep Cesium's native navigation actions visually aligned with Orbit's
    compact toolbar controls. */
 .cesium-viewer-toolbar {
@@ -647,27 +359,6 @@
     width: 30px;
     height: 30px;
 }
-
-#cameraTools { display: inline-block; margin-left: 5px; }
-
-#cameraTools .camera-tools-menu,
-#cameraTools .camera-tools-menu[hidden] { display: none !important; }
-
-#cameraTools button {
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    border: 1px solid var(--orbit-border-primary);
-    border-radius: 6px;
-    background: var(--orbit-bg-tertiary);
-    color: var(--orbit-text-primary);
-    cursor: pointer;
-    font: 700 15px/1 sans-serif;
-}
-
-
-#cameraTools button:hover { background: var(--orbit-bg-hover); border-color: var(--orbit-border-focus); }
-#cameraTools .camera-tools-menu { display: grid; gap: 5px; margin-top: 5px; }
 
 #leftSidebar .sidebar-panel,
 #leftSatellitesPanel,
@@ -937,12 +628,6 @@ body.presentation-mode #leftSidebar {
         gap: 4px;
     }
 
-    #topToolbar .toolbar-time-wrap,
-    #topToolbar .toolbar-separator,
-    #topToolbar .toolbar-subinfo {
-        display: none;
-    }
-
     #topToolbar .toolbar-brand {
         margin-right: 4px;
     }
@@ -953,9 +638,6 @@ body.presentation-mode #leftSidebar {
         max-width: none;
     }
 
-    #topToolbar .toolbar-btn {
-        padding-inline: 8px;
-    }
 }
 
 @media (max-width: 620px) {
@@ -967,25 +649,6 @@ body.presentation-mode #leftSidebar {
     #topToolbar .toolbar-brand {
         margin-right: 2px;
         font-size: 12px;
-    }
-
-    #topToolbar .toolbar-info {
-        display: none;
-    }
-
-    #topToolbar .toolbar-btn {
-        padding-inline: 7px;
-        gap: 3px;
-        font-size: 11px;
-    }
-
-    /* Keep primary actions reachable without allowing the fixed header to
-       overflow narrow phone viewports. Their titles remain available on hover. */
-    #topConfigBtn span:last-child,
-    #topCameraModeBtn span:last-child,
-    #topSimCtrlBtn span:last-child,
-    #topRecordBtn span:last-child {
-        display: none;
     }
 
     #topToolbar .toolbar-spacer {

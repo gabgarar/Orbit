@@ -7,7 +7,7 @@ import {
 
 const PENDING_COMMANDS_KEY = "__orbitPendingProjectCommands";
 
-export { getOrbitRuntimeStatus, markOrbitRuntimeFailed, ORBIT_RUNTIME_STATUS_EVENT, ORBIT_RUNTIME_STATES };
+export { getOrbitRuntimeStatus, markOrbitRuntimeFailed, ORBIT_RUNTIME_STATUS_EVENT };
 
 function dispatchCommand(windowRef, command) {
     const EventConstructor = windowRef.CustomEvent || globalThis.CustomEvent;

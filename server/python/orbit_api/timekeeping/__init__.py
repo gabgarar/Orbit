@@ -12,10 +12,7 @@ from .eop import (
     TabularEarthOrientationProvider,
     VisualApproximationEarthOrientationProvider,
 )
-from .configuration import (
-    configure_timekeeping_from_environment,
-    load_leap_second_table_from_environment,
-)
+from .configuration import load_leap_second_table_from_environment
 from .scales import (
     BUILTIN_LEAP_SECOND_TABLE,
     LeapSecondTable,
@@ -55,7 +52,6 @@ __all__ = [
     "TimeScale",
     "VisualApproximationEarthOrientationProvider",
     "configure_default_leap_second_table",
-    "configure_timekeeping_from_environment",
     "default_leap_second_table",
     "ensure_utc",
     "from_utc",

@@ -9,13 +9,13 @@ export function computeTleChecksum(line) {
     return sum % 10;
 }
 
-export function hasValidTleChecksum(line) {
+function hasValidTleChecksum(line) {
     if (typeof line !== "string" || line.length < 69) return false;
     const expected = Number(line[68]);
     return Number.isInteger(expected) && expected >= 0 && expected <= 9 && computeTleChecksum(line) === expected;
 }
 
-export function isValidTleEntry(entry) {
+function isValidTleEntry(entry) {
     const name = String(entry?.name || "").trim(); const line1 = String(entry?.line1 || "").trim(); const line2 = String(entry?.line2 || "").trim();
     if (!name || !line1.startsWith("1 ") || !line2.startsWith("2 ") || line1.length < 69 || line2.length < 69) return false;
     const satelliteNumber = line1.slice(2, 7);

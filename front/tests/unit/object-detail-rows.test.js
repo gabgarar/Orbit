@@ -124,6 +124,10 @@ test("manual input and propagation are intentionally split", () => {
                     argument_of_perigee_deg: 70,
                     true_anomaly_deg: 12
                 },
+                summary: {
+                    perigeeKm: 420,
+                    apogeeKm: 980
+                },
                 propagationOptions: {
                     numericalIntegrator: "rk4",
                     forceTerms: ["central", "j2", "drag"]
@@ -139,6 +143,8 @@ test("manual input and propagation are intentionally split", () => {
     assert.equal(input["r / Posición EME2000"], "(6800.000, 20.000, 15.000) km");
     assert.equal(input["v / Velocidad EME2000"], "(0.10000, 7.60000, 0.20000) km/s");
     assert.equal(input["Semieje mayor"], "6878.000 km");
+    assert.equal(input.Perigeo, "420.000 km");
+    assert.equal(input.Apogeo, "980.000 km");
     assert.equal(propagation.Motor, "Cowell numerical propagation");
     assert.equal(propagation.Integrador, "RK4");
     assert.equal(propagation["Modelo de fuerzas"], "Central gravity + J2 + Atmospheric drag");

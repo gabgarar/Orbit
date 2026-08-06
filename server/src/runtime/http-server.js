@@ -1,7 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 
-export const WEBSOCKET_HANDSHAKE_TIMEOUT_MS = 10_000;
+const WEBSOCKET_HANDSHAKE_TIMEOUT_MS = 10_000;
 
 function writeRawResponse(socket, {
     httpVersion = "1.1",

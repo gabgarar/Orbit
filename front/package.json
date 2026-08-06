@@ -1,0 +1,16 @@
+{
+  "name": "orbit-legacy-runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:unit": "node --test tests/unit/*.test.js"
+  },
+  "knip": {
+    "entry": ["main.js", "tests/unit/**/*.test.js"],
+    "project": ["main.js", "js/**/*.js", "tests/unit/**/*.test.js"],
+    "ignoreExportsUsedInFile": true,
+    "ignoreIssues": {
+      "js/runtime/runtimeStatus.js": ["exports"]
+    }
+  }
+}

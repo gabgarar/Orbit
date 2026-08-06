@@ -41,6 +41,13 @@ test("Docker local-only bind and host-port override stay aligned with restart an
     assert.match(dockerignore, /^react-ui\/dist\/?$/m);
     assert.match(dockerignore, /^server\/ui-artifacts\/?$/m);
     assert.match(dockerignore, /^server\/debug\.log$/m);
+    for (const ignoredBuildInput of [".venv/", ".venv-docs/", "site/", "docs/", "tests/", "debug.log"]) {
+        assert.match(
+            dockerignore,
+            new RegExp(`^${ignoredBuildInput.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"),
+            `${ignoredBuildInput} must stay out of the Docker build context`
+        );
+    }
     assert.match(restartScript, /Get-OrbitHttpPort/);
     assert.match(restartScript, /Get-OrbitHttpBind/);
     assert.match(restartScript, /ORBIT_HTTP_PORT\s*=\s*"\$orbitHttpPort"/);

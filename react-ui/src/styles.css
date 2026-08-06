@@ -183,7 +183,7 @@ body.with-toolbars #cesiumContainer {
     border: 0;
     border-top: 1px solid rgba(89, 127, 183, 0.45);
     border-radius: 0 !important;
-    background: linear-gradient(90deg, rgba(18, 39, 68, 0.20), rgba(9, 20, 35, 0.08) 58%, transparent);
+    background: transparent;
     box-shadow: none;
     -webkit-backdrop-filter: blur(8px) saturate(108%);
     backdrop-filter: blur(8px) saturate(108%);
@@ -602,7 +602,3 @@ body.with-toolbars #cesiumContainer {
     #leftInfoPanel { top: 64px !important; left: 8px; bottom: 8px; border-radius: 12px; }
     #leftSidebar { top: 64px !important; bottom: 8px; left: 4px; }
 }
-
-/* The engine's original simulation dock is retained only as a hidden controller.
-   React owns the visible interface below. */
-#simulationControlDock { display: none !important; }
