@@ -77,6 +77,13 @@ These tools provide review signals; they do not by themselves authorize removal
 of an API, since an export may be consumed by another layer or be a documented
 contract.
 
+## Continuous integration
+
+The **Verify Orbit** workflow runs for every push or pull request targeting
+`main` or `develop`. It repeats the Node, frontend, and Python tests, builds
+React, and runs the static audit. Browser tests remain a separate operational
+step because they require a healthy Docker instance.
+
 ## Interface tests
 
 Playwright uses by default `http://127.0.0.1:8100`, one worker and a timeout of

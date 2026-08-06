@@ -1,4 +1,5 @@
 import { tleEpochAgeMs, tleEpochToDate } from "../../../../front/js/features/objectDetails/tleEpoch.js";
+import { formatReferenceFrame } from "../../../../front/js/features/frames/referenceFrame.js";
 
 const number = (input, digits = 1) => input !== null && input !== undefined && input !== "" && Number.isFinite(Number(input)) ? Number(input).toFixed(digits) : "-";
 const value = (input, fallback = "-") => input === undefined || input === null || input === "" ? fallback : String(input);
@@ -25,12 +26,13 @@ function firstVector(...inputs) {
 }
 
 function frameLabel(input) {
-    if (typeof input === "string") return input.trim() || null;
+    if (typeof input === "string") return formatReferenceFrame(input) || null;
     if (!input || typeof input !== "object") return null;
     const name = String(input.name || input.frame || "").trim();
     const realization = String(input.realization || "").trim();
-    if (!name) return realization || null;
-    return realization && realization !== name ? `${name} / ${realization}` : name;
+    if (!name) return formatReferenceFrame(realization) || null;
+    const label = realization && realization !== name ? `${name} / ${realization}` : name;
+    return formatReferenceFrame(label) || null;
 }
 
 function vectorMagnitude(input) {

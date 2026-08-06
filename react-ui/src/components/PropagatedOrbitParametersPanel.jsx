@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadChartPng } from "../../../front/js/runtime/chartPngExport.js";
+import { formatReferenceFrame } from "../../../front/js/features/frames/referenceFrame.js";
 
 /*
  * Floating propagated-orbit inspector.
@@ -226,13 +227,6 @@ function titleCase(value) {
     return String(value)
         .replace(/[_-]+/g, " ")
         .replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
-function formatReferenceFrame(value) {
-    if (typeof value === "object") value = firstDefined(value, ["label", "name", "id", "value"]);
-    const normalized = String(value || "").trim().toUpperCase();
-    if (["EME2000", "GCRF", "ITRF", "TIRS", "CIRS", "TEME", "PEF", "TOD", "MOD", "ENU"].includes(normalized)) return normalized;
-    return titleCase(value);
 }
 
 function errorMessage(value) {

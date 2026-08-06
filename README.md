@@ -48,6 +48,9 @@ Todos los accesos operativos están centralizados en `.scripts/`. Ejecútalos de
 La estructura y responsabilidades de cada capa de pruebas están en
 [la guía de pruebas](docs/wiki/development/testing.md).
 
+Los pushes y pull requests hacia `main` o `develop` ejecutan automáticamente
+las pruebas, el build React y la auditoría estática en GitHub Actions.
+
 ## Pruebas visuales de la interfaz
 
 Con Orbit arrancado en Docker, genera capturas y valida el catÃ¡logo en cinco resoluciones de pantalla:

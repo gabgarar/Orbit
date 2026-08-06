@@ -98,6 +98,8 @@ import {
     synchronizeManualOrbitState,
     toManualOrbitApiPayload
 } from "./js/features/manualOrbit/editorState.js";
+import { normalizeManualOrbitPreviewReferenceFrame } from "./js/features/frames/referenceFrame.js";
+import { createPropagatedParametersContextBuilder } from "./js/features/propagatedParameters/context.js";
 
 const logger = getLogger("main");
 logger.info("Iniciando Cesium...");
@@ -3144,16 +3146,6 @@ function asValidManualOrbitDate(value) {
     return Number.isNaN(candidate.getTime()) ? null : candidate;
 }
 
-function normalizeManualOrbitPreviewReferenceFrame(value, fallback = "eme2000") {
-    const normalize = (candidate) => {
-        const normalized = String(candidate || "").trim().toLowerCase();
-        if (["itrf", "ecef", "earth-fixed", "earth_fixed"].includes(normalized)) return "itrf";
-        if (["eme2000", "eci", "inertial"].includes(normalized)) return "eme2000";
-        return null;
-    };
-    return normalize(value) || normalize(fallback) || "eme2000";
-}
-
 function getManualOrbitDesignSettings() {
     if (manualOrbitDesignSettings) {
         return { ...manualOrbitDesignSettings };
@@ -4167,102 +4159,19 @@ function setupManualOrbitEditorBridge() {
     });
 }
 
-function propagatedParametersIso(value) {
-    const date = value instanceof Date ? value : new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-// Entry-point bridge only. The inspector owns presentation and the follow-up
-// request; the runtime's responsibility here is to turn UI targets into a
-// stable layer/manual-design context without duplicating panel state or fetch
-// policy in every caller.
-function buildPropagatedParametersContext(detail = {}) {
-    const source = String(detail.source || "layer").trim() || "layer";
-    if (source === "manual-design") {
-        const manualOrbit = detail.manualOrbit && typeof detail.manualOrbit === "object"
-            ? detail.manualOrbit
-            : null;
-        if (!manualOrbit) {
-            return null;
-        }
-        const startTime = propagatedParametersIso(detail.startTime || manualOrbit.epochStartUtc || manualOrbit.epochUtc);
-        const endTime = propagatedParametersIso(detail.endTime || manualOrbit.epochEndUtc);
-        if (!startTime || !endTime || Date.parse(endTime) <= Date.parse(startTime)) {
-            return null;
-        }
-        // The editor keeps both representations in sync. Preserve which one
-        // the user is actively authoring, otherwise the inspector could
-        // silently fall back to Keplerian values after a State vector edit.
-        const inspectorManualOrbit = {
-            ...manualOrbit,
-            definitionSource: manualOrbit.definitionSource
-                ?? manualOrbit.definition_source
-                ?? manualOrbitDefinitionSource
-        };
-        return {
-            id: null,
-            source,
-            kind: "manual-design",
-            name: String(inspectorManualOrbit.name || "Manual Orbit").trim() || "Manual Orbit",
-            active: true,
-            manualOrbit: inspectorManualOrbit,
-            startTime,
-            endTime,
-            timeRange: {
-                mode: "manual-design",
-                startDate: startTime,
-                endDate: endTime
-            },
-            referenceFrame: normalizeManualOrbitPreviewReferenceFrame(
-                inspectorManualOrbit.previewReferenceFrame,
-                "eme2000"
-            ).toUpperCase(),
-            propagator: inspectorManualOrbit.propagator || null
-        };
-    }
-
-    const id = String(detail.id || "").trim();
-    if (!id || !isCompositeLayerActive(id) || isGroundStationLayerId(id) || isCelestialBodyLayerId(id)) {
-        return null;
-    }
-
-    const sourceId = getSatelliteSourceIdFromLayerId(id);
-    const telemetry = getCompositeLayerTelemetry(id);
-    const catalogMeta = getCompositeLayerMeta(id);
-    const timeRange = getObjectTimeRange(id, telemetry);
-    const manualOrbit = getManualOrbitProjectEntry(sourceId) || null;
-    const sourceFormat = String(catalogMeta?.sourceFormat || catalogMeta?.source_format || "TLE").toUpperCase();
-    const referenceFrame = manualOrbit
-        // A saved manual layer still owns the display choice configured in
-        // Manual Orbit. It is never a TLE/SGP4 state and must not inherit
-        // TEME from the catalogue fallback below.
-        ? normalizeManualOrbitPreviewReferenceFrame(
-            manualOrbit.previewReferenceFrame ?? manualOrbit.preview_reference_frame,
-            "eme2000"
-        ).toUpperCase()
-        : (sourceFormat === "OEM"
-            ? (telemetry?.position_frame || telemetry?.reference_frame || telemetry?.frame || null)
-            : "TEME");
-    return {
-        id,
-        source,
-        kind: "layer",
-        sourceId,
-        name: getLayerDisplayName(id),
-        active: true,
-        telemetry,
-        catalogMeta,
-        manualOrbit,
-        startTime: propagatedParametersIso(detail.startTime || timeRange?.startDate),
-        endTime: propagatedParametersIso(detail.endTime || timeRange?.endDate),
-        timeRange,
-        simulation: getSimulationTelemetryContext(),
-        // Catalogue SGP4 starts in TEME; OEM retains its declared frame. A
-        // manual layer instead reports its saved EME2000/ITRF view choice.
-        referenceFrame,
-        propagator: manualOrbit?.propagator || telemetry?.propagator || null
-    };
-}
+const buildPropagatedParametersContext = createPropagatedParametersContextBuilder({
+    isCompositeLayerActive,
+    isGroundStationLayerId,
+    isCelestialBodyLayerId,
+    getSatelliteSourceIdFromLayerId,
+    getCompositeLayerTelemetry,
+    getCompositeLayerMeta,
+    getObjectTimeRange,
+    getManualOrbitProjectEntry,
+    getLayerDisplayName,
+    getSimulationTelemetryContext,
+    getManualOrbitDefinitionSource: () => manualOrbitDefinitionSource
+});
 
 function publishPropagatedParametersInspectorState(patch = {}) {
     Object.assign(propagatedParametersInspectorState, patch);

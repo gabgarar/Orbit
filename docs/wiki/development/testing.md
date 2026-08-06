@@ -77,6 +77,13 @@ Las herramientas son una señal de revisión, no autorizan por sí solas a borra
 una API: un export puede ser consumido por otra capa o constituir un contrato
 documentado.
 
+## Integración continua
+
+El workflow **Verify Orbit** se ejecuta en cada push o pull request dirigido a
+`main` o `develop`. Repite los tests Node, frontend y Python, compila React y
+ejecuta la auditoría estática. Las pruebas de navegador siguen siendo un paso
+operativo separado porque requieren una instancia Docker saludable.
+
 ## Pruebas de interfaz
 
 Playwright usa por defecto `http://127.0.0.1:8100`, un worker y un timeout de
