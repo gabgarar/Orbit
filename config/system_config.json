@@ -3,7 +3,7 @@
     "orbit": {
       "propagation_hours": 25,
       "future_show": true,
-      "ground_track_show": true,
+      "ground_track_show": false,
       "future_line_width": 2.5,
       "future_color": "#7fd7ff",
       "selected_color": "#ff2d2d"

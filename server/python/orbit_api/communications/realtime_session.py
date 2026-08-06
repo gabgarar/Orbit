@@ -39,26 +39,14 @@ class RealtimeSession:
                 props, config, by_name = self._get_snapshot()
                 sent = False
                 if now >= next_state_at:
-                    state = []
-                    for name in self._subscriptions.satellite_ids:
-                        propagator = by_name.get(name)
-                        if propagator is None:
-                            continue
-                        x, y, z, vx, vy, vz = propagator.propagate()
-                        state.append({
-                            "satellite": name,
-                            "reference_frame": "ITRF",
-                            "position_units": "m",
-                            "velocity_units": "m/s",
-                            "position": {"x": x, "y": y, "z": z},
-                            "velocity": {"x": vx, "y": vy, "z": vz}
-                        })
+                    state = await asyncio.to_thread(self._build_state, by_name)
                     await send_payload(self._websocket, {"type": "state", "data": state, "compressed": False}, self._compression_threshold)
                     next_state_at = now + config.get("websocket_state_interval_seconds", 1.0)
                     sent = True
                 if config.get("orbit_future_show", True) and now >= next_orbit_at:
                     selected = [(name, by_name[name]) for name in self._subscriptions.satellite_ids if name in by_name]
-                    await send_payload(self._websocket, {"type": "orbits", "data": self._get_orbits(selected, config), "compressed": False}, self._compression_threshold)
+                    orbits = await asyncio.to_thread(self._get_orbits, selected, config)
+                    await send_payload(self._websocket, {"type": "orbits", "data": orbits, "compressed": False}, self._compression_threshold)
                     next_orbit_at = now + config.get("websocket_orbit_interval_seconds", 10.0)
                     sent = True
                 await asyncio.sleep(0 if sent else 0.05)
@@ -67,6 +55,24 @@ class RealtimeSession:
         finally:
             receiver_task.cancel()
             print(f"Cliente desconectado (ID: {client_id})")
+
+    def _build_state(self, by_name: dict) -> list[dict]:
+        """Build a potentially expensive snapshot away from the ASGI event loop."""
+        state = []
+        for name in self._subscriptions.satellite_ids:
+            propagator = by_name.get(name)
+            if propagator is None:
+                continue
+            x, y, z, vx, vy, vz = propagator.propagate()
+            state.append({
+                "satellite": name,
+                "reference_frame": "ITRF",
+                "position_units": "m",
+                "velocity_units": "m/s",
+                "position": {"x": x, "y": y, "z": z},
+                "velocity": {"x": vx, "y": vy, "z": vz},
+            })
+        return state
 
     async def _receive_commands(self) -> None:
         while True:

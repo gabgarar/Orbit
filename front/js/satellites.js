@@ -375,7 +375,11 @@ function shouldShowFutureOrbit(id) {
 }
 
 function shouldShowGroundTrack(id) {
-    return getSatelliteConfigValue(id, "orbit_ground_track_show", orbitConfig.orbit_ground_track_show) !== false
+    // The project-wide switch is authoritative. A per-object override may hide
+    // its own track, but it must not resurrect a track when the global option
+    // is disabled.
+    return orbitConfig.orbit_ground_track_show !== false
+        && getSatelliteConfigValue(id, "orbit_ground_track_show", true) !== false
         && getPropagationHoursForSatellite(id) > 0;
 }
 

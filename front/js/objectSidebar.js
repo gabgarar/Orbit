@@ -815,6 +815,8 @@ export function setupObjectSidebar({
     onRequestAddCelestialBody,
     onRequestCreateGroundStation,
     onRequestUpdateGroundStation,
+    onPreviewGroundStation = () => null,
+    onClearGroundStationPreview = () => {},
     onRequestToggleGroundStationHeatMap,
     onRequestDuplicateLayer,
     onRequestRenameLayer,
@@ -1425,8 +1427,9 @@ export function setupObjectSidebar({
                         <input id="gsMaskInput" type="number" step="0.1" min="0" max="90" value="10" />
                     </label>
                     <label class="catalog-filter-field">
-                        <span>Radio cobertura (km)</span>
-                        <input id="gsCoverageRadiusInput" type="number" step="1" min="1" value="1200" />
+                        <span>Envolvente RF calculada (km)</span>
+                        <input id="gsCoverageRadiusInput" type="number" readonly value="—" aria-describedby="gsRfRangeHint" />
+                        <small id="gsRfRangeHint">Derivada de potencia, frecuencia, ganancias y RX mínima.</small>
                     </label>
                 </div>
             </div>
@@ -1496,8 +1499,9 @@ export function setupObjectSidebar({
                     </label>
                 </div>
             </div>
-            <div class="catalog-filter-actions">
-                <button class="catalog-action-btn" id="groundStationCreateBtn" type="button">Crear estacion</button>
+            <div class="catalog-filter-actions ground-station-actions">
+                <button class="catalog-secondary-btn" id="groundStationCancelBtn" type="button">Cancelar</button>
+                <button class="catalog-action-btn" id="groundStationCreateBtn" type="button">Añadir a Layers</button>
             </div>
         </div>
     `;
@@ -1647,6 +1651,7 @@ export function setupObjectSidebar({
     const addGroundStationBtn = addMenu.querySelector("#addGroundStationBtn");
 
     const groundStationCloseBtn = groundStationModal.querySelector("#groundStationCloseBtn");
+    const groundStationCancelBtn = groundStationModal.querySelector("#groundStationCancelBtn");
     const groundStationCreateBtn = groundStationModal.querySelector("#groundStationCreateBtn");
     const groundStationTitle = groundStationModal.querySelector("#groundStationTitle");
     const groundStationPanel = groundStationModal.querySelector("#groundStationPanel");
@@ -1987,78 +1992,8 @@ export function setupObjectSidebar({
         addMenu.classList.add("open");
     }
 
-    function openGroundStationModal(layerId = null) {
-        closeAddMenu();
-        editingGroundStationId = layerId ? String(layerId) : null;
-
-        const isEditing = Boolean(editingGroundStationId);
-        groundStationTitle.textContent = isEditing ? "Update parameters" : "Nueva estacion terrestre";
-        groundStationCreateBtn.textContent = isEditing ? "Guardar cambios" : "Crear estacion";
-
-        if (isEditing && typeof getGroundStationParams === "function") {
-            const current = getGroundStationParams(editingGroundStationId) || {};
-            gsNameInput.value = String(current.name || "");
-            gsLatInput.value = String(Number(current.latitude_deg ?? 0));
-            gsLonInput.value = String(Number(current.longitude_deg ?? 0));
-            gsAltInput.value = String(Number(current.altitude_m ?? 0));
-            gsTimeZoneInput.value = String(current.time_zone || "UTC");
-            gsMaskInput.value = String(Number(current.min_elevation_deg ?? 10));
-            gsFreqInput.value = String(Number(current.frequency_mhz ?? 2200));
-            gsTxPowerInput.value = String(Number(current.tx_power_dbm ?? 38));
-            gsTxGainInput.value = String(Number(current.tx_gain_dbi ?? 18));
-            gsRxGainInput.value = String(Number(current.rx_gain_dbi ?? 21));
-            gsMinLinkPowerInput.value = String(Number(current.min_link_power_dbm ?? -80));
-            gsCoverageRadiusInput.value = String(Number(current.coverage_radius_km ?? 1200));
-            gsPointSizeInput.value = String(Number(current.point_size_px ?? 11));
-            gsPointSymbolInput.value = String(current.point_symbol || "circle");
-            gsPointColorInput.value = String(current.point_color || "#3cc4ff");
-            gsCoverageVisibleInput.checked = current.coverage_visible !== false;
-            gsHeatEnabledInput.checked = current.heatmap_enabled !== false;
-            gsHeatDensityInput.value = String(current.heatmap_density || "medium").toLowerCase();
-        } else {
-            gsNameInput.value = "";
-            gsLatInput.value = "40.4168";
-            gsLonInput.value = "-3.7038";
-            gsAltInput.value = "667";
-            gsTimeZoneInput.value = "UTC";
-            gsMaskInput.value = "10";
-            gsFreqInput.value = "2200";
-            gsTxPowerInput.value = "38";
-            gsTxGainInput.value = "18";
-            gsRxGainInput.value = "21";
-            gsMinLinkPowerInput.value = "-80";
-            gsCoverageRadiusInput.value = "1200";
-            gsPointSizeInput.value = "11";
-            gsPointSymbolInput.value = "circle";
-            gsPointColorInput.value = "#3cc4ff";
-            gsCoverageVisibleInput.checked = true;
-            gsHeatEnabledInput.checked = false;
-            gsHeatDensityInput.value = "medium";
-        }
-
-        setGroundStationTab("general");
-
-        groundStationModal.classList.add("open");
-        window.dispatchEvent(new CustomEvent("orbit:ground-station-open", {
-            detail: { editing: isEditing, values: {
-                name: gsNameInput.value, latitude_deg: gsLatInput.value, longitude_deg: gsLonInput.value, altitude_m: gsAltInput.value, time_zone: gsTimeZoneInput.value,
-                min_elevation_deg: gsMaskInput.value, frequency_mhz: gsFreqInput.value, tx_power_dbm: gsTxPowerInput.value, tx_gain_dbi: gsTxGainInput.value,
-                rx_gain_dbi: gsRxGainInput.value, min_link_power_dbm: gsMinLinkPowerInput.value, coverage_radius_km: gsCoverageRadiusInput.value, point_size_px: gsPointSizeInput.value,
-                point_symbol: gsPointSymbolInput.value, point_color: gsPointColorInput.value, coverage_visible: gsCoverageVisibleInput.checked,
-                heatmap_enabled: gsHeatEnabledInput.checked, heatmap_density: gsHeatDensityInput.value
-            } }
-        }));
-        gsNameInput?.focus();
-    }
-
-    function closeGroundStationModal() {
-        editingGroundStationId = null;
-        groundStationModal.classList.remove("open");
-        window.dispatchEvent(new Event("orbit:ground-station-close"));
-    }
-
-    async function submitGroundStation() {
-        const payload = {
+    function readGroundStationEditorPayload() {
+        return {
             name: String(gsNameInput?.value || "").trim() || "Estacion terrestre",
             latitude_deg: Number(gsLatInput?.value),
             longitude_deg: Number(gsLonInput?.value),
@@ -2078,6 +2013,89 @@ export function setupObjectSidebar({
             heatmap_enabled: gsHeatEnabledInput?.checked === true,
             heatmap_density: String(gsHeatDensityInput?.value || "medium").trim().toLowerCase()
         };
+    }
+
+    function syncGroundStationPreview() {
+        const preview = onPreviewGroundStation(readGroundStationEditorPayload(), { editing: Boolean(editingGroundStationId) });
+        if (gsCoverageRadiusInput && Number.isFinite(Number(preview?.radio_range_km))) {
+            gsCoverageRadiusInput.value = Number(preview.radio_range_km).toFixed(1);
+        }
+    }
+
+    function openGroundStationModal(layerId = null) {
+        closeAddMenu();
+        editingGroundStationId = layerId ? String(layerId) : null;
+
+        const isEditing = Boolean(editingGroundStationId);
+        groundStationTitle.textContent = isEditing ? "Update parameters" : "Nueva estacion terrestre";
+        groundStationCreateBtn.textContent = isEditing ? "Guardar cambios" : "Añadir a Layers";
+
+        if (isEditing && typeof getGroundStationParams === "function") {
+            const current = getGroundStationParams(editingGroundStationId) || {};
+            gsNameInput.value = String(current.name || "");
+            gsLatInput.value = String(Number(current.latitude_deg ?? 0));
+            gsLonInput.value = String(Number(current.longitude_deg ?? 0));
+            gsAltInput.value = String(Number(current.altitude_m ?? 0));
+            gsTimeZoneInput.value = String(current.time_zone || "UTC");
+            gsMaskInput.value = String(Number(current.min_elevation_deg ?? 10));
+            gsFreqInput.value = String(Number(current.frequency_mhz ?? 2200));
+            gsTxPowerInput.value = String(Number(current.tx_power_dbm ?? 38));
+            gsTxGainInput.value = String(Number(current.tx_gain_dbi ?? 18));
+            gsRxGainInput.value = String(Number(current.rx_gain_dbi ?? 21));
+            gsMinLinkPowerInput.value = String(Number(current.min_link_power_dbm ?? -80));
+            gsCoverageRadiusInput.value = String(Number(current.radio_range_km ?? current.coverage_radius_km ?? 0));
+            gsPointSizeInput.value = String(Number(current.point_size_px ?? 11));
+            gsPointSymbolInput.value = String(current.point_symbol || "circle");
+            gsPointColorInput.value = String(current.point_color || "#3cc4ff");
+            gsCoverageVisibleInput.checked = current.coverage_visible !== false;
+            gsHeatEnabledInput.checked = current.heatmap_enabled !== false;
+            gsHeatDensityInput.value = String(current.heatmap_density || "medium").toLowerCase();
+        } else {
+            gsNameInput.value = "";
+            gsLatInput.value = "40.4168";
+            gsLonInput.value = "-3.7038";
+            gsAltInput.value = "667";
+            gsTimeZoneInput.value = "UTC";
+            gsMaskInput.value = "10";
+            gsFreqInput.value = "2200";
+            gsTxPowerInput.value = "38";
+            gsTxGainInput.value = "18";
+            gsRxGainInput.value = "21";
+            gsMinLinkPowerInput.value = "-80";
+            gsCoverageRadiusInput.value = "—";
+            gsPointSizeInput.value = "11";
+            gsPointSymbolInput.value = "circle";
+            gsPointColorInput.value = "#3cc4ff";
+            gsCoverageVisibleInput.checked = true;
+            gsHeatEnabledInput.checked = false;
+            gsHeatDensityInput.value = "medium";
+        }
+
+        setGroundStationTab("general");
+
+        groundStationModal.classList.add("open");
+        syncGroundStationPreview();
+        window.dispatchEvent(new CustomEvent("orbit:ground-station-open", {
+            detail: { editing: isEditing, values: {
+                name: gsNameInput.value, latitude_deg: gsLatInput.value, longitude_deg: gsLonInput.value, altitude_m: gsAltInput.value, time_zone: gsTimeZoneInput.value,
+                min_elevation_deg: gsMaskInput.value, frequency_mhz: gsFreqInput.value, tx_power_dbm: gsTxPowerInput.value, tx_gain_dbi: gsTxGainInput.value,
+                rx_gain_dbi: gsRxGainInput.value, min_link_power_dbm: gsMinLinkPowerInput.value, coverage_radius_km: gsCoverageRadiusInput.value, point_size_px: gsPointSizeInput.value,
+                point_symbol: gsPointSymbolInput.value, point_color: gsPointColorInput.value, coverage_visible: gsCoverageVisibleInput.checked,
+                heatmap_enabled: gsHeatEnabledInput.checked, heatmap_density: gsHeatDensityInput.value
+            } }
+        }));
+        gsNameInput?.focus();
+    }
+
+    function closeGroundStationModal() {
+        onClearGroundStationPreview();
+        editingGroundStationId = null;
+        groundStationModal.classList.remove("open");
+        window.dispatchEvent(new Event("orbit:ground-station-close"));
+    }
+
+    async function submitGroundStation() {
+        const payload = readGroundStationEditorPayload();
 
         if (!Number.isFinite(payload.latitude_deg) || payload.latitude_deg < -90 || payload.latitude_deg > 90) {
             showErrorPopup("Latitud invalida para la estacion.");
@@ -2552,8 +2570,22 @@ export function setupObjectSidebar({
     });
 
     groundStationCloseBtn?.addEventListener("click", closeGroundStationModal);
+    groundStationCancelBtn?.addEventListener("click", closeGroundStationModal);
     groundStationCreateBtn?.addEventListener("click", () => {
         submitGroundStation();
+    });
+    [
+        gsNameInput, gsLatInput, gsLonInput, gsAltInput, gsTimeZoneInput, gsMaskInput,
+        gsFreqInput, gsTxPowerInput, gsTxGainInput, gsRxGainInput, gsMinLinkPowerInput,
+        gsPointSizeInput, gsPointSymbolInput, gsPointColorInput, gsCoverageVisibleInput,
+        gsHeatEnabledInput, gsHeatDensityInput
+    ].filter(Boolean).forEach((input) => {
+        input.addEventListener("input", () => {
+            if (groundStationModal.classList.contains("open")) syncGroundStationPreview();
+        });
+        input.addEventListener("change", () => {
+            if (groundStationModal.classList.contains("open")) syncGroundStationPreview();
+        });
     });
 
     groundStationModal.addEventListener("click", (event) => {

@@ -596,6 +596,37 @@ body.with-toolbars #objectSidebar.collapsed {
     scrollbar-color: var(--orbit-scrollbar-thumb) transparent;
 }
 
+.ground-station-panel .catalog-filter-field input[readonly] {
+    color: #8ee9b4;
+    border-color: #315e54;
+    background: rgba(8, 38, 31, .72);
+    cursor: default;
+}
+
+.ground-station-panel .catalog-filter-field small {
+    color: var(--orbit-text-secondary);
+    font-size: 9px;
+    line-height: 1.35;
+}
+
+.ground-station-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 9px;
+}
+
+.ground-station-actions .catalog-secondary-btn {
+    min-height: 34px;
+    padding: 0 14px;
+    border: 1px solid var(--orbit-border-secondary);
+    border-radius: 6px;
+    background: rgba(11, 24, 41, .82);
+    color: var(--orbit-text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
 .tle-info-content::-webkit-scrollbar { width: 10px; }
 .tle-info-content::-webkit-scrollbar-track { background: transparent; }
 .tle-info-content::-webkit-scrollbar-thumb {

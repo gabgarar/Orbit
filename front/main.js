@@ -282,6 +282,7 @@ let simulationTickTimer = null;
 let simulationUiBusy = false;
 let topSearchInitialized = false;
 const groundStationLayers = new Map();
+let groundStationPreview = null;
 const satelliteDuplicateLayers = new Map();
 const layerDisplayNameOverrides = new Map();
 // Native Cesium Sun/Moon visuals are exposed as ordinary workspace layers.
@@ -1415,6 +1416,73 @@ function applyGroundStationVisuals(station) {
         station.coverageEntity.ellipse.outlineColor = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.74);
         station.coverageEntity.show = station.visible === true && station.coverage_visible !== false;
     }
+}
+
+function clearGroundStationPreview() {
+    if (!groundStationPreview) return;
+    for (const entity of [groundStationPreview.entity, groundStationPreview.coverageEntity]) {
+        if (entity) viewer.entities.remove(entity);
+    }
+    groundStationPreview = null;
+}
+
+// The station designer must be able to show the exact RF envelope without
+// publishing a temporary layer into Layers, the project document, or pass
+// analysis. Confirmation is the only operation that creates a station layer.
+function previewGroundStation(params = {}) {
+    const latitudeDeg = Number(params.latitude_deg);
+    const longitudeDeg = Number(params.longitude_deg);
+    if (!Number.isFinite(latitudeDeg) || latitudeDeg < -90 || latitudeDeg > 90
+        || !Number.isFinite(longitudeDeg) || longitudeDeg < -180 || longitudeDeg > 180) {
+        clearGroundStationPreview();
+        return null;
+    }
+    const altitudeM = Number.isFinite(Number(params.altitude_m)) ? Number(params.altitude_m) : 0;
+    const position = Cesium.Cartesian3.fromDegrees(longitudeDeg, latitudeDeg, altitudeM);
+    if (!groundStationPreview) {
+        groundStationPreview = {
+            id: "__ground-station-preview__",
+            visible: true,
+            entity: viewer.entities.add({
+                id: "__ground-station-preview__-entity",
+                position,
+                label: {
+                    text: "PREVIEW",
+                    font: "600 12px sans-serif",
+                    fillColor: Cesium.Color.fromCssColorString("#9ef1b9"),
+                    outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 2,
+                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                    pixelOffset: new Cesium.Cartesian2(0, -14)
+                }
+            }),
+            coverageEntity: viewer.entities.add({
+                id: "__ground-station-preview__-coverage",
+                position,
+                ellipse: { semiMajorAxis: 1, semiMinorAxis: 1, outline: true }
+            })
+        };
+    }
+    Object.assign(groundStationPreview, {
+        name: String(params.name || "Estación terrestre").trim() || "Estación terrestre",
+        latitude_deg: latitudeDeg,
+        longitude_deg: longitudeDeg,
+        altitude_m: altitudeM,
+        frequency_mhz: Number(params.frequency_mhz),
+        tx_power_dbm: Number(params.tx_power_dbm),
+        tx_gain_dbi: Number(params.tx_gain_dbi),
+        rx_gain_dbi: Number(params.rx_gain_dbi),
+        min_link_power_dbm: Number(params.min_link_power_dbm),
+        point_size_px: Number(params.point_size_px),
+        point_color: String(params.point_color || "#3cc4ff"),
+        point_symbol: String(params.point_symbol || "circle"),
+        coverage_visible: params.coverage_visible !== false
+    });
+    groundStationPreview.entity.position = position;
+    groundStationPreview.coverageEntity.position = position;
+    groundStationPreview.entity.label.text = `PREVIEW · ${groundStationPreview.name}`;
+    applyGroundStationVisuals(groundStationPreview);
+    return { radio_range_km: groundStationPreview.radio_range_km };
 }
 
 function createGroundStationLayer(params = {}) {
@@ -5200,11 +5268,14 @@ function setupPropagatedParametersInspector() {
             if (!id) {
                 return null;
             }
+            clearGroundStationPreview();
             openLeftSatellitesPanel();
             publishGroundStationsState();
             return id;
         },
         onRequestUpdateGroundStation: (id, payload) => updateGroundStationLayer(id, payload),
+        onPreviewGroundStation: (payload) => previewGroundStation(payload),
+        onClearGroundStationPreview: () => clearGroundStationPreview(),
         onRequestToggleGroundStationHeatMap: (id, enabled) => toggleGroundStationHeatMap(id, enabled),
         onRequestDuplicateLayer: (id) => {
             if (isGroundStationLayerId(id) || isCelestialBodyLayerId(id)) {
