@@ -13,7 +13,6 @@ const standardTabs = [
 const groundStationTabs = [
     ["overview", "OVERVIEW", "Station identity"],
     ["access", "PASSES", "Access and visibility"],
-    ["monitoring", "MONITOR", "Monitored satellites"],
     ["configuration", "CONFIG", "Station configuration"]
 ];
 const toneClass = { "is-operational": "text-[#73e3a0]", "is-hidden": "text-[#d2a8ff]" };
@@ -31,7 +30,6 @@ function stationRows(detail) {
     const telemetry = detail.telemetry || {};
     const station = telemetry.station || detail.station || {};
     const realtime = telemetry.realtime || {};
-    const monitored = Array.isArray(station.monitor_satellite_ids) ? station.monitor_satellite_ids : [];
     const nextPass = Array.isArray(telemetry.next_passes) ? telemetry.next_passes[0] : null;
     return {
         overview: [
@@ -49,11 +47,6 @@ function stationRows(detail) {
             ["Mejor enlace", `${number(realtime.best_link_dbm, 1)} dBm`],
             ["Próximo AOS", nextPass?.aos ? utc(nextPass.aos) : "Sin pases calculados"],
             ["Próximo LOS", nextPass?.los ? utc(nextPass.los) : "-"]
-        ],
-        monitoring: [
-            ["Capas monitorizadas", `${monitored.length}`],
-            ["Cobertura de pases", "24 h al calcular AOS / LOS"],
-            ["Método", "Elevación ITRF respecto a máscara"]
         ],
         configuration: [
             ["Máscara de elevación", `${number(station.min_elevation_deg, 1)}°`],
@@ -151,7 +144,7 @@ export default function ObjectDetailsPanel() {
             <span className={`inline-flex rounded-[5px] px-2 py-1.5 text-[10px] leading-none font-bold ${details.visible ? "bg-[rgba(39,169,95,.19)] text-[#73e3a0]" : "bg-[rgba(133,75,193,.24)] text-[#d2a8ff]"}`}>{details.visible ? "ACTIVE" : "HIDDEN"}</span>
             <span>{isCelestialBody ? "CUERPO DE REFERENCIA" : isGroundStation ? "OPERACIONES TERRESTRES" : `NORAD ${details.noradId}`}</span>
         </div>
-        <nav className={`relative z-[1] my-[11px] mb-[13px] grid ${isGroundStation ? "grid-cols-4" : "grid-cols-5"} border-b border-[#1c2c43]`} aria-label="Secciones de detalle" role="tablist">
+        <nav className={`relative z-[1] my-[11px] mb-[13px] grid ${isGroundStation ? "grid-cols-3" : "grid-cols-5"} border-b border-[#1c2c43]`} aria-label="Secciones de detalle" role="tablist">
             {tabs.map(([key, label, title]) => <button className={`relative min-w-0 cursor-pointer border-0 bg-transparent px-0.5 pt-[9px] pb-[11px] text-[8px] leading-none font-bold tracking-[-.02em] ${tab === key ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1]"}`} type="button" key={key} role="tab" title={title} aria-label={title} aria-selected={tab === key} aria-controls={`object-details-${key}`} onClick={() => setTab(key)}>{label}</button>)}
         </nav>
         <section id={`object-details-${tab}`} role="tabpanel"><DetailRows rows={rows[tab] || []} /></section>

@@ -1339,13 +1339,7 @@ function setCompositeLayerActive(layerId, active) {
         }
     }
 
-    const wasActive = isSatelliteLayerActive(layerId);
     const changed = setSatelliteLayerActive(layerId, isActive);
-    if (changed && isActive && !wasActive && groundStationLayers.size > 0) {
-        window.dispatchEvent(new CustomEvent("orbit:ground-stations-satellite-monitoring-open", {
-            detail: { satelliteId: layerId, satelliteName: getLayerDisplayName(layerId) }
-        }));
-    }
     if (changed) {
         syncGroundStationVisibilityLinks();
     }
@@ -2019,15 +2013,18 @@ function clearGroundStationAnalysisVisuals() {
     }
 }
 
-// Monitored pairs own a lightweight callback polyline. The callback returns
-// no positions below the station mask, so Cesium shows an antenna link only
-// while that satellite is actually accessible from that station.
+// Every active orbital layer gets a lightweight callback polyline for every
+// visible ground station. The callback returns no positions below the station
+// mask or outside the RF envelope, so no station/satellite association is
+// persisted merely to show the live operational geometry.
 function syncGroundStationVisibilityLinks() {
     const desired = new Set();
+    const satelliteLayerIds = getCompositeLayerIds()
+        .filter((id) => !isGroundStationLayerId(id) && !isCelestialBodyLayerId(id))
+        .filter((id) => isCompositeLayerActive(id));
     for (const station of groundStationLayers.values()) {
         if (!station?.visible) continue;
-        for (const satelliteLayerId of station.monitor_satellite_ids || []) {
-            if (!isCompositeLayerActive(satelliteLayerId)) continue;
+        for (const satelliteLayerId of satelliteLayerIds) {
             const satellite = getCompositeLayerEntity(satelliteLayerId);
             if (!satellite?.position) continue;
             const key = `${station.id}:${satelliteLayerId}`;
@@ -2072,7 +2069,9 @@ function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElev
         polyline: {
             positions: new Cesium.CallbackProperty((time) => {
                 const satellitePosition = satellite.position?.getValue?.(time);
-                if (!satellitePosition || computeStationElevationDeg(stationPosition, satellitePosition) < minimumElevationDeg) return [];
+                if (!satellitePosition) return [];
+                const rangeKm = Cesium.Cartesian3.distance(stationPosition, satellitePosition) / 1000;
+                if (rangeKm > calculateGroundStationRadioRangeKm(station) || computeStationElevationDeg(stationPosition, satellitePosition) < minimumElevationDeg) return [];
                 return [stationPosition, satellitePosition];
             }, false),
             width: 1.8,
@@ -2101,23 +2100,10 @@ function publishGroundStationsState() {
     }));
     const satellites = getCompositeLayerIds()
         .filter((id) => !isGroundStationLayerId(id) && !isCelestialBodyLayerId(id))
-        .filter((id) => Boolean(getSatelliteTle(getSatelliteSourceIdFromLayerId(id))))
         .map((id) => ({ id, name: getLayerDisplayName(id) }));
     window.dispatchEvent(new CustomEvent("orbit:ground-stations-state", {
         detail: { stations, satellites, now: getDisplayedSimulationDate()?.toISOString?.() || null }
     }));
-}
-
-function setGroundStationMonitoring(stationId, satelliteIds) {
-    const station = groundStationLayers.get(String(stationId || ""));
-    if (!station) return false;
-    station.monitor_satellite_ids = Array.isArray(satelliteIds)
-        ? satelliteIds.map((id) => String(id || "").trim()).filter(Boolean)
-        : [];
-    syncGroundStationVisibilityLinks();
-    emitObjectStateChanged({ layerId: station.id, sourceId: station.id, reason: "monitoring" });
-    publishGroundStationsState();
-    return true;
 }
 
 async function analyzeGroundStationPasses(detail = {}) {
@@ -5217,7 +5203,6 @@ function setupPropagatedParametersInspector() {
             }
             openLeftSatellitesPanel();
             publishGroundStationsState();
-            window.dispatchEvent(new CustomEvent("orbit:ground-stations-monitoring-open", { detail: { stationId: id } }));
             return id;
         },
         onRequestUpdateGroundStation: (id, payload) => updateGroundStationLayer(id, payload),
@@ -5278,25 +5263,6 @@ function setupPropagatedParametersInspector() {
     });
     window.addEventListener("orbit:ground-stations-analyze", (event) => {
         void analyzeGroundStationPasses(event.detail || {});
-    });
-    window.addEventListener("orbit:ground-stations-update", (event) => {
-        const detail = event.detail || {};
-        updateGroundStationLayer(String(detail.stationId || ""), detail.patch || {});
-    });
-    window.addEventListener("orbit:ground-stations-monitoring-save", (event) => {
-        const detail = event.detail || {};
-        setGroundStationMonitoring(detail.stationId, detail.satelliteIds);
-    });
-    window.addEventListener("orbit:ground-stations-satellite-monitoring-save", (event) => {
-        const detail = event.detail || {};
-        const satelliteId = String(detail.satelliteId || "").trim();
-        for (const station of groundStationLayers.values()) {
-            const current = new Set(station.monitor_satellite_ids || []);
-            if (Array.isArray(detail.stationIds) && detail.stationIds.includes(station.id)) current.add(satelliteId);
-            else current.delete(satelliteId);
-            station.monitor_satellite_ids = [...current];
-        }
-        publishGroundStationsState();
     });
 
     // A welcome action submitted while the catalogue is loading is queued by
