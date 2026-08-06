@@ -21,6 +21,32 @@ para clasificar una muestra como visible.
 
 ## Visibilidad y pases
 
+El acceso operativo comienza en **Ground Stations** de la barra superior. El
+panel permite seleccionar una estación y una capa orbital y calcular los pases
+de las siguientes 24 h desde la época activa. Usa siempre la máscara de
+elevación configurada al crear o editar la estación; no existe una segunda
+máscara temporal en el análisis. El resultado indica AOS, LOS y elevación máxima; activa el ground track de la
+capa y dibuja en verde el enlace estación-satélite mientras el satélite supera
+la máscara. La geometría de la estación y los estados de visibilidad se
+evalúan en ITRF/WGS-84. Las marcas verdes de AOS/LOS aparecen en la línea temporal
+simulada y la tabla de pases puede exportarse como CSV. El perfil de elevación
+del panel representa las muestras calculadas cada 30 s: azul para toda la
+trayectoria y verde únicamente donde supera la máscara. No representa todavía
+crepúsculo, Sol, Luna ni restricciones astronómicas.
+
+Actualmente el cálculo operativo de pases está habilitado para las capas con
+TLE/SGP4. Las capas OEM, SP3 y los diseños manuales conservan su visualización,
+pero requieren un proveedor de efemérides de acceso general antes de poder
+planificar pases desde este panel.
+
+## Monitorización
+
+Al crear una estación, Orbit solicita qué capas TLE/SGP4 debe monitorizar. La
+misma asignación puede modificarse desde **Satélites monitorizados** en el
+panel de estación. Al activar una nueva capa satelital, aparece el flujo
+inverso para seleccionar las estaciones que la seguirán. La ficha de cada
+estación ofrece **Tablas AOS / LOS** como acceso directo a sus pases.
+
 Orbit calcula elevación de los estados propagados y devuelve muestras con una
 marca de visibilidad. Los intervalos AOS/LOS se extraen al cruzar el umbral de
 la máscara durante el muestreo de la efeméride.
@@ -43,7 +69,7 @@ flowchart LR
     mayor resolución y valide el resultado con herramientas apropiadas para
     misión.
 
-+### Ecuaciones de visibilidad implementadas
+### Ecuaciones de visibilidad implementadas
 
 Orbit convierte la estación geodésica WGS-84 a ITRF. Con semieje mayor \(a\), excentricidad cuadrada \(e^2\), latitud \(\varphi\), longitud \(\lambda\) y altura \(h\):
 

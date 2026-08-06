@@ -298,6 +298,7 @@ const bodyCentricCamera = createBodyCentricCameraController({
 });
 let groundStationSequence = 1;
 let stationHeatMapTimer = null;
+let groundStationAnalysisLink = null;
 let currentProjectFileHandle = null;
 let currentProjectName = null;
 let objectSidebar = null;
@@ -1336,7 +1337,14 @@ function setCompositeLayerActive(layerId, active) {
         }
     }
 
-    return setSatelliteLayerActive(layerId, isActive);
+    const wasActive = isSatelliteLayerActive(layerId);
+    const changed = setSatelliteLayerActive(layerId, isActive);
+    if (changed && isActive && !wasActive && groundStationLayers.size > 0) {
+        window.dispatchEvent(new CustomEvent("orbit:ground-stations-satellite-monitoring-open", {
+            detail: { satelliteId: layerId, satelliteName: getLayerDisplayName(layerId) }
+        }));
+    }
+    return changed;
 }
 
 function duplicateSatelliteLayer(sourceId) {
@@ -1421,6 +1429,9 @@ function createGroundStationLayer(params = {}) {
     const coverageVisible = params.coverage_visible !== false;
     const heatmapEnabled = params.heatmap_enabled === true;
     const heatmapDensity = normalizeGroundStationHeatDensity(params.heatmap_density);
+    const monitoredSatelliteIds = Array.isArray(params.monitor_satellite_ids)
+        ? params.monitor_satellite_ids.map((id) => String(id || "").trim()).filter(Boolean)
+        : [];
     const displayName = String(params.name || `Estacion ${groundStationSequence - 1}`).trim() || `Estacion ${groundStationSequence - 1}`;
 
     const position = Cesium.Cartesian3.fromDegrees(lon, lat, altitudeM);
@@ -1477,6 +1488,7 @@ function createGroundStationLayer(params = {}) {
         coverage_visible: coverageVisible,
         heatmap_enabled: heatmapEnabled,
         heatmap_density: heatmapDensity,
+        monitor_satellite_ids: monitoredSatelliteIds,
         heatmap_samples: new Map(),
         visible: true,
         entity: stationEntity,
@@ -1511,7 +1523,8 @@ function getGroundStationParams(layerId) {
         point_color: station.point_color,
         coverage_visible: station.coverage_visible !== false,
         heatmap_enabled: station.heatmap_enabled !== false,
-        heatmap_density: normalizeGroundStationHeatDensity(station.heatmap_density)
+        heatmap_density: normalizeGroundStationHeatDensity(station.heatmap_density),
+        monitor_satellite_ids: [...(station.monitor_satellite_ids || [])]
     };
 }
 
@@ -1970,6 +1983,106 @@ function applySimulationRange(startDate, endDate) {
     refreshSimulationControlsUi();
     updateTopToolbarTime();
     return true;
+}
+
+function clearGroundStationAnalysisVisuals() {
+    if (groundStationAnalysisLink) {
+        viewer.entities.remove(groundStationAnalysisLink);
+        groundStationAnalysisLink = null;
+    }
+}
+
+function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElevationDeg) {
+    clearGroundStationAnalysisVisuals();
+    const satellite = getCompositeLayerEntity(satelliteLayerId);
+    if (!station || !satellite?.position) return;
+    const stationPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
+    groundStationAnalysisLink = viewer.entities.add({
+        id: `ground-station-link:${station.id}`,
+        polyline: {
+            positions: new Cesium.CallbackProperty((time) => {
+                const satellitePosition = satellite.position?.getValue?.(time);
+                if (!satellitePosition || computeStationElevationDeg(stationPosition, satellitePosition) < minimumElevationDeg) return [];
+                return [stationPosition, satellitePosition];
+            }, false),
+            width: 1.8,
+            material: Cesium.Color.fromCssColorString("#69f0a5").withAlpha(0.88)
+        },
+        properties: { layerType: "GROUND_STATION_ANALYSIS" }
+    });
+}
+
+function publishGroundStationsState() {
+    const stations = [...groundStationLayers.values()].map((station) => ({
+        id: station.id,
+        name: station.name,
+        latitude_deg: station.latitude_deg,
+        longitude_deg: station.longitude_deg,
+        altitude_m: station.altitude_m,
+        min_elevation_deg: station.min_elevation_deg,
+        monitor_satellite_ids: [...(station.monitor_satellite_ids || [])]
+    }));
+    const satellites = getCompositeLayerIds()
+        .filter((id) => !isGroundStationLayerId(id) && !isCelestialBodyLayerId(id))
+        .filter((id) => Boolean(getSatelliteTle(getSatelliteSourceIdFromLayerId(id))))
+        .map((id) => ({ id, name: getLayerDisplayName(id) }));
+    window.dispatchEvent(new CustomEvent("orbit:ground-stations-state", {
+        detail: { stations, satellites, now: getDisplayedSimulationDate()?.toISOString?.() || null }
+    }));
+}
+
+function setGroundStationMonitoring(stationId, satelliteIds) {
+    const station = groundStationLayers.get(String(stationId || ""));
+    if (!station) return false;
+    station.monitor_satellite_ids = Array.isArray(satelliteIds)
+        ? satelliteIds.map((id) => String(id || "").trim()).filter(Boolean)
+        : [];
+    emitObjectStateChanged({ layerId: station.id, sourceId: station.id, reason: "monitoring" });
+    publishGroundStationsState();
+    return true;
+}
+
+async function analyzeGroundStationPasses(detail = {}) {
+    const stationId = String(detail.stationId || "").trim();
+    const satelliteLayerId = String(detail.satelliteId || "").trim();
+    const station = groundStationLayers.get(stationId);
+    const satelliteId = getSatelliteSourceIdFromLayerId(satelliteLayerId);
+    const minElevationDeg = Math.max(0, Math.min(90, Number(detail.minElevationDeg)));
+    if (!station || !satelliteId || !Number.isFinite(minElevationDeg)) {
+        window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", { detail: { error: "Selecciona una estación, satélite y máscara válidos.", passes: [] } }));
+        return;
+    }
+    const startDate = getDisplayedSimulationDate();
+    const endDate = new Date(startDate.getTime() + (24 * 3600 * 1000));
+    try {
+        const query = new URLSearchParams({
+            sat_id: satelliteId,
+            station_lat_deg: String(station.latitude_deg),
+            station_lon_deg: String(station.longitude_deg),
+            station_height_m: String(station.altitude_m),
+            min_elevation_deg: String(minElevationDeg),
+            start_time: startDate.toISOString(),
+            end_time: endDate.toISOString(),
+            step_seconds: "30"
+        });
+        const response = await fetch(`/api/aos-los?${query}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        showGroundStationAnalysisVisuals(station, satelliteLayerId, minElevationDeg);
+        setSatelliteVisualizationConfig(satelliteId, { orbit_ground_track_show: true });
+        const satelliteEntity = getCompositeLayerEntity(satelliteLayerId);
+        const stationPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
+        const satellitePosition = satelliteEntity?.position?.getValue?.(viewer.clock.currentTime);
+        const currentElevation = satellitePosition
+            ? computeStationElevationDeg(stationPosition, satellitePosition)
+            : Number.NaN;
+        window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+            detail: { ...result, referenceFrame: "ITRF", visibleNow: Number.isFinite(currentElevation) ? currentElevation >= minElevationDeg : false }
+        }));
+    } catch (error) {
+        logger.warn("No se pudo calcular la visibilidad de la estación:", error);
+        window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", { detail: { error: "No se pudieron calcular los pases.", passes: [] } }));
+    }
 }
 
 function restoreProjectSimulationState(snapshot) {
@@ -3720,6 +3833,9 @@ function normalizePersistedManualOrbitRecord(record) {
         manualOrbitRecordValue(record, "previewReferenceFrame", "preview_reference_frame"),
         "eme2000"
     );
+    if (Array.isArray(patch.monitor_satellite_ids)) {
+        station.monitor_satellite_ids = patch.monitor_satellite_ids.map((id) => String(id || "").trim()).filter(Boolean);
+    }
 
     return {
         id,
@@ -5014,6 +5130,8 @@ function setupPropagatedParametersInspector() {
                 return null;
             }
             openLeftSatellitesPanel();
+            publishGroundStationsState();
+            window.dispatchEvent(new CustomEvent("orbit:ground-stations-monitoring-open", { detail: { stationId: id } }));
             return id;
         },
         onRequestUpdateGroundStation: (id, payload) => updateGroundStationLayer(id, payload),
@@ -5066,6 +5184,30 @@ function setupPropagatedParametersInspector() {
     setupManualOrbitEditorBridge();
     setupPropagatedParametersEntryBridge();
     setupPropagatedParametersInspector();
+
+    window.addEventListener("orbit:ground-stations-request-state", publishGroundStationsState);
+    window.addEventListener("orbit:ground-stations-create-request", () => {
+        openLeftSatellitesPanel();
+        objectSidebar?.openGroundStationEditor?.();
+    });
+    window.addEventListener("orbit:ground-stations-analyze", (event) => {
+        void analyzeGroundStationPasses(event.detail || {});
+    });
+    window.addEventListener("orbit:ground-stations-monitoring-save", (event) => {
+        const detail = event.detail || {};
+        setGroundStationMonitoring(detail.stationId, detail.satelliteIds);
+    });
+    window.addEventListener("orbit:ground-stations-satellite-monitoring-save", (event) => {
+        const detail = event.detail || {};
+        const satelliteId = String(detail.satelliteId || "").trim();
+        for (const station of groundStationLayers.values()) {
+            const current = new Set(station.monitor_satellite_ids || []);
+            if (Array.isArray(detail.stationIds) && detail.stationIds.includes(station.id)) current.add(satelliteId);
+            else current.delete(satelliteId);
+            station.monitor_satellite_ids = [...current];
+        }
+        publishGroundStationsState();
+    });
 
     // A welcome action submitted while the catalogue is loading is queued by
     // React. Bind and publish `ready` only after the sidebar can restore the

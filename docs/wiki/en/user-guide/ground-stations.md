@@ -21,6 +21,31 @@ to classify a sample as visible.
 
 ## Visibility and passes
 
+The operational entry point is **Ground Stations** in the top toolbar. The
+panel selects a station and an orbital layer and calculates passes for the next
+24 hours from the active epoch. It always uses the elevation mask configured
+when the station was created or edited; there is no second temporary mask in
+the analysis. Results show
+AOS, LOS, and peak elevation; they enable the layer ground track and draw a
+green station-to-satellite link while the satellite is above the mask. Station
+geometry and visibility states are evaluated in ITRF/WGS-84. Green AOS/LOS
+markers appear on the simulated timeline and the pass table can be exported as
+CSV. The elevation profile uses the calculated 30 s samples: blue is the full
+trajectory and green is only the segment above the station mask. It does not
+yet model twilight, Sun, Moon, or astronomical constraints.
+
+The operational pass calculation currently supports TLE/SGP4 layers. OEM, SP3,
+and manual designs retain their visualization, but need a general access
+ephemeris provider before this panel can schedule their passes.
+
+## Monitoring
+
+When a station is created, Orbit asks which TLE/SGP4 layers it should monitor.
+The assignment can be changed through **Monitored satellites** in the station
+panel. Activating a new satellite layer opens the inverse flow for selecting
+the stations that will track it. Each station details card exposes
+**AOS / LOS tables** as a direct pass-analysis entry point.
+
 Orbit calculates elevation of the propagated states and returns samples with a
 visibility mark. AOS/LOS intervals are extracted when crossing the threshold of
 the mask during the ephemeris sampling.
@@ -43,7 +68,7 @@ flowchart LR
     higher resolution and validate the result with appropriate tools to
     mission.
 
-+### Visibility equations implemented
+### Visibility equations implemented
 
 Orbit converts WGS-84 geodetic station to ITRF. With semi-major axis \(a\), square eccentricity \(e^2\), latitude \(\varphi\), longitude \(\lambda\) and height \(h\):
 

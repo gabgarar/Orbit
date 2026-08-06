@@ -1493,7 +1493,10 @@ export function setupObjectSidebar({
             </div>
         </div>
     `;
-    // React owns the visible ground-station form.
+    // The station editor remains a legacy floating dialog until its complete
+    // form migrates to React. Attach it before wiring controls: otherwise the
+    // Layers > Add layer action toggles a detached node and appears inert.
+    document.body.appendChild(groundStationModal);
 
     const exportModal = document.createElement("div");
     exportModal.id = "catalogExportModal";
@@ -4439,10 +4442,7 @@ export function setupObjectSidebar({
             renderList();
         },
         openGroundStationEditor(layerId) {
-            if (!layerId) {
-                return;
-            }
-            openGroundStationModal(layerId);
+            openGroundStationModal(layerId || null);
         },
         openPanel,
         destroy() {

@@ -17,19 +17,21 @@ function NavigationIcon({ name }) {
     return <svg className="!h-4 !w-4 !fill-none !stroke-current !stroke-[1.7] !stroke-linecap-round !stroke-linejoin-round" viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
 }
 
-function NavigationItem({ label }) {
+function NavigationItem({ label, onActivate }) {
     const active = label === "Satellites";
     const stateClass = active
         ? "active !text-[#e2eaff] after:!absolute after:!inset-x-0 after:!bottom-0 after:!h-0.5 after:!rounded-t-sm after:!bg-[#2f63ff] after:!shadow-[0_0_10px_#2f63ff]"
         : "max-[820px]:!hidden";
 
-    return <span
-        className={`toolbar-nav-link !relative !inline-flex !h-full !items-center !gap-[7px] !font-[system-ui,sans-serif] !text-[clamp(14px,1.25vw,18px)] !leading-none !font-semibold !whitespace-nowrap !text-[#a5afc5] ${stateClass}`}
+    return <button
+        type="button"
+        onClick={() => onActivate?.(label)}
+        className={`toolbar-nav-link !relative !inline-flex !h-full !items-center !gap-[7px] !border-0 !bg-transparent !p-0 !font-[system-ui,sans-serif] !text-[clamp(14px,1.25vw,18px)] !leading-none !font-semibold !whitespace-nowrap !text-[#a5afc5] !cursor-pointer ${stateClass}`}
         aria-current={active ? "page" : undefined}
     >
         <span className="toolbar-nav-icon !inline-flex !items-center !justify-center !text-[#7198ff]"><NavigationIcon name={label} /></span>
         {label}
-    </span>;
+    </button>;
 }
 
 export default function TopToolbar({ hasNotifications, onToggleNotifications, onToggleHelp }) {
@@ -42,7 +44,9 @@ export default function TopToolbar({ hasNotifications, onToggleNotifications, on
             <span>ORBIT</span>
         </a>
         <nav className="toolbar-nav !flex !min-w-0 !self-stretch !items-center !gap-[clamp(12px,1.5vw,23px)] max-[620px]:!flex-none max-[620px]:!gap-0" aria-label="Navegacion principal">
-            {navigation.map((label) => <NavigationItem label={label} key={label} />)}
+            {navigation.map((label) => <NavigationItem label={label} key={label} onActivate={(target) => {
+                if (target === "Ground Stations") window.dispatchEvent(new Event("orbit:ground-stations-open"));
+            }} />)}
         </nav>
         <div className="toolbar-spacer !flex-1 max-[620px]:!hidden" />
         <GlobalSearch />

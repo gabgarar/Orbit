@@ -31,7 +31,7 @@ export function createGroundStationTelemetryService({ getPasses, getSatelliteSta
         }
         const cache = passCache.get(station.id);
         if (!cache || Date.now() - Number(cache.updatedAt || 0) > 45_000) refreshPasses(station, dates.startDate, dates.endDate);
-        return { id: getLayerName(station.id), source_format: "GROUND_STATION", source_origin: "USER", station: { name: station.name, latitude_deg: station.latitude_deg, longitude_deg: station.longitude_deg, altitude_m: station.altitude_m, min_elevation_deg: station.min_elevation_deg, frequency_mhz: station.frequency_mhz, tx_power_dbm: station.tx_power_dbm, tx_gain_dbi: station.tx_gain_dbi, rx_gain_dbi: station.rx_gain_dbi }, realtime: { visible_satellites: visible, active_satellites: states.length, best_elevation_deg: bestElevation, best_range_km: bestRange, best_link_dbm: bestLink }, next_passes: cache?.rows || [] };
+        return { id: getLayerName(station.id), source_format: "GROUND_STATION", source_origin: "USER", station: { name: station.name, latitude_deg: station.latitude_deg, longitude_deg: station.longitude_deg, altitude_m: station.altitude_m, min_elevation_deg: station.min_elevation_deg, frequency_mhz: station.frequency_mhz, tx_power_dbm: station.tx_power_dbm, tx_gain_dbi: station.tx_gain_dbi, rx_gain_dbi: station.rx_gain_dbi, monitor_satellite_ids: [...(station.monitor_satellite_ids || [])] }, realtime: { visible_satellites: visible, active_satellites: states.length, best_elevation_deg: bestElevation, best_range_km: bestRange, best_link_dbm: bestLink }, next_passes: cache?.rows || [] };
     }
     return { build, refreshPasses };
 }

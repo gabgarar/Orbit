@@ -39,10 +39,12 @@ function buildTimelineMarks(startValue, endValue, count = 6) {
 export default function TimeControlBar() {
     const [collapsed, setCollapsed] = useState(false); const [simulation, setSimulation] = useState(initialSimulation); const [dockLeft, setDockLeft] = useState(null); const [dockHeight, setDockHeight] = useState(null); const [dockBottom, setDockBottom] = useState(null);
     const [speedMenuOpen, setSpeedMenuOpen] = useState(false); const [dateMenuOpen, setDateMenuOpen] = useState(false); const [designMode, setDesignMode] = useState(isManualOrbitDesignActive);
+    const [accessMarks, setAccessMarks] = useState([]);
     const sendAction = (type, value) => window.dispatchEvent(new CustomEvent("orbit:simulation-action", { detail: { type, value } }));
 
     useEffect(() => { const sync = (event) => setSimulation((current) => ({ ...current, ...(event.detail || {}) })); window.addEventListener("orbit:simulation-state", sync); return () => window.removeEventListener("orbit:simulation-state", sync); }, []);
     useEffect(() => { const sync = (event) => setDesignMode(event.detail?.active === true); window.addEventListener("orbit:manual-orbit-design-state", sync); return () => window.removeEventListener("orbit:manual-orbit-design-state", sync); }, []);
+    useEffect(() => { const sync = (event) => setAccessMarks(Array.isArray(event.detail?.passes) ? event.detail.passes : []); window.addEventListener("orbit:ground-stations-analysis-result", sync); return () => window.removeEventListener("orbit:ground-stations-analysis-result", sync); }, []);
     useEffect(() => {
         const panel = document.getElementById("leftSatellitesPanel"); const infoPanel = document.getElementById("leftInfoPanel"); const rail = document.getElementById("leftSidebar"); const projectTimeFooter = document.getElementById("projectTimeFooter");
         const update = () => {
@@ -145,6 +147,12 @@ export default function TimeControlBar() {
                         onChange={(event) => sendAction("timeline", Number(event.target.value))}
                     />
                     <div className="pointer-events-none absolute top-[20px] right-0 left-0 z-[2] h-[33px]" aria-hidden="true">
+                        {accessMarks.map((pass, index) => [pass.aos, pass.los].map((value, boundary) => {
+                            const start = new Date(simulation.startDate).getTime(); const end = new Date(simulation.endDate).getTime(); const time = new Date(value).getTime();
+                            const position = Number.isFinite(time) && end > start ? ((time - start) / (end - start)) * 100 : -1;
+                            if (position < 0 || position > 100) return null;
+                            return <i key={`${index}-${boundary}-${value}`} title={boundary === 0 ? "AOS" : "LOS"} className="absolute top-[-5px] h-[13px] w-[2px] rounded bg-[#67ed9d] shadow-[0_0_7px_rgba(103,237,157,.8)]" style={{ left: `${position}%` }} />;
+                        }))}
                         {Array.from({ length: 21 }, (_, index) => {
                             const mark = Number.isInteger(index / 4) ? marks[index / 4] : null;
                             const labelPositionClass = index === 0 ? "translate-x-0 text-left" : index === 20 ? "-translate-x-full text-right" : "-translate-x-1/2 text-center";
