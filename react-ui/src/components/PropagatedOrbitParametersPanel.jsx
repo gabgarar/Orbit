@@ -126,6 +126,12 @@ function targetFromContext(detail, fallback) {
         name: detail.name ?? manualName,
         source: detail.source,
         propagator: detail.propagator ?? detail.manualOrbit?.propagator,
+        displayReferenceFrame: detail.displayReferenceFrame
+            ?? detail.display_reference_frame
+            ?? detail.previewReferenceFrame
+            ?? detail.preview_reference_frame
+            ?? detail.referenceFrame
+            ?? detail.reference_frame,
         referenceFrame: detail.referenceFrame ?? detail.reference_frame
     };
 }
@@ -225,7 +231,7 @@ function titleCase(value) {
 function formatReferenceFrame(value) {
     if (typeof value === "object") value = firstDefined(value, ["label", "name", "id", "value"]);
     const normalized = String(value || "").trim().toUpperCase();
-    if (["ECI", "ECEF", "ITRF", "TEME", "ENU"].includes(normalized)) return normalized;
+    if (["EME2000", "GCRF", "ITRF", "TIRS", "CIRS", "TEME", "PEF", "TOD", "MOD", "ENU"].includes(normalized)) return normalized;
     return titleCase(value);
 }
 
@@ -319,7 +325,7 @@ function EmptyState({ hasTarget, status, error, compact = false }) {
     </div>;
 }
 
-function VirtualizedSamplesTable({ samples }) {
+function VirtualizedSamplesTable({ samples, referenceFrame }) {
     const viewportRef = useRef(null);
     const [scrollTop, setScrollTop] = useState(0);
     const [viewportHeight, setViewportHeight] = useState(330);
@@ -348,7 +354,9 @@ function VirtualizedSamplesTable({ samples }) {
         };
     }, [samples, scrollTop, viewportHeight]);
 
-    return <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto rounded-[8px] border border-[#1e3451] bg-[rgba(4,12,23,.56)]" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+    const frameLabel = referenceFrame ? formatReferenceFrame(referenceFrame) : "";
+
+    return <div ref={viewportRef} className="orbit-scrollbar min-h-0 flex-1 overflow-auto rounded-[8px] border border-[#1e3451] bg-[rgba(4,12,23,.56)]" aria-label={frameLabel ? `Tabla de valores propagados calculados en ${frameLabel}` : "Tabla de valores propagados"} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         <table className="min-w-[1150px] w-full border-separate border-spacing-0 text-left font-[system-ui,sans-serif] text-[10px] tabular-nums">
             <thead className="sticky top-0 z-[2] bg-[#101e33] text-[#aec2df] shadow-[0_1px_0_#294362]">
                 <tr>{TABLE_COLUMNS.map(([label]) => <th className="h-[34px] whitespace-nowrap border-b border-[#294362] px-2.5 text-[9px] font-bold tracking-[.025em]" key={label}>{label}</th>)}</tr>
@@ -419,6 +427,7 @@ function InformationTab({
     source,
     propagator,
     referenceFrame,
+    displayFrame,
     start,
     end,
     statusLabel,
@@ -436,6 +445,14 @@ function InformationTab({
     const manualDesign = String(panel?.range?.mode || "").toLowerCase().includes("manual-design");
     const busy = ["busy", "loading", "pending", "propagating"].includes(String(panel?.status).toLowerCase());
     const duration = formatDuration(start, end);
+    const framesDiffer = Boolean(
+        displayFrame
+        && referenceFrame
+        && formatReferenceFrame(displayFrame) !== formatReferenceFrame(referenceFrame)
+    );
+    const metadataCards = framesDiffer
+        ? [["MODEL", propagator], ["DISPLAY FRAME", displayFrame], ["DYNAMICS FRAME", referenceFrame], ["SOURCE", source]]
+        : [["MODEL", propagator], ["FRAME", referenceFrame || displayFrame], ["SOURCE", source]];
 
     return <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-0.5">
         <section className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2.5 rounded-[8px] border border-[#25405f] bg-[rgba(12,27,48,.68)] px-3 py-2.5" aria-label="Resumen de propagación">
@@ -477,12 +494,14 @@ function InformationTab({
             <p className="mt-2 mb-0 text-[9px] leading-[1.4] text-[#7185a3]">{manualDesign ? "El diseño manual mantiene la escena sincronizada con sus epochs; aquí el rango es sólo de inspección." : "Aplicar simulación actualiza la escena y la barra temporal, y la deja pausada al inicio del intervalo."}</p>
         </section>
 
-        <section className="grid shrink-0 grid-cols-3 gap-2" aria-label="Metadatos del modelo">
-            {[["MODEL", propagator], ["FRAME", referenceFrame], ["SOURCE", source]].map(([label, value]) => <div className="min-w-0 rounded-[7px] border border-[#203854] bg-[rgba(6,17,31,.53)] px-2.5 py-2" key={label}>
+        <section className={"grid shrink-0 gap-2 " + (framesDiffer ? "grid-cols-4" : "grid-cols-3")} aria-label="Metadatos del modelo">
+            {metadataCards.map(([label, value]) => <div className="min-w-0 rounded-[7px] border border-[#203854] bg-[rgba(6,17,31,.53)] px-2.5 py-2" key={label}>
                 <span className="block text-[8px] font-bold tracking-[.06em] text-[#7288a7]">{label}</span>
-                <strong className="mt-0.5 block truncate text-[10px] font-semibold text-[#d0ddec]" title={value ? (label === "FRAME" ? formatReferenceFrame(value) : titleCase(value)) : "--"}>{value ? (label === "FRAME" ? formatReferenceFrame(value) : titleCase(value)) : "--"}</strong>
+                <strong className="mt-0.5 block truncate text-[10px] font-semibold text-[#d0ddec]" title={value ? (label.includes("FRAME") ? formatReferenceFrame(value) : titleCase(value)) : "--"}>{value ? (label.includes("FRAME") ? formatReferenceFrame(value) : titleCase(value)) : "--"}</strong>
             </div>)}
         </section>
+
+        {framesDiffer && <p className="m-0 shrink-0 text-[9px] leading-[1.4] text-[#8297b5]">La vista usa {formatReferenceFrame(displayFrame)}; los elementos osculantes se derivan del estado dinámico nativo en {formatReferenceFrame(referenceFrame)}.</p>}
 
         {samples.length > 0 && <DeltaStrip samples={samples} />}
         {panel?.error && <div className="shrink-0 rounded-[7px] border border-[rgba(210,75,91,.52)] bg-[rgba(123,35,49,.2)] px-3 py-2 text-[10px] leading-[1.45] text-[#ffc3cb]" role="alert">{errorMessage(panel.error)}</div>}
@@ -495,13 +514,13 @@ function ChartParameterPicker({ option, onChange }) {
     const [open, setOpen] = useState(false);
     return <div className="relative shrink-0">
         <button className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[6px] border border-[#31537b] bg-[#10223b] px-2.5 text-[10px] font-bold text-[#c0d8ff] hover:border-[#5683bc] hover:bg-[#163155] hover:text-white" type="button" aria-haspopup="menu" aria-expanded={open} title="Choose chart parameter" onClick={() => setOpen((current) => !current)}><ChartGlyph /><span className="max-w-[156px] truncate">{option.label}</span><span className="text-[#7e9ac1]">⌄</span></button>
-        {open && <div className="absolute top-[calc(100%+6px)] right-0 z-30 grid max-h-[300px] w-[220px] overflow-y-auto rounded-[8px] border border-[#355272] bg-[#0b182a] p-1 shadow-[0_14px_30px_rgba(0,0,0,.5)]" role="menu">
-            {CHART_OPTIONS.map((candidate) => <button className={"cursor-pointer rounded-[5px] px-2.5 py-2 text-left text-[10px] font-semibold " + (candidate.id === option.id ? "bg-[#234574] text-white" : "text-[#b9c9df] hover:bg-[#162d4c] hover:text-white")} type="button" key={candidate.id} role="menuitemradio" aria-checked={candidate.id === option.id} onClick={() => { onChange(candidate); setOpen(false); }}>{candidate.label}{candidate.unit ? <small className="ml-1 text-[9px] font-medium text-[#87a4ce]">({candidate.unit})</small> : null}</button>)}
+        {open && <div className="orbit-scrollbar absolute top-[calc(100%+6px)] right-0 z-30 grid max-h-[300px] w-[220px] overflow-y-auto rounded-[8px] border border-[#355272] bg-[#0b182a] p-1 shadow-[0_14px_30px_rgba(0,0,0,.5)]" role="menu">
+            {CHART_OPTIONS.map((candidate) => <button className={"appearance-none cursor-pointer rounded-[5px] border border-transparent bg-[#0b182a] px-2.5 py-2 text-left text-[10px] font-semibold " + (candidate.id === option.id ? "!border-[#557eaf] !bg-[#234574] text-white shadow-[inset_0_1px_rgba(230,242,255,.12)]" : "text-[#b9c9df] hover:border-[#31516f] hover:bg-[#162d4c] hover:text-white")} type="button" key={candidate.id} role="menuitemradio" aria-checked={candidate.id === option.id} onClick={() => { onChange(candidate); setOpen(false); }}>{candidate.label}{candidate.unit ? <small className="ml-1 text-[9px] font-medium text-[#87a4ce]">({candidate.unit})</small> : null}</button>)}
         </div>}
     </div>;
 }
 
-function OrbitParameterChart({ samples, option }) {
+function OrbitParameterChart({ samples, option, referenceFrame }) {
     const svgRef = useRef(null);
     const dragRef = useRef(null);
     const [viewDomain, setViewDomain] = useState(null);
@@ -654,6 +673,8 @@ function OrbitParameterChart({ samples, option }) {
         setTooltip(null);
         setViewDomain({ ...baseDomain });
     };
+    const chartTitle = option.label + (option.unit ? " (" + option.unit + ")" : "");
+    const calculationFrame = referenceFrame ? formatReferenceFrame(referenceFrame) : null;
     const exportPng = () => downloadChartPng(svgRef.current, option.id);
     const handleWheel = (event) => {
         const pointer = pointFromClient(event.clientX, event.clientY);
@@ -740,7 +761,10 @@ function OrbitParameterChart({ samples, option }) {
                     {points.length <= 160 && points.map((point, index) => <circle cx={xFor(point.time)} cy={yFor(point.value)} r="1.8" fill="#e0f0ff" stroke="#6daeff" strokeWidth=".8" key={"point-" + index}><title>{formatTime(point.time) + " · " + numeric(point.value, option.digits) + (option.unit ? " " + option.unit : "")}</title></circle>)}
                     {tooltip && <g pointerEvents="none"><line x1={tooltip.x} x2={tooltip.x} y1={padding.top} y2={padding.top + innerHeight} stroke="#b5d7ff" strokeOpacity=".5" strokeDasharray="3 3" /><line x1={padding.left} x2={padding.left + innerWidth} y1={tooltip.y} y2={tooltip.y} stroke="#b5d7ff" strokeOpacity=".28" strokeDasharray="3 3" /><circle cx={tooltip.x} cy={tooltip.y} r="4" fill="#0d2038" stroke="#dceeff" strokeWidth="1.6" /></g>}
                 </g>
-                <text x={padding.left} y="14" fill="#8197b5" fontSize="9.5" fontWeight="600">VALUE</text>
+                {/* Keep the plot title inside the SVG. The HTML toolbar is not
+                    part of the PNG export, while this title is. */}
+                <text x={padding.left} y="15" fill="#d9eaff" fontSize="11.5" fontWeight="700">{chartTitle}</text>
+                {calculationFrame && <text x={padding.left + innerWidth} y="15" fill="#89a6cb" fontSize="9.5" fontWeight="600" textAnchor="end">OSC. ELEMENTS · {calculationFrame}</text>}
                 <text x={padding.left + innerWidth} y={height - 4} fill="#8197b5" fontSize="9.5" fontWeight="600" textAnchor="end">UTC TIME</text>
             </svg>
             {tooltip && <div className="pointer-events-none absolute z-10 min-w-[156px] rounded-[6px] border border-[#4e749d] bg-[rgba(7,19,34,.96)] px-2.5 py-2 shadow-[0_8px_22px_rgba(0,0,0,.42)]" style={{ left: clamp((tooltip.x / width) * 100, 4, 76) + "%", top: clamp((tooltip.y / height) * 100, 4, 77) + "%", transform: "translate(10px, -105%)" }}>
@@ -752,16 +776,23 @@ function OrbitParameterChart({ samples, option }) {
     </div>;
 }
 
-function GraphTab({ samples, option, onOptionChange, hasTarget, status, error }) {
+function GraphTab({ samples, option, onOptionChange, hasTarget, status, error, referenceFrame }) {
+    const sampleReferenceFrame = firstDefined(samples[0], ["reference_frame", "referenceFrame", "frame"])
+        ?? firstDefined(samples[0]?.state, ["reference_frame", "referenceFrame", "frame"]);
+    const calculationFrame = referenceFrame ?? sampleReferenceFrame;
+    const calculationFrameLabel = calculationFrame ? formatReferenceFrame(calculationFrame) : null;
     return <div className="flex min-h-0 flex-1 flex-col gap-3">
         <div className="flex shrink-0 items-center justify-between gap-3">
             <div className="min-w-0">
                 <h3 className="m-0 text-[11px] font-semibold text-[#e4eefc]">Time plot</h3>
-                <p className="mt-1 mb-0 truncate text-[10px] text-[#879bb8]">Valores osculantes derivados de la propagación seleccionada.</p>
+                <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                    <p className="m-0 truncate text-[10px] text-[#879bb8]">Valores osculantes derivados de la propagación seleccionada.</p>
+                    {calculationFrameLabel && <span className="shrink-0 rounded-[4px] border border-[#315376] bg-[#0d2139] px-1.5 py-0.5 text-[8px] font-bold tracking-[.045em] text-[#a9cbef]" title="Reference frame used to derive the plotted osculating elements">MARCO DE CÁLCULO · {calculationFrameLabel}</span>}
+                </div>
             </div>
             <ChartParameterPicker option={option} onChange={onOptionChange} />
         </div>
-        {samples.length > 0 ? <OrbitParameterChart samples={samples} option={option} /> : <EmptyState hasTarget={hasTarget} status={status} error={error} />}
+        {samples.length > 0 ? <OrbitParameterChart samples={samples} option={option} referenceFrame={calculationFrame} /> : <EmptyState hasTarget={hasTarget} status={status} error={error} />}
     </div>;
 }
 
@@ -817,16 +848,24 @@ function exportSamplesCsv({ samples, targetLabel, source, propagator, referenceF
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function ValuesTab({ samples, hasTarget, status, error, onExport }) {
+function ValuesTab({ samples, hasTarget, status, error, referenceFrame, onExport }) {
+    const sampleReferenceFrame = firstDefined(samples[0], ["reference_frame", "referenceFrame", "frame"])
+        ?? firstDefined(samples[0]?.state, ["reference_frame", "referenceFrame", "frame"]);
+    const calculationFrame = referenceFrame ?? sampleReferenceFrame;
+    const frameLabel = calculationFrame ? formatReferenceFrame(calculationFrame) : "";
+
     return <div className="flex min-h-0 flex-1 flex-col gap-3">
         <div className="flex shrink-0 items-center justify-between gap-3">
             <div className="min-w-0">
-                <h3 className="m-0 text-[11px] font-semibold text-[#e4eefc]">Propagated values</h3>
-                <p className="mt-1 mb-0 text-[10px] text-[#879bb8]">Tabla completa de elementos osculantes y estado propagado.</p>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <h3 className="m-0 text-[11px] font-semibold text-[#e4eefc]">Valores propagados</h3>
+                    {frameLabel && <span className="rounded-[4px] border border-[#365d91] bg-[rgba(34,65,111,.38)] px-1.5 py-0.5 text-[8px] font-bold tracking-[.055em] text-[#bad7ff]" title="Marco del estado nativo desde el que se calculan los elementos osculantes">MARCO DE CÁLCULO · {frameLabel}</span>}
+                </div>
+                <p className="mt-1 mb-0 text-[10px] text-[#879bb8]">Tabla completa de elementos osculantes y estado propagado{frameLabel ? ` calculados en ${frameLabel}` : ""}.</p>
             </div>
             <button className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-[6px] border border-[#376e9c] bg-[#102a3f] px-2.5 text-[10px] font-bold text-[#b9dcff] hover:border-[#62a1d8] hover:bg-[#173b58] hover:text-white disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled={!samples.length} onClick={onExport} title="Export propagated values as CSV"><ExportGlyph />Export CSV</button>
         </div>
-        {samples.length > 0 ? <VirtualizedSamplesTable samples={samples} /> : <EmptyState hasTarget={hasTarget} status={status} error={error} />}
+        {samples.length > 0 ? <VirtualizedSamplesTable samples={samples} referenceFrame={calculationFrame} /> : <EmptyState hasTarget={hasTarget} status={status} error={error} />}
     </div>;
 }
 
@@ -954,6 +993,12 @@ export default function PropagatedOrbitParametersPanel() {
         ?? firstDefined(panel.target, ["propagator", "propagationModel", "propagation_model", "model"]);
     const referenceFrame = firstDefined(result, ["reference_frame", "referenceFrame", "frame"])
         ?? firstDefined(panel.range, ["referenceFrame", "reference_frame", "frame"]);
+    const displayFrame = firstDefined(panel.target, [
+        "displayReferenceFrame",
+        "display_reference_frame",
+        "previewReferenceFrame",
+        "preview_reference_frame"
+    ]) ?? firstDefined(panel.target, ["referenceFrame", "reference_frame", "frame"]);
     const errorText = errorMessage(panel.error);
     const [statusLabel, statusClass, statusText] = statusDescriptor(panel.status, errorText, hasTarget, samples.length);
 
@@ -1074,11 +1119,14 @@ export default function PropagatedOrbitParametersPanel() {
         height: String(windowRect.height) + "px"
     };
     const tabs = [["info", "Información"], ["chart", "Gráfica"], ["values", "Valores"]];
+    const panelTitle = targetLabel
+        ? `Parámetros orbitales propagados de ${targetLabel}`
+        : "Parámetros orbitales propagados";
 
     return <aside ref={panelRef} className="propagated-orbit-parameters-panel pointer-events-auto fixed z-[10126] flex min-h-[300px] min-w-[280px] flex-col overflow-hidden rounded-[11px] border border-[rgba(65,99,147,.7)] bg-[linear-gradient(145deg,rgba(12,26,45,.985),rgba(5,14,26,.985))] font-[system-ui,sans-serif] text-[#dbe7fa] shadow-[0_22px_60px_rgba(0,0,0,.48),inset_0_1px_rgba(255,255,255,.055)]" style={panelStyle} aria-label="Parámetros orbitales propagados">
         <header className="flex shrink-0 cursor-move select-none items-start gap-3 border-b border-[#213550] px-4 py-3.5" onPointerDown={beginDrag}>
             <div className="min-w-0 flex-1">
-                <h2 className="truncate text-[16px] leading-tight font-semibold text-[#f0f5ff]">Parámetros orbitales propagados</h2>
+                <h2 className="truncate text-[16px] leading-tight font-semibold text-[#f0f5ff]" title={panelTitle}>{panelTitle}</h2>
                 <p className="mt-1 text-[10px] leading-[1.35] text-[#8ea1bd]">Elementos osculantes y estado propagado a lo largo del tiempo.</p>
             </div>
             <button className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-[6px] border border-[#294565] bg-[#0b192b] text-xl leading-none text-[#b9c9df] hover:border-[#4770a5] hover:bg-[#122640] hover:text-white" type="button" title="Close panel" aria-label="Cerrar parámetros propagados" onClick={close}>&times;</button>
@@ -1089,9 +1137,9 @@ export default function PropagatedOrbitParametersPanel() {
         </nav>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3.5">
-            {activeTab === "info" && <InformationTab panel={panel} result={result} samples={samples} targetLabel={targetLabel} targetId={targetId} hasTarget={hasTarget} source={source} propagator={propagator} referenceFrame={referenceFrame} start={start} end={end} statusLabel={statusLabel} statusClass={statusClass} statusText={statusText} draftRange={draftRange} setDraftRange={setDraftRange} onUpdateRange={updateRange} onApplySimulation={applySimulation} onRefresh={requestRefresh} />}
-            {activeTab === "chart" && <GraphTab samples={samples} option={chartOption} onOptionChange={setChartOption} hasTarget={hasTarget} status={panel.status} error={errorText} />}
-            {activeTab === "values" && <ValuesTab samples={samples} hasTarget={hasTarget} status={panel.status} error={errorText} onExport={exportCsv} />}
+            {activeTab === "info" && <InformationTab panel={panel} result={result} samples={samples} targetLabel={targetLabel} targetId={targetId} hasTarget={hasTarget} source={source} propagator={propagator} referenceFrame={referenceFrame} displayFrame={displayFrame} start={start} end={end} statusLabel={statusLabel} statusClass={statusClass} statusText={statusText} draftRange={draftRange} setDraftRange={setDraftRange} onUpdateRange={updateRange} onApplySimulation={applySimulation} onRefresh={requestRefresh} />}
+            {activeTab === "chart" && <GraphTab samples={samples} option={chartOption} onOptionChange={setChartOption} hasTarget={hasTarget} status={panel.status} error={errorText} referenceFrame={referenceFrame} />}
+            {activeTab === "values" && <ValuesTab samples={samples} hasTarget={hasTarget} status={panel.status} error={errorText} referenceFrame={referenceFrame} onExport={exportCsv} />}
         </div>
 
         {RESIZE_HANDLES.map(([direction, className]) => <div key={direction} className={"absolute z-40 touch-none " + className} aria-hidden="true" onPointerDown={(event) => beginResize(direction, event)} />)}

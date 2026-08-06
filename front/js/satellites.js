@@ -3758,6 +3758,12 @@ function buildManualOrbitMetadata(payload, ephemeris, points) {
             payload,
             orbitConfig.orbit_ground_track_show !== false
         ),
+        // Persist the selected scene representation with the manual orbit.
+        // It is presentation provenance only; the physical definition remains
+        // EME2000 and is stored separately below.
+        previewReferenceFrame: normalizeManualOrbitPreviewReferenceFrame(
+            payload?.previewReferenceFrame ?? payload?.preview_reference_frame
+        ),
         keplerian: cloneManualOrbitValue(payload?.keplerian || null),
         stateVector: cloneManualOrbitValue(payload?.state_vector || payload?.stateVector || null),
         summary: cloneManualOrbitValue(payload?.orbit_summary || payload?.orbitSummary || null),
@@ -4316,6 +4322,9 @@ function buildManualOrbitProjectEntry(id, track) {
             ? Number(metadata.stepSeconds ?? metadata.step_seconds)
             : null,
         groundTrackEnabled: metadata.groundTrackEnabled !== false,
+        previewReferenceFrame: normalizeManualOrbitPreviewReferenceFrame(
+            metadata.previewReferenceFrame ?? metadata.preview_reference_frame
+        ),
         keplerian: cloneManualOrbitValue(metadata.keplerian || null),
         stateVector: cloneManualOrbitValue(metadata.stateVector || metadata.state_vector || null),
         objectMetadata: cloneManualOrbitValue(metadata.objectMetadata || metadata.object_metadata || DEFAULT_MANUAL_ORBIT_OBJECT_METADATA),

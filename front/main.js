@@ -3608,10 +3608,11 @@ function editManualOrbitFromWorkspace(satelliteId) {
         groundTrackPreview: typeof effectiveGroundTrack === "boolean"
             ? effectiveGroundTrack
             : record.groundTrackEnabled === true,
-        // This is a view preference only. Start editing in the clean EME2000
-        // view while leaving the confirmed ITRF ephemeris untouched.
+        // This is a view preference only. Restore the confirmed manual
+        // object's selected representation without changing its EME2000
+        // physical definition.
         previewReferenceFrame: normalizeManualOrbitPreviewReferenceFrame(
-            manualOrbitDesignSettings?.previewReferenceFrame,
+            record.previewReferenceFrame ?? record.preview_reference_frame,
             "eme2000"
         )
     };
@@ -4073,6 +4074,10 @@ function normalizePersistedManualOrbitRecord(record) {
     const groundTrackEnabled = typeof overrides.orbit_ground_track_show === "boolean"
         ? overrides.orbit_ground_track_show
         : savedGroundTrackEnabled !== false;
+    const previewReferenceFrame = normalizeManualOrbitPreviewReferenceFrame(
+        manualOrbitRecordValue(record, "previewReferenceFrame", "preview_reference_frame"),
+        "eme2000"
+    );
 
     return {
         id,
@@ -4084,6 +4089,7 @@ function normalizePersistedManualOrbitRecord(record) {
             ? clamp(requestedStepSeconds, 1, 3600)
             : null,
         groundTrackEnabled,
+        previewReferenceFrame,
         visible: visual.visible !== false,
         visualizationOverrides: { ...overrides }
     };
@@ -4135,6 +4141,7 @@ async function restoreManualOrbitsFromProject(records = []) {
                 name: persisted.state.name,
                 propagator: persisted.state.propagator,
                 definition_source: persisted.source,
+                previewReferenceFrame: persisted.previewReferenceFrame,
                 objectMetadata: persisted.state.objectMetadata,
                 propagationOptions: persisted.state.propagationOptions
             });
@@ -4398,6 +4405,7 @@ async function createManualOrbitFromEditor(payload = {}) {
             name: manualOrbitEditorState.name,
             propagator: manualOrbitEditorState.propagator,
             definition_source: manualOrbitDefinitionSource,
+            previewReferenceFrame: getManualOrbitDesignSettings().previewReferenceFrame,
             objectMetadata: manualOrbitEditorState.objectMetadata,
             propagationOptions: manualOrbitEditorState.propagationOptions,
             groundTrackEnabled
@@ -4576,6 +4584,18 @@ function buildPropagatedParametersContext(detail = {}) {
     const catalogMeta = getCompositeLayerMeta(id);
     const timeRange = getObjectTimeRange(id, telemetry);
     const manualOrbit = getManualOrbitProjectEntry(sourceId) || null;
+    const sourceFormat = String(catalogMeta?.sourceFormat || catalogMeta?.source_format || "TLE").toUpperCase();
+    const referenceFrame = manualOrbit
+        // A saved manual layer still owns the display choice configured in
+        // Manual Orbit. It is never a TLE/SGP4 state and must not inherit
+        // TEME from the catalogue fallback below.
+        ? normalizeManualOrbitPreviewReferenceFrame(
+            manualOrbit.previewReferenceFrame ?? manualOrbit.preview_reference_frame,
+            "eme2000"
+        ).toUpperCase()
+        : (sourceFormat === "OEM"
+            ? (telemetry?.position_frame || telemetry?.reference_frame || telemetry?.frame || null)
+            : "TEME");
     return {
         id,
         source,
@@ -4590,14 +4610,9 @@ function buildPropagatedParametersContext(detail = {}) {
         endTime: propagatedParametersIso(detail.endTime || timeRange?.endDate),
         timeRange,
         simulation: getSimulationTelemetryContext(),
-        // The propagated-parameters endpoint derives elements from the
-        // propagator's native dynamics state. Catalogue SGP4 therefore starts
-        // in TEME; the renderer's ITRF state must not be relabelled as ECEF
-        // while that request is pending. OEM is not repropagated here, but
-        // retain its declared frame if this context is shown with an error.
-        referenceFrame: String(catalogMeta?.sourceFormat || catalogMeta?.source_format || "TLE").toUpperCase() === "OEM"
-            ? (telemetry?.position_frame || telemetry?.reference_frame || telemetry?.frame || null)
-            : "TEME",
+        // Catalogue SGP4 starts in TEME; OEM retains its declared frame. A
+        // manual layer instead reports its saved EME2000/ITRF view choice.
+        referenceFrame,
         propagator: manualOrbit?.propagator || telemetry?.propagator || null
     };
 }
@@ -4840,6 +4855,9 @@ function buildPropagatedParametersTarget(context) {
         name: name || "Selected orbit",
         source: isManual ? "manual" : "catalog",
         propagator: context?.manualOrbit?.propagator || context?.propagator || (isManual ? "two-body" : "sgp4"),
+        // The selected scene view is distinct from the frame in which the
+        // orbital-elements endpoint derives its native state.
+        displayReferenceFrame: context?.referenceFrame || null,
         referenceFrame: context?.referenceFrame || null
     };
 }
@@ -5176,7 +5194,18 @@ function setupPropagatedParametersInspector() {
             return;
         }
         const source = String(event.detail?.source || "").trim().toLowerCase();
-        if (isManualOrbitMetadataOnlySource(source) || source === "ground-track" || source === "preview-reference-frame") {
+        if (source === "preview-reference-frame") {
+            // This changes only the scene preview. Preserve the computed
+            // orbital elements while making their display-frame provenance
+            // update immediately in the inspector.
+            const context = currentManualDesignParametersContext(propagatedParametersLastContext);
+            propagatedParametersLastContext = context;
+            publishPropagatedParametersInspectorState({
+                target: buildPropagatedParametersTarget(context)
+            });
+            return;
+        }
+        if (isManualOrbitMetadataOnlySource(source) || source === "ground-track") {
             return;
         }
         if (propagatedParametersRefreshTimer) {
