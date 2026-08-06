@@ -1,11 +1,10 @@
-"""Manual-orbit conversion, native engine selection, and SGP4 TLE helpers.
+"""Manual-orbit conversion and native engine selection.
 
-The editor deliberately keeps this capability transient. SGP4 receives a
-synthetic TLE for the current request only; the analytical two-body and
-numerical Cowell families use the canonical EME2000 compatibility definition
-directly. Nothing is written to the catalogue. Classical elements and
-Cartesian states are expressed in EME2000 kilometres / kilometres per second
-at the supplied epoch.
+Manual designs are transient EME2000 states or classical elements. They are
+propagated by native two-body, Cowell, or retained legacy J2/J3/J4 engines;
+they are never reinterpreted as NORAD TLE mean elements for SGP4. Nothing is
+written to the catalogue. Classical elements and Cartesian states are
+expressed in EME2000 kilometres / kilometres per second at the supplied epoch.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from orbit_api.domain.requests import (
     ManualOrbitRequest,
     ManualPropagationOptions,
     ManualStateVectorInput,
-    normalize_manual_orbit_propagator,
+    require_manual_orbit_runtime_propagator,
 )
 from orbit_api.frames import FrameTransformService
 from orbit_api.orbits.propagators.cowell import CowellPropagator
@@ -43,23 +42,12 @@ class ManualOrbitError(ValueError):
 
 
 _MANUAL_PROPAGATOR_METADATA = {
-    "sgp4": {
-        "label": "SGP4",
-        "dynamics_reference_frame": "TEME",
-        "input_reference_frame": "EME2000",
-        "legacy_input_reference_frame": "ECI",
-        "ephemeris_reference_frame": "ITRF",
-        "uses_synthetic_tle": True,
-        "eci_samples_available": False,
-        "eci_samples_field": None,
-    },
     "two-body": {
         "label": "Two-body",
         "dynamics_reference_frame": "EME2000",
         "input_reference_frame": "EME2000",
         "legacy_input_reference_frame": "ECI",
         "ephemeris_reference_frame": "ITRF",
-        "uses_synthetic_tle": False,
         "eci_samples_available": True,
         # Native samples live alongside their ITRF counterpart rather than in
         # a second array, so timestamps cannot drift out of alignment.
@@ -71,7 +59,6 @@ _MANUAL_PROPAGATOR_METADATA = {
         "input_reference_frame": "EME2000",
         "legacy_input_reference_frame": "ECI",
         "ephemeris_reference_frame": "ITRF",
-        "uses_synthetic_tle": False,
         "eci_samples_available": True,
         "eci_samples_field": "ephemeris.points[].eci",
         # Kept only to reproduce the physics of saved projects that chose
@@ -93,7 +80,6 @@ _MANUAL_PROPAGATOR_METADATA = {
         "input_reference_frame": "EME2000",
         "legacy_input_reference_frame": "ECI",
         "ephemeris_reference_frame": "ITRF",
-        "uses_synthetic_tle": False,
         "eci_samples_available": True,
         "eci_samples_field": "ephemeris.points[].eci",
         "applied_engine": "cowell-rk4",
@@ -404,7 +390,10 @@ def canonical_manual_orbit(payload: ManualOrbitRequest) -> tuple[str, dict[str, 
 def manual_propagator_metadata(propagator_name: str) -> dict[str, Any]:
     """Describe the input, dynamics, and renderer frames for one engine."""
 
-    canonical = normalize_manual_orbit_propagator(propagator_name)
+    try:
+        canonical = require_manual_orbit_runtime_propagator(propagator_name)
+    except ValueError as exc:
+        raise ManualOrbitError(str(exc)) from exc
     return {"id": canonical, **_MANUAL_PROPAGATOR_METADATA[canonical]}
 
 
@@ -447,19 +436,21 @@ def build_manual_orbit_propagator(
     epoch: datetime.datetime,
     keplerian: dict[str, float],
     state_vector: dict[str, Any],
-    resolve_sgp4: Any,
     propagation_options: dict[str, Any] | None = None,
     frame_transformer: FrameTransformService | None = None,
-) -> tuple[str, Any, dict[str, Any] | None, dict[str, Any]]:
+) -> tuple[str, Any, dict[str, Any]]:
     """Instantiate the selected manual propagation engine.
 
-    SGP4 remains a TLE-only engine and therefore retains the existing
-    synthetic-TLE path. Native analytical and numerical engines instead
-    consume the canonical ECI state/elements directly; converting those into
-    a TLE would introduce an avoidable model change before propagation begins.
+    Native analytical and numerical engines consume the canonical EME2000
+    state/elements directly. SGP4 is deliberately rejected here: deriving a
+    TLE from those osculating elements is an orbit-fit/export operation, not
+    a manual propagation engine.
     """
 
-    canonical = normalize_manual_orbit_propagator(propagator_name)
+    try:
+        canonical = require_manual_orbit_runtime_propagator(propagator_name)
+    except ValueError as exc:
+        raise ManualOrbitError(str(exc)) from exc
     try:
         option_model = (
             propagation_options
@@ -476,14 +467,6 @@ def build_manual_orbit_propagator(
     legacy_force_model_id = option_model.cowell_gravity_model if canonical == "cowell-rk4" else None
     numerical_integrator = options.get("numerical_integrator")
     metadata = manual_propagator_metadata(canonical)
-    if canonical == "sgp4":
-        if atmospheric_drag:
-            raise ManualOrbitError(
-                "SGP4 ya usa BSTAR en su TLE; no admite atmospheric_drag independiente"
-            )
-        tle = build_synthetic_tle(name, epoch, keplerian)
-        runtime_name, propagator = resolve_sgp4(None, tle["line1"], tle["line2"], canonical)
-        return runtime_name, propagator, tle, metadata
 
     if atmospheric_drag and canonical != "cowell-rk4":
         raise ManualOrbitError(
@@ -525,87 +508,4 @@ def build_manual_orbit_propagator(
                 if atmospheric_drag else None
             ),
         })
-    return _manual_runtime_identity(canonical, epoch, state_vector, options), propagator, None, metadata
-
-
-def tle_checksum(line_without_checksum: str) -> int:
-    """Return the NORAD checksum for an exactly 68-character TLE line."""
-
-    if len(line_without_checksum) != 68:
-        raise ManualOrbitError("Una línea TLE sin checksum debe tener 68 caracteres")
-    total = 0
-    for character in line_without_checksum:
-        if character.isdigit():
-            total += int(character)
-        elif character == "-":
-            total += 1
-    return total % 10
-
-
-def is_valid_tle_checksum(line: str) -> bool:
-    """Return whether a complete, fixed-width TLE line has a valid checksum."""
-
-    return len(line) == 69 and line[-1].isdigit() and tle_checksum(line[:-1]) == int(line[-1])
-
-
-def _tle_epoch(epoch: datetime.datetime) -> str:
-    utc_epoch = ensure_utc(epoch)
-    year_start = datetime.datetime(utc_epoch.year, 1, 1, tzinfo=datetime.UTC)
-    day_of_year = 1.0 + ((utc_epoch - year_start).total_seconds() / 86400.0)
-    days_in_year = 366 if (datetime.date(utc_epoch.year, 12, 31).timetuple().tm_yday == 366) else 365
-    # Rounding to the eight TLE fractional-day digits can cross the year
-    # boundary for the last microseconds of December 31.
-    if round(day_of_year, 8) >= days_in_year + 1:
-        utc_epoch = datetime.datetime(utc_epoch.year + 1, 1, 1, tzinfo=datetime.UTC)
-        year_start, day_of_year = utc_epoch, 1.0
-    return f"{utc_epoch.year % 100:02d}{day_of_year:012.8f}"
-
-
-def _synthetic_identifiers(name: str, epoch: datetime.datetime, keplerian: dict[str, float]) -> tuple[int, int]:
-    material = "|".join((
-        name,
-        epoch.isoformat(),
-        f"{keplerian['semi_major_axis_km']:.9f}",
-        f"{keplerian['eccentricity']:.12f}",
-        f"{keplerian['mean_anomaly_deg']:.9f}",
-    ))
-    digest = int(hashlib.sha1(material.encode("utf-8")).hexdigest()[:12], 16)
-    return 70_000 + (digest % 20_000), 1 + (digest % 99_999)
-
-
-def build_synthetic_tle(name: str, epoch: datetime.datetime, keplerian: dict[str, float]) -> dict[str, Any]:
-    """Build a valid checksum-protected TLE for the supplied mean elements."""
-
-    semi_major_axis = float(keplerian["semi_major_axis_km"])
-    eccentricity = float(keplerian["eccentricity"])
-    _validate_clearance(semi_major_axis, eccentricity)
-    mean_motion_rev_day = math.sqrt(EARTH_MU_KM3_S2 / (semi_major_axis ** 3)) * 86400.0 / _TWO_PI
-    if not (math.isfinite(mean_motion_rev_day) and mean_motion_rev_day > 0):
-        raise ManualOrbitError("No se pudo derivar el movimiento medio del TLE sintético")
-
-    catalog_number, revolution_number = _synthetic_identifiers(name, epoch, keplerian)
-    epoch_text = _tle_epoch(epoch)
-    international_designator = f"{epoch.year % 100:02d}001MAN"
-    inclination = float(keplerian["inclination_deg"])
-    raan = _normalize_degrees(keplerian["raan_deg"])
-    argument_of_perigee = _normalize_degrees(keplerian["argument_of_perigee_deg"])
-    mean_anomaly = _normalize_degrees(keplerian["mean_anomaly_deg"])
-    eccentricity_digits = min(9_999_999, max(0, int(round(eccentricity * 10_000_000))))
-
-    line1_without_checksum = (
-        f"1 {catalog_number:05d}U {international_designator:<8} {epoch_text}"
-        "  .00000000  00000-0  00000-0 0  999"
-    )
-    line2_without_checksum = (
-        f"2 {catalog_number:05d} {inclination:8.4f} {raan:8.4f} {eccentricity_digits:07d}"
-        f" {argument_of_perigee:8.4f} {mean_anomaly:8.4f} {mean_motion_rev_day:11.8f}{revolution_number:05d}"
-    )
-    line1 = f"{line1_without_checksum}{tle_checksum(line1_without_checksum)}"
-    line2 = f"{line2_without_checksum}{tle_checksum(line2_without_checksum)}"
-    return {
-        "line1": line1,
-        "line2": line2,
-        "synthetic": True,
-        "catalog_number": catalog_number,
-        "epoch": ensure_utc(epoch).isoformat(),
-    }
+    return _manual_runtime_identity(canonical, epoch, state_vector, options), propagator, metadata

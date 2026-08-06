@@ -30,7 +30,7 @@ the [RK4](rk4.md) integrator solves the numerical system.
 
 | Propagator | Origin | Native state | Dynamics | Operational availability |
 | --- | --- | --- | --- | --- |
-| [SGP4](sgp4.md) | TLE | TEME, UTC | SGP4 implementation of `sgp4.api.Satrec`. | Default catalog record. |
+| [SGP4](sgp4.md) | TLE | TEME, UTC | SGP4 implementation of `sgp4.api.Satrec`. | Catalogue TLE only. |
 | [Two bodies](two-body.md) | Manual elements | EME2000, UTC | Analytical elliptical Kepler. | Manual orbit. |
 | [Cowell](cowell.md) | Manual status | EME2000, UTC | RK4 fixed, center/J2/J3/J4/drag. | Manual orbit. |
 | J2+J3+J4 | Manual status | EME2000, UTC | Fixed RK4 preset without drag. | Manual compatibility. |
@@ -52,10 +52,21 @@ strict mode is described in [Frameworks](../engineering/reference-frames.md).
 
 ## Manual selection
 
-Manual routes accept Keplerian elements for two bodies, a Cartesian state for
-Cowell and the J2+J3+J4 preset, and an SGP4 route that generates a synthetic
-TLE. A synthetic SGP4 result may differ from analytical two-body dynamics
-because it starts from another representation and model.
+Manual routes accept Keplerian elements for two-body propagation, a Cartesian
+state for Cowell, and the compatibility J2+J3+J4 preset. The input and
+dynamics of those models are defined in `EME2000`; if the view or an output
+ephemeris needs an Earth-fixed frame, it is transformed to `ITRF` afterwards.
+
+SGP4 does not take part in this selection. It consumes a catalogue TLE and
+keeps `TEME` as its native frame; reusing manual EME2000 elements as though
+they were NORAD mean elements is not a valid frame conversion.
+
+!!! warning "Not available: synthetic TLE fit"
+
+    Exporting a TLE from a manual orbit will require an explicit fitting
+    operation: sample a reference ephemeris, express it in TEME, and fit an
+    SGP4/TLE model over an interval while declaring residuals and provenance.
+    It is not part of current manual propagation.
 
 ## Global limits
 

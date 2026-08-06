@@ -65,12 +65,13 @@ flowchart LR
 | Term | Definition in Orbit |
 | --- | --- |
 | **Propagator** | Engine that obtains a state from a definition and an epoch. |
-| **SGP4** | Model used for TLE entries. His native state is TEME. |
+| **SGP4** | Model used for catalogue TLE entries. Its native state is TEME and it is not a manual-orbit propagator. |
 | **Two bodies** | Manual analytical propagator with idealized central gravity and native state EME2000. |
 | **Cowell/RK4** | Fixed pitch numerical manual propagator. Supports center gravity, J2/J3/J4 and exponential drag as selectable terms; the published integrator is RK4. |
 | **Legacy J2 / J2-J3-J4** | Routes preserved for existing projects. They are not new selectable families at the same level as Cowell/RK4. |
 | **TLE** | Two-Line Element set. Catalog representation used by SGP4. |
-| **BSTAR** | Trailing term included in a TLE/SGP4. Orbit does not support additional manual drag on an SGP4 manual orbit. |
+| **BSTAR** | Drag term included in a catalogue TLE/SGP4. It is not a manual-propagation parameter. |
+| **Synthetic TLE** | A potential interoperability product obtained by fitting SGP4 to a reference ephemeris. It is not implemented and is not a direct EME2000-to-TEME conversion. |
 | **Anniversary** | Series of states or points sampled in an interval. The API limits the series to 20,000 points. |
 | **Osculating state** | Instantaneous elements derived from a state vector under the two-body model for inspection. They are not an orbit determination. |
 | **YEARS / LOS** | Acquisition Of Signal / Loss Of Signal; beginning and end of a visibility window. Orbit extracts them from elevation samples. |

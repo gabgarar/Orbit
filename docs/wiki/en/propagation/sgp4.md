@@ -8,6 +8,10 @@
 engine for Orbit catalogue objects, and its native state is always declared in
 `TEME`.
 
+SGP4 accepts catalogue TLE definitions only. It is not offered as a propagator
+for a manual `EME2000` orbit; converting that definition into a TLE would
+require an explicit fit that is not part of the editor.
+
 SGP4 is an **analytical** propagator for TLEs. It is based on
 Brouwer-Lyddane theory and NORAD operational corrections. It is not a
 numerical integrator and does not recalculate a trajectory from user-selected

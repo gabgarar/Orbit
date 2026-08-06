@@ -16,7 +16,7 @@ prevent extensible architecture from being interpreted as a promise.
 | --- | --- | --- |
 | Local HTTP/WebSocket gateway | Implemented. | [Integrations](../integrations/index.md) |
 | TLE SGP4 Propagation | Implemented with native TEME state. | [Glossary](glossary.md) |
-| Manual orbits | Two bodies, synthetic SGP4 and Cowell/RK4 with limited forces. | [REST API](../integrations/rest-api.md) |
+| Manual orbits | Two-body and Cowell/RK4 with limited forces, in EME2000. | [REST API](../integrations/rest-api.md) |
 | Explicit time and frames | EOP modules, leap seconds, `StateVector` and transformations. | [Architecture](../development/architecture.md) |
 | OEM/SP3 Python Readers | Implemented as backend modules. | [Validation](../development/validation.md) |
 | local Docker Compose | Implemented. | [Deployment](../development/deployment.md) |
@@ -31,6 +31,7 @@ prevent extensible architecture from being interpreted as a promise.
 | Authentication and authorization | Not implemented. | That an exposed API is secure by default. |
 | Collaboration/multitenancy | Not implemented. | That projects are synchronized between users. |
 | Orbit determination | Not implemented. | Let osculating elements be an OD solution. |
+| Synthetic-TLE fitting or export | Not implemented. | That a manual EME2000 state converts directly into a TLE/TEME. |
 | Precision OEM/SP3 Operating Load | Not exposed by UI, gateway or public API. | Let the Python reader involve a product path. |
 | CI, artifacts and automated releases | Not declared. | Let local commands publish a release. |
 | Managed Kubernetes/Helm/cloud | Not included. | Let Docker Compose describe a multi-instance deployment. |

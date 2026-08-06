@@ -65,12 +65,13 @@ flowchart LR
 | Término | Definición en Orbit |
 | --- | --- |
 | **Propagador** | Motor que obtiene un estado a partir de una definición y una época. |
-| **SGP4** | Modelo usado para entradas TLE. Su estado nativo es TEME. |
+| **SGP4** | Modelo usado para entradas TLE de catálogo. Su estado nativo es TEME y no es un propagador de órbitas manuales. |
 | **Dos cuerpos** | Propagador analítico manual con gravedad central idealizada y estado nativo EME2000. |
 | **Cowell/RK4** | Propagador manual numérico de paso fijo. Admite gravedad central, J2/J3/J4 y drag exponencial como términos seleccionables; el integrador publicado es RK4. |
 | **J2 / J2-J3-J4 heredados** | Rutas conservadas para proyectos existentes. No son familias seleccionables nuevas al mismo nivel que Cowell/RK4. |
 | **TLE** | Two-Line Element set. Representación de catálogo usada por SGP4. |
-| **BSTAR** | Término de arrastre incluido en un TLE/SGP4. Orbit no admite drag manual adicional en una órbita manual SGP4. |
+| **BSTAR** | Término de arrastre incluido en un TLE/SGP4 de catálogo. No es un parámetro de la propagación manual. |
+| **TLE sintético** | Producto potencial de interoperabilidad obtenido mediante ajuste de SGP4 a una efeméride de referencia. No está implementado y no es una conversión directa de EME2000 a TEME. |
 | **Efeméride** | Serie de estados o puntos muestreados en un intervalo. La API limita la serie a 20 000 puntos. |
 | **Estado osculador** | Elementos instantáneos derivados de un vector de estado bajo el modelo de dos cuerpos para inspección. No son una determinación de órbita. |
 | **AOS / LOS** | Acquisition Of Signal / Loss Of Signal; comienzo y fin de una ventana de visibilidad. Orbit los extrae a partir de muestras de elevación. |

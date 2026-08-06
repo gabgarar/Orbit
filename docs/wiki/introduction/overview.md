@@ -45,7 +45,8 @@ EOP cuando están disponibles.
 | Área | Estado |
 | --- | --- |
 | Propagación SGP4 de catálogo | Disponible. |
-| Órbitas manuales de dos cuerpos, SGP4 sintético y Cowell RK4 | Disponible. |
+| Órbitas manuales de dos cuerpos y Cowell/RK4 | Disponibles en `EME2000`. |
+| Ajuste o exportación de TLE sintético desde una efeméride manual | No disponible; requerirá un ajuste SGP4 explícito, no una conversión directa. |
 | Visor 3D, capas, proyectos locales y estaciones de tierra | Disponible. |
 | Lectores Python SP3/OEM de precisión | Disponibles como biblioteca; no integrados como carga de producto. |
 | Determinación de órbita, medidas, maniobras, conjunciones y Monte Carlo | No disponibles. |

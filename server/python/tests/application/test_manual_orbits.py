@@ -1,6 +1,6 @@
-"""Manual-orbit conversion, TLE construction, and route adapter tests."""
+"""Manual-orbit conversion, native-engine selection, and route adapter tests."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 import math
 
 import pytest
@@ -9,15 +9,18 @@ from pydantic import ValidationError
 
 from orbit_api.api.routes.manual_orbits import create_manual_orbits_router
 from orbit_api.application.manual_orbits import (
+    ManualOrbitError,
     build_manual_orbit_propagator,
-    build_synthetic_tle,
     canonical_manual_orbit,
-    is_valid_tle_checksum,
 )
-from orbit_api.domain.requests import MANUAL_ORBIT_PROPAGATORS, ManualOrbitRequest
+from orbit_api.domain.requests import (
+    LEGACY_MANUAL_ORBIT_PROPAGATORS,
+    MANUAL_ORBIT_PROPAGATORS,
+    MANUAL_ORBIT_SGP4_UNAVAILABLE_MESSAGE,
+    ManualOrbitRequest,
+)
 from orbit_api.orbits.propagators.cowell import CowellPropagator
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
-from orbit_api.orbits.propagators.sgp4.propagator import SGP4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
 
 
@@ -25,7 +28,7 @@ def keplerian_payload(**overrides):
     payload = {
         "name": "Manual test",
         "epochUtc": "2026-07-20T12:00:00Z",
-        "propagator": "sgp4",
+        "propagator": "two-body",
         "keplerian": {
             "semiMajorAxisKm": 6878,
             "eccentricity": 0.001,
@@ -39,21 +42,15 @@ def keplerian_payload(**overrides):
     return payload
 
 
-def test_manual_request_accepts_editor_camel_case_and_generates_valid_synthetic_tle():
+def test_manual_request_accepts_editor_camel_case_with_a_native_eme2000_definition():
     request = ManualOrbitRequest(**keplerian_payload())
     source, keplerian, state_vector = canonical_manual_orbit(request)
-    tle = build_synthetic_tle(request.name, request.epoch, keplerian)
 
+    assert request.propagator == "two-body"
     assert source == "keplerian"
     assert state_vector["reference_frame"] == "EME2000"
     assert state_vector["legacy_reference_frame"] == "ECI"
     assert keplerian["mean_anomaly_deg"] != keplerian["true_anomaly_deg"]
-    assert len(tle["line1"]) == len(tle["line2"]) == 69
-    assert is_valid_tle_checksum(tle["line1"])
-    assert is_valid_tle_checksum(tle["line2"])
-    assert tle["synthetic"] is True
-    propagated = SGP4Propagator(tle["line1"], tle["line2"]).propagate_datetime(datetime(2026, 7, 20, 12, 0, 0))
-    assert len(propagated) == 6 and all(math.isfinite(component) for component in propagated)
 
 
 def test_manual_request_accepts_flat_state_vector_and_derives_keplerian():
@@ -85,12 +82,16 @@ def test_manual_request_accepts_flat_state_vector_and_derives_keplerian():
 
 
 def test_manual_request_normalizes_native_propagator_aliases_and_rejects_unsupported_ones():
-    assert MANUAL_ORBIT_PROPAGATORS == ("sgp4", "two-body", "cowell-rk4")
+    assert MANUAL_ORBIT_PROPAGATORS == ("two-body", "cowell-rk4")
+    assert LEGACY_MANUAL_ORBIT_PROPAGATORS == ("sgp4", "j2-j3-j4")
     default_payload = keplerian_payload()
     default_payload.pop("propagator")
     assert ManualOrbitRequest(**default_payload).propagator == "two-body"
     assert ManualOrbitRequest(**keplerian_payload(propagator="kepler")).propagator == "two-body"
     assert ManualOrbitRequest(**keplerian_payload(propagator="two_body")).propagator == "two-body"
+    # A saved synthetic-SGP4 record still deserializes so the caller can
+    # report it as unavailable instead of silently changing its model.
+    assert ManualOrbitRequest(**keplerian_payload(propagator="SGP-4")).propagator == "sgp4"
     assert ManualOrbitRequest(**keplerian_payload(propagator="J2 + J3 + J4")).propagator == "j2-j3-j4"
     assert ManualOrbitRequest(**keplerian_payload(propagator="cowell")).propagator == "cowell-rk4"
     assert ManualOrbitRequest(**keplerian_payload(propagator="Cowell / RK4")).propagator == "cowell-rk4"
@@ -141,11 +142,6 @@ def test_manual_request_normalizes_metadata_and_cowell_drag_options_and_restrict
         "area_m2": 3.5,
         "mass_kg": 240.0,
     }
-    with pytest.raises(ValidationError, match="BSTAR"):
-        ManualOrbitRequest(**keplerian_payload(
-            propagator="sgp4",
-            propagationOptions={"atmosphericDrag": True},
-        ))
     with pytest.raises(ValidationError, match="Cowell/RK4"):
         ManualOrbitRequest(**keplerian_payload(
             propagator="two-body",
@@ -199,7 +195,6 @@ def test_clean_defaults_and_legacy_drag_only_payloads_keep_their_distinct_physic
     ("propagator", "expected_terms"),
     [
         ("two-body", ["central"]),
-        ("sgp4", ["central"]),
         ("j2-j3-j4", ["central", "j2", "j3", "j4"]),
     ],
 )
@@ -257,24 +252,19 @@ def test_direct_builder_projects_stale_cowell_terms_onto_fixed_engines():
     request = ManualOrbitRequest(**keplerian_payload(propagator="two-body"))
     _, keplerian, state_vector = canonical_manual_orbit(request)
 
-    def resolver(*_args):
-        raise AssertionError("Los propagadores nativos no deben sintetizar un TLE")
-
-    clean_name, clean_propagator, _tle, _metadata = build_manual_orbit_propagator(
+    clean_name, clean_propagator, _metadata = build_manual_orbit_propagator(
         "two-body",
         name=request.name,
         epoch=request.epoch,
         keplerian=keplerian,
         state_vector=state_vector,
-        resolve_sgp4=resolver,
     )
-    stale_name, stale_propagator, _tle, stale_metadata = build_manual_orbit_propagator(
+    stale_name, stale_propagator, stale_metadata = build_manual_orbit_propagator(
         "two-body",
         name=request.name,
         epoch=request.epoch,
         keplerian=keplerian,
         state_vector=state_vector,
-        resolve_sgp4=resolver,
         propagation_options={
             "forceTerms": ["central", "srp"],
             "numericalIntegrator": "dopri8",
@@ -292,16 +282,12 @@ def test_native_manual_runtime_identity_uses_propagator_epoch_and_state_not_disp
     request = ManualOrbitRequest(**keplerian_payload(propagator="two-body"))
     _, keplerian, state_vector = canonical_manual_orbit(request)
 
-    def resolver(*_args):
-        raise AssertionError("Los propagadores nativos no deben sintetizar un TLE")
-
-    first_name, first_prop, first_tle, first_metadata = build_manual_orbit_propagator(
+    first_name, first_prop, first_metadata = build_manual_orbit_propagator(
         request.propagator,
         name="Same display name",
         epoch=request.epoch,
         keplerian=keplerian,
         state_vector=state_vector,
-        resolve_sgp4=resolver,
     )
     changed_state = {
         **state_vector,
@@ -310,21 +296,19 @@ def test_native_manual_runtime_identity_uses_propagator_epoch_and_state_not_disp
         # manual records still deserialize through this key.
         "position_eci_km": {**state_vector["position_eci_km"], "x": 7001},
     }
-    second_name, _, second_tle, _ = build_manual_orbit_propagator(
+    second_name, _, _ = build_manual_orbit_propagator(
         request.propagator,
         name="Same display name",
         epoch=request.epoch,
         keplerian=keplerian,
         state_vector=changed_state,
-        resolve_sgp4=resolver,
     )
-    drag_name, drag_propagator, drag_tle, drag_metadata = build_manual_orbit_propagator(
+    drag_name, drag_propagator, drag_metadata = build_manual_orbit_propagator(
         "cowell-rk4",
         name="Same display name",
         epoch=request.epoch,
         keplerian=keplerian,
         state_vector=state_vector,
-        resolve_sgp4=resolver,
         propagation_options={
             "atmospheric_drag": True,
             "cowell_gravity_model": "two-body",
@@ -341,27 +325,60 @@ def test_native_manual_runtime_identity_uses_propagator_epoch_and_state_not_disp
     assert drag_name != first_name
     assert drag_name.startswith("manual:cowell-rk4:")
     assert isinstance(drag_propagator, CowellPropagator)
-    assert drag_tle is None
     assert drag_metadata["applied_engine"] == "cowell-rk4"
     assert drag_metadata["integrator_id"] == "rk4"
     assert "Runge" in drag_metadata["integrator_label"]
-    assert first_tle is second_tle is None
     assert first_metadata["id"] == "two-body"
     assert first_metadata["dynamics_reference_frame"] == "EME2000"
 
 
-def test_manual_route_uses_resolver_and_returns_display_named_itrf_ephemeris():
+def test_legacy_sgp4_manual_definition_deserializes_but_builder_rejects_it():
+    legacy = ManualOrbitRequest(**keplerian_payload(
+        propagator="sgp4",
+        propagationOptions={"atmosphericDrag": True},
+    ))
+    _, keplerian, state_vector = canonical_manual_orbit(legacy)
+
+    assert legacy.propagator == "sgp4"
+    assert legacy.propagation_options.atmospheric_drag is True
+    with pytest.raises(ManualOrbitError, match="SGP4 no está disponible"):
+        build_manual_orbit_propagator(
+            legacy.propagator,
+            name=legacy.name,
+            epoch=legacy.epoch,
+            keplerian=keplerian,
+            state_vector=state_vector,
+        )
+
+
+def test_manual_route_rejects_legacy_sgp4_without_building_ephemeris():
     calls = []
 
-    class FakePropagator: pass
+    def build_ephemeris(*_args):
+        calls.append("build")
+        raise AssertionError("A legacy SGP4 manual record must not be propagated")
 
-    def resolve_propagator(sat_id, line1, line2, propagator_name):
-        calls.append((sat_id, line1, line2, propagator_name))
-        return "sgp4:tle:test", FakePropagator()
+    router = create_manual_orbits_router(
+        build_ephemeris,
+        lambda value: value.astimezone(UTC),
+    )
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits")
+
+    with pytest.raises(HTTPException) as rejected:
+        endpoint(ManualOrbitRequest(**keplerian_payload(propagator="sgp4")))
+
+    assert rejected.value.status_code == 422
+    assert rejected.value.detail == MANUAL_ORBIT_SGP4_UNAVAILABLE_MESSAGE
+    assert calls == []
+
+
+def test_manual_route_uses_native_model_and_returns_display_named_itrf_ephemeris():
+    calls = []
 
     def build_ephemeris(name, propagator, start, end, step, include_velocity):
-        assert name == "sgp4:tle:test" and isinstance(propagator, FakePropagator)
+        assert name.startswith("manual:two-body:") and isinstance(propagator, TwoBodyPropagator)
         assert start.tzinfo is UTC and end > start and step == 30 and include_velocity is True
+        calls.append(name)
         return {
             "satellite": name,
             "start_time": start.isoformat(),
@@ -379,17 +396,17 @@ def test_manual_route_uses_resolver_and_returns_display_named_itrf_ephemeris():
             }],
         }
 
-    router = create_manual_orbits_router(resolve_propagator, build_ephemeris, lambda value: value.astimezone(UTC))
+    router = create_manual_orbits_router(build_ephemeris, lambda value: value.astimezone(UTC))
     endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits")
     response = endpoint(ManualOrbitRequest(**keplerian_payload(horizonHours=2)))
 
-    assert calls and calls[0][0] is None and calls[0][3] == "sgp4"
+    assert calls
     assert response["name"] == "Manual test"
     assert response["epochUtc"].endswith("+00:00")
     assert response["ephemeris"]["satellite"] == "Manual test"
     assert response["ephemeris"]["points"][0]["satellite"] == "Manual test"
     assert response["ephemeris"]["points"][0]["reference_frame"] == "ITRF"
-    assert response["tle"]["synthetic"] is True
+    assert response["tle"] is None
     assert response["propagation_options"] == {
         "force_terms": ["central"],
         "atmospheric_drag": False,
@@ -403,11 +420,6 @@ def test_manual_route_uses_resolver_and_returns_display_named_itrf_ephemeris():
 def test_manual_route_prefers_an_explicit_end_time_over_horizon_hours():
     calls = []
 
-    class FakePropagator: pass
-
-    def resolve_propagator(*_args):
-        return "sgp4:tle:test", FakePropagator()
-
     def build_ephemeris(name, propagator, start, end, step, include_velocity):
         calls.append((name, propagator, start, end, step, include_velocity))
         return {
@@ -419,7 +431,7 @@ def test_manual_route_prefers_an_explicit_end_time_over_horizon_hours():
             "points": [],
         }
 
-    router = create_manual_orbits_router(resolve_propagator, build_ephemeris, lambda value: value.astimezone(UTC))
+    router = create_manual_orbits_router(build_ephemeris, lambda value: value.astimezone(UTC))
     endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits")
     response = endpoint(ManualOrbitRequest(**keplerian_payload(
         startTime="2026-07-20T10:00:00Z",
@@ -437,7 +449,7 @@ def test_manual_route_prefers_an_explicit_end_time_over_horizon_hours():
         "step_seconds": 30.0,
         "points_count": 2,
         "range_source": "explicit_end_time",
-        "propagator": "sgp4",
+        "propagator": "two-body",
         "applied_engine": "analytical",
         "atmospheric_drag": False,
     }
@@ -457,9 +469,6 @@ def test_manual_route_uses_native_models_without_synthetic_tle(
 ):
     calls = []
 
-    def resolve_propagator(*_args):
-        raise AssertionError("Solo SGP4 debe pasar por el resolvedor TLE")
-
     def build_ephemeris(name, propagator, start, end, step, include_velocity):
         calls.append((name, propagator, start, end, step, include_velocity))
         return {
@@ -473,7 +482,7 @@ def test_manual_route_uses_native_models_without_synthetic_tle(
             "points": [],
         }
 
-    router = create_manual_orbits_router(resolve_propagator, build_ephemeris, lambda value: value.astimezone(UTC))
+    router = create_manual_orbits_router(build_ephemeris, lambda value: value.astimezone(UTC))
     endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits")
     response = endpoint(ManualOrbitRequest(**keplerian_payload(propagator=requested_propagator)))
 
@@ -490,7 +499,6 @@ def test_manual_route_uses_native_models_without_synthetic_tle(
     assert metadata["input_reference_frame"] == "EME2000"
     assert metadata["legacy_input_reference_frame"] == "ECI"
     assert metadata["ephemeris_reference_frame"] == "ITRF"
-    assert metadata["uses_synthetic_tle"] is False
     assert metadata["eci_samples_available"] is True
     assert metadata["eci_samples_field"] == "ephemeris.points[].eci"
     assert response["propagation_options"] == {
@@ -501,9 +509,6 @@ def test_manual_route_uses_native_models_without_synthetic_tle(
 
 def test_manual_route_keeps_j2_j3_j4_as_a_fixed_no_drag_preset():
     calls = []
-
-    def resolve_propagator(*_args):
-        raise AssertionError("Native manual propagators do not use TLE")
 
     def build_ephemeris(name, propagator, start, end, step, include_velocity):
         calls.append((name, propagator, start, end, step, include_velocity))
@@ -518,7 +523,7 @@ def test_manual_route_keeps_j2_j3_j4_as_a_fixed_no_drag_preset():
             "points": [],
         }
 
-    router = create_manual_orbits_router(resolve_propagator, build_ephemeris, lambda value: value.astimezone(UTC))
+    router = create_manual_orbits_router(build_ephemeris, lambda value: value.astimezone(UTC))
     endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits")
     response = endpoint(ManualOrbitRequest(**keplerian_payload(
         propagator="j2-j3-j4",
@@ -551,9 +556,6 @@ def test_manual_route_keeps_j2_j3_j4_as_a_fixed_no_drag_preset():
 def test_manual_route_uses_explicit_cowell_for_configurable_drag(force_model, expected_terms, expected_gravity_model):
     calls = []
 
-    def resolve_propagator(*_args):
-        raise AssertionError("Native manual propagators do not use TLE")
-
     def build_ephemeris(name, propagator, start, end, step, include_velocity):
         calls.append((name, propagator, start, end, step, include_velocity))
         return {
@@ -575,7 +577,7 @@ def test_manual_route_uses_explicit_cowell_for_configurable_drag(force_model, ex
         "areaM2": 2,
         "massKg": 120,
     }
-    router = create_manual_orbits_router(resolve_propagator, build_ephemeris, lambda value: value.astimezone(UTC))
+    router = create_manual_orbits_router(build_ephemeris, lambda value: value.astimezone(UTC))
     endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits")
     response = endpoint(ManualOrbitRequest(**keplerian_payload(
         propagator="cowell-rk4",
@@ -610,13 +612,10 @@ def test_manual_route_uses_explicit_cowell_for_configurable_drag(force_model, ex
 
 
 def test_manual_route_converts_native_propagation_failure_to_a_correctable_422():
-    def resolve_propagator(*_args):
-        raise AssertionError("El modelo nativo no debe usar el resolvedor TLE")
-
     def build_ephemeris(*_args):
         raise ValueError("La propagaciÃ³n intersecta la Tierra")
 
-    router = create_manual_orbits_router(resolve_propagator, build_ephemeris, lambda value: value.astimezone(UTC))
+    router = create_manual_orbits_router(build_ephemeris, lambda value: value.astimezone(UTC))
     endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits")
 
     with pytest.raises(HTTPException) as error:

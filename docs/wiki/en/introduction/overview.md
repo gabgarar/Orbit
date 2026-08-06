@@ -45,7 +45,8 @@ EOP when available.
 | Area | State |
 | --- | --- |
 | Catalog SGP4 Propagation | Available. |
-| Manual Two-Body Orbiters, Synthetic SGP4 and Cowell RK4 | Available. |
+| Manual two-body and Cowell/RK4 orbits | Available in `EME2000`. |
+| Synthetic-TLE fitting or export from a manual ephemeris | Not available; it will require an explicit SGP4 fit, not a direct conversion. |
 | 3D viewer, layers, local projects and ground stations | Available. |
 | Precision Python SP3/OEM Readers | Available as a library; not integrated as product load. |
 | Orbit determination, measurements, maneuvers, conjunctions and Monte Carlo | Not available. |

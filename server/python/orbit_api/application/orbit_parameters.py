@@ -22,6 +22,7 @@ from orbit_api.application.manual_orbits import (
     canonical_manual_orbit,
 )
 from orbit_api.domain.requests import OrbitParametersRequest
+from orbit_api.domain.requests import require_manual_orbit_runtime_propagator
 from orbit_api.frames import FrameTransformService, StateVector
 from orbit_api.orbits.propagators.classical import (
     EARTH_EQUATORIAL_RADIUS_KM,
@@ -362,37 +363,36 @@ def _catalog_source(payload: OrbitParametersRequest, resolve_propagator: Callabl
 
 def _manual_source(
     payload: OrbitParametersRequest,
-    resolve_propagator: Callable,
     frame_transformer: FrameTransformService | None = None,
 ) -> tuple[str, Callable, str, float, dict[str, Any], dict[str, Any]]:
     manual = payload.source.manual_orbit
     if manual is None:  # Defensive narrowing; the request model already rejects this.
         raise OrbitParametersError("Falta la definición de órbita manual")
+    try:
+        propagator_name = require_manual_orbit_runtime_propagator(manual.propagator)
+    except ValueError as exc:
+        raise ManualOrbitError(str(exc)) from exc
     definition_source, keplerian, state_vector = canonical_manual_orbit(manual)
-    runtime_name, propagator, _tle, model = build_manual_orbit_propagator(
-        manual.propagator,
+    runtime_name, propagator, model = build_manual_orbit_propagator(
+        propagator_name,
         name=manual.name,
         epoch=manual.epoch,
         keplerian=keplerian,
         state_vector=state_vector,
-        resolve_sgp4=resolve_propagator,
         propagation_options=manual.propagation_options.canonical(
-            propagator=manual.propagator
+            propagator=propagator_name
         ),
         frame_transformer=frame_transformer,
     )
-    frame = "TEME" if model.get("dynamics_reference_frame") == "TEME" else "EME2000"
+    frame = "EME2000"
     model = {
         **model,
         "state_reference_frame": frame,
-        "state_source": "raw_sgp4_teme" if frame == "TEME" else "native_manual_eme2000",
+        "state_source": "native_manual_eme2000",
     }
-    # Synthetic-TLE manual SGP4 follows its Satrec constants too; all native
-    # manual engines use the WGS-84-compatible constant from `classical`.
-    try:
-        mu = float(getattr(getattr(propagator, "sat", None), "mu", EARTH_MU_KM3_S2))
-    except (TypeError, ValueError) as exc:
-        raise OrbitParametersError("El propagador manual no expone un parámetro gravitacional válido") from exc
+    # Every runnable manual engine uses the WGS-84-compatible constant from
+    # ``classical``. Manual SGP4/TEME is intentionally not a supported path.
+    mu = EARTH_MU_KM3_S2
     model["central_body_mu_km3_s2"] = mu
     identity = {
         "kind": "manual",
@@ -402,7 +402,7 @@ def _manual_source(
         "reference_frame": frame,
         "object_metadata": manual.object_metadata.canonical(),
         "propagation_options": manual.propagation_options.canonical(
-            propagator=manual.propagator
+            propagator=propagator_name
         ),
     }
     return manual.name, _native_state_provider(propagator, frame), frame, mu, model, identity
@@ -428,7 +428,6 @@ def build_orbit_parameters(
     if payload.source.kind == "manual":
         name, state_at, frame, mu, model, identity = _manual_source(
             payload,
-            resolve_propagator,
             frame_transformer,
         )
     else:

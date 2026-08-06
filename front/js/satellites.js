@@ -65,13 +65,13 @@ const MANUAL_ORBIT_PREVIEW_MARKER_SIZE_PX = 10;
 const MANUAL_ORBIT_PREVIEW_ELLIPSE_SAMPLES = 721;
 const MANUAL_ORBIT_PREVIEW_GEOMETRY_INERTIAL = "inertial-osculating-ellipse";
 // Higher-order gravity models are not fixed osculating ellipses: their
-// secular precession is represented by native ECI samples from the API. The samples are still
+// secular precession is represented by native EME2000 samples from the API. The samples are still
 // rendered through one epoch transform, so the design view remains inertial
 // rather than becoming an Earth-fixed rosette.
 const MANUAL_ORBIT_PREVIEW_GEOMETRY_INERTIAL_EPHEMERIS = "inertial-eci-ephemeris";
 const MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS = "earth-fixed-ephemeris";
-const MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI = "eci";
-const MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECEF = "ecef";
+const MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_EME2000 = "eme2000";
+const MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ITRF = "itrf";
 const satelliteVectorEntities = new Map();
 const SECONDS_PER_DAY = 86400;
 const MILLISECONDS_PER_DAY = SECONDS_PER_DAY * 1000;
@@ -251,7 +251,7 @@ let manualOrbitPreviewState = {
     points: [],
     // `points` use the frame selected in the manual editor. `surfacePoints`
     // always retain the propagated ITRF samples so a 2D view is a physical
-    // Earth projection rather than an ECI ellipse flattened by Cesium.
+    // Earth projection rather than an EME2000 ellipse flattened by Cesium.
     surfacePoints: [],
     epochPoint: null,
     surfaceEpochPoint: null,
@@ -262,7 +262,7 @@ let manualOrbitPreviewState = {
     visible: false,
     showGroundTrack: false,
     color: MANUAL_ORBIT_PREVIEW_COLOR,
-    previewReferenceFrame: MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI,
+    previewReferenceFrame: MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_EME2000,
     geometryMode: MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS,
     vectorEntities: [],
     vectorVisible: false,
@@ -3243,21 +3243,18 @@ function readManualOrbitPropagator(payload = {}, ephemeris = getManualOrbitEphem
     return normalizeManualOrbitPropagator(null);
 }
 
-function normalizeManualOrbitPreviewReferenceFrame(value, fallback = MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI) {
-    const fallbackFrame = String(fallback || "").trim().toLowerCase() === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECEF
-        ? MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECEF
-        : MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI;
-    const normalized = String(value || "").trim().toLowerCase();
-    if (!normalized) {
-        return fallbackFrame;
-    }
-    if (["ecef", "itrf", "earth-fixed", "earth_fixed"].includes(normalized)) {
-        return MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECEF;
-    }
-    if (["eci", "inertial"].includes(normalized)) {
-        return MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI;
-    }
-    return fallbackFrame;
+function normalizeManualOrbitPreviewReferenceFrame(value, fallback = MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_EME2000) {
+    const normalize = (candidate) => {
+        const normalized = String(candidate || "").trim().toLowerCase();
+        if (["itrf", "ecef", "earth-fixed", "earth_fixed"].includes(normalized)) {
+            return MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ITRF;
+        }
+        if (["eme2000", "eci", "inertial"].includes(normalized)) {
+            return MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_EME2000;
+        }
+        return null;
+    };
+    return normalize(value) || normalize(fallback) || MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_EME2000;
 }
 
 function firstFiniteManualOrbitValue(source, keys) {
@@ -3380,7 +3377,7 @@ function inertialPositionForTrueAnomaly(elements, trueAnomalyRad) {
 }
 
 /**
- * Build one osculating ellipse in the input ECI frame and align it to Cesium's
+ * Build one osculating ellipse in the input EME2000 frame and align it to Cesium's
  * Earth-fixed rendering frame once, at the selected epoch.  Transforming every
  * point with its own timestamp would instead encode Earth rotation into a
  * multi-day ITRF path and produce the rosette seen in the design editor.
@@ -3500,7 +3497,7 @@ function buildEpochAnchoredEciEphemerisPreview(eciPoints, epochTimeMs) {
         return null;
     }
 
-    // Cesium's globe uses an Earth-fixed scene. Rotate every native ECI sample
+    // Cesium's globe uses an Earth-fixed scene. Rotate every native EME2000 sample
     // with the *same* epoch angle so the trajectory stays in the requested
     // inertial frame while preserving the model's genuine precession from the API.
     const points = [];
@@ -4052,9 +4049,9 @@ function renderManualOrbitPreviewEntities(viewer = currentViewer) {
 
 /**
  * Render (or replace) the transient design preview returned by
- * `POST /api/manual-orbits`. In `eci` mode it prefers native ECI samples for
+ * `POST /api/manual-orbits`. In `eme2000` mode it prefers native EME2000 samples for
  * manual Two-body and gravity-model engines, otherwise it renders one epoch-anchored inertial
- * ellipse; in `ecef` mode it renders the returned ITRF ephemeris.
+ * ellipse; in `itrf` mode it renders the returned ITRF ephemeris.
  * It never creates a layer, a satellite state, or a telemetry source. Its
  * optional ground track is a dedicated transient entity projected from that
  * same selected geometry. If Cesium is not
@@ -4062,7 +4059,7 @@ function renderManualOrbitPreviewEntities(viewer = currentViewer) {
  * `initSatelliteReceiver` later.
  *
  * @param {object} payload manual-orbit response or its `ephemeris` payload
- * @param {object} options `{ color?: string, viewer?: Viewer, showGroundTrack?: boolean, previewReferenceFrame?: "eci" | "ecef" }`
+ * @param {object} options `{ color?: string, viewer?: Viewer, showGroundTrack?: boolean, previewReferenceFrame?: "eme2000" | "itrf" }`
  * @returns {{ id: string, pointCount: number, rendered: boolean, visible: boolean }}
  */
 export function renderManualOrbitPreview(payload = {}, options = {}) {
@@ -4075,22 +4072,22 @@ export function renderManualOrbitPreview(payload = {}, options = {}) {
         || ephemeris?.eciSamplesAvailable === true
         || payload?.eci_samples_available === true
         || payload?.eciSamplesAvailable === true;
-    const inertialNativePreview = previewReferenceFrame === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI
+    const inertialNativePreview = previewReferenceFrame === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_EME2000
         && (["two-body", "j2", "j2-j3-j4", "cowell-rk4"].includes(propagator) || nativeEciSamplesAvailable)
         ? buildEpochAnchoredEciEphemerisPreview(
             getManualOrbitEciEphemerisPoints(payload),
             preliminaryEpochTimeMs
         )
         : null;
-    const inertialPreview = previewReferenceFrame === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI
+    const inertialPreview = previewReferenceFrame === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_EME2000
         ? inertialNativePreview || buildEpochAnchoredInertialPreview(payload, preliminaryEpochTimeMs)
         : null;
-    // ECEF is deliberately the literal propagated ITRF ephemeris. ECI uses a
-    // canonical ellipse for SGP4, but native Two-body/J2/J3/J4/Cowell samples are preferred
+    // ITRF is deliberately the literal propagated Earth-fixed ephemeris. EME2000 uses a
+    // canonical ellipse for legacy synthetic-TLE data, but native Two-body/J2/J3/J4/Cowell samples are preferred
     // whenever the API supplies them. This keeps a vector-authored Two-body
     // state exact and makes higher-order secular precession visible. The geometric
     // ellipse remains the backwards-compatible fallback for older responses.
-    const points = previewReferenceFrame === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECEF
+    const points = previewReferenceFrame === MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ITRF
         ? ephemerisPoints
         : inertialPreview?.points || ephemerisPoints;
     if (points.length < 2) {
@@ -4102,7 +4099,7 @@ export function renderManualOrbitPreview(payload = {}, options = {}) {
     const requestedColor = String(options?.color || MANUAL_ORBIT_PREVIEW_COLOR).trim();
     manualOrbitPreviewState.points = points;
     // Keep the physical Earth-fixed samples even when the visual preview is
-    // an epoch-anchored ECI ellipse. They are the authoritative source for
+    // an epoch-anchored EME2000 ellipse. They are the authoritative source for
     // the 2D reprojection and for its horizon footprint.
     manualOrbitPreviewState.surfacePoints = ephemerisPoints.length >= 2
         ? ephemerisPoints
@@ -4139,7 +4136,7 @@ export function updateManualOrbitPreview(payload = {}, options = {}) {
 
 /**
  * Toggle the transient manual-design ground track without re-propagating the
- * orbit. It follows the orbit line's currently selected ECI/ECEF preview
+ * orbit. It follows the orbit line's currently selected EME2000/ITRF preview
  * geometry and is also preserved by the editor for confirmation.
  */
 export function setManualOrbitPreviewGroundTrack(showGroundTrack, options = {}) {
@@ -4179,7 +4176,7 @@ export function clearManualOrbitPreview() {
         visible: false,
         showGroundTrack: false,
         color: MANUAL_ORBIT_PREVIEW_COLOR,
-        previewReferenceFrame: MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_ECI,
+        previewReferenceFrame: MANUAL_ORBIT_PREVIEW_REFERENCE_FRAME_EME2000,
         geometryMode: MANUAL_ORBIT_PREVIEW_GEOMETRY_EPHEMERIS,
         vectorEntities: [],
         vectorVisible: false,

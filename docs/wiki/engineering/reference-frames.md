@@ -25,6 +25,25 @@ solo para la reducción con EOP y segundos intercalares.
 `J2000` y `EME2K` son alias de `EME2000`; `ITRS` es alias de `ITRF`. Las
 etiquetas genéricas `ECI` y `ECEF` se rechazan.
 
+## Marcos de órbitas manuales y de catálogo
+
+La elección del propagador no autoriza a cambiar el nombre del marco. Orbit
+mantiene estas separaciones:
+
+| Origen | Marco de entrada y dinámica | Vista terrestre generada |
+| --- | --- | --- |
+| Órbita manual de dos cuerpos o Cowell/RK4 | `EME2000` | `ITRF`, mediante una transformación posterior. |
+| TLE de catálogo con SGP4 | `TEME` | `ITRF`, por la ruta TEME→PEF→ITRF. |
+
+La opción terrestre de una órbita manual no es un segundo integrador: expresa
+la misma efeméride `EME2000` en `ITRF` para el globo, el mapa o una salida
+terrestre. Por eso las etiquetas visibles deben ser `EME2000` e `ITRF`, no
+`ECI` ni `ECEF`.
+
+Un futuro TLE sintético requerirá ajustar el modelo SGP4 sobre una efeméride
+de referencia expresada en TEME. No se obtiene al rotar directamente un estado
+manual EME2000 y no es una transformación de marcos implementada.
+
 ## Rutas de transformación
 
 ```mermaid

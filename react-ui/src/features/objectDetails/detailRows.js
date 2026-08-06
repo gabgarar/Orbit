@@ -112,7 +112,7 @@ function manualPropagationEngineLabel(input) {
     const id = String(input || "").trim().toLowerCase();
     if (id === "cowell-rk4" || id === "cowell") return "Cowell numerical propagation";
     if (id === "two-body" || id === "kepler" || id === "keplerian") return "Keplerian analytical propagation";
-    if (id === "sgp4" || id === "sgp-4") return "SGP4 / TLE propagation";
+    if (id === "sgp4" || id === "sgp-4") return "Legacy SGP4 / synthetic TLE (unsupported)";
     // Older projects can retain a J2 preset without mislabelling J2 itself
     // as an integrator. Its force model is shown separately below.
     if (id === "j2" || id === "j2-j3-j4") return "Legacy numerical preset";

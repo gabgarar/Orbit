@@ -9,6 +9,10 @@ SGP4 receives the two complete TLE lines and Orbit constructs it through
 high-fidelity ephemeris: it is a set of mean elements encoded for NORAD's
 SGP4 model.
 
+The manual-orbit editor does not transform its `EME2000` elements into a TLE
+or use SGP4 as a manual engine. A future synthetic TLE would be the result of
+a fit to a reference ephemeris, not a direct frame conversion.
+
 The epoch written in the TLE matters. As a query moves away from it, prediction
 usually degrades because of real spacecraft changes and the limits of the
 model itself.

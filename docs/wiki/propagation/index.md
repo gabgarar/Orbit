@@ -12,7 +12,7 @@ analíticas y numéricas delimitadas.
 | Tema | Estado |
 | --- | --- |
 | [Visión general](overview.md) | Contrato común y selección de motores. |
-| [SGP4](sgp4.md) | TLE de catálogo y TLE sintético manual. |
+| [SGP4](sgp4.md) | TLE de catálogo; no es un motor de órbita manual. |
 | [Dos cuerpos](two-body.md) | Modelo kepleriano analítico manual. |
 | [Cowell](cowell.md) | Integración RK4 de fuerzas seleccionadas. |
 | [Integradores numéricos](numerical-integrators.md) | RK4 fijo y límites de uso. |

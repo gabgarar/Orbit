@@ -25,9 +25,9 @@ escala temporal ni datos de las capas.
 
 En **Vista 2D**, Orbit no dibuja la trayectoria espacial elevada. La opción
 **Mostrar futuro** se representa como la trayectoria reproyectada sobre la
-Tierra a partir de las muestras ITRF/ECEF de la efeméride. Por tanto, la línea
-del mapa conserva el movimiento relativo a la Tierra y no es una elipse ECI
-aplanada por el visor.
+Tierra a partir de las muestras `ITRF` de la efeméride. Por tanto, la línea
+del mapa conserva el movimiento relativo a la Tierra y no es una elipse
+`EME2000` aplanada por el visor.
 
 **Ground Track** controla en 2D el círculo de visibilidad geométrica del
 satélite. Con el control activado, Orbit dibuja el horizonte de elevación cero
@@ -39,8 +39,12 @@ un sensor.
 En Vista 3D y Columbus, **Mostrar futuro** recupera la trayectoria espacial;
 Ground Track conserva su función de mostrar u ocultar la traza de suelo y la
 huella. Esta misma regla se aplica al editor de órbitas manuales: aunque se
-inspeccione el diseño en ECI, la proyección 2D usa las muestras ITRF
+inspeccione el diseño en `EME2000`, la proyección 2D usa las muestras `ITRF`
 propagadas.
+
+`EME2000` e `ITRF` son los nombres de marco que muestra la interfaz. No se
+usan `ECI` ni `ECEF` como etiquetas visuales porque no identifican un contrato
+de referencia suficientemente preciso.
 
 ## Navegación
 

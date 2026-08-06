@@ -12,7 +12,7 @@ analytical and numerical delimited.
 | Theme | State |
 | --- | --- |
 | [Overview](overview.md) | Common contract and engine selection. |
-| [SGP4](sgp4.md) | Catalog TLE and manual synthetic TLE. |
+| [SGP4](sgp4.md) | Catalogue TLE; it is not a manual-orbit engine. |
 | [Two bodies](two-body.md) | Manual analytical Keplerian model. |
 | [Cowell](cowell.md) | RK4 integration of selected forces. |
 | [Numerical integrators](numerical-integrators.md) | Fixed RK4 and usage limits. |

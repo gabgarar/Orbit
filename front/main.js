@@ -3494,13 +3494,14 @@ function asValidManualOrbitDate(value) {
     return Number.isNaN(candidate.getTime()) ? null : candidate;
 }
 
-function normalizeManualOrbitPreviewReferenceFrame(value, fallback = "eci") {
-    const fallbackFrame = String(fallback || "").trim().toLowerCase() === "ecef" ? "ecef" : "eci";
-    const normalized = String(value || "").trim().toLowerCase();
-    if (!normalized) {
-        return fallbackFrame;
-    }
-    return normalized === "ecef" ? "ecef" : normalized === "eci" ? "eci" : fallbackFrame;
+function normalizeManualOrbitPreviewReferenceFrame(value, fallback = "eme2000") {
+    const normalize = (candidate) => {
+        const normalized = String(candidate || "").trim().toLowerCase();
+        if (["itrf", "ecef", "earth-fixed", "earth_fixed"].includes(normalized)) return "itrf";
+        if (["eme2000", "eci", "inertial"].includes(normalized)) return "eme2000";
+        return null;
+    };
+    return normalize(value) || normalize(fallback) || "eme2000";
 }
 
 function getManualOrbitDesignSettings() {
@@ -3524,10 +3525,10 @@ function getManualOrbitDesignSettings() {
         // immediately. The same preference is carried into the confirmed
         // manual object when it is created.
         groundTrackPreview: false,
-        // A design can either show the single ECI osculating ellipse or the
-        // literal Earth-fixed propagation samples. ECI preserves the legacy
-        // clean-design default.
-        previewReferenceFrame: "eci"
+        // A design can either show the single EME2000 osculating ellipse or
+        // the literal ITRF propagation samples. EME2000 is the clean-design
+        // default.
+        previewReferenceFrame: "eme2000"
     };
     return { ...manualOrbitDesignSettings };
 }
@@ -3607,11 +3608,11 @@ function editManualOrbitFromWorkspace(satelliteId) {
         groundTrackPreview: typeof effectiveGroundTrack === "boolean"
             ? effectiveGroundTrack
             : record.groundTrackEnabled === true,
-        // This is a view preference only. Start editing in the clean inertial
-        // view while leaving the confirmed ECEF ephemeris untouched.
+        // This is a view preference only. Start editing in the clean EME2000
+        // view while leaving the confirmed ITRF ephemeris untouched.
         previewReferenceFrame: normalizeManualOrbitPreviewReferenceFrame(
             manualOrbitDesignSettings?.previewReferenceFrame,
-            "eci"
+            "eme2000"
         )
     };
     manualOrbitEditingTarget = {
@@ -3942,7 +3943,7 @@ function getManualOrbitPropagatorLabel(value, propagationOptions = {}) {
         case "cowell-rk4":
             return `Cowell numerical / ${getManualOrbitNumericalIntegratorLabel(propagationOptions?.numericalIntegrator ?? propagationOptions?.numerical_integrator)} · forces: ${getManualOrbitForceTermsLabel(propagationOptions)}`;
         case "sgp4":
-            return "SGP4 (TLE)";
+            return "Legacy synthetic TLE (unsupported)";
         default:
             return String(value || "propagador").trim() || "propagador";
     }
@@ -4193,7 +4194,7 @@ async function requestManualOrbitPreview() {
         renderManualOrbitPreview(responsePayload, {
             viewer,
             // This is a live design aid and is preserved for the confirmed
-            // object as well. Its projection follows the selected ECI/ECEF
+            // object as well. Its projection follows the selected EME2000/ITRF
             // preview frame, so the design view never mixes both geometries.
             showGroundTrack: getManualOrbitDesignSettings().groundTrackPreview === true,
             color: "#65b7ff",
@@ -4557,7 +4558,10 @@ function buildPropagatedParametersContext(detail = {}) {
                 startDate: startTime,
                 endDate: endTime
             },
-            referenceFrame: String(inspectorManualOrbit.previewReferenceFrame || "eci").toUpperCase(),
+            referenceFrame: normalizeManualOrbitPreviewReferenceFrame(
+                inspectorManualOrbit.previewReferenceFrame,
+                "eme2000"
+            ).toUpperCase(),
             propagator: inspectorManualOrbit.propagator || null
         };
     }
@@ -4569,6 +4573,7 @@ function buildPropagatedParametersContext(detail = {}) {
 
     const sourceId = getSatelliteSourceIdFromLayerId(id);
     const telemetry = getCompositeLayerTelemetry(id);
+    const catalogMeta = getCompositeLayerMeta(id);
     const timeRange = getObjectTimeRange(id, telemetry);
     const manualOrbit = getManualOrbitProjectEntry(sourceId) || null;
     return {
@@ -4579,13 +4584,20 @@ function buildPropagatedParametersContext(detail = {}) {
         name: getLayerDisplayName(id),
         active: true,
         telemetry,
-        catalogMeta: getCompositeLayerMeta(id),
+        catalogMeta,
         manualOrbit,
         startTime: propagatedParametersIso(detail.startTime || timeRange?.startDate),
         endTime: propagatedParametersIso(detail.endTime || timeRange?.endDate),
         timeRange,
         simulation: getSimulationTelemetryContext(),
-        referenceFrame: "ECEF",
+        // The propagated-parameters endpoint derives elements from the
+        // propagator's native dynamics state. Catalogue SGP4 therefore starts
+        // in TEME; the renderer's ITRF state must not be relabelled as ECEF
+        // while that request is pending. OEM is not repropagated here, but
+        // retain its declared frame if this context is shown with an error.
+        referenceFrame: String(catalogMeta?.sourceFormat || catalogMeta?.source_format || "TLE").toUpperCase() === "OEM"
+            ? (telemetry?.position_frame || telemetry?.reference_frame || telemetry?.frame || null)
+            : "TEME",
         propagator: manualOrbit?.propagator || telemetry?.propagator || null
     };
 }
@@ -4845,7 +4857,7 @@ function buildPropagatedParametersManualSource(context) {
     );
     return {
         type: "manual",
-        // The serialiser preserves the complete ECI state, propagator and
+        // The serialiser preserves the complete EME2000 state, propagator and
         // ballistic drag settings while excluding this inspector's own range.
         manualOrbit: toManualOrbitApiPayload(manualOrbit, { source })
     };
@@ -4907,7 +4919,10 @@ function currentManualDesignParametersContext(context) {
             startDate: range.startTime.toISOString(),
             endDate: range.endTime.toISOString()
         },
-        referenceFrame: String(settings.previewReferenceFrame || "eci").toUpperCase(),
+        referenceFrame: normalizeManualOrbitPreviewReferenceFrame(
+            settings.previewReferenceFrame,
+            "eme2000"
+        ).toUpperCase(),
         propagator: manualOrbitEditorState?.propagator || context?.propagator || null
     };
 }

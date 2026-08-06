@@ -9,6 +9,11 @@ SGP4 recibe las dos líneas completas de un TLE y Orbit las construye mediante
 efeméride de alta fidelidad: es un conjunto de elementos medios codificados
 para el modelo SGP4 de NORAD.
 
+El editor de órbitas manuales no transforma sus elementos `EME2000` en un TLE
+ni usa SGP4 como motor manual. Un TLE sintético futuro sería el resultado de
+un ajuste sobre una efeméride de referencia, no una conversión directa de
+marcos.
+
 La época escrita en el TLE importa. A medida que una consulta se aleja de ella,
 la predicción suele degradarse por cambios reales del satélite y por las
 limitaciones del propio modelo.

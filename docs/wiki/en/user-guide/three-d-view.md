@@ -25,8 +25,8 @@ time scale or layer data.
 
 In **2D View**, Orbit does not draw the elevated spatial trajectory. The
 **Show future** option becomes the trajectory projected onto Earth from the
-ephemeris ITRF/ECEF samples. The map line therefore preserves Earth-relative
-motion; it is not an ECI ellipse flattened by the viewer.
+ephemeris `ITRF` samples. The map line therefore preserves Earth-relative
+motion; it is not an `EME2000` ellipse flattened by the viewer.
 
 In 2D, **Ground Track** controls the satellite's geometric visibility circle.
 When enabled, Orbit draws the zero-elevation horizon around the sub-satellite
@@ -37,7 +37,11 @@ sensor-coverage calculation.
 In 3D View and Columbus, **Show future** restores the spatial trajectory;
 Ground Track continues to show or hide the surface trace and footprint. The
 same rule applies to the manual-orbit editor: even when a design is inspected
-in ECI, its 2D projection uses the propagated ITRF samples.
+in `EME2000`, its 2D projection uses the propagated `ITRF` samples.
+
+`EME2000` and `ITRF` are the frame names displayed by the interface. It does
+not use `ECI` or `ECEF` as visual labels because they do not identify a
+sufficiently precise reference contract.
 
 ## Navigation
 

@@ -30,7 +30,7 @@ compone y el integrador [RK4](rk4.md) resuelve el sistema numérico.
 
 | Propagador | Origen | Estado nativo | Dinámica | Disponibilidad operativa |
 | --- | --- | --- | --- | --- |
-| [SGP4](sgp4.md) | TLE | TEME, UTC | Implementación SGP4 de `sgp4.api.Satrec`. | Registro predeterminado del catálogo. |
+| [SGP4](sgp4.md) | TLE | TEME, UTC | Implementación SGP4 de `sgp4.api.Satrec`. | Sólo catálogo TLE. |
 | [Dos cuerpos](two-body.md) | Elementos manuales | EME2000, UTC | Kepler elíptico analítico. | Órbita manual. |
 | [Cowell](cowell.md) | Estado manual | EME2000, UTC | RK4 fijo, central/J2/J3/J4/drag. | Órbita manual. |
 | J2+J3+J4 | Estado manual | EME2000, UTC | Preset RK4 fijo sin drag. | Compatibilidad manual. |
@@ -53,9 +53,20 @@ el modo estricto se describe en [Marcos de referencia](../engineering/reference-
 ## Selección manual
 
 Las rutas manuales aceptan elementos keplerianos para dos cuerpos, un estado
-cartesiano para Cowell y el preset J2+J3+J4, y una ruta SGP4 que genera un TLE
-sintético. El resultado SGP4 sintético puede diferir de la dinámica analítica
-de dos cuerpos porque parte de otra representación y otro modelo.
+cartesiano para Cowell y el preset J2+J3+J4 de compatibilidad. La entrada y la
+dinámica de esos modelos se definen en `EME2000`; si la vista o una efeméride
+de salida necesita un marco terrestre, se transforma después a `ITRF`.
+
+SGP4 no participa en esta selección. Consume un TLE de catálogo y mantiene
+`TEME` como su marco nativo; reutilizar elementos manuales EME2000 como si
+fueran elementos medios NORAD no es una conversión de marco válida.
+
+!!! warning "No disponible: ajuste de TLE sintético"
+
+    Exportar un TLE a partir de una órbita manual requerirá una operación
+    explícita de ajuste: muestrear una efeméride de referencia, expresarla en
+    TEME y ajustar el modelo SGP4/TLE sobre un intervalo, declarando residuos
+    y procedencia. No forma parte de la propagación manual actual.
 
 ## Límites globales
 

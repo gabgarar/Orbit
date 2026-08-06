@@ -40,13 +40,28 @@ antes de saber qué reducción o realización se requiere.
 
 Una representación no determina el modelo de fuerzas:
 
-- TLE implica el uso de SGP4 en el catálogo de Orbit.
+- TLE implica el uso de SGP4 en el catálogo de Orbit, no en el editor de
+  órbitas manuales.
 - Los elementos manuales pueden alimentar dos cuerpos o el modelo analítico
-  J2 de compatibilidad; también existe una ruta SGP4 mediante TLE sintético.
+  J2 de compatibilidad; su contrato inercial es `EME2000`.
 - Cowell requiere un estado cartesiano manual en `EME2000`, no una conversión
   automática desde cualquier representación.
 - OEM y SP3 son fuentes tabuladas; su lector interpola dentro de la cobertura,
   no integra ecuaciones de movimiento.
+
+## Un TLE sintético no es una conversión de marcos
+
+Un TLE contiene elementos medios y parámetros del modelo GP/NORAD que SGP4
+interpreta en `TEME`. Por ello, transformar un vector o unos elementos
+osculadores `EME2000` a TEME no produce por sí solo un TLE físicamente
+equivalente.
+
+!!! warning "No disponible: exportar/ajustar TLE sintético"
+
+    Una futura exportación de TLE sintético deberá ajustar SGP4 sobre una
+    efeméride de referencia ya propagada y expresada en TEME. Deberá publicar
+    el arco de ajuste, las muestras, los residuos y la procedencia. No existe
+    una conversión directa ni una ruta SGP4 dentro de la propagación manual.
 
 Consulte [Propagación](../propagation/overview.md) y
 [Formatos](../formats/overview.md) para el contrato de cada fuente.

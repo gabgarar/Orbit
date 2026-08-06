@@ -13,7 +13,10 @@ from orbit_api.application.manual_orbits import (
     build_manual_orbit_propagator,
     canonical_manual_orbit,
 )
-from orbit_api.domain.requests import ManualOrbitRequest
+from orbit_api.domain.requests import (
+    ManualOrbitRequest,
+    require_manual_orbit_runtime_propagator,
+)
 from orbit_api.frames import FrameTransformService
 
 
@@ -141,7 +144,6 @@ def _camel_propagation_options(options: dict) -> dict:
 
 
 def create_manual_orbits_router(
-    resolve_propagator: Callable,
     build_ephemeris: Callable,
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None = None,
@@ -152,22 +154,25 @@ def create_manual_orbits_router(
 
     @router.post("/manual-orbits")
     def create_manual_orbit(payload: ManualOrbitRequest) -> dict:
-        # Scope the canonical form to the selected engine. A saved two-body
-        # or SGP4 object may still carry old Cowell controls, but the response
-        # must expose only the forces that engine actually applies.
-        propagation_options = payload.propagation_options.canonical(
-            propagator=payload.propagator
-        )
-        object_metadata = payload.object_metadata.canonical()
         try:
+            # ``ManualOrbitRequest`` recognizes legacy SGP4 records so a
+            # saved project can be identified without silently becoming a
+            # two-body orbit. A creation/preview request must not run it:
+            # SGP4 consumes NORAD mean elements, not manual EME2000 states.
+            propagator_name = require_manual_orbit_runtime_propagator(
+                payload.propagator
+            )
+            propagation_options = payload.propagation_options.canonical(
+                propagator=propagator_name
+            )
+            object_metadata = payload.object_metadata.canonical()
             definition_source, keplerian, state_vector = canonical_manual_orbit(payload)
-            runtime_name, propagator, tle, propagator_metadata = build_manual_orbit_propagator(
-                payload.propagator,
+            runtime_name, propagator, propagator_metadata = build_manual_orbit_propagator(
+                propagator_name,
                 name=payload.name,
                 epoch=payload.epoch,
                 keplerian=keplerian,
                 state_vector=state_vector,
-                resolve_sgp4=resolve_propagator,
                 propagation_options=propagation_options,
                 frame_transformer=frame_transformer,
             )
@@ -213,7 +218,10 @@ def create_manual_orbits_router(
             "objectMetadata": _camel_object_metadata(object_metadata),
             "propagation_options": propagation_options,
             "propagationOptions": _camel_propagation_options(propagation_options),
-            "tle": tle,
+            # Compatibility key: manual creation no longer synthesizes or
+            # returns a TLE. A future TLE fitting/export operation will have
+            # its own explicit API and residual-quality contract.
+            "tle": None,
             "keplerian": keplerian,
             "state_vector": state_vector,
             "orbit_summary": _orbit_summary(keplerian),

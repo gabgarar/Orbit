@@ -171,9 +171,9 @@ test("a confirmed manual orbit exposes only its authored definition in Manual Pa
     const overview = Object.fromEntries(details.rows.overview);
 
     assert.equal(manual.Definition, "keplerian");
-    assert.equal(manual["Propagation engine"], "SGP4 / TLE propagation");
-    // SGP4 has its own TLE/BSTAR model; stale manual drag fields must not be
-    // presented as active Cowell physics.
+    assert.equal(manual["Propagation engine"], "Legacy SGP4 / synthetic TLE (unsupported)");
+    // A legacy synthetic TLE has its own historical TLE/BSTAR model; stale
+    // manual drag fields must not be presented as active Cowell physics.
     assert.equal("Atmospheric drag" in manual, false);
     assert.equal("Drag coefficient" in manual, false);
     assert.equal("Reference area" in manual, false);

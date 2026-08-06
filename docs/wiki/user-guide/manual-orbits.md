@@ -30,19 +30,51 @@ modifica el proyecto hasta que se confirma la creación.
 
 1. Nombre y metadatos de la órbita.
 2. Intervalo UTC para la previsualización.
-3. Elementos keplerianos o estado cartesiano inicial.
-4. Propagador: dos cuerpos, SGP4 sintético o Cowell/RK4.
+3. Elementos keplerianos o estado cartesiano inicial en `EME2000`.
+4. Propagador físico: dos cuerpos o Cowell/RK4.
 5. Términos de fuerza de Cowell cuando corresponda.
 
 La previsualización se dibuja sobre la Tierra y no es todavía una capa del
 proyecto. Al confirmar, se crea una órbita manual y vuelve a aparecer en
 **Layers**.
 
+## Marcos de la previsualización
+
+La definición manual y su propagación física usan el marco inercial
+`EME2000`. La vista ofrece dos formas explícitas de inspeccionar la misma
+efeméride:
+
+- **EME2000 — trayectoria inercial** muestra la trayectoria que genera el
+  propagador.
+- **ITRF — ruta terrestre** muestra esa efeméride después de transformarla al
+  marco fijo a Tierra. Es la vista usada para la proyección 2D y para la traza
+  sobre el globo.
+
+Cambiar a ITRF no vuelve a propagar la órbita ni cambia las fuerzas: es una
+transformación posterior del estado calculado en EME2000. La interfaz no usa
+las etiquetas genéricas `ECI` o `ECEF`; el nombre visible siempre identifica
+el marco que se está mostrando.
+
+## SGP4 y TLE sintético
+
+SGP4 no es un propagador seleccionable para una órbita manual. Está reservado
+para un TLE de catálogo, cuyos estados nativos son `TEME`. Un estado o unos
+elementos manuales en EME2000 no se convierten en un TLE con una simple
+rotación de marcos.
+
+En el futuro, Orbit podrá ofrecer **Exportar/Ajustar TLE sintético** como una
+operación explícita: partirá de una efeméride manual de referencia, la llevará
+a TEME y ajustará un modelo SGP4/TLE sobre un intervalo. El producto deberá
+declarar el intervalo, las muestras, los residuos y la procedencia. No forma
+parte de la propagación manual actual.
+
 ## Límites importantes
 
 - Todas las órbitas manuales actuales están centradas en `EARTH`.
-- Dos cuerpos y Cowell generan estados nativos en `EME2000`; SGP4 genera
-  `TEME`. Consulte [Propagadores](../propagation/overview.md).
+- La entrada y la dinámica manuales se mantienen en `EME2000`; una vista o
+  efeméride terrestre se obtiene después en `ITRF`. SGP4 genera `TEME` sólo
+  para fuentes TLE de catálogo. Consulte
+  [Propagadores](../propagation/overview.md).
 - El modo de diseño cambia temporalmente a un rango de simulación y pausa la
   reproducción; sus controles temporales propios evitan confundir el diseño
   con el reloj habitual del espacio de trabajo.

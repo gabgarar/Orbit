@@ -25,6 +25,25 @@ only for reduction with EOP and leap seconds.
 `J2000` and `EME2K` are aliases for `EME2000`; `ITRS` is an alias for `ITRF`. The
 Generic tags `ECI` and `ECEF` are rejected.
 
+## Manual-orbit and catalogue frames
+
+Choosing a propagator does not authorize renaming its frame. Orbit keeps these
+boundaries:
+
+| Source | Input and dynamics frame | Generated Earth-fixed view |
+| --- | --- | --- |
+| Manual two-body or Cowell/RK4 orbit | `EME2000` | `ITRF`, through a subsequent transformation. |
+| Catalogue TLE with SGP4 | `TEME` | `ITRF`, through the TEME→PEF→ITRF route. |
+
+The Earth-fixed option for a manual orbit is not a second integrator: it
+expresses the same `EME2000` ephemeris in `ITRF` for the globe, map, or an
+Earth-fixed output. Therefore the visible labels must be `EME2000` and `ITRF`,
+not `ECI` or `ECEF`.
+
+A future synthetic TLE will require fitting the SGP4 model to a reference
+ephemeris expressed in TEME. It is not obtained by directly rotating a manual
+EME2000 state and is not an implemented frame transformation.
+
 ## Transformation paths
 
 ```mermaid

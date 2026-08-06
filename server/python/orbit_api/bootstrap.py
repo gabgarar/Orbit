@@ -53,7 +53,6 @@ def create_app() -> FastAPI:
         runtime.renderer_state_at,
     ))
     app.include_router(create_manual_orbits_router(
-        runtime.resolve_propagator,
         runtime.build_ephemeris,
         ensure_utc,
         runtime.frame_transformer,

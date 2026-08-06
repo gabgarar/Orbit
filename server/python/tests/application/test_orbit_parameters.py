@@ -10,8 +10,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from orbit_api.api.routes.orbit_parameters import create_orbit_parameters_router
+from orbit_api.application.manual_orbits import ManualOrbitError
 from orbit_api.application.orbit_parameters import OrbitParametersError, build_orbit_parameters
-from orbit_api.domain.requests import OrbitParametersRequest
+from orbit_api.domain.requests import (
+    MANUAL_ORBIT_SGP4_UNAVAILABLE_MESSAGE,
+    OrbitParametersRequest,
+)
 from orbit_api.orbits.propagators.sgp4.propagator import SGP4Propagator
 
 
@@ -68,6 +72,34 @@ def test_two_body_inspector_returns_constant_osculating_elements_in_eme2000():
     assert math.isclose(last["elements"]["eccentricity"], first["elements"]["eccentricity"], abs_tol=1e-9)
     assert first["elements"]["perigee_altitude_km"] < first["elements"]["apogee_altitude_km"]
     assert first["elements"]["mean_motion_rev_day"] > 0.0
+
+
+def test_inspector_keeps_legacy_manual_sgp4_readable_but_rejects_execution():
+    request = manual_request(
+        propagator="sgp4",
+        options={"atmosphericDrag": True},
+    )
+
+    # A project record can be parsed for identification, but no synthetic TLE
+    # is built and the catalogue resolver is never invoked.
+    assert request.source.manual_orbit is not None
+    assert request.source.manual_orbit.propagator == "sgp4"
+    with pytest.raises(ManualOrbitError, match="SGP4 no está disponible"):
+        build_orbit_parameters(
+            request,
+            resolve_propagator=native_only_resolver,
+        )
+
+    router = create_orbit_parameters_router(
+        native_only_resolver,
+        lambda value: value.astimezone(UTC),
+    )
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/orbit-parameters")
+    with pytest.raises(HTTPException) as rejected:
+        endpoint(request)
+
+    assert rejected.value.status_code == 422
+    assert rejected.value.detail == MANUAL_ORBIT_SGP4_UNAVAILABLE_MESSAGE
 
 
 def test_inspector_reports_only_forces_applied_by_a_fixed_manual_engine():

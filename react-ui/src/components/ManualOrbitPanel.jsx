@@ -66,12 +66,6 @@ const PROPAGATION_ENGINE_OPTIONS = [
         label: "Cowell numerical",
         availability: "Numerical",
         description: "Numerically integrates the selected force model. Choose its integrator and optional atmospheric drag below."
-    },
-    {
-        value: "sgp4",
-        label: "SGP4 (TLE)",
-        availability: "TLE compatible",
-        description: "Analytical TLE model. Manual elements are converted to a synthetic TLE, so its result can differ from native Two-body or J2 propagation."
     }
 ];
 
@@ -79,6 +73,14 @@ const PROPAGATION_ENGINE_OPTIONS = [
 // propagators. Keep the value visible and untouched until the user explicitly
 // migrates it to Cowell numerical + the corresponding force model.
 const LEGACY_PROPAGATOR_OPTIONS = [
+    {
+        value: "sgp4",
+        label: "Legacy SGP4 / synthetic TLE",
+        availability: "Legacy / unavailable",
+        description: "SGP4 is not available for manual orbit design. An EME2000 state cannot be converted directly into a NORAD TLE; create the orbit with a physical propagator and use synthetic-TLE export when that workflow is available.",
+        unavailable: true,
+        legacy: true
+    },
     {
         value: "j2",
         label: "Legacy force preset: J2",
@@ -143,11 +145,14 @@ function toDatetimeInput(value, fallback) {
     return Number.isNaN(date.getTime()) ? fallback : date.toISOString().slice(0, 16);
 }
 
-function normalizePreviewReferenceFrame(value, fallback = "eci") {
-    const normalized = String(value || "").trim().toLowerCase();
-    if (normalized === "ecef") return "ecef";
-    if (normalized === "eci") return "eci";
-    return fallback;
+function normalizePreviewReferenceFrame(value, fallback = "eme2000") {
+    const normalize = (candidate) => {
+        const normalized = String(candidate || "").trim().toLowerCase();
+        if (["itrf", "ecef", "earth-fixed", "earth_fixed"].includes(normalized)) return "itrf";
+        if (["eme2000", "eci", "inertial"].includes(normalized)) return "eme2000";
+        return null;
+    };
+    return normalize(value) || normalize(fallback) || "eme2000";
 }
 
 function canonicalPropagatorName(value) {
@@ -317,11 +322,11 @@ function createDefaultForm() {
         // resulting manual satellite is confirmed.
         groundTrackPreview: false,
         // This affects only the transient design preview. The input state
-        // vector and the confirmed orbit always retain their ECI contract.
-        previewReferenceFrame: "eci",
+        // vector and the confirmed orbit always retain their EME2000 contract.
+        previewReferenceFrame: "eme2000",
         // Manual inputs are state/element based rather than TLE based, so an
         // ideal two-body model is the reliable starting point. Existing
-        // SGP4-authored objects retain their propagator when hydrated.
+        // synthetic-TLE records stay visible as unavailable legacy records.
         propagator: "two-body",
         objectMetadata: {
             objectType: "satellite",
@@ -840,7 +845,7 @@ export default function ManualOrbitPanel() {
     const updatePropagator = (propagator) => {
         const nextPropagator = normalizePropagator(propagator, form.propagator);
         // `forceTerms` describes active physics, never a dormant Cowell
-        // draft. This prevents a Two-body/Sgp4 record from claiming J2/J3/J4
+        // draft. This prevents a Two-body or legacy record from claiming J2/J3/J4
         // in its persisted metadata when those forces are not applied.
         const nextForceTerms = nextPropagator === "cowell-rk4"
             ? normalizeForceTerms(form.propagationOptions.forceTerms)
@@ -972,13 +977,11 @@ export default function ManualOrbitPanel() {
     const selectedNumericalIntegrator = COWELL_NUMERICAL_INTEGRATOR_OPTIONS.find(
         (option) => option.value === form.propagationOptions.numericalIntegrator
     ) ?? { label: form.propagationOptions.numericalIntegrator };
-    const previewFrameDescription = selectedPropagator.value === "sgp4"
-        ? "ECI preview is the osculating input ellipse at the initial epoch. Select ECEF to inspect the generated SGP4 / synthetic-TLE propagation relative to Earth."
+    const previewFrameDescription = selectedPropagator.legacy
+        ? selectedPropagator.description
         : selectedPropagator.value === "cowell-rk4"
-            ? `ECI preview uses Cowell numerical with ${selectedNumericalIntegrator.label}. Active force terms: ${forceTermsLabel(activeForceTerms)}. ECEF shows that same propagation relative to Earth.`
-            : selectedPropagator.legacy
-                ? "This legacy force preset is shown unchanged. Select Cowell numerical explicitly to choose an integrator and force model."
-                : "ECI preview follows the native inertial trajectory. ECEF shows that same propagation relative to Earth. This does not change the ECI input state or orbital definition.";
+            ? `EME2000 preview uses Cowell numerical with ${selectedNumericalIntegrator.label}. Active force terms: ${forceTermsLabel(activeForceTerms)}. ITRF shows that same propagation fixed to Earth.`
+            : "EME2000 preview follows the native inertial trajectory. ITRF shows that same propagation fixed to Earth. This does not change the EME2000 input state or orbital definition.";
     const statusTone = status?.kind === "error"
         ? "border-[#874252] bg-[#291821] text-[#ffd0d9]"
         : status?.kind === "success"
@@ -1086,12 +1089,12 @@ export default function ManualOrbitPanel() {
                     <span className="text-[9px] leading-none font-bold tracking-[.06em] text-[#87a4d1]">DISPLAY ONLY</span>
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-1 rounded-md border border-[#1b304d] bg-[#08111f] p-1" role="radiogroup" aria-label="Orbit preview reference frame">
-                    <button className={`cursor-pointer rounded-[5px] border-0 px-2 py-2 text-left text-[10px] leading-none font-bold ${form.previewReferenceFrame === "eci" ? "bg-[#233b69] text-[#f3f7ff] shadow-[inset_0_0_0_1px_rgba(122,161,255,.42)]" : "bg-transparent text-[#93a4bd] hover:bg-[#13223a] hover:text-[#dce7f8]"}`} type="button" role="radio" aria-checked={form.previewReferenceFrame === "eci"} onClick={() => updatePreviewReferenceFrame("eci")}>
-                        <span className="block">ECI</span>
-                        <small className="mt-1 block text-[9px] font-medium opacity-75">{selectedPropagator.value === "sgp4" ? "Input ellipse" : "Inertial trajectory"}</small>
+                    <button className={`cursor-pointer rounded-[5px] border-0 px-2 py-2 text-left text-[10px] leading-none font-bold ${form.previewReferenceFrame === "eme2000" ? "bg-[#233b69] text-[#f3f7ff] shadow-[inset_0_0_0_1px_rgba(122,161,255,.42)]" : "bg-transparent text-[#93a4bd] hover:bg-[#13223a] hover:text-[#dce7f8]"}`} type="button" role="radio" aria-checked={form.previewReferenceFrame === "eme2000"} onClick={() => updatePreviewReferenceFrame("eme2000")}>
+                        <span className="block">EME2000</span>
+                        <small className="mt-1 block text-[9px] font-medium opacity-75">Inertial trajectory</small>
                     </button>
-                    <button className={`cursor-pointer rounded-[5px] border-0 px-2 py-2 text-left text-[10px] leading-none font-bold ${form.previewReferenceFrame === "ecef" ? "bg-[#233b69] text-[#f3f7ff] shadow-[inset_0_0_0_1px_rgba(122,161,255,.42)]" : "bg-transparent text-[#93a4bd] hover:bg-[#13223a] hover:text-[#dce7f8]"}`} type="button" role="radio" aria-checked={form.previewReferenceFrame === "ecef"} onClick={() => updatePreviewReferenceFrame("ecef")}>
-                        <span className="block">ECEF</span>
+                    <button className={`cursor-pointer rounded-[5px] border-0 px-2 py-2 text-left text-[10px] leading-none font-bold ${form.previewReferenceFrame === "itrf" ? "bg-[#233b69] text-[#f3f7ff] shadow-[inset_0_0_0_1px_rgba(122,161,255,.42)]" : "bg-transparent text-[#93a4bd] hover:bg-[#13223a] hover:text-[#dce7f8]"}`} type="button" role="radio" aria-checked={form.previewReferenceFrame === "itrf"} onClick={() => updatePreviewReferenceFrame("itrf")}>
+                        <span className="block">ITRF</span>
                         <small className="mt-1 block text-[9px] font-medium opacity-75">Earth-fixed path</small>
                     </button>
                 </div>
@@ -1102,7 +1105,7 @@ export default function ManualOrbitPanel() {
             {activeTab === "orbit" && <section id="manual-orbit-orbit" className="mt-3" role="tabpanel">
                 <div className="flex items-baseline justify-between gap-2">
                     <h3 className="m-0 text-[12px] leading-none font-bold text-[#e7effd]">Orbital definition</h3>
-                    <span className="text-[9px] leading-none font-semibold tracking-[.06em] text-[#7f94b4]">ECI</span>
+                    <span className="text-[9px] leading-none font-semibold tracking-[.06em] text-[#7f94b4]">EME2000</span>
                 </div>
                 <p className="mt-1.5 mb-3 text-[10px] leading-[1.35] text-[#8498b5]">Edit either representation; the runtime keeps the other one synchronized.</p>
                 <nav className="grid grid-cols-2 gap-1 rounded-lg border border-[#1d304b] bg-[#08111f] p-1" aria-label="Orbital definition method" role="tablist">
@@ -1115,7 +1118,7 @@ export default function ManualOrbitPanel() {
                         <h3 className="m-0 text-[12px] leading-none font-bold text-[#e7effd]">{title}</h3>
                         <p className="mt-1 mb-0 text-[10px] leading-[1.35] text-[#8498b5]">Use the slider for a quick adjustment or enter an exact value.</p>
                     </div>
-                    <span className="shrink-0 rounded-full border border-[#2d4770] bg-[#10213a] px-2 py-1 text-[9px] leading-none font-bold tracking-[.045em] text-[#9fc0ff]">{definitionTab === "keplerian" ? "CLASSICAL" : "ECI"}</span>
+                    <span className="shrink-0 rounded-full border border-[#2d4770] bg-[#10213a] px-2 py-1 text-[9px] leading-none font-bold tracking-[.045em] text-[#9fc0ff]">{definitionTab === "keplerian" ? "CLASSICAL" : "EME2000"}</span>
                 </div>
                 <div className="grid gap-2">
                     {fields.map((field) => <NumericRangeField key={field.key} field={field} value={form[group][field.key]} onChange={(value) => updateField(group, field.key, value)} />)}
@@ -1152,7 +1155,7 @@ export default function ManualOrbitPanel() {
             <section className="mt-3 grid gap-1.5 border-t border-[#1b2d45] pt-3 font-[system-ui,sans-serif]" aria-labelledby="manualOrbitPropagatorTitle">
                 <div className="flex items-center justify-between gap-2">
                     <h3 id="manualOrbitPropagatorTitle" className="m-0 text-[11px] leading-none font-semibold text-[#c7d5ea]">Propagation engine</h3>
-                    <span className={`shrink-0 rounded-full border px-1.5 py-1 text-[8px] leading-none font-bold uppercase tracking-[.07em] ${selectedPropagator.unavailable ? "border-[#7a4b4b] bg-[#2b1a1d] text-[#ffc3c3]" : selectedPropagator.value === "two-body" ? "border-[#356dc2] bg-[#102747] text-[#b7d4ff]" : selectedPropagator.value === "sgp4" ? "border-[#66543a] bg-[#2a2216] text-[#f0d39d]" : "border-[#3b7359] bg-[#102a22] text-[#b8f1d0]"}`}>{selectedPropagator.availability}</span>
+                    <span className={`shrink-0 rounded-full border px-1.5 py-1 text-[8px] leading-none font-bold uppercase tracking-[.07em] ${selectedPropagator.unavailable ? "border-[#7a4b4b] bg-[#2b1a1d] text-[#ffc3c3]" : selectedPropagator.value === "two-body" ? "border-[#356dc2] bg-[#102747] text-[#b7d4ff]" : "border-[#3b7359] bg-[#102a22] text-[#b8f1d0]"}`}>{selectedPropagator.availability}</span>
                 </div>
                 <select className={inputClassName("!h-[34px] !cursor-pointer !font-semibold")} value={form.propagator} aria-describedby="manualOrbitPropagatorDescription" onChange={(event) => updatePropagator(event.target.value)}>
                     {selectedPropagator.unavailable && <option value={selectedPropagator.value} disabled>{selectedPropagator.label}</option>}

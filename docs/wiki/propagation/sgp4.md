@@ -8,6 +8,10 @@
 para los objetos de catálogo de Orbit y su estado nativo se declara siempre en
 `TEME`.
 
+SGP4 sólo acepta la definición TLE de catálogo. No se ofrece como propagador
+de una órbita manual `EME2000`; convertir esa definición en un TLE exigiría un
+ajuste explícito que no forma parte del editor.
+
 SGP4 es un propagador **analítico** para TLE: parte de la teoría de
 Brouwer-Lyddane y de las correcciones operacionales NORAD. No es un integrador
 numérico ni recalcula una trayectoria a partir de fuerzas seleccionadas por el

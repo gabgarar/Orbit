@@ -43,6 +43,7 @@ test("manual orbit preview queues safely before a Cesium viewer exists", () => {
     const preview = renderManualOrbitPreview(previewPayload, { showGroundTrack: true });
     assert.equal(preview.id, "__manual-orbit-preview__");
     assert.equal(preview.pointCount, 3);
+    assert.equal(preview.previewReferenceFrame, "eme2000");
     assert.equal(preview.visible, true);
     assert.equal(preview.rendered, false);
     assert.equal(preview.showGroundTrack, true);
@@ -57,6 +58,18 @@ test("manual orbit preview queues safely before a Cesium viewer exists", () => {
     const cleared = clearManualOrbitPreview();
     assert.equal(cleared.pointCount, 0);
     assert.equal(cleared.rendered, false);
+});
+
+test("manual orbit preview canonicalizes legacy ECI/ECEF preferences to EME2000/ITRF", () => {
+    clearManualOrbitPreview();
+
+    const inertial = renderManualOrbitPreview(previewPayload, { previewReferenceFrame: "eci" });
+    assert.equal(inertial.previewReferenceFrame, "eme2000");
+
+    const earthFixed = renderManualOrbitPreview(previewPayload, { previewReferenceFrame: "ecef" });
+    assert.equal(earthFixed.previewReferenceFrame, "itrf");
+
+    clearManualOrbitPreview();
 });
 
 test("manual orbit preview rejects invalid updates without discarding the current preview", () => {
@@ -324,7 +337,7 @@ test("manual orbit design preview renders one epoch-anchored inertial ellipse, n
         };
 
         const preview = renderManualOrbitPreview(longRangePayload, { viewer, showGroundTrack: true });
-        assert.equal(preview.previewReferenceFrame, "eci");
+        assert.equal(preview.previewReferenceFrame, "eme2000");
         assert.equal(preview.geometryMode, "inertial-osculating-ellipse");
         assert.equal(preview.pointCount, 721);
         assert.equal(preview.showGroundTrack, true);
@@ -336,7 +349,7 @@ test("manual orbit design preview renders one epoch-anchored inertial ellipse, n
         const positions = added[0].polyline.positions;
         assert.equal(positions.length, 721);
         assert.equal(added[0].polyline.arcType, "none");
-        // The visual orbit remains the epoch-anchored ECI ellipse, while the
+        // The visual orbit remains the epoch-anchored EME2000 ellipse, while the
         // ground path deliberately uses the physical ITRF samples returned
         // by the propagation service. That lets the 2D map stay a real Earth
         // projection instead of flattening an inertial ellipse.
@@ -359,7 +372,7 @@ test("manual orbit design preview renders one epoch-anchored inertial ellipse, n
     }
 });
 
-test("J2 ECI preview uses the backend native samples and projects its ground track from that same trajectory", () => {
+test("J2 EME2000 preview uses the backend native samples and projects its ground track from that same trajectory", () => {
     const previousCesium = globalThis.Cesium;
     const makeColor = (value) => ({ value, withAlpha: (alpha) => makeColor(`${value}:${alpha}`) });
     const added = [];
@@ -453,7 +466,7 @@ test("J2 ECI preview uses the backend native samples and projects its ground tra
     try {
         clearManualOrbitPreview();
         const preview = renderManualOrbitPreview(j2Payload, { viewer, showGroundTrack: true });
-        assert.equal(preview.previewReferenceFrame, "eci");
+        assert.equal(preview.previewReferenceFrame, "eme2000");
         assert.equal(preview.geometryMode, "inertial-eci-ephemeris");
         assert.equal(preview.pointCount, 3);
         assert.deepEqual(added.map((entity) => entity.id), [
@@ -464,7 +477,7 @@ test("J2 ECI preview uses the backend native samples and projects its ground tra
 
         const pathPositions = added[0].polyline.positions;
         assert.equal(pathPositions.length, 3);
-        // The fixed epoch rotation preserves each backend ECI radius; the
+        // The fixed epoch rotation preserves each backend EME2000 radius; the
         // values prove the renderer did not replace them with a static ellipse.
         assert.ok(Math.abs(Math.hypot(pathPositions[0].x, pathPositions[0].y, pathPositions[0].z) - 7_000_000) < 1e-6);
         assert.ok(Math.abs(Math.hypot(pathPositions[2].x, pathPositions[2].y, pathPositions[2].z) - Math.hypot(7_200_000, 0, 2_000)) < 1e-6);
@@ -483,7 +496,7 @@ test("J2 ECI preview uses the backend native samples and projects its ground tra
     }
 });
 
-test("manual preview uses native ECI only for supported native models and otherwise keeps its ellipse fallback", () => {
+test("manual preview uses native EME2000 samples only for supported native models and otherwise keeps its ellipse fallback", () => {
     const keplerian = {
         semi_major_axis_km: 26099,
         eccentricity: 0.137,
@@ -715,7 +728,7 @@ test("manual preview replaces the spatial orbit with its ITRF projection in 2D a
         ]);
         assert.equal(added[0].show, false);
         // The epoch marker and map trace use the real ITRF ephemeris, not
-        // the ECI path selected for the 3D design preview.
+        // the EME2000 path selected for the 3D design preview.
         assert.equal(added[1].position.x, 7_010_000);
         assert.equal(added[1].position.y, 50_000);
         assert.equal(added[1].position.z, 0);
@@ -740,7 +753,7 @@ test("manual preview replaces the spatial orbit with its ITRF projection in 2D a
     }
 });
 
-test("manual orbit preview renders its path and ground track from raw propagated samples when ECEF is selected", () => {
+test("manual orbit preview renders its path and ground track from raw propagated samples when ITRF is selected", () => {
     const previousCesium = globalThis.Cesium;
     const makeColor = (value) => ({ value, withAlpha: (alpha) => makeColor(`${value}:${alpha}`) });
     const added = [];
@@ -798,9 +811,9 @@ test("manual orbit preview renders its path and ground track from raw propagated
         const preview = renderManualOrbitPreview(payload, {
             viewer,
             showGroundTrack: true,
-            previewReferenceFrame: "ecef"
+            previewReferenceFrame: "itrf"
         });
-        assert.equal(preview.previewReferenceFrame, "ecef");
+        assert.equal(preview.previewReferenceFrame, "itrf");
         assert.equal(preview.geometryMode, "earth-fixed-ephemeris");
         assert.equal(preview.pointCount, 3);
         assert.equal(added[0].polyline.positions.length, 3);

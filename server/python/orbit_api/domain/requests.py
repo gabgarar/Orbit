@@ -15,17 +15,25 @@ from orbit_api.core.settings import (
 from orbit_api.timekeeping import ensure_utc
 
 
-# These are the *new-design* manual propagation families, rather than a list
-# of every historical implementation the service can still deserialize. A
-# native state propagator needs an ECI state and epoch, whereas a catalogue
-# endpoint only has TLE lines. ``cowell-rk4`` is deliberately a propagation
-# family: its numerical integrator and force model are separate options.
-MANUAL_ORBIT_PROPAGATORS = ("sgp4", "two-body", "cowell-rk4")
+# These are the selectable *new-design* manual propagation families. A
+# manual state is defined in EME2000 at an epoch, so it must be propagated by
+# a native analytical or numerical engine. ``cowell-rk4`` is deliberately a
+# propagation family: its numerical integrator and force model are separate
+# options.
+MANUAL_ORBIT_PROPAGATORS = ("two-body", "cowell-rk4")
 
-# Existing projects may contain the former fixed J2+J3+J4 preset in their
-# ``propagator`` field. It remains accepted as a compatibility route. New
-# editors expose J2/J3/J4 exclusively under the Cowell force-model selector.
-LEGACY_MANUAL_ORBIT_PROPAGATORS = ("j2-j3-j4",)
+# The request model can still deserialize these persisted IDs so saved project
+# documents can be identified and handled deliberately. ``j2-j3-j4`` remains
+# executable solely to reproduce its former native implementation. ``sgp4``
+# is *not* executable for a manual state: it was an old synthetic-TLE shortcut
+# which treated EME2000 osculating elements as NORAD mean elements.
+LEGACY_MANUAL_ORBIT_PROPAGATORS = ("sgp4", "j2-j3-j4")
+MANUAL_ORBIT_SGP4_UNAVAILABLE_MESSAGE = (
+    "SGP4 no está disponible para órbitas manuales: requiere elementos medios "
+    "NORAD/TLE y produce estados TEME. Usa two-body o cowell-rk4 para una "
+    "órbita manual en EME2000. El ajuste y la exportación de un TLE sintético "
+    "serán una operación separada."
+)
 _MANUAL_ORBIT_PROPAGATOR_ALIASES = {
     "sgp4": "sgp4",
     "sgp-4": "sgp4",
@@ -67,9 +75,9 @@ _COWELL_GRAVITY_MODEL_ALIASES = {
 # persisted representation so semantically identical requests have one stable
 # cache/project identity.
 COWELL_FORCE_TERMS = ("central", "j2", "j3", "j4", "drag")
-# Start new designs from the smallest physically complete model.  Additional
+# Start new designs from the smallest physically complete model. Additional
 # harmonics are opt-in force terms of Cowell/RK4; they are never implied by an
-# unrelated propagation family such as two-body or SGP4.
+# unrelated propagation family such as two-body.
 DEFAULT_COWELL_FORCE_TERMS = ("central",)
 _COWELL_FORCE_TERM_ALIASES = {
     "central": "central",
@@ -97,6 +105,8 @@ _LEGACY_GRAVITY_MODEL_FORCE_TERMS = {
 # the implementation, so a request must never report a different composition
 # merely because it carried stale Cowell controls in its project payload.
 _FIXED_MANUAL_PROPAGATOR_FORCE_TERMS = {
+    # Retained only to normalize stale project data before the runtime emits
+    # the explicit unavailable-SGP4 diagnostic.
     "sgp4": ("central",),
     "two-body": ("central",),
     "j2-j3-j4": ("central", "j2", "j3", "j4"),
@@ -114,10 +124,11 @@ _NUMERICAL_INTEGRATOR_ALIASES = {
 def normalize_manual_orbit_propagator(value: str) -> str:
     """Return the persisted manual-orbit propagator ID.
 
-    ``sgp4``, ``two-body`` and ``cowell-rk4`` are the selectable families for
-    new designs. The fixed J2+J3+J4 compatibility preset remains accepted.
-    Editor-friendly spellings such as ``kepler`` still normalize at the HTTP
-    boundary.
+    Selectable IDs are listed in :data:`MANUAL_ORBIT_PROPAGATORS`; persisted
+    legacy IDs are accepted here only so old project records can deserialize.
+    Call :func:`require_manual_orbit_runtime_propagator` before instantiating
+    an engine. Editor-friendly spellings such as ``kepler`` still normalize at
+    the HTTP boundary.
     """
 
     normalized = re.sub(r"-+", "-", re.sub(r"[\s_+/]+", "-", str(value or "").strip().lower())).strip("-")
@@ -127,6 +138,21 @@ def normalize_manual_orbit_propagator(value: str) -> str:
         raise ValueError(
             f"Propagador manual no compatible '{value}'. Seleccionables: {available}"
         )
+    return canonical
+
+
+def require_manual_orbit_runtime_propagator(value: str) -> str:
+    """Return a manual engine that may run, rejecting legacy synthetic SGP4.
+
+    Keeping ``sgp4`` recognizable in the normalizer avoids silently changing
+    saved projects into a different physical model. Runtime/API paths must
+    nevertheless reject it, because manual EME2000 elements are not NORAD TLE
+    mean elements and cannot be passed straight to SGP4.
+    """
+
+    canonical = normalize_manual_orbit_propagator(value)
+    if canonical == "sgp4":
+        raise ValueError(MANUAL_ORBIT_SGP4_UNAVAILABLE_MESSAGE)
     return canonical
 
 
@@ -730,10 +756,6 @@ class ManualPropagationOptions(BaseModel):
         )
         if canonical_propagator is not None and canonical_propagator != "cowell-rk4":
             if self.atmospheric_drag:
-                if canonical_propagator == "sgp4":
-                    raise ValueError(
-                        "SGP4 ya usa el término BSTAR de su TLE; atmospheric_drag solo está disponible para Cowell/RK4"
-                    )
                 raise ValueError(
                     "atmospheric_drag is only available with the Cowell/RK4 propagator; "
                     "select cowell-rk4 and a force model"
@@ -839,9 +861,11 @@ class ManualOrbitRequest(BaseModel):
     The selected representation is authoritative.  When both representations
     are included (the normal UI synchronization case), ``definition_source``
     picks one; Keplerian elements are used by default for backwards-compatible
-    direct API clients. SGP4 uses a transient synthetic TLE, while native
-    two-body and Cowell configurations use the canonical ECI definition
-    directly. Legacy J2 records remain supported without being reinterpreted.
+    direct API clients. Native two-body and Cowell configurations use the
+    canonical EME2000 definition directly. The model also recognizes legacy
+    SGP4 records so callers can report them as unavailable rather than silently
+    changing their dynamics; it never permits that compatibility ID to run.
+    Legacy J2 records remain supported without being reinterpreted.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -850,9 +874,8 @@ class ManualOrbitRequest(BaseModel):
     epoch: datetime.datetime = Field(
         validation_alias=AliasChoices("epoch", "epoch_utc", "epochUtc"),
     )
-    # A manual design starts from a physical ECI state, so Two-body is the
-    # coherent default.  SGP4 stays explicit because it first synthesises a
-    # TLE and therefore represents a different model family.
+    # A manual design starts from a physical EME2000 state, so Two-body is the
+    # coherent default.
     propagator: str = Field(default="two-body", min_length=1, max_length=40)
     object_metadata: ManualObjectMetadata = Field(
         default_factory=ManualObjectMetadata,
@@ -976,14 +999,15 @@ class ManualOrbitRequest(BaseModel):
             raise ValueError("definition_source state_vector requiere un vector de estado")
         if self.end_time is not None and self.start_time is not None and self.end_time <= self.start_time:
             raise ValueError("end_time debe ser mayor que start_time")
-        if self.propagation_options.atmospheric_drag and self.propagator not in {"cowell-rk4", "sgp4"}:
+        # Keep historical synthetic-SGP4 records readable. They are rejected
+        # by the runtime/API boundary with a specific explanation instead of
+        # being silently converted into a different manual model.
+        if self.propagator == "sgp4":
+            return self
+        if self.propagation_options.atmospheric_drag and self.propagator != "cowell-rk4":
             raise ValueError(
                 "atmospheric_drag is only available with the Cowell/RK4 propagator; "
                 "select cowell-rk4 and a force model"
-            )
-        if self.propagator == "sgp4" and self.propagation_options.atmospheric_drag:
-            raise ValueError(
-                "SGP4 ya usa el tÃ©rmino BSTAR de su TLE; atmospheric_drag solo estÃ¡ disponible para propagadores manuales nativos"
             )
         return self
 
@@ -997,6 +1021,11 @@ class ManualOrbitRequest(BaseModel):
         Explicit drag is intentionally rejected before this projection.
         """
 
+        if self.propagator == "sgp4":
+            # This is an unavailable legacy record. Preserve its raw options
+            # long enough for callers to identify it; the runtime rejects it
+            # before any force composition or propagation is applied.
+            return self
         resolved_options = self.propagation_options.canonical(propagator=self.propagator)
         if self.propagator != "cowell-rk4":
             self.propagation_options.force_terms = tuple(resolved_options["force_terms"])
@@ -1016,7 +1045,7 @@ class OrbitParametersSource(BaseModel):
     A catalogue/TLE source intentionally remains SGP4/TEME at the inspector
     boundary.  A manual source reuses :class:`ManualOrbitRequest`, which
     preserves the selected native model (including J2/J3/J4 and drag) rather
-    than silently reducing it to a synthetic TLE.
+    than silently changing it into a different propagation model.
     """
 
     model_config = ConfigDict(populate_by_name=True)

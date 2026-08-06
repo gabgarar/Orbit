@@ -28,18 +28,48 @@ the project until creation is confirmed.
 
 1. Orbit name and metadata.
 2. UTC preview interval.
-3. Keplerian elements or initial Cartesian state.
-4. Propagator: two-body, synthetic SGP4, or Cowell/RK4.
+3. Keplerian elements or an initial Cartesian state in `EME2000`.
+4. Physical propagator: two-body or Cowell/RK4.
 5. Cowell force terms when applicable.
 
 The preview is drawn around Earth and is not yet a project layer. On
 confirmation, Orbit creates the manual orbit and it reappears in **Layers**.
 
+## Preview frames
+
+The manual definition and its physical propagation use the `EME2000` inertial
+frame. The view provides two explicit ways to inspect the same ephemeris:
+
+- **EME2000 — inertial trajectory** shows the trajectory produced by the
+  propagator.
+- **ITRF — Earth-fixed path** shows that ephemeris after transformation into
+  the Earth-fixed frame. It is the view used for 2D projection and the trace
+  on the globe.
+
+Switching to ITRF does not propagate the orbit again or change its forces; it
+is a subsequent transformation of the state calculated in EME2000. The
+interface does not use the generic `ECI` or `ECEF` labels: the visible name
+always identifies the frame being displayed.
+
+## SGP4 and synthetic TLEs
+
+SGP4 is not a selectable propagator for a manual orbit. It is reserved for a
+catalogue TLE, whose native states are `TEME`. A manual state or manual
+elements in EME2000 cannot be converted into a TLE with a simple frame
+rotation.
+
+In the future, Orbit may provide **Export/Fit synthetic TLE** as an explicit
+operation: it will start from a reference manual ephemeris, transform it to
+TEME, and fit an SGP4/TLE model over an interval. The product will need to
+declare the interval, samples, residuals, and provenance. This is not part of
+current manual propagation.
+
 ## Important limits
 
 - All current manual orbits are centred on `EARTH`.
-- Two-body and Cowell produce native `EME2000` states; SGP4 produces `TEME`.
-  See [Propagators](../propagation/overview.md).
+- Manual input and dynamics remain in `EME2000`; an Earth-fixed view or
+  ephemeris is obtained afterwards in `ITRF`. SGP4 produces `TEME` only for
+  catalogue TLE sources. See [Propagators](../propagation/overview.md).
 - Design mode temporarily switches to a paused simulation range. Its own time
   controls avoid confusing design with the normal workspace clock.
 - Hiding Layers in this mode is an interface choice, not data removal or a
