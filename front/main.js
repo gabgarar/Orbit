@@ -2136,7 +2136,6 @@ async function analyzeGroundStationPasses(detail = {}) {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const result = await response.json();
         showGroundStationAnalysisVisuals(station, satelliteLayerId, minElevationDeg);
-        setSatelliteVisualizationConfig(satelliteId, { orbit_ground_track_show: true });
         const satelliteEntity = getCompositeLayerEntity(satelliteLayerId);
         const stationPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
         const satellitePosition = satelliteEntity?.position?.getValue?.(viewer.clock.currentTime);
