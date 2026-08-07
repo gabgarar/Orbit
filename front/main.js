@@ -163,6 +163,7 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
 
 viewer.scene.morphComplete.addEventListener(() => {
     refreshSatelliteOverlays(viewer);
+    refreshGroundStationCoveragePresentation();
 });
 
 if (viewer?.cesiumWidget?.creditContainer) {
@@ -297,6 +298,8 @@ const bodyCentricCamera = createBodyCentricCameraController({
 });
 let groundStationSequence = 1;
 let groundStationAnalysisLink = null;
+let groundStationAnalysisRequestSequence = 0;
+let groundStationAnalysisAbortController = null;
 const groundStationVisibilityLinks = new Map();
 let currentProjectFileHandle = null;
 let currentProjectName = null;
@@ -692,6 +695,29 @@ function getDisplayedSimulationDate() {
     }
     const date = simulationState.currentDate instanceof Date ? simulationState.currentDate : new Date(simulationState.currentDate);
     return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function getGroundStationAnalysisWindow() {
+    // A pass list must describe the same temporal domain as the visible
+    // simulation timeline.  Previously analysis always started at the playhead
+    // and extended 24 hours, which could put AOS/LOS rows outside the bar the
+    // operator was looking at.
+    if (simulationState.mode === SIMULATION_MODE_RANGE) {
+        const startDate = new Date(simulationState.startDate);
+        const endDate = new Date(simulationState.endDate);
+        if (!Number.isNaN(startDate.getTime())
+            && !Number.isNaN(endDate.getTime())
+            && endDate > startDate) {
+            return { startDate, endDate, source: "simulation-range" };
+        }
+    }
+
+    const startDate = getDisplayedSimulationDate();
+    return {
+        startDate,
+        endDate: new Date(startDate.getTime() + (24 * 3600 * 1000)),
+        source: "rolling-24h"
+    };
 }
 
 function formatObjectTimeRangeHours(hours) {
@@ -1145,7 +1171,21 @@ const groundStationTelemetryService = createGroundStationTelemetryService({
     },
     calculateFreeSpacePathLossDb: computeFreeSpacePathLossDb,
     getPasses: async (satelliteId, station, startDate, endDate) => {
-        const query = new URLSearchParams({ sat_id: satelliteId, station_lat_deg: String(station.latitude_deg), station_lon_deg: String(station.longitude_deg), min_elevation_deg: String(station.min_elevation_deg), start_time: startDate.toISOString(), end_time: endDate.toISOString(), step_seconds: "60" });
+        const query = new URLSearchParams({
+            sat_id: satelliteId,
+            station_lat_deg: String(station.latitude_deg),
+            station_lon_deg: String(station.longitude_deg),
+            station_height_m: String(station.altitude_m),
+            min_elevation_deg: String(station.min_elevation_deg),
+            max_range_km: String(calculateGroundStationRadioRangeKm(station)),
+            start_time: startDate.toISOString(),
+            end_time: endDate.toISOString(),
+            // Keep the pass samples at the same 30 s cadence used by the
+            // timestamped range ephemeris that draws a simulated trajectory.
+            // That lets the table, elevation plot, timeline marker and 3D
+            // coverage volume all refer to the same physical samples.
+            step_seconds: "30"
+        });
         const response = await fetch(`/api/aos-los?${query}`);
         return response.ok ? (await response.json()).passes : [];
     }
@@ -1194,9 +1234,7 @@ function setCompositeLayerVisibility(layerId, visible) {
         }
         station.visible = visible === true;
         if (station.entity) station.entity.show = station.visible;
-        if (station.coverageEntity) {
-            station.coverageEntity.show = station.visible && station.coverage_visible !== false;
-        }
+        applyGroundStationVisuals(station);
         emitObjectStateChanged({ layerId, sourceId: layerId, reason: "visibility" });
         return;
     }
@@ -1243,6 +1281,7 @@ function removeGroundStationLayer(layerId) {
     }
     if (station.entity) viewer.entities.remove(station.entity);
     if (station.coverageEntity) viewer.entities.remove(station.coverageEntity);
+    if (station.coverageVolumeEntity) viewer.entities.remove(station.coverageVolumeEntity);
     groundStationLayers.delete(layerId);
     syncGroundStationVisibilityLinks();
     layerDisplayNameOverrides.delete(layerId);
@@ -1360,6 +1399,33 @@ function calculateGroundStationRadioRangeKm(station) {
     return Math.max(1, Math.min(5000, rangeKm));
 }
 
+function isGroundStationCoverageVolumeVisible() {
+    return viewer?.scene?.mode === Cesium.SceneMode.SCENE3D;
+}
+
+function getGroundStationCoverageHalfAngleRadians(station) {
+    const maskDeg = Number.isFinite(Number(station?.min_elevation_deg))
+        ? Number(station.min_elevation_deg)
+        : 10;
+    // Cesium measures the ellipsoid cone from the local +Z axis. Local +Z is
+    // the antenna zenith, therefore elevation 90° is 0° from that axis.
+    return Cesium.Math.toRadians(Math.max(0, Math.min(90, 90 - maskDeg)));
+}
+
+function getGroundStationUpOrientation(position) {
+    return Cesium.Transforms.headingPitchRollQuaternion(
+        position,
+        new Cesium.HeadingPitchRoll(0, 0, 0)
+    );
+}
+
+function refreshGroundStationCoveragePresentation() {
+    for (const station of groundStationLayers.values()) {
+        applyGroundStationVisuals(station);
+    }
+    viewer.scene?.requestRender?.();
+}
+
 function applyGroundStationVisuals(station) {
     if (!station || !station.entity) {
         return;
@@ -1374,8 +1440,11 @@ function applyGroundStationVisuals(station) {
     };
     station.entity.point = undefined;
 
+    station.radio_range_km = calculateGroundStationRadioRangeKm(station);
+    const coverageVisible = station.visible === true && station.coverage_visible !== false;
+    const showVolume = coverageVisible && isGroundStationCoverageVolumeVisible();
+
     if (station.coverageEntity?.ellipse) {
-        station.radio_range_km = calculateGroundStationRadioRangeKm(station);
         station.coverageEntity.ellipse.semiMajorAxis = station.radio_range_km * 1000;
         station.coverageEntity.ellipse.semiMinorAxis = station.radio_range_km * 1000;
         station.coverageEntity.ellipse.granularity = Cesium.Math.toRadians(0.25);
@@ -1389,13 +1458,29 @@ function applyGroundStationVisuals(station) {
         );
         station.coverageEntity.ellipse.material = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.11);
         station.coverageEntity.ellipse.outlineColor = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.74);
-        station.coverageEntity.show = station.visible === true && station.coverage_visible !== false;
+        // A map is a zenith projection of the local coverage volume. The
+        // circle is the useful, geographically correct 2D representation.
+        station.coverageEntity.show = coverageVisible && !showVolume;
+    }
+
+    if (station.coverageVolumeEntity?.ellipsoid) {
+        const rangeMeters = station.radio_range_km * 1000;
+        station.coverageVolumeEntity.ellipsoid.radii = new Cesium.Cartesian3(rangeMeters, rangeMeters, rangeMeters);
+        station.coverageVolumeEntity.ellipsoid.minimumCone = 0;
+        station.coverageVolumeEntity.ellipsoid.maximumCone = getGroundStationCoverageHalfAngleRadians(station);
+        station.coverageVolumeEntity.ellipsoid.material = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.09);
+        station.coverageVolumeEntity.ellipsoid.outlineColor = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.78);
+        station.coverageVolumeEntity.orientation = getGroundStationUpOrientation(station.coverageVolumeEntity.position.getValue(Cesium.JulianDate.now()));
+        // This is a spherical sector: range limits its radius and the mask
+        // clips directions below the accepted elevation. A valid pass is
+        // therefore inside it, and its rim is the visual elevation mask.
+        station.coverageVolumeEntity.show = showVolume;
     }
 }
 
 function clearGroundStationPreview() {
     if (!groundStationPreview) return;
-    for (const entity of [groundStationPreview.entity, groundStationPreview.coverageEntity]) {
+    for (const entity of [groundStationPreview.entity, groundStationPreview.coverageEntity, groundStationPreview.coverageVolumeEntity]) {
         if (entity) viewer.entities.remove(entity);
     }
     groundStationPreview = null;
@@ -1435,6 +1520,12 @@ function previewGroundStation(params = {}) {
                 id: "__ground-station-preview__-coverage",
                 position,
                 ellipse: { semiMajorAxis: 1, semiMinorAxis: 1, outline: true }
+            }),
+            coverageVolumeEntity: viewer.entities.add({
+                id: "__ground-station-preview__-coverage-volume",
+                position,
+                ellipsoid: { radii: new Cesium.Cartesian3(1, 1, 1), minimumCone: 0, maximumCone: Cesium.Math.PI_OVER_TWO, outline: true },
+                orientation: getGroundStationUpOrientation(position)
             })
         };
     }
@@ -1455,6 +1546,7 @@ function previewGroundStation(params = {}) {
     });
     groundStationPreview.entity.position = position;
     groundStationPreview.coverageEntity.position = position;
+    groundStationPreview.coverageVolumeEntity.position = position;
     groundStationPreview.entity.label.text = `PREVIEW · ${groundStationPreview.name}`;
     applyGroundStationVisuals(groundStationPreview);
     return { radio_range_km: groundStationPreview.radio_range_km };
@@ -1522,6 +1614,23 @@ function createGroundStationLayer(params = {}) {
             layerType: "GROUND_STATION"
         }
     });
+    const coverageVolumeEntity = viewer.entities.add({
+        id: `${stationId}-coverage-volume`,
+        position,
+        ellipsoid: {
+            radii: new Cesium.Cartesian3(1, 1, 1),
+            minimumCone: 0,
+            maximumCone: Cesium.Math.PI_OVER_TWO,
+            material: Cesium.Color.fromCssColorString(pointColor).withAlpha(0.09),
+            outline: true,
+            outlineColor: Cesium.Color.fromCssColorString(pointColor).withAlpha(0.78)
+        },
+        orientation: getGroundStationUpOrientation(position),
+        properties: {
+            orbitLayerId: stationId,
+            layerType: "GROUND_STATION"
+        }
+    });
 
     groundStationLayers.set(stationId, {
         id: stationId,
@@ -1544,7 +1653,8 @@ function createGroundStationLayer(params = {}) {
         monitor_satellite_ids: monitoredSatelliteIds,
         visible: true,
         entity: stationEntity,
-        coverageEntity
+        coverageEntity,
+        coverageVolumeEntity
     });
 
     applyGroundStationVisuals(groundStationLayers.get(stationId));
@@ -1619,10 +1729,24 @@ function updateGroundStationLayer(layerId, patch = {}) {
     if (station.coverageEntity) {
         station.coverageEntity.position = nextPosition;
     }
+    if (station.coverageVolumeEntity) {
+        station.coverageVolumeEntity.position = nextPosition;
+    }
 
     layerDisplayNameOverrides.set(layerId, station.name);
     applyGroundStationVisuals(station);
     syncGroundStationVisibilityLinks();
+    // A pass table is derived from the station contract, so never retain a
+    // calculation made with its previous mask/RF/location values.
+    cancelGroundStationPassAnalysis();
+    window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+        detail: {
+            error: "La configuración de la estación ha cambiado. Vuelve a analizar los pases.",
+            passes: [],
+            samples: [],
+            visibleNow: false
+        }
+    }));
     emitObjectStateChanged({ layerId, sourceId: layerId, reason: "configuration" });
     publishGroundStationsState();
     return true;
@@ -1935,6 +2059,7 @@ function setSimulationMode(mode) {
         return;
     }
 
+    cancelGroundStationPassAnalysis();
     simulationState.mode = normalized;
 
     if (normalized === SIMULATION_MODE_REALTIME) {
@@ -1975,6 +2100,7 @@ function setSimulationMode(mode) {
     simulationState.lastTickTimestamp = Date.now();
     applySimulationDateToViewer(getDisplayedSimulationDate());
     syncViewerClockPlayback();
+    refreshSatelliteOverlays(viewer);
     updateTopToolbarTime();
     refreshSimulationControlsUi();
 }
@@ -1999,6 +2125,7 @@ function applySimulationRange(startDate, endDate) {
     if (!setSimulationRange(simulationState, new Date(startMs), new Date(endMs))) {
         return false;
     }
+    cancelGroundStationPassAnalysis();
     simulationState.currentDate = new Date(clamp(displayedTimeMs, startMs, endMs));
     simulationState.rewind = false;
 
@@ -2013,6 +2140,7 @@ function applySimulationRange(startDate, endDate) {
     }
     applySimulationDateToViewer(simulationState.currentDate);
     syncViewerClockPlayback();
+    refreshSatelliteOverlays(viewer);
     refreshSimulationControlsUi();
     updateTopToolbarTime();
     return true;
@@ -2118,6 +2246,45 @@ function publishGroundStationsState() {
     }));
 }
 
+function cancelGroundStationPassAnalysis() {
+    groundStationAnalysisRequestSequence += 1;
+    if (groundStationAnalysisAbortController) {
+        groundStationAnalysisAbortController.abort();
+        groundStationAnalysisAbortController = null;
+    }
+}
+
+function groundStationAnalysisSignature(station) {
+    if (!station) return "";
+    return [
+        station.latitude_deg,
+        station.longitude_deg,
+        station.altitude_m,
+        station.min_elevation_deg,
+        station.frequency_mhz,
+        station.tx_power_dbm,
+        station.tx_gain_dbi,
+        station.rx_gain_dbi,
+        station.min_link_power_dbm
+    ].map((value) => Number(value)).join("|");
+}
+
+function isCurrentGroundStationPassAnalysis({ requestId, stationId, station, stationSignature, satelliteLayerId, satelliteId, analysisWindow }) {
+    if (requestId !== groundStationAnalysisRequestSequence) return false;
+    if (groundStationLayers.get(stationId) !== station) return false;
+    if (groundStationAnalysisSignature(station) !== stationSignature) return false;
+    if (getSatelliteSourceIdFromLayerId(satelliteLayerId) !== satelliteId) return false;
+
+    const currentWindow = getGroundStationAnalysisWindow();
+    if (currentWindow.source !== analysisWindow.source) return false;
+    // Range simulation has fixed endpoints, therefore its response must be
+    // discarded if the operator has changed either endpoint while it was in
+    // flight. Realtime deliberately advances while an analysis is running.
+    if (analysisWindow.source !== "simulation-range") return true;
+    return currentWindow.startDate.getTime() === analysisWindow.startDate.getTime()
+        && currentWindow.endDate.getTime() === analysisWindow.endDate.getTime();
+}
+
 async function analyzeGroundStationPasses(detail = {}) {
     const stationId = String(detail.stationId || "").trim();
     const satelliteLayerId = String(detail.satelliteId || "").trim();
@@ -2131,8 +2298,24 @@ async function analyzeGroundStationPasses(detail = {}) {
         window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", { detail: { error: "Selecciona una estación, satélite y máscara válidos.", passes: [] } }));
         return;
     }
-    const startDate = getDisplayedSimulationDate();
-    const endDate = new Date(startDate.getTime() + (24 * 3600 * 1000));
+    if (groundStationAnalysisAbortController) {
+        groundStationAnalysisAbortController.abort();
+    }
+    const requestId = ++groundStationAnalysisRequestSequence;
+    const abortController = new AbortController();
+    groundStationAnalysisAbortController = abortController;
+    const analysisWindow = getGroundStationAnalysisWindow();
+    const { startDate, endDate } = analysisWindow;
+    const stationSignature = groundStationAnalysisSignature(station);
+    const requestContext = {
+        requestId,
+        stationId,
+        station,
+        stationSignature,
+        satelliteLayerId,
+        satelliteId,
+        analysisWindow
+    };
     try {
         const query = new URLSearchParams({
             sat_id: satelliteId,
@@ -2140,17 +2323,24 @@ async function analyzeGroundStationPasses(detail = {}) {
             station_lon_deg: String(station.longitude_deg),
             station_height_m: String(station.altitude_m),
             min_elevation_deg: String(minElevationDeg),
+            max_range_km: String(calculateGroundStationRadioRangeKm(station)),
             start_time: startDate.toISOString(),
             end_time: endDate.toISOString(),
             step_seconds: "30"
         });
-        const response = await fetch(`/api/aos-los?${query}`);
+        const response = await fetch(`/api/aos-los?${query}`, { signal: abortController.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const result = await response.json();
+        if (!isCurrentGroundStationPassAnalysis(requestContext)) return;
         showGroundStationAnalysisVisuals(station, satelliteLayerId, minElevationDeg);
         const satelliteEntity = getCompositeLayerEntity(satelliteLayerId);
         const stationPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
-        const satellitePosition = satelliteEntity?.position?.getValue?.(viewer.clock.currentTime);
+        // Calculate the instantaneous link budget against the same canonical
+        // simulation clock that supplied the pass-analysis request.  It avoids
+        // a stale Cesium frame producing a range from a different instant.
+        const displayedDate = getDisplayedSimulationDate();
+        const displayedJulianDate = Cesium.JulianDate.fromDate(displayedDate);
+        const satellitePosition = satelliteEntity?.position?.getValue?.(displayedJulianDate);
         const rangeKm = satellitePosition ? Cesium.Cartesian3.distance(stationPosition, satellitePosition) / 1000 : Number.NaN;
         const currentElevation = satellitePosition
             ? computeStationElevationDeg(stationPosition, satellitePosition)
@@ -2160,11 +2350,32 @@ async function analyzeGroundStationPasses(detail = {}) {
             ? station.tx_power_dbm + station.tx_gain_dbi + station.rx_gain_dbi - pathLossDb
             : Number.NaN;
         window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
-            detail: { ...result, stationTimeZone: station.time_zone || "UTC", referenceFrame: "ITRF", rangeKm, linkBudgetDbm, visibleNow: Number.isFinite(currentElevation) ? currentElevation >= minElevationDeg : false }
+            detail: {
+                ...result,
+                stationTimeZone: station.time_zone || "UTC",
+                referenceFrame: String(result.reference_frame || "ITRF"),
+                timeScale: String(result.time_scale || "UTC"),
+                analysisWindow: {
+                    startTime: result.start_time || startDate.toISOString(),
+                    endTime: result.end_time || endDate.toISOString(),
+                    source: analysisWindow.source
+                },
+                analysisSelection: { stationId, satelliteLayerId },
+                rangeKm,
+                linkBudgetDbm,
+                visibleNow: Number.isFinite(currentElevation) && Number.isFinite(rangeKm)
+                    ? currentElevation >= minElevationDeg && rangeKm <= calculateGroundStationRadioRangeKm(station)
+                    : false
+            }
         }));
     } catch (error) {
+        if (error?.name === "AbortError" || !isCurrentGroundStationPassAnalysis(requestContext)) return;
         logger.warn("No se pudo calcular la visibilidad de la estación:", error);
         window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", { detail: { error: "No se pudieron calcular los pases.", passes: [] } }));
+    } finally {
+        if (requestId === groundStationAnalysisRequestSequence && groundStationAnalysisAbortController === abortController) {
+            groundStationAnalysisAbortController = null;
+        }
     }
 }
 
@@ -5277,6 +5488,7 @@ function setupPropagatedParametersInspector() {
     window.addEventListener("orbit:ground-stations-analyze", (event) => {
         void analyzeGroundStationPasses(event.detail || {});
     });
+    window.addEventListener("orbit:ground-stations-analysis-cancel", cancelGroundStationPassAnalysis);
 
     // A welcome action submitted while the catalogue is loading is queued by
     // React. Bind and publish `ready` only after the sidebar can restore the

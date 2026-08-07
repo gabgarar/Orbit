@@ -21,7 +21,9 @@ export function createGroundStationTelemetryService({ getPasses, getSatelliteSta
         let visible = 0; let bestElevation = null; let bestRange = null; let bestLink = null;
         for (const satellite of states) {
             const result = calculateElevationDegrees(station, satellite);
-            if (!result || result.elevationDeg < station.min_elevation_deg) continue;
+            const rfRangeKm = Number(station.radio_range_km);
+            const withinRfEnvelope = !Number.isFinite(rfRangeKm) || result?.rangeKm <= rfRangeKm;
+            if (!result || result.elevationDeg < station.min_elevation_deg || !withinRfEnvelope) continue;
             visible += 1;
             const link = calculateFreeSpacePathLossDb(station.frequency_mhz, result.rangeKm);
             if (bestElevation === null || result.elevationDeg > bestElevation) {

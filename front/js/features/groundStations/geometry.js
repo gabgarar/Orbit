@@ -7,7 +7,14 @@ export function calculateElevationDegrees(Cesium, stationCartesian, satelliteCar
         new Cesium.Cartesian3()
     );
     const normalizedLineOfSight = Cesium.Cartesian3.normalize(lineOfSight, new Cesium.Cartesian3());
-    const zenith = Cesium.Cartesian3.normalize(stationCartesian, new Cesium.Cartesian3());
+    // The visibility service on the backend uses the WGS-84 geodetic ENU
+    // frame. At non-equatorial latitudes the radial vector is not the local
+    // ellipsoid normal, so use Cesium's matching surface normal here rather
+    // than an Earth-centre approximation.
+    const zenith = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(
+        stationCartesian,
+        new Cesium.Cartesian3()
+    );
     const dot = Cesium.Math.clamp(Cesium.Cartesian3.dot(normalizedLineOfSight, zenith), -1, 1);
     return Cesium.Math.toDegrees(Math.asin(dot));
 }

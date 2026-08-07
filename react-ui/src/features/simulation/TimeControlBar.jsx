@@ -2,9 +2,19 @@ import { useEffect, useState } from "react";
 import { CalendarIcon, ChevronDownIcon } from "../../components/icons.jsx";
 
 const initialSimulation = { mode: "realtime", isPlaying: true, speed: 1, timelineStep: 0, timelineSteps: 1000, currentDate: new Date().toISOString(), startDate: new Date().toISOString(), endDate: new Date().toISOString() };
-const toDateTimeInput = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
-const timelineDateLabel = (value) => new Date(value).toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
-const timelineTimeLabel = (value) => new Date(value).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false });
+// ``datetime-local`` deliberately carries no offset. Treat its displayed
+// value as UTC so the editor, timeline, AOS/LOS table and chart all describe
+// the same instant, regardless of the operator's browser timezone.
+const toUtcDateTimeInput = (value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 16); };
+const fromUtcDateTimeInput = (value) => {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    const date = new Date(`${text.length === 16 ? `${text}:00` : text}Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+};
+const timelineDateLabel = (value) => new Date(value).toLocaleDateString("es-ES", { day: "2-digit", month: "short", timeZone: "UTC" });
+const timelineTimeLabel = (value) => new Date(value).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
+const timelineDateTimeLabel = (value) => new Date(value).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" });
 const classNames = (...classes) => classes.filter(Boolean).join(" ");
 const isManualOrbitDesignActive = () => window.__orbitManualOrbitDesignActive === true
     || document.documentElement.dataset.manualOrbitDesign === "true";
@@ -36,15 +46,27 @@ function buildTimelineMarks(startValue, endValue, count = 6) {
     return Array.from({ length: count }, (_, index) => ({ position: (index / (count - 1)) * 100, value: new Date(start + ((end - start) * index) / (count - 1)) }));
 }
 
+function getPassTimelineMarker(pass) {
+    const peakTime = new Date(pass?.max_elevation_time).getTime();
+    if (Number.isFinite(peakTime)) return { time: peakTime, label: "máxima elevación" };
+
+    const aosTime = new Date(pass?.aos).getTime();
+    const losTime = new Date(pass?.los).getTime();
+    if (Number.isFinite(aosTime) && Number.isFinite(losTime)) return { time: (aosTime + losTime) / 2, label: "punto medio" };
+    if (Number.isFinite(aosTime)) return { time: aosTime, label: "inicio del pase" };
+    return null;
+}
+
 export default function TimeControlBar() {
     const [collapsed, setCollapsed] = useState(false); const [simulation, setSimulation] = useState(initialSimulation); const [dockLeft, setDockLeft] = useState(null); const [dockHeight, setDockHeight] = useState(null); const [dockBottom, setDockBottom] = useState(null);
     const [speedMenuOpen, setSpeedMenuOpen] = useState(false); const [dateMenuOpen, setDateMenuOpen] = useState(false); const [designMode, setDesignMode] = useState(isManualOrbitDesignActive);
     const [accessMarks, setAccessMarks] = useState([]);
+    const [accessWindow, setAccessWindow] = useState(null);
     const sendAction = (type, value) => window.dispatchEvent(new CustomEvent("orbit:simulation-action", { detail: { type, value } }));
 
     useEffect(() => { const sync = (event) => setSimulation((current) => ({ ...current, ...(event.detail || {}) })); window.addEventListener("orbit:simulation-state", sync); return () => window.removeEventListener("orbit:simulation-state", sync); }, []);
     useEffect(() => { const sync = (event) => setDesignMode(event.detail?.active === true); window.addEventListener("orbit:manual-orbit-design-state", sync); return () => window.removeEventListener("orbit:manual-orbit-design-state", sync); }, []);
-    useEffect(() => { const sync = (event) => setAccessMarks(Array.isArray(event.detail?.passes) ? event.detail.passes : []); window.addEventListener("orbit:ground-stations-analysis-result", sync); return () => window.removeEventListener("orbit:ground-stations-analysis-result", sync); }, []);
+    useEffect(() => { const sync = (event) => { setAccessMarks(Array.isArray(event.detail?.passes) ? event.detail.passes : []); setAccessWindow(event.detail?.analysisWindow || null); }; window.addEventListener("orbit:ground-stations-analysis-result", sync); return () => window.removeEventListener("orbit:ground-stations-analysis-result", sync); }, []);
     useEffect(() => {
         const panel = document.getElementById("leftSatellitesPanel"); const infoPanel = document.getElementById("leftInfoPanel"); const rail = document.getElementById("leftSidebar"); const projectTimeFooter = document.getElementById("projectTimeFooter");
         const update = () => {
@@ -73,13 +95,22 @@ export default function TimeControlBar() {
     useEffect(() => { if (!isSimulated) setCollapsed(false); }, [isSimulated]);
 
     const marks = buildTimelineMarks(simulation.startDate, simulation.endDate);
+    const analysisRangeMatchesTimeline = (() => {
+        if (accessWindow?.source !== "simulation-range") return false;
+        const analysisStart = Date.parse(accessWindow.startTime); const analysisEnd = Date.parse(accessWindow.endTime);
+        const timelineStart = Date.parse(simulation.startDate); const timelineEnd = Date.parse(simulation.endDate);
+        return [analysisStart, analysisEnd, timelineStart, timelineEnd].every(Number.isFinite)
+            && Math.abs(analysisStart - timelineStart) < 1_000
+            && Math.abs(analysisEnd - timelineEnd) < 1_000;
+    })();
+    const timelinePassMarks = analysisRangeMatchesTimeline ? accessMarks : [];
     const progress = Math.max(0, Math.min(100, ((simulation.timelineStep || 0) / (simulation.timelineSteps || 1000)) * 100));
     const markerPositionClass = progress <= 3
         ? "is-start translate-x-0 after:left-[6px]"
         : progress >= 97
             ? "is-end -translate-x-full after:left-auto after:right-[6px]"
             : "-translate-x-1/2 after:left-1/2 after:-translate-x-1/2";
-    const updateRange = (field, value) => { if (!value) return; const next = { ...simulation, [field]: new Date(value).toISOString() }; setSimulation(next); sendAction("range", { startDate: next.startDate, endDate: next.endDate }); };
+    const updateRange = (field, value) => { const nextDate = fromUtcDateTimeInput(value); if (!nextDate) return; const next = { ...simulation, [field]: nextDate.toISOString() }; setSimulation(next); sendAction("range", { startDate: next.startDate, endDate: next.endDate }); };
 
     // Real time and Static deliberately leave only the compact time selector
     // visible. The full timeline is reserved for an active simulation range.
@@ -119,8 +150,8 @@ export default function TimeControlBar() {
                         <CalendarIcon />
                     </button>
                     {dateMenuOpen && !simulation.oemDomainActive && <div className="absolute right-0 bottom-[calc(100%+7px)] z-[3] grid w-[238px] gap-2 rounded-[8px] border border-[#315178] bg-[#0c1728] p-[10px] shadow-[0_12px_28px_rgba(0,0,0,.45)]" role="dialog" aria-label="Seleccionar rango temporal">
-                        <label className="grid gap-[5px] text-[10px] leading-none font-bold text-[#aebed5]">Inicio<input className="h-[30px] w-full box-border rounded-[6px] border border-[#233957] bg-[#091321] px-[6px] font-[inherit] text-[#dce8fb] [color-scheme:dark]" type="datetime-local" value={toDateTimeInput(simulation.startDate)} onChange={(event) => updateRange("startDate", event.target.value)} /></label>
-                        <label className="grid gap-[5px] text-[10px] leading-none font-bold text-[#aebed5]">Fin<input className="h-[30px] w-full box-border rounded-[6px] border border-[#233957] bg-[#091321] px-[6px] font-[inherit] text-[#dce8fb] [color-scheme:dark]" type="datetime-local" value={toDateTimeInput(simulation.endDate)} onChange={(event) => updateRange("endDate", event.target.value)} /></label>
+                        <label className="grid gap-[5px] text-[10px] leading-none font-bold text-[#aebed5]">Inicio (UTC)<input className="h-[30px] w-full box-border rounded-[6px] border border-[#233957] bg-[#091321] px-[6px] font-[inherit] text-[#dce8fb] [color-scheme:dark]" type="datetime-local" value={toUtcDateTimeInput(simulation.startDate)} onChange={(event) => updateRange("startDate", event.target.value)} /></label>
+                        <label className="grid gap-[5px] text-[10px] leading-none font-bold text-[#aebed5]">Fin (UTC)<input className="h-[30px] w-full box-border rounded-[6px] border border-[#233957] bg-[#091321] px-[6px] font-[inherit] text-[#dce8fb] [color-scheme:dark]" type="datetime-local" value={toUtcDateTimeInput(simulation.endDate)} onChange={(event) => updateRange("endDate", event.target.value)} /></label>
                     </div>}
                 </div>
             </div>
@@ -134,7 +165,7 @@ export default function TimeControlBar() {
                         )}
                         style={{ left: progress + "%" }}
                     >
-                        {timelineTimeLabel(simulation.currentDate)}
+                        {timelineTimeLabel(simulation.currentDate)} UTC
                     </output>
                     <input
                         className="absolute top-[20px] left-0 z-[3] h-3 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-[4px] [&::-webkit-slider-runnable-track]:bg-[linear-gradient(to_right,#4779ff_0_var(--timeline-progress),#253a57_var(--timeline-progress)_100%)] [&::-webkit-slider-runnable-track]:shadow-[inset_0_0_0_1px_rgba(113,141,181,.18)] [&::-webkit-slider-thumb]:mt-[-5px] [&::-webkit-slider-thumb]:size-[13px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[#6f98ff] [&::-webkit-slider-thumb]:bg-[#2860ed] [&::-webkit-slider-thumb]:shadow-[0_0_0_3px_rgba(54,99,239,.2)] [&::-moz-range-track]:h-[3px] [&::-moz-range-track]:rounded-[4px] [&::-moz-range-track]:bg-[#253a57] [&::-moz-range-track]:shadow-[inset_0_0_0_1px_rgba(113,141,181,.18)] [&::-moz-range-progress]:h-[3px] [&::-moz-range-progress]:rounded-[4px] [&::-moz-range-progress]:bg-[#4779ff] [&::-moz-range-thumb]:size-[10px] [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-[#6f98ff] [&::-moz-range-thumb]:bg-[#2860ed] [&::-moz-range-thumb]:shadow-[0_0_0_3px_rgba(54,99,239,.2)]"
@@ -147,12 +178,14 @@ export default function TimeControlBar() {
                         onChange={(event) => sendAction("timeline", Number(event.target.value))}
                     />
                     <div className="pointer-events-none absolute top-[20px] right-0 left-0 z-[2] h-[33px]" aria-hidden="true">
-                        {accessMarks.map((pass, index) => [pass.aos, pass.los].map((value, boundary) => {
-                            const start = new Date(simulation.startDate).getTime(); const end = new Date(simulation.endDate).getTime(); const time = new Date(value).getTime();
-                            const position = Number.isFinite(time) && end > start ? ((time - start) / (end - start)) * 100 : -1;
+                        {timelinePassMarks.map((pass, index) => {
+                            const marker = getPassTimelineMarker(pass);
+                            const start = new Date(simulation.startDate).getTime(); const end = new Date(simulation.endDate).getTime();
+                            const position = marker && end > start ? ((marker.time - start) / (end - start)) * 100 : -1;
                             if (position < 0 || position > 100) return null;
-                            return <i key={`${index}-${boundary}-${value}`} title={boundary === 0 ? "AOS" : "LOS"} className="absolute top-[-5px] h-[13px] w-[2px] rounded bg-[#67ed9d] shadow-[0_0_7px_rgba(103,237,157,.8)]" style={{ left: `${position}%` }} />;
-                        }))}
+                            const timestamp = timelineDateTimeLabel(marker.time);
+                            return <i key={`${index}-${marker.time}`} role="img" aria-label={`Pase ${index + 1}: ${marker.label}, ${timestamp} UTC`} title={`Pase ${index + 1} · ${marker.label} · ${timestamp} UTC`} className="pointer-events-auto absolute top-[-5px] h-[13px] w-[2px] cursor-help rounded bg-[#67ed9d] shadow-[0_0_7px_rgba(103,237,157,.8)]" style={{ left: `${position}%` }} />;
+                        })}
                         {Array.from({ length: 21 }, (_, index) => {
                             const mark = Number.isInteger(index / 4) ? marks[index / 4] : null;
                             const labelPositionClass = index === 0 ? "translate-x-0 text-left" : index === 20 ? "-translate-x-full text-right" : "-translate-x-1/2 text-center";

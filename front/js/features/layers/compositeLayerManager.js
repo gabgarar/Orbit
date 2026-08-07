@@ -26,6 +26,7 @@ export function createCompositeLayerManager({ satellites, groundStations, duplic
             station.visible = visible === true;
             station.entity && (station.entity.show = station.visible);
             station.coverageEntity && (station.coverageEntity.show = station.visible && station.coverage_visible !== false);
+            station.coverageVolumeEntity && (station.coverageVolumeEntity.show = station.visible && station.coverage_visible !== false);
             return;
         }
         satellites.setVisible(getSatelliteSourceId(id), visible);

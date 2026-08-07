@@ -86,6 +86,18 @@ def test_ephemeris_contains_bounded_timestamped_points_and_is_cached():
         runtime.build_ephemeris("ISS", FakePropagator(), start, start, 0)
 
 
+def test_constellation_reload_discards_ephemerides_for_the_previous_element_set(monkeypatch):
+    runtime = OrbitRuntime()
+    runtime._ephemeris_cache.set("old-tle", {"stale": True})
+    monkeypatch.setattr("orbit_api.application.orbit_runtime.load_system_config", lambda: ({}, {"satellites_catalog_file": "catalog.json"}))
+    monkeypatch.setattr("orbit_api.application.orbit_runtime.load_all_tles_from_config", lambda _path: [("ISS", "line1", "line2")])
+    monkeypatch.setattr(runtime._propagator_registry, "create", lambda *_args: FakePropagator())
+
+    runtime.load_constellation()
+
+    assert runtime._ephemeris_cache.get("old-tle") is None
+
+
 def test_ephemeris_cache_key_includes_the_versioned_eop_snapshot():
     provider = MutableEopProvider()
     runtime = OrbitRuntime(FrameTransformService(provider))

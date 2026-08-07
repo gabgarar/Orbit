@@ -1,6 +1,7 @@
 """ITRF/WGS-84 geometry helpers used by the ground-station AOS/LOS service."""
 
 import math
+from collections.abc import Callable
 
 
 WGS84_SEMI_MAJOR_AXIS_M = 6_378_137.0
@@ -36,18 +37,51 @@ def elevation_degrees(
     return math.degrees(math.atan2(up, horizontal))
 
 
-def extract_passes(samples: list[dict], minimum_elevation_deg: float) -> list[dict]:
-    """Convert elevation samples into AOS/LOS windows."""
+def slant_range_km(
+    station_latitude_deg: float,
+    station_longitude_deg: float,
+    satellite_itrf_m: tuple[float, float, float],
+    station_height_m: float = 0.0,
+) -> float:
+    """Return geometric station-to-satellite range in kilometres."""
+    station_x, station_y, station_z = _itrf_from_geodetic(
+        station_latitude_deg,
+        station_longitude_deg,
+        station_height_m,
+    )
+    delta_x = satellite_itrf_m[0] - station_x
+    delta_y = satellite_itrf_m[1] - station_y
+    delta_z = satellite_itrf_m[2] - station_z
+    return math.sqrt((delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z)) / 1_000.0
+
+
+def extract_passes(
+    samples: list[dict],
+    minimum_elevation_deg: float,
+    *,
+    refine_transition: Callable[[dict, dict], str | None] | None = None,
+) -> list[dict]:
+    """Convert visibility samples into AOS/LOS windows.
+
+    ``refine_transition`` may provide the physical mask/RF crossing between
+    two adjacent samples.  Keeping the coarse samples in the response makes
+    plots inexpensive, while the pass table is no longer displaced to the
+    next 30-second sample merely because the transition happened in between.
+    """
     passes: list[dict] = []
     active_pass: dict | None = None
+    previous_sample: dict | None = None
 
     for sample in samples:
         elevation = float(sample.get("elevation_deg") or -90.0)
         sample_time = sample.get("time")
-        if elevation >= minimum_elevation_deg:
+        is_visible = bool(sample.get("visible")) if "visible" in sample else elevation >= minimum_elevation_deg
+        if is_visible:
             if active_pass is None:
+                previous_visible = bool(previous_sample.get("visible")) if previous_sample and "visible" in previous_sample else False
+                aos = refine_transition(previous_sample, sample) if refine_transition and previous_sample and not previous_visible else None
                 active_pass = {
-                    "aos": sample_time,
+                    "aos": aos or sample_time,
                     "los": sample_time,
                     "max_elevation_deg": elevation,
                     "max_elevation_time": sample_time,
@@ -57,9 +91,13 @@ def extract_passes(samples: list[dict], minimum_elevation_deg: float) -> list[di
                 active_pass["max_elevation_time"] = sample_time
             active_pass["los"] = sample_time
         elif active_pass is not None:
-            active_pass["los"] = sample_time
+            los = refine_transition(previous_sample, sample) if refine_transition and previous_sample else None
+            # The previous visible vertex is a conservative fallback.  Never
+            # publish the first *invisible* sample as LOS.
+            active_pass["los"] = los or previous_sample.get("time") or active_pass["los"]
             passes.append(active_pass)
             active_pass = None
+        previous_sample = sample
 
     if active_pass is not None:
         passes.append(active_pass)

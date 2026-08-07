@@ -361,6 +361,9 @@ class StationInput(BaseModel):
     lon_deg: float = Field(ge=-180, le=180)
     height_m: float = Field(default=0.0, ge=-1_000, le=100_000)
     min_elevation_deg: float = Field(default=10.0, ge=0, le=90)
+    # Optional RF slant-range gate. Keeping it in the station contract makes
+    # AOS/LOS agree with the visual coverage volume and live link geometry.
+    max_range_km: float | None = Field(default=None, gt=0, le=50_000)
 
 
 class EphemerisRequest(TleSourceRequest):

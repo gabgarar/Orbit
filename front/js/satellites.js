@@ -235,6 +235,16 @@ const activeLayerSatelliteIds = new Set();
 const tleBySatelliteId = new Map();
 const catalogEntryMetaBySatelliteId = new Map();
 const oemEphemerisTrackById = new Map();
+// Catalogue paths received through the WebSocket are rolling, real-time
+// previews. A simulated range needs its own timestamped ITRF ephemeris; it
+// must never reinterpret a rolling polyline as though it had been generated
+// at a different date.
+const rangeEphemerisCache = new Map();
+const rangeEphemerisRequests = new Map();
+const RANGE_EPHEMERIS_CACHE_LIMIT = 24;
+const RANGE_EPHEMERIS_MAX_POINTS = 12_000;
+let rangeEphemerisRevision = 0;
+const STATIC_EPHEMERIS_MIN_HORIZON_SECONDS = 24 * 60 * 60;
 // Manual tracks are generated locally from a user-authored definition. They
 // deliberately do not enter the remote catalogue or its WebSocket stream;
 // their sampled SGP4 ephemeris is updated by the render loop instead.
@@ -503,6 +513,162 @@ function isRangeSimulationModeActive() {
     return Boolean(simulationCtx && simulationCtx.mode === "range");
 }
 
+function getExactTimelineEphemerisWindow(id, simulationCtx) {
+    const rangeStartMs = simulationCtx?.rangeStart?.getTime?.();
+    const rangeEndMs = simulationCtx?.rangeEnd?.getTime?.();
+    if (simulationCtx?.mode === "range" && Number.isFinite(rangeStartMs) && Number.isFinite(rangeEndMs) && rangeEndMs > rangeStartMs) {
+        return { kind: "range", startMs: rangeStartMs, endMs: rangeEndMs };
+    }
+
+    if (simulationCtx?.mode === "static") {
+        const startMs = simulationCtx.date?.getTime?.();
+        if (!Number.isFinite(startMs)) return null;
+        const configuredSeconds = Number(getPropagationHoursForSatellite(id)) * 3600;
+        const horizonSeconds = Math.max(
+            STATIC_EPHEMERIS_MIN_HORIZON_SECONDS,
+            Number.isFinite(configuredSeconds) && configuredSeconds > 0 ? configuredSeconds : 0
+        );
+        return { kind: "static", startMs, endMs: startMs + (horizonSeconds * 1000) };
+    }
+
+    return null;
+}
+
+function rangeEphemerisKey(id, simulationCtx) {
+    const window = getExactTimelineEphemerisWindow(id, simulationCtx);
+    return window ? `${rangeEphemerisRevision}|${id}|${window.kind}|${window.startMs}|${window.endMs}` : null;
+}
+
+function rangeEphemerisStepSeconds(ephemerisWindow) {
+    const spanSeconds = (ephemerisWindow?.endMs - ephemerisWindow?.startMs) / 1000;
+    if (!Number.isFinite(spanSeconds) || spanSeconds <= 0) return 30;
+    // Keep the normal 30 s resolution for one-day operations (the same
+    // resolution as AOS/LOS), while bounding long exploratory ranges.
+    return Math.max(30, Math.min(3600, Math.ceil(spanSeconds / RANGE_EPHEMERIS_MAX_POINTS)));
+}
+
+function parseRangeEphemeris(payload, key) {
+    const points = Array.isArray(payload?.points) ? payload.points : [];
+    const parsed = points.map((point) => {
+        const position = point?.position || {};
+        const timeMs = Date.parse(point?.time || point?.epoch || "");
+        const x = Number(position.x); const y = Number(position.y); const z = Number(position.z);
+        return Number.isFinite(timeMs) && Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)
+            ? { timeMs, x, y, z }
+            : null;
+    }).filter(Boolean);
+    if (parsed.length < 2) return null;
+
+    for (let index = 1; index < parsed.length; index += 1) {
+        if (parsed[index].timeMs <= parsed[index - 1].timeMs) return null;
+    }
+
+    return {
+        key,
+        startMs: parsed[0].timeMs,
+        endMs: parsed.at(-1).timeMs,
+        orbit: parsed.map(({ x, y, z }) => ({ x, y, z })),
+        sampleTimesMs: parsed.map((point) => point.timeMs),
+        referenceFrame: String(payload?.reference_frame || "ITRF")
+    };
+}
+
+function cacheRangeEphemeris(key, ephemeris) {
+    rangeEphemerisCache.delete(key);
+    rangeEphemerisCache.set(key, ephemeris);
+    while (rangeEphemerisCache.size > RANGE_EPHEMERIS_CACHE_LIMIT) {
+        rangeEphemerisCache.delete(rangeEphemerisCache.keys().next().value);
+    }
+}
+
+function invalidateRangeEphemerides() {
+    // A catalogue refresh can replace a TLE under the same object name. Both
+    // the browser cache and in-flight responses must then become ineligible;
+    // otherwise the 3D path could belong to the previous element set while
+    // AOS/LOS uses the newly loaded propagator.
+    rangeEphemerisRevision += 1;
+    rangeEphemerisCache.clear();
+    for (const state of Object.values(satelliteState)) {
+        if (!state) continue;
+        state.rangeEphemeris = null;
+        state.rangeEphemerisStartMs = null;
+        state.rangeEphemerisEndMs = null;
+        state.awaitingRangeEphemeris = false;
+    }
+}
+
+function applyRangeEphemerisToState(viewer, id, state, ephemeris) {
+    state.rangeEphemeris = ephemeris;
+    state.rangeEphemerisStartMs = ephemeris.startMs;
+    state.rangeEphemerisEndMs = ephemeris.endMs;
+    state.awaitingRangeEphemeris = false;
+    state.lastStateReferenceFrame = normalizeReferenceFrame(ephemeris.referenceFrame) || "ITRF";
+    renderFutureOrbitForState(viewer, id, state, state.lastOrbitPayload);
+}
+
+function requestRangeEphemeris(viewer, id, state, simulationCtx) {
+    const ephemerisWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
+    const key = rangeEphemerisKey(id, simulationCtx);
+    if (!key || !ephemerisWindow || isLocalEphemerisTrack(id)) return Promise.resolve(null);
+    if (state.rangeEphemeris?.key === key) return Promise.resolve(state.rangeEphemeris);
+
+    const cached = rangeEphemerisCache.get(key);
+    if (cached) {
+        applyRangeEphemerisToState(viewer, id, state, cached);
+        return Promise.resolve(cached);
+    }
+
+    const pending = rangeEphemerisRequests.get(key);
+    if (pending) return pending;
+
+    const startTime = new Date(ephemerisWindow.startMs).toISOString();
+    const endTime = new Date(ephemerisWindow.endMs).toISOString();
+    const request = fetch("/api/ephemeris", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+            sat_id: id,
+            start_time: startTime,
+            end_time: endTime,
+            step_seconds: rangeEphemerisStepSeconds(ephemerisWindow),
+            include_velocity: false
+        })
+    }).then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const ephemeris = parseRangeEphemeris(await response.json(), key);
+        if (!ephemeris) throw new Error("La efeméride de simulación no contiene muestras ITRF válidas.");
+        cacheRangeEphemeris(key, ephemeris);
+        const currentContext = resolveSimulationTimelineContext();
+        if (rangeEphemerisKey(id, currentContext) === key && satelliteState[id] === state) {
+            applyRangeEphemerisToState(viewer, id, state, ephemeris);
+        }
+        return ephemeris;
+    }).catch((error) => {
+        // Do not fall back to a retimed WebSocket orbit: an absent line is
+        // safer than showing a state from the wrong physical instant.
+        if (satelliteState[id] === state && rangeEphemerisKey(id, resolveSimulationTimelineContext()) === key) {
+            state.awaitingRangeEphemeris = true;
+            state.rangeEphemerisErrorKey = key;
+        }
+        logger.warn(`No se pudo cargar la efeméride simulada de ${id}:`, error);
+        return null;
+    }).finally(() => rangeEphemerisRequests.delete(key));
+
+    rangeEphemerisRequests.set(key, request);
+    return request;
+}
+
+function invalidateRetimedRangeOrbit(viewer, state) {
+    state.awaitingRangeEphemeris = true;
+    state.simOrbitPositions = [];
+    state.simOrbitSampleTimesMs = null;
+    if (state.orbitEntity) {
+        viewer.entities.remove(state.orbitEntity);
+        state.orbitEntity = null;
+    }
+    remove2DOverlays(viewer, state);
+}
+
 function clipOrbitBySimulationRange(state, orbitPoints) {
     const simulationCtx = resolveSimulationTimelineContext();
     if (!simulationCtx || simulationCtx.mode !== "range") {
@@ -581,8 +747,8 @@ function sampleOrbitPositionForDate(state, simulationDate) {
 }
 
 function hasValidSimulationTrackWindow(state) {
-    const startMs = Number(state?.simTrackStartMs);
-    const endMs = Number(state?.simTrackEndMs);
+    const startMs = Number(state?.rangeEphemerisStartMs ?? state?.simTrackStartMs);
+    const endMs = Number(state?.rangeEphemerisEndMs ?? state?.simTrackEndMs);
     return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs;
 }
 
@@ -594,8 +760,8 @@ function isOutsideSimulationTrackWindow(state, simulationDate) {
     if (!Number.isFinite(simMs)) {
         return false;
     }
-    const startMs = Number(state.simTrackStartMs);
-    const endMs = Number(state.simTrackEndMs);
+    const startMs = Number(state.rangeEphemerisStartMs ?? state.simTrackStartMs);
+    const endMs = Number(state.rangeEphemerisEndMs ?? state.simTrackEndMs);
     return simMs < startMs || simMs > endMs;
 }
 
@@ -1321,6 +1487,11 @@ function startSmoothUpdate(viewer) {
             if (!state.entity) continue;
             if (!state.entity.show && !state.isOutOfTimeVisualState) continue;
 
+            if (useSimulationOrbit && state.awaitingRangeEphemeris) {
+                applyOutOfTimeVisualState(id, state, true);
+                continue;
+            }
+
             const outsideTrackWindow = useSimulationOrbit && isOutsideSimulationTrackWindow(state, simulationCtx?.date);
             applyOutOfTimeVisualState(id, state, outsideTrackWindow);
 
@@ -1797,6 +1968,7 @@ export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.json
 export async function refreshSatelliteCatalog(catalogUrl = "/config/catalog.json") {
     // Actualiza la URL del catálogo y lo recarga. También reaplica subscripciones WS actuales.
     lastCatalogUrl = catalogUrl || lastCatalogUrl;
+    invalidateRangeEphemerides();
     catalogSatelliteIds.clear();
     tleBySatelliteId.clear();
     catalogEntryMetaBySatelliteId.clear();
@@ -2190,6 +2362,33 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         return;
     }
 
+    const simulationCtx = resolveSimulationTimelineContext();
+    const rangeKey = rangeEphemerisKey(id, simulationCtx);
+    const exactTimelineWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
+    const activeRangeEphemeris = rangeKey && state.rangeEphemeris?.key === rangeKey
+        ? state.rangeEphemeris
+        : null;
+    if (exactTimelineWindow && !isLocalEphemerisTrack(id)) {
+        if (!activeRangeEphemeris) {
+            invalidateRetimedRangeOrbit(viewer, state);
+            void requestRangeEphemeris(viewer, id, state, simulationCtx);
+            return;
+        }
+        // This payload has an explicit UTC timestamp for every ITRF vertex.
+        // It takes precedence over the rolling WebSocket preview in range or
+        // static simulation, so a path and an AOS/LOS computation describe
+        // the same physical state history.
+        orbitPayload = {
+            ...(orbitPayload || {}),
+            orbit: activeRangeEphemeris.orbit,
+            sampleTimesMs: activeRangeEphemeris.sampleTimesMs,
+            orbit_start_time: new Date(activeRangeEphemeris.startMs).toISOString(),
+            orbit_end_time: new Date(activeRangeEphemeris.endMs).toISOString()
+        };
+    } else {
+        state.awaitingRangeEphemeris = false;
+    }
+
     const orbit = orbitPayload?.orbit;
     if (!Array.isArray(orbit) || orbit.length < 2) {
         if (state.orbitEntity) {
@@ -2208,13 +2407,17 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         sourceFutureOrbitHours = Number.isFinite(fallbackHours) && fallbackHours > 0 ? fallbackHours : 12;
     }
 
-    const horizonClippedOrbit = clipFutureOrbitByRequestedHorizon(id, orbit);
+    // The selected simulation range is the operational horizon. Do not crop
+    // it again with the real-time preview preference or the last pass in the
+    // visible range could disappear from the scene.
+    const horizonClippedOrbit = simulationCtx?.mode === "range"
+        ? orbit
+        : clipFutureOrbitByRequestedHorizon(id, orbit);
     const effectiveHorizonHoursRaw = Number(getPropagationHoursForSatellite(id));
     const effectiveHorizonHours = Number.isFinite(effectiveHorizonHoursRaw) && effectiveHorizonHoursRaw > 0
         ? effectiveHorizonHoursRaw
         : (Number.isFinite(sourceFutureOrbitHours) && sourceFutureOrbitHours > 0 ? sourceFutureOrbitHours : 12);
 
-    const simulationCtx = resolveSimulationTimelineContext();
     const isOutOfTimeInRange = Boolean(
         simulationCtx
         && simulationCtx.mode === "range"
@@ -2231,33 +2434,33 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         return;
     }
 
-    const hasRangeWindow = Boolean(
-        simulationCtx
-        && simulationCtx.mode === "range"
-        && simulationCtx.rangeStart
-        && simulationCtx.rangeEnd
-        && simulationCtx.rangeEnd.getTime() > simulationCtx.rangeStart.getTime()
-    );
-
     state.simOrbitPositions = toCartesianArray(horizonClippedOrbit);
-    const sourceSampleTimes = Array.isArray(state.simTrackSampleTimesMs)
-        ? state.simTrackSampleTimesMs
+    const payloadSampleTimes = Array.isArray(orbitPayload?.sampleTimesMs)
+        ? orbitPayload.sampleTimesMs
         : null;
-    // OEM samples can be irregularly spaced. Preserve their real timestamps
-    // so both rendering and simulated telemetry interpolate the same track.
+    const sourceSampleTimes = payloadSampleTimes
+        || (isLocalEphemerisTrack(id) && Array.isArray(state.simTrackSampleTimesMs)
+            ? state.simTrackSampleTimesMs
+            : null);
+    // Preserve physical timestamps from exact range/static ephemerides and
+    // imported OEM/manual tracks. A plain WebSocket preview has no per-point
+    // epoch and therefore remains a realtime-only visual aid.
     state.simOrbitSampleTimesMs = sourceSampleTimes && sourceSampleTimes.length === orbit.length
-        ? sourceSampleTimes.slice(0, horizonClippedOrbit.length)
+        ? sourceSampleTimes.slice(0, horizonClippedOrbit.length).map(Number)
         : null;
-    if (hasRangeWindow) {
-        const rangeStartMs = simulationCtx.rangeStart.getTime();
-        const rangeEndMs = simulationCtx.rangeEnd.getTime();
-        const spanSeconds = Math.max(1, (rangeEndMs - rangeStartMs) / 1000);
-        // En simulacion por rango, la orbita se mapea al tramo [inicio, fin].
-        state.simOrbitReferenceMs = rangeStartMs;
-        state.simOrbitHorizonSeconds = spanSeconds;
+    if (state.simOrbitSampleTimesMs?.length === horizonClippedOrbit.length) {
+        state.simOrbitReferenceMs = state.simOrbitSampleTimesMs[0];
+        state.simOrbitHorizonSeconds = Math.max(1, (state.simOrbitSampleTimesMs.at(-1) - state.simOrbitReferenceMs) / 1000);
     } else {
-        state.simOrbitReferenceMs = Date.now();
-        state.simOrbitHorizonSeconds = Math.max(1, effectiveHorizonHours * 3600);
+        const orbitStartMs = Date.parse(orbitPayload?.orbit_start_time || "");
+        const orbitEndMs = Date.parse(orbitPayload?.orbit_end_time || "");
+        if (Number.isFinite(orbitStartMs) && Number.isFinite(orbitEndMs) && orbitEndMs > orbitStartMs) {
+            state.simOrbitReferenceMs = orbitStartMs;
+            state.simOrbitHorizonSeconds = Math.max(1, (orbitEndMs - orbitStartMs) / 1000);
+        } else {
+            state.simOrbitReferenceMs = Date.now();
+            state.simOrbitHorizonSeconds = Math.max(1, effectiveHorizonHours * 3600);
+        }
     }
 
     const futureOrbitVisible = shouldShowFutureOrbit(id);

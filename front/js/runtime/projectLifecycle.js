@@ -31,7 +31,7 @@ export function createProjectLifecycle(deps) {
             celestialBodies: getCelestialBodies(),
             layerNames: Object.fromEntries(getLayerNameOverrides()),
             layerTree: getObjectSidebar()?.getProjectTree?.(),
-            groundStations: [...getGroundStationLayers().values()].map(({ entity: _entity, coverageEntity: _coverageEntity, ...station }) => station),
+            groundStations: [...getGroundStationLayers().values()].map(({ entity: _entity, coverageEntity: _coverageEntity, coverageVolumeEntity: _coverageVolumeEntity, ...station }) => station),
             simulation: {
                 mode: simulation.mode,
                 startDate: simulation.startDate,

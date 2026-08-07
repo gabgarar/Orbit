@@ -322,6 +322,10 @@ class OrbitRuntime:
             self._propagators, self._propagators_by_name, self._system_config = props, by_name, system_config
             self._orbit_point_cache.clear(); self._orbit_cache_payload = []; self._orbit_cache_key = None
             self._orbit_cache_valid_until = datetime.datetime.min.replace(tzinfo=datetime.UTC)
+            # The name of a catalogue entry is stable while its TLE is not.
+            # Cached ephemerides are keyed by name, so they must be discarded
+            # when a reload swaps an element set under the same identifier.
+            self._ephemeris_cache.clear()
         print(f"Constellation ready: {len(props)} valid, {invalid} invalid")
 
     def satellite_count(self) -> int:

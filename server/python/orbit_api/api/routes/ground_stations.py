@@ -6,7 +6,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, Query
 
 from orbit_api.domain.requests import AosLosRequest, StationInput
-from orbit_api.ground_stations.visibility import elevation_degrees, extract_passes
+from orbit_api.ground_stations.visibility import elevation_degrees, extract_passes, slant_range_km
 from orbit_api.timekeeping import utc_now
 
 
@@ -17,8 +17,7 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
     def calculate_access_windows(payload: AosLosRequest) -> dict:
         name, propagator = resolve_propagator(payload.sat_id, payload.line1, payload.line2)
         ephemeris = build_ephemeris(name, propagator, payload.start_time, payload.end_time, payload.step_seconds, False)
-        samples = []
-        for point in ephemeris["points"]:
+        def visibility_sample(point: dict) -> dict:
             position = point.get("position") or {}
             elevation = elevation_degrees(
                 payload.station.lat_deg,
@@ -26,14 +25,80 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
                 (float(position.get("x") or 0), float(position.get("y") or 0), float(position.get("z") or 0)),
                 payload.station.height_m,
             )
-            samples.append({"time": point.get("time"), "elevation_deg": elevation, "visible": elevation >= payload.station.min_elevation_deg})
+            range_km = slant_range_km(
+                payload.station.lat_deg,
+                payload.station.lon_deg,
+                (float(position.get("x") or 0), float(position.get("y") or 0), float(position.get("z") or 0)),
+                payload.station.height_m,
+            )
+            within_rf_envelope = (
+                payload.station.max_range_km is None
+                or range_km <= payload.station.max_range_km
+            )
+            return {
+                "time": point.get("time"),
+                "elevation_deg": elevation,
+                "range_km": range_km,
+                "visible": elevation >= payload.station.min_elevation_deg and within_rf_envelope,
+            }
+
+        def refine_visibility_transition(before: dict, after: dict) -> str | None:
+            """Locate the mask/RF crossing between two coarse samples.
+
+            The visible predicate is evaluated again from the same propagator
+            and ITRF geometry used for the coarse ephemeris. This keeps AOS
+            and LOS physically tied to the displayed station contract instead
+            of rounding them to the nearest 30-second vertex.
+            """
+            try:
+                lower = datetime.datetime.fromisoformat(str(before.get("time") or "").replace("Z", "+00:00"))
+                upper = datetime.datetime.fromisoformat(str(after.get("time") or "").replace("Z", "+00:00"))
+                lower = ensure_utc(lower)
+                upper = ensure_utc(upper)
+            except (TypeError, ValueError):
+                return None
+            if upper <= lower:
+                return None
+
+            lower_visible = bool(before.get("visible"))
+            if lower_visible == bool(after.get("visible")):
+                return None
+
+            # 30 s / 2^6 is below 0.5 s. The loop is also safe if a client
+            # chooses a coarser accepted step for a long exploratory range.
+            for _ in range(12):
+                if (upper - lower).total_seconds() <= 0.5:
+                    break
+                middle = lower + ((upper - lower) / 2)
+                refined = build_ephemeris(name, propagator, middle, middle, 1.0, False)
+                point = (refined.get("points") or [None])[0]
+                if not point:
+                    return None
+                if bool(visibility_sample(point).get("visible")) == lower_visible:
+                    lower = middle
+                else:
+                    upper = middle
+
+            return (lower + ((upper - lower) / 2)).isoformat()
+
+        samples = [visibility_sample(point) for point in ephemeris["points"]]
         return {
             "satellite": name,
             "station": payload.station.model_dump(),
             "start_time": ensure_utc(payload.start_time).isoformat(),
             "end_time": ensure_utc(payload.end_time).isoformat(),
+            # Access geometry is evaluated from the renderer ephemeris, not
+            # from the propagator's native inertial state. Publish that
+            # contract so every consumer can prove which frame and transport
+            # time scale fed its AOS/LOS values.
+            "reference_frame": str(ephemeris.get("reference_frame") or "ITRF"),
+            "time_scale": str(ephemeris.get("transport_time_scale") or ephemeris.get("time_scale") or "UTC"),
             "step_seconds": payload.step_seconds,
-            "passes": extract_passes(samples, payload.station.min_elevation_deg),
+            "passes": extract_passes(
+                samples,
+                payload.station.min_elevation_deg,
+                refine_transition=refine_visibility_transition,
+            ),
             "samples": samples,
             "count": len(samples),
         }
@@ -45,6 +110,7 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
         station_lon_deg: float = Query(..., ge=-180, le=180),
         station_height_m: float = Query(default=0.0, ge=-1_000, le=100_000),
         min_elevation_deg: float = Query(default=10.0, ge=0, le=90),
+        max_range_km: float | None = Query(default=None, gt=0, le=50_000),
         start_time: datetime.datetime | None = Query(default=None),
         end_time: datetime.datetime | None = Query(default=None),
         step_seconds: float = Query(default=10.0, gt=0, le=600),
@@ -57,6 +123,7 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
                 lon_deg=station_lon_deg,
                 height_m=station_height_m,
                 min_elevation_deg=min_elevation_deg,
+                max_range_km=max_range_km,
             ),
             start_time=start_time or now,
             end_time=end_time or now + datetime.timedelta(hours=24),
