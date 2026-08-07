@@ -50,8 +50,7 @@ html[data-manual-orbit-design="true"] #leftSatellitesPanel {
     display: none !important;
 }
 
-#leftSidebar #leftSatellitesBtn[hidden],
-html[data-manual-orbit-design="true"] #leftSidebar #leftSatellitesBtn {
+#leftSidebar #leftSatellitesBtn[hidden] {
     display: none !important;
 }
 

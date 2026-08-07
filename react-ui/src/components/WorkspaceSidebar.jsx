@@ -307,7 +307,7 @@ export default function WorkspaceSidebar() {
     };
     return <>
         <aside id="leftSidebar" aria-label="Paneles del visor">
-            <button id="leftSatellitesBtn" className={`sidebar-btn${openPanel && !designMode ? " active" : ""}`} type="button" title="Capas y satelites" aria-label="Capas y satelites" aria-expanded={openPanel && !designMode} onClick={togglePanel} hidden={designMode}><SatelliteIcon /></button>
+            <button id="leftSatellitesBtn" className={`sidebar-btn${openPanel && !designMode ? " active" : ""}`} type="button" title={designMode ? "Capas (no disponibles durante el diseño)" : "Capas y satelites"} aria-label="Capas y satelites" aria-expanded={openPanel && !designMode} onClick={togglePanel}><SatelliteIcon /></button>
             {!groundStationsOpen && <button id="leftManualOrbitBtn" className={`sidebar-btn${manualOrbitOpen ? " active" : ""}`} type="button" title={"Crear \u00f3rbita manual"} aria-label={"Crear \u00f3rbita manual"} aria-expanded={manualOrbitOpen} onClick={() => window.dispatchEvent(new CustomEvent("orbit:manual-orbit-toggle", { detail: { open: !manualOrbitOpen } }))}><ManualOrbitIcon /></button>}
             {groundStationsOpen && <button id="leftGroundStationsBtn" className="sidebar-btn" type="button" title="Crear estación terrestre" aria-label="Crear estación terrestre" onClick={() => window.dispatchEvent(new Event("orbit:ground-stations-create-request"))}><GroundStationIcon /></button>}
             {groundStationsOpen && <button id="leftPassTablesBtn" className="sidebar-btn" type="button" title="Tablas AOS / LOS" aria-label="Tablas AOS / LOS" onClick={() => window.dispatchEvent(new CustomEvent("orbit:ground-station-passes-open", { detail: {} }))}><PassTableIcon /></button>}

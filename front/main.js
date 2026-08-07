@@ -1378,6 +1378,7 @@ function applyGroundStationVisuals(station) {
         station.radio_range_km = calculateGroundStationRadioRangeKm(station);
         station.coverageEntity.ellipse.semiMajorAxis = station.radio_range_km * 1000;
         station.coverageEntity.ellipse.semiMinorAxis = station.radio_range_km * 1000;
+        station.coverageEntity.ellipse.granularity = Cesium.Math.toRadians(0.25);
         // A very wide ellipse drawn almost on the terrain z-fights with the
         // globe. Lift only the visual overlay as its radius grows; this does
         // not alter the RF calculation or the station position.
@@ -1510,6 +1511,7 @@ function createGroundStationLayer(params = {}) {
         ellipse: {
             semiMajorAxis: coverageRadiusKm * 1000,
             semiMinorAxis: coverageRadiusKm * 1000,
+            granularity: Cesium.Math.toRadians(0.25),
             material: Cesium.Color.fromCssColorString("#3cc4ff").withAlpha(0.12),
             outline: true,
             outlineColor: Cesium.Color.fromCssColorString("#3cc4ff").withAlpha(0.7),
@@ -3488,7 +3490,7 @@ function publishManualOrbitDesignState(active) {
     // Keep the legacy/React Layers surface out of the editor even while a
     // React update is pending. The component mirrors this from the persistent
     // state above, so it remains hidden after subsequent re-renders as well.
-    for (const id of ["leftSatellitesBtn", "leftSatellitesPanel"]) {
+    for (const id of ["leftSatellitesPanel"]) {
         const element = document.getElementById(id);
         if (element) element.hidden = isActive;
     }

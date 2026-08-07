@@ -1425,9 +1425,19 @@ export function setupObjectSidebar({
                         <input id="gsMaskInput" type="number" step="0.1" min="0" max="90" value="10" />
                     </label>
                     <label class="catalog-filter-field">
-                        <span>Envolvente RF calculada (km)</span>
+                        <span class="rf-range-label">Envolvente RF calculada (km)
+                            <span class="rf-formula-trigger" tabindex="0" aria-describedby="gsRfRangeHint" aria-label="Ver fórmula de la envolvente RF">
+                                <span aria-hidden="true">?</span>
+                                <span class="rf-formula-tooltip" id="gsRfRangeHint" role="tooltip">
+                                    <span class="rf-formula-tooltip__title">Envolvente RF · espacio libre</span>
+                                    <span class="rf-formula" aria-label="R en kilómetros es diez elevado a Ptx más Gtx más Grx menos Prx mínimo menos 32,44 menos veinte por logaritmo decimal de f en megahercios, todo dividido entre veinte.">
+                                        <i>R</i> <span>(km)</span> = 10<sup>(<i>P</i><sub>tx</sub> + <i>G</i><sub>tx</sub> + <i>G</i><sub>rx</sub> − <i>P</i><sub>rx,min</sub> − 32.44 − 20 log<sub>10</sub>(<i>f</i><sub>MHz</sub>)) / 20</sup>
+                                    </span>
+                                    <span class="rf-formula-tooltip__note">Radio teórico para el umbral de potencia RX configurado.</span>
+                                </span>
+                            </span>
+                        </span>
                         <input id="gsCoverageRadiusInput" type="number" readonly value="—" aria-describedby="gsRfRangeHint" />
-                        <small id="gsRfRangeHint">R (km) = 10^((Ptx + Gtx + Grx − Prx,min − 32.44 − 20 log10(fMHz)) / 20).</small>
                     </label>
                 </div>
             </div>

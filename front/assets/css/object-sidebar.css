@@ -598,6 +598,80 @@ body.with-toolbars #objectSidebar.collapsed {
     scrollbar-color: var(--orbit-scrollbar-thumb) transparent;
 }
 
+.ground-station-panel .rf-range-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ground-station-panel .rf-formula-trigger {
+    position: relative;
+    display: inline-grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    border: 1px solid #4d76b3;
+    border-radius: 50%;
+    color: #a9c9ff;
+    font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    cursor: help;
+    outline: none;
+}
+
+.ground-station-panel .rf-formula-trigger:hover,
+.ground-station-panel .rf-formula-trigger:focus-visible {
+    border-color: #86b5ff;
+    color: #e7f1ff;
+    box-shadow: 0 0 0 3px rgba(77, 118, 179, 0.18);
+}
+
+.ground-station-panel .rf-formula-tooltip {
+    position: absolute;
+    z-index: 6;
+    top: calc(100% + 9px);
+    right: -12px;
+    display: grid;
+    width: min(318px, calc(100vw - 72px));
+    gap: 8px;
+    padding: 12px 13px;
+    border: 1px solid #426da7;
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(11, 29, 54, 0.98), rgba(5, 15, 30, 0.98));
+    color: #dbe9fb;
+    font: 500 11px/1.45 system-ui, sans-serif;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.48);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-4px);
+    transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.ground-station-panel .rf-formula-trigger:hover .rf-formula-tooltip,
+.ground-station-panel .rf-formula-trigger:focus-visible .rf-formula-tooltip {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.ground-station-panel .rf-formula-tooltip__title {
+    color: #91b9ff;
+    font-weight: 700;
+    letter-spacing: 0.015em;
+}
+
+.ground-station-panel .rf-formula {
+    display: block;
+    overflow-wrap: anywhere;
+    color: #f2f7ff;
+    font: 600 16px/1.5 Cambria, "Times New Roman", serif;
+    letter-spacing: 0.01em;
+    text-align: center;
+}
+
+.ground-station-panel .rf-formula i { font-style: italic; }
+.ground-station-panel .rf-formula sub,
+.ground-station-panel .rf-formula sup { font-size: 0.68em; }
+.ground-station-panel .rf-formula-tooltip__note { color: #a8bad4; }
+
 .ground-station-number-control {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 116px;
