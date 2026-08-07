@@ -15,6 +15,10 @@ export function getRuntimeSettings({ serverDir, environment = process.env } = {}
         configDir: path.join(serverDir, "../config"),
         frontDir: path.join(serverDir, "../front"),
         reactDistDir: path.join(serverDir, "../front/dist"),
+        // MkDocs is built into the image separately from the React bundle.
+        // Keep it outside `front/` so the application can expose it at the
+        // stable `/Orbit/` prefix without affecting the Python Swagger routes.
+        docsSiteDir: path.join(serverDir, "../docs-site"),
         pythonDir: path.join(serverDir, "python")
     });
 }

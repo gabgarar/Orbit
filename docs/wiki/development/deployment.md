@@ -37,6 +37,13 @@ El contenedor declara un healthcheck HTTP contra `http://127.0.0.1:8100/health`.
 Compose aplica `restart: unless-stopped`. La imagen ejecuta Node como proceso
 principal; Node supervisa el backend Python privado.
 
+## Documentación integrada
+
+La imagen construye el mismo sitio MkDocs que se publica en GitHub Pages y lo
+sirve en `/Orbit/`. El botón `?` de la aplicación lo muestra dentro del
+espacio de trabajo; también puede abrirse directamente en una pestaña. La ruta
+`/docs` permanece reservada para la interfaz Swagger del backend FastAPI.
+
 ## Exposición de red
 
 | Variable | Predeterminado | Efecto |

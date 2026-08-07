@@ -4,7 +4,6 @@
 .venv/
 .venv-docs/
 site/
-docs/
 tests/
 debug.log
 server/node_modules

@@ -8,6 +8,7 @@ test("runtime settings preserve Docker defaults", () => {
     assert.equal(settings.port, 8100);
     assert.equal(settings.pythonBackendUrl, "http://127.0.0.1:8765");
     assert.equal(settings.configDir, path.join("/app/server", "../config"));
+    assert.equal(settings.docsSiteDir, path.join("/app/server", "../docs-site"));
 });
 
 test("runtime settings accept valid deployment overrides and reject invalid ports", () => {

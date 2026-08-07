@@ -38,6 +38,13 @@ export function createOrbitApp({ runtime, config, catalog, importer, refresher, 
         index: false,
         fallthrough: true
     }));
+    // The product documentation is a prebuilt MkDocs site.  It deliberately
+    // lives under `/Orbit/`, leaving `/docs*` available for FastAPI Swagger
+    // through the proxy route registered above.
+    app.use("/Orbit", express.static(runtime.docsSiteDir, {
+        index: "index.html",
+        fallthrough: true
+    }));
     app.use(express.static(runtime.reactDistDir));
     app.use(express.static(runtime.frontDir));
     app.use("/config", express.static(runtime.configDir));

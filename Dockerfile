@@ -1,3 +1,16 @@
+# Build the published documentation independently, so the runtime image only
+# contains the already-generated static site.
+FROM python:3.12-slim-bookworm AS docs-builder
+
+WORKDIR /docs
+
+COPY requirements-docs.txt ./
+RUN pip install --no-cache-dir -r requirements-docs.txt
+
+COPY mkdocs.yml ./
+COPY docs/wiki/ ./docs/wiki/
+RUN mkdocs build --strict --site-dir /docs/site
+
 # Imagen autocontenida para ejecutar Orbit en cualquier plataforma con Docker.
 FROM node:24-bookworm-slim
 
@@ -29,6 +42,8 @@ RUN npm run test:node --prefix server \
     && npm run test:frontend --prefix server \
     && /opt/venv/bin/python -m pytest server/python/tests
 RUN npm run build --prefix react-ui
+
+COPY --from=docs-builder /docs/site/ ./docs-site/
 
 COPY config/ ./config/
 RUN node server/scripts/validate-image-config.js

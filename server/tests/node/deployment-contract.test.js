@@ -37,11 +37,19 @@ test("Docker local-only bind and host-port override stay aligned with restart an
         dockerfile.indexOf("RUN node server/scripts/validate-image-config.js") > dockerfile.lastIndexOf("COPY config/ ./config/"),
         "the copied runtime configuration must be validated inside the image"
     );
+    assert.match(dockerfile, /^FROM python:[^\s]+ AS docs-builder$/m);
+    assert.match(dockerfile, /^COPY requirements-docs\.txt \.\/$/m);
+    assert.match(dockerfile, /^COPY mkdocs\.yml \.\/$/m);
+    assert.match(dockerfile, /^COPY docs\/wiki\/ \.\/docs\/wiki\/$/m);
+    assert.match(dockerfile, /^RUN mkdocs build --strict --site-dir \/docs\/site$/m);
+    assert.match(dockerfile, /^COPY --from=docs-builder \/docs\/site\/ \.\/docs-site\/$/m);
     assert.match(dockerignore, /^front\/dist\/?$/m);
     assert.match(dockerignore, /^react-ui\/dist\/?$/m);
     assert.match(dockerignore, /^server\/ui-artifacts\/?$/m);
     assert.match(dockerignore, /^server\/debug\.log$/m);
-    for (const ignoredBuildInput of [".venv/", ".venv-docs/", "site/", "docs/", "tests/", "debug.log"]) {
+    assert.match(dockerignore, /^site\/$/m);
+    assert.doesNotMatch(dockerignore, /^docs\/$/m, "docs/wiki must remain available to the docs-builder stage");
+    for (const ignoredBuildInput of [".venv/", ".venv-docs/", "site/", "tests/", "debug.log"]) {
         assert.match(
             dockerignore,
             new RegExp(`^${ignoredBuildInput.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"),

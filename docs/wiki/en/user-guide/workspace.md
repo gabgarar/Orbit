@@ -17,6 +17,7 @@ remote database.
 | Object panels | Information, propagated parameters and actions specific to the selected element. |
 | Layers panel footer | Visible UTC date and time and temporary mode selector. |
 | Simulation bar | Playback and timeline controls, only for a simulated range. |
+| Help | The `?` button opens the complete navigable Orbit documentation without leaving the workspace. |
 
 ## Work with the tree
 

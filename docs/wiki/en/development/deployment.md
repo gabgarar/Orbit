@@ -37,6 +37,13 @@ The container declares an HTTP healthcheck against `http://127.0.0.1:8100/health
 Compose applies `restart: unless-stopped`. The image runs Node as a process
 main; Node monitors the private Python backend.
 
+## Embedded documentation
+
+The image builds the same MkDocs site published on GitHub Pages and serves it
+at `/Orbit/`. The application's `?` button displays it inside the workspace,
+and it can also be opened directly in a browser tab. The `/docs` route remains
+reserved for the FastAPI backend Swagger interface.
+
 ## Network Exposure
 
 | Variable | Default | Effect |

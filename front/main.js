@@ -2636,7 +2636,7 @@ function ensureTopToolbar() {
         const helpButton = existing.querySelector("#topHelpBtn");
         if (helpButton && helpButton.dataset.orbitBound !== "true") {
             helpButton.dataset.orbitBound = "true";
-            helpButton.addEventListener("click", () => showAppAlert("La ayuda contextual estará disponible próximamente.", "Ayuda"));
+            helpButton.addEventListener("click", () => window.dispatchEvent(new Event("orbit:help-open")));
         }
         setupTopSearchAutocomplete();
         return existing;
@@ -2671,7 +2671,7 @@ function ensureTopToolbar() {
     `;
 
     toolbar.querySelector("#topSettingsBtn")?.addEventListener("click", () => runtimeConfigPanelApi?.toggle?.());
-    toolbar.querySelector("#topHelpBtn")?.addEventListener("click", () => showAppAlert("La ayuda contextual estará disponible próximamente.", "Ayuda"));
+    toolbar.querySelector("#topHelpBtn")?.addEventListener("click", () => window.dispatchEvent(new Event("orbit:help-open")));
 
     if (!document.getElementById("projectWelcome")) {
         const welcome = document.createElement("div");

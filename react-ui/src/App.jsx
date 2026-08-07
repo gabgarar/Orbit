@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import CesiumGlobe from "./components/CesiumGlobe.jsx";
 import TopToolbar from "./components/layout/TopToolbar.jsx";
 import HelpPanel from "./components/overlays/HelpPanel.jsx";
@@ -20,5 +20,10 @@ export default function App() {
             window.dispatchEvent(new CustomEvent("orbit:project-dialog-request", { detail: action }));
         }
     };
+    useEffect(() => {
+        const openHelp = () => setHelpOpen(true);
+        window.addEventListener("orbit:help-open", openHelp);
+        return () => window.removeEventListener("orbit:help-open", openHelp);
+    }, []);
     return <><TopToolbar hasNotifications={notifications.length > 0} onToggleNotifications={() => setNotificationsOpen((value) => !value)} onToggleHelp={() => setHelpOpen((value) => !value)} /><CesiumGlobe /><OrbitOverlays /><TimeControlBar />{welcomeOpen && <ProjectWelcome onAction={startProjectAction} runtimeStatus={runtimeStatus} />}{notificationsOpen && <NotificationCenter notifications={notifications} onClose={() => setNotificationsOpen(false)} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}</>;
 }

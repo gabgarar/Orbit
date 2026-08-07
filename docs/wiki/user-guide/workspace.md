@@ -17,6 +17,7 @@ base de datos remota.
 | Paneles de objeto | Información, parámetros propagados y acciones específicas del elemento seleccionado. |
 | Pie del panel de Layers | Fecha y hora UTC visibles y selector de modo temporal. |
 | Barra de simulación | Controles de reproducción y línea temporal, sólo para un rango simulado. |
+| Ayuda | El botón `?` abre la documentación completa y navegable de Orbit sin salir del espacio de trabajo. |
 
 ## Trabajo con el árbol
 
@@ -56,4 +57,3 @@ guardar o exportar.
 No existe un modo de edición concurrente, bloqueo de capas ni historial
 compartido de cambios. Para auditar cambios, conserve versiones exportadas del
 JSON de proyecto fuera de Orbit.
-

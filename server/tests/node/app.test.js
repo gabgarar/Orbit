@@ -7,7 +7,12 @@ import { createOrbitApp } from "../../src/app.js";
 
 function dependencies(isHealthy, overrides = {}) {
     return {
-        runtime: { reactDistDir: ".", frontDir: path.resolve("..", "front"), configDir: "." },
+        runtime: {
+            reactDistDir: ".",
+            frontDir: path.resolve("..", "front"),
+            configDir: ".",
+            docsSiteDir: path.resolve("..", "docs-site")
+        },
         config: { get: async () => ({ system: {}, data: {} }), save: async () => {} },
         catalog: { get: async () => ({ entries: [] }) },
         importer: { importContent: async () => ({ ok: true }) },
@@ -81,7 +86,12 @@ test("the generated distribution retains the Moon texture when source assets are
 
     try {
         const app = createOrbitApp(dependencies(async () => true, {
-            runtime: { reactDistDir, frontDir, configDir: temporaryRoot }
+            runtime: {
+                reactDistDir,
+                frontDir,
+                configDir: temporaryRoot,
+                docsSiteDir: path.join(temporaryRoot, "docs-site")
+            }
         }));
         await withApp(app, async (baseUrl) => {
             const response = await fetch(`${baseUrl}/assets/basemap/Moon_color_16bit_srgb_4k.png`);
@@ -89,6 +99,54 @@ test("the generated distribution retains the Moon texture when source assets are
             assert.match(response.headers.get("content-type") || "", /^image\/png\b/i);
             assert.deepEqual([...Buffer.from(await response.arrayBuffer())], [137, 80, 78, 71, 13, 10, 26, 10]);
         });
+    } finally {
+        await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
+});
+
+test("the prebuilt MkDocs site is served from /Orbit without replacing FastAPI Swagger", async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "orbit-docs-site-"));
+    const docsSiteDir = path.join(temporaryRoot, "docs-site");
+    const reactDistDir = path.join(temporaryRoot, "react-dist");
+    const forwardedPaths = [];
+    await Promise.all([
+        fs.mkdir(docsSiteDir, { recursive: true }),
+        fs.mkdir(path.join(reactDistDir, "Orbit"), { recursive: true })
+    ]);
+    await Promise.all([
+        fs.writeFile(path.join(docsSiteDir, "index.html"), "<h1>Orbit documentation</h1>"),
+        fs.writeFile(path.join(reactDistDir, "Orbit", "index.html"), "<h1>Frontend collision</h1>")
+    ]);
+
+    try {
+        const app = createOrbitApp(dependencies(async () => true, {
+            runtime: {
+                reactDistDir,
+                frontDir: path.join(temporaryRoot, "front"),
+                configDir: temporaryRoot,
+                docsSiteDir
+            },
+            pythonClient: {
+                request: async (requestPath) => {
+                    forwardedPaths.push(requestPath);
+                    return new Response("<h1>FastAPI Swagger</h1>", {
+                        headers: { "content-type": "text/html; charset=utf-8" }
+                    });
+                }
+            }
+        }));
+
+        await withApp(app, async (baseUrl) => {
+            const documentation = await fetch(`${baseUrl}/Orbit/`);
+            assert.equal(documentation.status, 200);
+            assert.match(await documentation.text(), /Orbit documentation/);
+
+            const swagger = await fetch(`${baseUrl}/docs`);
+            assert.equal(swagger.status, 200);
+            assert.match(await swagger.text(), /FastAPI Swagger/);
+        });
+
+        assert.deepEqual(forwardedPaths, ["/docs"]);
     } finally {
         await fs.rm(temporaryRoot, { recursive: true, force: true });
     }
