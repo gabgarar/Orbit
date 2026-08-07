@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import PanelCloseButton from "./PanelCloseButton.jsx";
 
 const buttonClass = "!inline-flex !h-[34px] !items-center !justify-center !rounded-[10px] !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-tertiary)] !px-3 !text-xs !leading-none !font-bold !text-[var(--orbit-text-primary)] !cursor-pointer hover:!bg-[var(--orbit-bg-hover)] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[var(--orbit-border-focus)]";
 
@@ -35,11 +36,12 @@ export default function AppDialog() {
     >
         <section
             id="appDialogPanel"
-            className="!w-[min(420px,94vw)] !rounded-[14px] !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-secondary)] !p-4 !text-[var(--orbit-text-primary)] !shadow-[0_16px_40px_rgba(0,0,0,.45)]"
+            className="!relative !w-[min(420px,94vw)] !rounded-[14px] !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-secondary)] !p-4 !text-[var(--orbit-text-primary)] !shadow-[0_16px_40px_rgba(0,0,0,.45)]"
             role="dialog"
             aria-modal="true"
         >
-            <h4 className="!m-0 !mb-2 !font-sans !text-base !leading-none !font-bold">{dialog.title}</h4>
+            <PanelCloseButton className="!absolute !top-3 !right-3" label="Cerrar diálogo" onClick={() => respond(false)} />
+            <h4 className="!m-0 !mb-2 !pr-8 !font-sans !text-base !leading-none !font-bold">{dialog.title}</h4>
             <p className="!m-0 !font-sans !text-[13px] !leading-[1.45] !text-[var(--orbit-text-secondary)]">{dialog.message}</p>
             <div id="appDialogActions" className="!mt-4 !flex !justify-end !gap-2">
                 {dialog.showCancel && <button className={buttonClass} type="button" onClick={() => respond(false)}>Cancelar</button>}

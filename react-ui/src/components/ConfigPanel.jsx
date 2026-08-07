@@ -2,6 +2,7 @@ import { useState } from "react";
 import ConfigField from "../features/config/ConfigField.jsx";
 import { sections, tabs, titles } from "../features/config/configSchema.js";
 import useConfigPanelState from "../hooks/useConfigPanelState.js";
+import PanelCloseButton from "./PanelCloseButton.jsx";
 
 const classNames = (...classes) => classes.filter(Boolean).join(" ");
 const statusColors = {
@@ -46,7 +47,7 @@ export default function ConfigPanel() {
             aria-label="Ajustes de la aplicación"
         >
             <header id="configPanelHeader" className="relative shrink-0 border-b border-[#1c2c43] px-4 pt-4">
-                <button className="absolute top-[14px] right-[15px] cursor-pointer border-0 bg-transparent p-0 text-2xl leading-none text-[#b7c6dc] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5c83ff]" type="button" onClick={() => setOpen(false)} aria-label="Cerrar">&times;</button>
+                <PanelCloseButton className="absolute top-[14px] right-[15px]" onClick={() => setOpen(false)} />
                 <div className="max-w-[calc(100%_-_32px)]">
                     <div className="flex items-center gap-2">
                         <h2 className="m-0 text-[17px] leading-[1.2] font-medium text-[#f1f6ff]">AJUSTES</h2>

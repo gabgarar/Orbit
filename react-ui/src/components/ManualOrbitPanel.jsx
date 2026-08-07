@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
+import PanelCloseButton from "./PanelCloseButton.jsx";
 
 /**
  * UI/event boundary for manually authored orbits.
@@ -1000,7 +1001,7 @@ export default function ManualOrbitPanel() {
                 </div>
                 <p className="mt-1.5 mb-0 text-[10px] leading-[1.3] font-medium text-[#91a5c1]">{isEditingManualOrbit ? "Modifica la definici\u00f3n; al actualizar se sustituir\u00e1 esta misma \u00f3rbita." : "Escena aislada para dise\u00f1ar y previsualizar una \u00f3rbita."}</p>
             </div>
-            <button className="inline-flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[7px] border border-[#294361] bg-[#0c192b] p-0 text-[18px] leading-none text-[#bdcbe0] hover:border-[#5075a6] hover:bg-[#14243d] hover:text-[#f4f8ff]" type="button" aria-label={"Cerrar creador de \u00f3rbita manual"} onClick={() => requestClose("close")}>&times;</button>
+            <PanelCloseButton label={"Cerrar creador de \u00f3rbita manual"} onClick={() => requestClose("close")} />
         </header>
 
         <div className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-3 pb-5 [scrollbar-color:#355179_transparent] [scrollbar-gutter:stable] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#355179]">

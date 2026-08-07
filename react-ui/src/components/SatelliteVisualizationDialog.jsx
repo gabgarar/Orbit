@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import PanelCloseButton from "./PanelCloseButton.jsx";
 
 const fields = [["orbit_future_color", "Color órbita futura", "color"], ["orbit_future_line_width", "Grosor futuro", "number"], ["propagation_hours", "Propagación (h)", "number"], ["satellite_label_size_px", "Tamaño etiqueta", "number"], ["satellite_model_scale", "Escala modelo", "number"]];
 const checks = [["satellite_use_3d_model", "Usar modelo 3D"], ["orbit_future_show", "Mostrar futuro"], ["orbit_ground_track_show", "Mostrar ground track"]];
@@ -37,7 +38,7 @@ export default function SatelliteVisualizationDialog() {
         >
             <header className="mb-2 flex items-center justify-between">
                 <h3 className="m-0 font-sans text-[length:calc(15px*var(--orbit-ui-scale))] font-bold">Opciones de visualización</h3>
-                <button className="inline-flex size-[calc(30px*var(--orbit-ui-scale))] cursor-pointer items-center justify-center rounded-full border border-[var(--orbit-border-primary)] bg-[var(--orbit-bg-tertiary)] p-0 font-sans text-[length:calc(16px*var(--orbit-ui-scale))] leading-none text-[var(--orbit-text-primary)] hover:bg-[var(--orbit-bg-hover)]" type="button" onClick={() => setData(null)} aria-label="Cerrar">×</button>
+                <PanelCloseButton className="size-[calc(30px*var(--orbit-ui-scale))]" onClick={() => setData(null)} />
             </header>
 
             <p className="mx-0.5 mt-1 mb-2.5 font-sans text-[length:calc(12px*var(--orbit-ui-scale))] font-semibold text-[var(--orbit-text-accent)]">Satélite: {data.id}</p>

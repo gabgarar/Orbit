@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import PanelCloseButton from "./PanelCloseButton.jsx";
 
 const localValue = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 const headerButtonClass = "cursor-pointer rounded-lg border border-[var(--orbit-border-accent)] bg-[var(--orbit-bg-tertiary)] px-2.5 py-1.5 font-[system-ui,sans-serif] text-xs font-semibold text-[var(--orbit-text-primary)] hover:bg-[var(--orbit-bg-hover)]";
@@ -33,7 +34,7 @@ export default function ExportDialog() {
         <section className="grid w-[min(calc(700px*var(--orbit-ui-scale)),96vw)] max-h-[88vh] gap-3 overflow-auto rounded-[calc(14px*var(--orbit-ui-scale))] border border-[var(--orbit-border-accent)] bg-[linear-gradient(180deg,var(--orbit-bg-modal)_0%,var(--orbit-bg-secondary)_100%)] p-[calc(14px*var(--orbit-ui-scale))] text-[var(--orbit-text-primary)] shadow-[0_24px_60px_rgba(0,0,0,.45)]" role="dialog" aria-modal="true">
             <header className="flex items-center justify-between">
                 <h3 className="m-0 font-[system-ui,sans-serif] text-[15px] font-bold">Exportar {data.id}</h3>
-                <button className="inline-flex size-10 flex-none cursor-pointer items-center justify-center rounded-full border border-[var(--orbit-border-accent)] bg-[var(--orbit-bg-tertiary)] p-0 font-[system-ui,sans-serif] text-sm leading-none font-bold text-[var(--orbit-text-primary)] hover:bg-[var(--orbit-bg-hover)]" type="button" onClick={() => run("close")} aria-label="Cerrar">×</button>
+                <PanelCloseButton onClick={() => run("close")} />
             </header>
             <p className="m-0 font-[system-ui,sans-serif] text-[11px] leading-[1.4] font-semibold tracking-[.03em] text-[var(--orbit-text-secondary)] uppercase">Fuente: {data.sourceFormat}</p>
             <div className="flex justify-end gap-2">{data.sourceFormat === "TLE" && <button className={headerButtonClass} type="button" onClick={() => run("tle")}>Exportar TLE</button>}{data.sourceFormat === "OMM" && <><button className={headerButtonClass} type="button" onClick={() => run("omm-json")}>OMM JSON</button><button className={headerButtonClass} type="button" onClick={() => run("omm-xml")}>OMM XML</button></>}{data.sourceFormat === "OEM" && <button className={headerButtonClass} type="button" onClick={() => run("oem")}>Exportar OEM</button>}</div>

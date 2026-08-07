@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadChartPng } from "../../../front/js/runtime/chartPngExport.js";
 import { formatReferenceFrame } from "../../../front/js/features/frames/referenceFrame.js";
+import PanelCloseButton from "./PanelCloseButton.jsx";
 
 /*
  * Floating propagated-orbit inspector.
@@ -1123,7 +1124,7 @@ export default function PropagatedOrbitParametersPanel() {
                 <h2 className="truncate text-[16px] leading-tight font-semibold text-[#f0f5ff]" title={panelTitle}>{panelTitle}</h2>
                 <p className="mt-1 text-[10px] leading-[1.35] text-[#8ea1bd]">Elementos osculantes y estado propagado a lo largo del tiempo.</p>
             </div>
-            <button className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-[6px] border border-[#294565] bg-[#0b192b] text-xl leading-none text-[#b9c9df] hover:border-[#4770a5] hover:bg-[#122640] hover:text-white" type="button" title="Close panel" aria-label="Cerrar parámetros propagados" onClick={close}>&times;</button>
+            <PanelCloseButton label="Cerrar parámetros propagados" onPointerDown={(event) => event.stopPropagation()} onClick={close} />
         </header>
 
         <nav className="grid shrink-0 grid-cols-3 border-b border-[#203550] px-3" role="tablist" aria-label="Secciones del inspector">

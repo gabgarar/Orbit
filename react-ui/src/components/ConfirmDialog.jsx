@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import PanelCloseButton from "./PanelCloseButton.jsx";
 
 const buttonClass = "!min-h-[38px] !rounded-[10px] !border !border-[var(--orbit-border-accent)] !bg-[var(--orbit-bg-tertiary)] !px-3 !font-sans !text-xs !font-semibold !text-[var(--orbit-text-primary)] !cursor-pointer hover:!bg-[var(--orbit-bg-hover)] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[var(--orbit-border-focus)]";
 
@@ -34,12 +35,13 @@ export default function ConfirmDialog() {
         onMouseDown={(event) => event.target === event.currentTarget && respond(false)}
     >
         <section
-            className="!grid !w-[min(460px,94vw)] !gap-3 !rounded-[14px] !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-secondary)] !p-4 !text-[var(--orbit-text-primary)] !shadow-[0_20px_60px_rgba(0,0,0,.45)]"
+            className="!relative !grid !w-[min(460px,94vw)] !gap-3 !rounded-[14px] !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-secondary)] !p-4 !text-[var(--orbit-text-primary)] !shadow-[0_20px_60px_rgba(0,0,0,.45)]"
             role="dialog"
             aria-modal="true"
             aria-labelledby="sidebarConfirmTitle"
         >
-            <h3 id="sidebarConfirmTitle" className="!m-0 !font-sans !text-base !leading-none !font-bold">{request.title}</h3>
+            <PanelCloseButton className="!absolute !top-3 !right-3" label="Cerrar confirmación" onClick={() => respond(false)} />
+            <h3 id="sidebarConfirmTitle" className="!m-0 !pr-8 !font-sans !text-base !leading-none !font-bold">{request.title}</h3>
             <p id="sidebarConfirmMessage" className="!m-0 !font-sans !text-[13px] !leading-[1.45] !text-[var(--orbit-text-secondary)]">{request.message}</p>
             <div className="!grid !grid-cols-2 !gap-2">
                 <button className={buttonClass} type="button" onClick={() => respond(false)}>{request.cancelText || "Cancelar"}</button>

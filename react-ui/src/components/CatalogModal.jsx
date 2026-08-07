@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { formatCatalogRefreshCountdown } from "../../../front/js/features/catalog/refreshStatus.js";
+import PanelCloseButton from "./PanelCloseButton.jsx";
 
 const action = (type, detail = {}) => window.dispatchEvent(new CustomEvent("orbit:catalog-action", { detail: { type, ...detail } }));
 
 const headerButtonClass = "cursor-pointer rounded-lg border border-[var(--orbit-border-accent)] bg-[var(--orbit-bg-tertiary)] px-2.5 py-1.5 font-[system-ui,sans-serif] text-xs font-semibold text-[var(--orbit-text-primary)] hover:bg-[var(--orbit-bg-hover)] disabled:cursor-not-allowed disabled:opacity-45";
-const closeButtonClass = "inline-flex size-10 flex-none cursor-pointer items-center justify-center rounded-full border border-[var(--orbit-border-accent)] bg-[var(--orbit-bg-tertiary)] p-0 font-[system-ui,sans-serif] text-sm leading-none font-bold text-[var(--orbit-text-primary)] hover:bg-[var(--orbit-bg-hover)] max-[760px]:col-start-3 max-[760px]:row-start-1 max-[760px]:size-[34px] max-[760px]:justify-self-center max-[480px]:size-8";
 const pageButtonClass = "cursor-pointer rounded-lg border border-[var(--orbit-border-primary)] bg-[var(--orbit-bg-tertiary)] px-2.5 py-1.5 font-[system-ui,sans-serif] text-xs font-bold text-[var(--orbit-text-primary)] hover:border-[var(--orbit-border-focus)] hover:bg-[var(--orbit-bg-hover)] disabled:cursor-not-allowed disabled:opacity-50 max-[480px]:px-[7px]";
 const actionButtonClass = "cursor-pointer rounded-lg border border-[var(--orbit-border-accent)] bg-[var(--orbit-bg-tertiary)] px-2 py-[7px] font-[system-ui,sans-serif] text-[11px] font-semibold text-[var(--orbit-text-primary)] hover:bg-[var(--orbit-bg-hover)] disabled:cursor-not-allowed disabled:opacity-45";
 // Warning and Info intentionally share this exact outer box. Keeping their
@@ -144,7 +144,7 @@ export default function CatalogModal() {
                     <button data-testid="catalog-filters" className={headerButtonClass} type="button" disabled={headerBusy} onClick={() => action("filters")}>Filtros</button>
                     <button data-testid="catalog-refresh" className={headerButtonClass} type="button" disabled={refreshBlocked} title={refreshTitle} onClick={() => action("refresh")}>Actualizar</button>
                     <button data-testid="catalog-select-all" className={headerButtonClass} type="button" disabled={headerBusy} onClick={() => action("select-all")}>Seleccionar todo</button>
-                    <button className={closeButtonClass} type="button" onClick={() => action("close")} aria-label="Cerrar">×</button>
+                    <PanelCloseButton className="max-[760px]:col-start-3 max-[760px]:row-start-1 max-[760px]:justify-self-center" onClick={() => action("close")} />
                 </div>
             </header>
             <CatalogRefreshStatus refresh={refresh} now={refreshClock} />

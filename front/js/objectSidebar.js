@@ -1100,7 +1100,7 @@ export function setupObjectSidebar({
                     <button class="catalog-header-btn" id="catalogFiltersBtn" type="button">Filtros</button>
                     <button class="catalog-header-btn" id="catalogRefreshBtn" type="button">Actualizar catalogo</button>
                     <button class="catalog-header-btn" id="catalogSelectAllBtn" type="button">Seleccionar todo</button>
-                    <button class="catalog-close-btn" id="catalogCloseBtn" type="button" aria-label="Cerrar catalogo" title="Cerrar">✕</button>
+                    <button class="catalog-close-btn" id="catalogCloseBtn" type="button" aria-label="Cerrar catalogo" title="Cerrar">×</button>
                 </div>
             </div>
             <input id="catalogSearch" type="text" placeholder="Buscar en catalogo..." />
@@ -1130,7 +1130,7 @@ export function setupObjectSidebar({
         <div class="catalog-filter-panel" role="dialog" aria-modal="true" aria-label="Filtros de catalogo">
             <div class="catalog-filter-header">
                 <h3>Filtros</h3>
-                <button class="catalog-close-btn" id="catalogFilterCloseBtn" type="button" aria-label="Cerrar filtros" title="Cerrar">✕</button>
+                <button class="catalog-close-btn" id="catalogFilterCloseBtn" type="button" aria-label="Cerrar filtros" title="Cerrar">×</button>
             </div>
             <div class="catalog-filter-grid">
                 <label class="catalog-filter-field">
@@ -1508,7 +1508,7 @@ export function setupObjectSidebar({
         <div class="catalog-export-panel" role="dialog" aria-modal="true" aria-label="Exportar satelite">
             <div class="catalog-export-header">
                 <h3>Exportar satelite</h3>
-                <button class="catalog-close-btn" id="catalogExportCloseBtn" type="button" aria-label="Cerrar exportacion" title="Cerrar">✕</button>
+                <button class="catalog-close-btn" id="catalogExportCloseBtn" type="button" aria-label="Cerrar exportacion" title="Cerrar">×</button>
             </div>
             <div class="catalog-export-target" id="catalogExportTarget">-</div>
             <div class="catalog-export-source" id="catalogExportSource">Source: -</div>

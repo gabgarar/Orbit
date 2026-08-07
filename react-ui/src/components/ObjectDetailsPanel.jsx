@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { buildObjectDetails } from "../features/objectDetails/detailRows.js";
 import useSelectedObject from "../hooks/useSelectedObject.js";
 import { emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
+import PanelCloseButton from "./PanelCloseButton.jsx";
 
 const standardTabs = [
     ["overview", "OVERVIEW", "Overview"],
@@ -145,7 +146,7 @@ export default function ObjectDetailsPanel() {
     const rows = isGroundStation ? stationRows(detail) : details.rows;
 
     return <aside className="object-details-panel pointer-events-auto fixed top-[86px] right-[14px] bottom-[132px] z-[10124] flex min-h-[300px] w-[min(300px,calc(100vw-28px))] flex-col overflow-auto rounded-[10px] border border-[rgba(65,99,147,.58)] bg-[linear-gradient(145deg,rgba(12,25,42,.97),rgba(5,14,25,.97))] p-4 font-[system-ui] text-[#dbe7fa] shadow-[0_22px_60px_rgba(0,0,0,.46),inset_0_1px_rgba(255,255,255,.045)] max-[760px]:top-20 max-[760px]:right-2.5 max-[760px]:bottom-[74px] max-[760px]:w-[min(330px,calc(100vw-20px))]" aria-label="Detalles del objeto seleccionado">
-        <button className="absolute top-[14px] right-[15px] cursor-pointer border-0 bg-transparent text-2xl leading-none text-[#b7c6dc] hover:text-white" type="button" aria-label="Cerrar detalles" onClick={() => setDismissedId(detail.id)}>&#215;</button>
+        <PanelCloseButton className="absolute top-[14px] right-[15px]" label="Cerrar detalles" onClick={() => setDismissedId(detail.id)} />
         <h2 className="mb-[9px] max-w-[calc(100%_-_30px)] overflow-hidden text-ellipsis whitespace-nowrap text-[17px] leading-[1.2] font-medium text-[#f1f6ff]">{details.title}</h2>
         <div className="flex items-center gap-2.5 border-b border-[#1c2c43] pb-[17px] text-[11px] leading-none font-semibold tracking-[.03em] text-[#8fa1ba]">
             <span className={`inline-flex rounded-[5px] px-2 py-1.5 text-[10px] leading-none font-bold ${details.visible ? "bg-[rgba(39,169,95,.19)] text-[#73e3a0]" : "bg-[rgba(133,75,193,.24)] text-[#d2a8ff]"}`}>{details.visible ? "ACTIVE" : "HIDDEN"}</span>

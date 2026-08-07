@@ -716,25 +716,6 @@ body.with-toolbars #objectSidebar.collapsed {
     letter-spacing: .05em;
 }
 
-.ground-station-panel .catalog-close-btn {
-    width: 30px;
-    height: 30px;
-    min-width: 30px;
-    min-height: 30px;
-    flex: 0 0 30px;
-    border: 1px solid #294361;
-    border-radius: 7px;
-    background: #0c192b;
-    color: #bdcbe0;
-    font: 400 21px/1 system-ui, sans-serif;
-}
-
-.ground-station-panel .catalog-close-btn:hover {
-    border-color: #5075a6;
-    background: #14243d;
-    color: #f4f8ff;
-}
-
 .ground-station-panel .catalog-filter-field input[readonly] {
     color: #8ee9b4;
     border-color: #315e54;
@@ -983,27 +964,33 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .catalog-close-btn {
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
-    min-height: 40px;
-    flex: 0 0 40px;
-    aspect-ratio: 1;
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    min-height: 30px;
+    flex: 0 0 30px;
     box-sizing: border-box;
-    border-radius: 50%;
-    border: 1px solid var(--orbit-border-accent);
-    background: var(--orbit-bg-tertiary);
-    color: var(--orbit-text-primary);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #b7c6dc;
     cursor: pointer;
     padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font: 700 14px/1 sans-serif;
+    font: 400 24px/1 system-ui, sans-serif;
+    transition: color 160ms ease;
 }
 
 .catalog-close-btn:hover {
-    background: var(--orbit-bg-hover);
+    background: transparent;
+    color: #fff;
+}
+
+.catalog-close-btn:focus-visible {
+    outline: 2px solid #5c83ff;
+    outline-offset: 2px;
 }
 
 .catalog-header-btn {
@@ -2242,14 +2229,6 @@ body.with-toolbars #objectSidebar.collapsed {
 
     .catalog-modal-header-actions {
         grid-template-columns: repeat(2, minmax(66px, 1fr)) 32px;
-    }
-
-    .catalog-close-btn {
-        width: 32px;
-        height: 32px;
-        min-width: 32px;
-        min-height: 32px;
-        flex-basis: 32px;
     }
 
     .catalog-list-name {

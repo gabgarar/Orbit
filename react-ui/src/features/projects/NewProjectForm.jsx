@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { requestProjectCommand } from "../../services/projectRuntime.js";
+import PanelCloseButton from "../../components/PanelCloseButton.jsx";
 
 const panelClass = "relative w-[min(440px,100%)] rounded-[18px] border border-[#5899e799] bg-[linear-gradient(135deg,rgba(18,62,112,.96),rgba(5,18,36,.98))] p-8 font-sans text-[var(--orbit-text-primary)] shadow-[0_26px_70px_rgba(0,0,0,.56)]";
 const buttonClass = "rounded-lg border border-[var(--orbit-border-primary)] bg-[#122543e6] px-[14px] py-2.5 text-[13px] leading-none font-semibold text-[var(--orbit-text-primary)] cursor-pointer transition-colors hover:bg-[var(--orbit-bg-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#54a8ff]";
@@ -27,7 +28,7 @@ export default function NewProjectForm({ onClose }) {
     };
 
     return <form className={panelClass} onSubmit={submit}>
-        <button className="absolute top-[14px] right-[14px] grid h-[30px] w-[30px] place-items-center rounded-full border border-[var(--orbit-border-primary)] bg-transparent p-0 font-sans text-[22px] leading-none text-[var(--orbit-text-primary)] cursor-pointer hover:bg-[var(--orbit-bg-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#54a8ff]" type="button" aria-label="Cerrar" onClick={onClose}>&#215;</button>
+        <PanelCloseButton className="absolute top-[14px] right-[14px]" onClick={onClose} />
         <p className="m-0 mb-2.5 font-sans text-[11px] leading-none font-extrabold tracking-[3px] text-[#52a8ff]">ORBIT PROJECT</p>
         <h2 className="m-0 mb-2.5 font-sans text-[26px] leading-[1.2] font-bold">Nuevo proyecto</h2>
         <p className="m-0 mb-6 text-sm leading-[1.55] text-[var(--orbit-text-secondary)]">Define un nombre para comenzar un proyecto vacío.</p>
