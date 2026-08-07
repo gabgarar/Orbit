@@ -2352,6 +2352,8 @@ async function analyzeGroundStationPasses(detail = {}) {
         window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
             detail: {
                 ...result,
+                stationName: String(station.name || stationId),
+                satelliteName: String(getLayerDisplayName(satelliteLayerId) || satelliteId),
                 stationTimeZone: station.time_zone || "UTC",
                 referenceFrame: String(result.reference_frame || "ITRF"),
                 timeScale: String(result.time_scale || "UTC"),
@@ -2509,6 +2511,37 @@ window.addEventListener("orbit:simulation-action", async (event) => {
         simulationState.currentDate = getDateFromTimelineRatio(ratio);
         simulationState.isPlaying = false;
         simulationState.playing = false;
+        if (simulationState.mode === SIMULATION_MODE_REALTIME) {
+            simulationState.mode = SIMULATION_MODE_RANGE;
+        }
+        applySimulationDateToViewer(simulationState.currentDate);
+        syncViewerClockPlayback();
+        refreshSimulationControlsUi();
+        updateTopToolbarTime();
+    } else if (type === "timeline-jump") {
+        // Pass markers carry an exact UTC instant. Do not route this through
+        // the range slider, whose finite number of steps would quantize the
+        // selected AOS/LOS or maximum-elevation time.
+        const targetIso = typeof value === "object" && value !== null ? value.time : value;
+        if (typeof targetIso !== "string") return;
+
+        const targetDate = new Date(targetIso);
+        const startDate = new Date(simulationState.startDate);
+        const endDate = new Date(simulationState.endDate);
+        if (Number.isNaN(targetDate.getTime())
+            || Number.isNaN(startDate.getTime())
+            || Number.isNaN(endDate.getTime())
+            || endDate <= startDate
+            || targetDate < startDate
+            || targetDate > endDate) {
+            return;
+        }
+
+        simulationState.currentDate = targetDate;
+        simulationState.isPlaying = false;
+        simulationState.playing = false;
+        simulationState.rewind = false;
+        simulationState.lastTickTimestamp = Date.now();
         if (simulationState.mode === SIMULATION_MODE_REALTIME) {
             simulationState.mode = SIMULATION_MODE_RANGE;
         }
