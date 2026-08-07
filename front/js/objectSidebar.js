@@ -1676,6 +1676,54 @@ export function setupObjectSidebar({
     const gsTabButtons = groundStationModal.querySelectorAll("[data-gs-tab]");
     const gsTabPanels = groundStationModal.querySelectorAll("[data-gs-tab-panel]");
 
+    // Keep precise numerical entry while making the station designer useful as
+    // a live control surface. Each slider is paired with the existing number
+    // field, so neither interaction method becomes authoritative over the
+    // other.
+    const addStationRangeControl = (input, { min, max, step }) => {
+        if (!input || input.type !== "number" || input.parentElement?.querySelector("input[type='range']")) return;
+        const control = document.createElement("div");
+        control.className = "ground-station-number-control";
+        input.parentElement.insertBefore(control, input);
+        control.appendChild(input);
+        const range = document.createElement("input");
+        range.type = "range";
+        range.min = String(min);
+        range.max = String(max);
+        range.step = String(step);
+        const syncRange = () => {
+            const value = Number(input.value);
+            range.value = String(Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min);
+        };
+        range.addEventListener("input", () => {
+            input.value = range.value;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        input.addEventListener("input", syncRange);
+        control.appendChild(range);
+        syncRange();
+    };
+    addStationRangeControl(gsLatInput, { min: -90, max: 90, step: 0.01 });
+    addStationRangeControl(gsLonInput, { min: -180, max: 180, step: 0.01 });
+    addStationRangeControl(gsAltInput, { min: 0, max: 12000, step: 10 });
+    addStationRangeControl(gsMaskInput, { min: 0, max: 90, step: 0.5 });
+    addStationRangeControl(gsFreqInput, { min: 100, max: 6000, step: 1 });
+    addStationRangeControl(gsTxPowerInput, { min: -30, max: 80, step: 0.5 });
+    addStationRangeControl(gsTxGainInput, { min: -10, max: 60, step: 0.5 });
+    addStationRangeControl(gsRxGainInput, { min: -10, max: 60, step: 0.5 });
+    addStationRangeControl(gsMinLinkPowerInput, { min: -160, max: -20, step: 0.5 });
+    addStationRangeControl(gsPointSizeInput, { min: 4, max: 48, step: 1 });
+    const syncStationRangeControls = () => {
+        groundStationModal.querySelectorAll(".ground-station-number-control").forEach((control) => {
+            const number = control.querySelector("input[type='number']");
+            const range = control.querySelector("input[type='range']");
+            const value = Number(number?.value);
+            if (number && range && Number.isFinite(value)) {
+                range.value = String(Math.min(Number(range.max), Math.max(Number(range.min), value)));
+            }
+        });
+    };
+
     const setGroundStationTab = (tabId) => {
         const safeTab = String(tabId || "general").toLowerCase();
         gsTabButtons.forEach((btn) => {
@@ -2071,6 +2119,7 @@ export function setupObjectSidebar({
             gsHeatDensityInput.value = "medium";
         }
 
+        syncStationRangeControls();
         setGroundStationTab("general");
 
         groundStationModal.classList.add("open");

@@ -379,11 +379,11 @@ body.with-toolbars #objectSidebar.collapsed {
     position: fixed;
     inset: 0;
     z-index: 10145;
-    background: var(--orbit-bg-overlay);
+    background: transparent;
     display: none;
-    align-items: center;
-    justify-content: center;
-    padding: 16px;
+    align-items: flex-start;
+    justify-content: flex-end;
+    padding: 76px 12px 12px;
     box-sizing: border-box;
 }
 
@@ -392,8 +392,8 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .ground-station-panel {
-    width: min(640px, calc(100vw - 32px));
-    max-height: calc(100dvh - 32px);
+    width: min(430px, calc(100vw - 24px));
+    max-height: calc(100dvh - 88px);
     overflow: hidden;
     padding: 16px;
     gap: 14px;
@@ -401,7 +401,7 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .ground-station-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
     min-width: 0;
     width: 100%;
@@ -594,6 +594,32 @@ body.with-toolbars #objectSidebar.collapsed {
     padding-right: 4px;
     scrollbar-width: thin;
     scrollbar-color: var(--orbit-scrollbar-thumb) transparent;
+}
+
+.ground-station-number-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 116px;
+    gap: 8px;
+    align-items: center;
+}
+
+.ground-station-number-control input[type="range"] {
+    width: 100%;
+    accent-color: #6688ff;
+    cursor: pointer;
+}
+
+.ground-station-panel .catalog-filter-header::after {
+    content: "DISEÑO DE ESTACIÓN";
+    margin-left: auto;
+    margin-right: 9px;
+    border: 1px solid #365786;
+    border-radius: 999px;
+    padding: 3px 6px;
+    color: #9ebcf0;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: .05em;
 }
 
 .ground-station-panel .catalog-filter-field input[readonly] {
