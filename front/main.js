@@ -47,11 +47,9 @@ import { loadSystemConfig, saveSystemConfigWithRetry } from "./js/services/syste
 import {
     calculateElevationDegrees,
     calculateFreeSpacePathLossDb,
-    calculateGeoDistanceKm,
-    normalizeHeatMapDensity
+    calculateGeoDistanceKm
 } from "./js/features/groundStations/geometry.js";
 import { createGroundStationSymbol } from "./js/features/groundStations/symbols.js";
-import { createGroundStationHeatMapManager } from "./js/features/groundStations/heatMapManager.js";
 import { createGroundStationTelemetryService } from "./js/features/groundStations/telemetry.js";
 import { createProjectLifecycle } from "./js/runtime/projectLifecycle.js";
 import { setupCameraActions } from "./js/runtime/camera/actions.js";
@@ -298,7 +296,6 @@ const bodyCentricCamera = createBodyCentricCameraController({
     getBodyPosition: (id, time, result) => getLocalCameraTargetPosition(id, time, result)
 });
 let groundStationSequence = 1;
-let stationHeatMapTimer = null;
 let groundStationAnalysisLink = null;
 const groundStationVisibilityLinks = new Map();
 let currentProjectFileHandle = null;
@@ -1130,33 +1127,6 @@ function computeFreeSpacePathLossDb(freqMhz, rangeKm) {
     return calculateFreeSpacePathLossDb(freqMhz, rangeKm);
 }
 
-function normalizeGroundStationHeatDensity(value) {
-    return normalizeHeatMapDensity(value);
-}
-
-function updateGroundStationHeatLegendVisibility() {
-    const hasAnyVisibleHeatMap = [...groundStationLayers.values()].some((station) => {
-        if (!station || station.heatmap_enabled !== true) {
-            return false;
-        }
-        return true;
-    });
-
-    window.dispatchEvent(new CustomEvent("orbit:heat-legend", { detail: hasAnyVisibleHeatMap }));
-}
-
-const groundStationHeatMaps = createGroundStationHeatMapManager({
-    viewer,
-    Cesium,
-    groundStationLayers,
-    getActiveSatelliteLayerIds,
-    getSatelliteTelemetry,
-    calculateElevationDegrees,
-    calculateGeoDistanceKm,
-    normalizeDensity: normalizeGroundStationHeatDensity,
-    onChange: updateGroundStationHeatLegendVisibility
-});
-
 const groundStationTelemetryService = createGroundStationTelemetryService({
     getLayerName: getLayerDisplayName,
     getSatelliteStates: () => getCompositeLayerIds()
@@ -1227,8 +1197,6 @@ function setCompositeLayerVisibility(layerId, visible) {
         if (station.coverageEntity) {
             station.coverageEntity.show = station.visible && station.coverage_visible !== false;
         }
-        groundStationHeatMaps.setVisible(layerId, station.visible);
-        updateGroundStationHeatLegendVisibility();
         emitObjectStateChanged({ layerId, sourceId: layerId, reason: "visibility" });
         return;
     }
@@ -1275,7 +1243,6 @@ function removeGroundStationLayer(layerId) {
     }
     if (station.entity) viewer.entities.remove(station.entity);
     if (station.coverageEntity) viewer.entities.remove(station.coverageEntity);
-    groundStationHeatMaps.clear(layerId);
     groundStationLayers.delete(layerId);
     syncGroundStationVisibilityLinks();
     layerDisplayNameOverrides.delete(layerId);
@@ -1411,7 +1378,14 @@ function applyGroundStationVisuals(station) {
         station.radio_range_km = calculateGroundStationRadioRangeKm(station);
         station.coverageEntity.ellipse.semiMajorAxis = station.radio_range_km * 1000;
         station.coverageEntity.ellipse.semiMinorAxis = station.radio_range_km * 1000;
-        station.coverageEntity.ellipse.height = Math.max(3000, Number(station.altitude_m) + 3000);
+        // A very wide ellipse drawn almost on the terrain z-fights with the
+        // globe. Lift only the visual overlay as its radius grows; this does
+        // not alter the RF calculation or the station position.
+        station.coverageEntity.ellipse.height = Math.max(
+            12000,
+            Number(station.altitude_m) + 12000,
+            Math.min(90000, station.radio_range_km * 18)
+        );
         station.coverageEntity.ellipse.material = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.11);
         station.coverageEntity.ellipse.outlineColor = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.74);
         station.coverageEntity.show = station.visible === true && station.coverage_visible !== false;
@@ -1506,8 +1480,6 @@ function createGroundStationLayer(params = {}) {
     const pointColor = String(params.point_color || "#3cc4ff").trim() || "#3cc4ff";
     const pointSymbol = String(params.point_symbol || "circle").trim() || "circle";
     const coverageVisible = params.coverage_visible !== false;
-    const heatmapEnabled = params.heatmap_enabled === true;
-    const heatmapDensity = normalizeGroundStationHeatDensity(params.heatmap_density);
     const monitoredSatelliteIds = Array.isArray(params.monitor_satellite_ids)
         ? params.monitor_satellite_ids.map((id) => String(id || "").trim()).filter(Boolean)
         : [];
@@ -1567,17 +1539,13 @@ function createGroundStationLayer(params = {}) {
         point_color: pointColor,
         point_symbol: pointSymbol,
         coverage_visible: coverageVisible,
-        heatmap_enabled: heatmapEnabled,
-        heatmap_density: heatmapDensity,
         monitor_satellite_ids: monitoredSatelliteIds,
-        heatmap_samples: new Map(),
         visible: true,
         entity: stationEntity,
         coverageEntity
     });
 
     applyGroundStationVisuals(groundStationLayers.get(stationId));
-    groundStationHeatMaps.update(stationId);
     syncGroundStationVisibilityLinks();
 
     layerDisplayNameOverrides.set(stationId, displayName);
@@ -1607,8 +1575,6 @@ function getGroundStationParams(layerId) {
         point_symbol: station.point_symbol,
         point_color: station.point_color,
         coverage_visible: station.coverage_visible !== false,
-        heatmap_enabled: station.heatmap_enabled !== false,
-        heatmap_density: normalizeGroundStationHeatDensity(station.heatmap_density),
         monitor_satellite_ids: [...(station.monitor_satellite_ids || [])]
     };
 }
@@ -1640,12 +1606,6 @@ function updateGroundStationLayer(layerId, patch = {}) {
     station.point_symbol = String(patch.point_symbol || station.point_symbol || "circle").trim() || "circle";
     station.point_color = String(patch.point_color || station.point_color || "#3cc4ff").trim() || "#3cc4ff";
     station.coverage_visible = patch.coverage_visible !== false;
-    station.heatmap_enabled = patch.heatmap_enabled !== false;
-    station.heatmap_density = normalizeGroundStationHeatDensity(
-        Object.prototype.hasOwnProperty.call(patch, "heatmap_density")
-            ? patch.heatmap_density
-            : station.heatmap_density
-    );
 
     const nextPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
     if (station.entity) {
@@ -1660,27 +1620,9 @@ function updateGroundStationLayer(layerId, patch = {}) {
 
     layerDisplayNameOverrides.set(layerId, station.name);
     applyGroundStationVisuals(station);
-    groundStationHeatMaps.update(layerId);
     syncGroundStationVisibilityLinks();
     emitObjectStateChanged({ layerId, sourceId: layerId, reason: "configuration" });
     publishGroundStationsState();
-    return true;
-}
-
-function toggleGroundStationHeatMap(layerId, enabled) {
-    const station = groundStationLayers.get(layerId);
-    if (!station) {
-        return false;
-    }
-
-    station.heatmap_enabled = enabled === true;
-    if (!station.heatmap_enabled) {
-        groundStationHeatMaps.clear(layerId);
-    } else {
-        groundStationHeatMaps.update(layerId);
-    }
-    updateGroundStationHeatLegendVisibility();
-    emitObjectStateChanged({ layerId, sourceId: layerId, reason: "heatmap" });
     return true;
 }
 
@@ -5276,7 +5218,6 @@ function setupPropagatedParametersInspector() {
         onRequestUpdateGroundStation: (id, payload) => updateGroundStationLayer(id, payload),
         onPreviewGroundStation: (payload) => previewGroundStation(payload),
         onClearGroundStationPreview: () => clearGroundStationPreview(),
-        onRequestToggleGroundStationHeatMap: (id, enabled) => toggleGroundStationHeatMap(id, enabled),
         onRequestDuplicateLayer: (id) => {
             if (isGroundStationLayerId(id) || isCelestialBodyLayerId(id)) {
                 return null;
@@ -5348,13 +5289,6 @@ function setupPropagatedParametersInspector() {
         getAlertTitle: () => uiText("alertTitle"),
         logger: console
     });
-
-    if (stationHeatMapTimer) {
-        clearInterval(stationHeatMapTimer);
-    }
-    stationHeatMapTimer = setInterval(() => {
-        groundStationHeatMaps.refreshAll();
-    }, 1200);
 
     const resolvePickedLayerId = (picked) => {
         const pickedEntity = picked?.id;

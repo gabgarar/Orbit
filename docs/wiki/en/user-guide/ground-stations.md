@@ -14,7 +14,7 @@ Stations are saved within the project document.
 | Time | Station IANA time zone, for example `Europe/Madrid` or `UTC`. |
 | Radio | Frequency, transmit power, transmit gain and receive gain. |
 | Visual | Symbol size and color. |
-| Coverage | Coverage visibility and heat map, when enabled. |
+| Coverage | RF coverage-envelope visibility. |
 
 Interface coordinates are entered in degrees for latitude and longitude and
 in meters for altitude. The elevation mask determines the threshold used
@@ -118,7 +118,7 @@ AOS and LOS are extracted from the first and last sample that meet that threshol
 
 ## Coverage and radio
 
-The footprint and the heat map are visual representations associated with the
+The RF coverage envelope is a visual representation associated with the
 layer. Radio fields allow for a simplified link budget, not
 a complete RF chain model. There is no published modeling of antennas,
 atmospheric propagation, interference, availability, network planning
@@ -128,7 +128,7 @@ nor measures received.
 
 1. Create or edit the station from the workspace.
 2. Enter your parameters and save changes.
-3. Activate your visibility and, if applicable, coverage or heat map.
+3. Activate station visibility and the RF coverage envelope when needed.
 4. Select a time or time range before checking visibility.
 5. Save or export the [Project](projects.md) to keep the station.
 

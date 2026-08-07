@@ -1,62 +1,5 @@
 # Versionado
 
-## 2026-07-06a
-
-- **Fix visibilidad heat map (puntos + color bar)**
-  - Los puntos del heat map se elevan por encima del círculo de cobertura para evitar que queden ocultos visualmente.
-  - Se incrementa contraste/opacidad y tamaño de punto (especialmente en densidad alta).
-  - Se fuerza `disableDepthTestDistance` en puntos de heat map para mejorar visibilidad sobre el globo.
-  - La leyenda (`color bar`) pasa a mostrarse cuando existe al menos una estación con heat map activado.
-  - Al crear estación, si el heat map ya está activado, se fuerza refresco inmediato de la capa.
-
-## 2026-07-05m
-
-- **Heat map: cobertura completa del círculo y mejora de densidad**
-  - El muestreo del heat map se recorta ahora exactamente al radio de cobertura de estación (todo el círculo, sin margen extra externo).
-  - Se ajusta el escalado de densidad para que `Alta` sea claramente más densa que `Media` y `Baja`.
-  - Se incrementa la frecuencia de refresco del heat map para que la acumulación de puntos sea más visible en tiempo real.
-
-- **Leyenda de color (color bar)**
-  - La leyenda del heat map se muestra siempre que exista al menos una estación visible con heat map activado.
-
-- **Círculo de cobertura independiente del heat map**
-  - Nuevo parámetro `coverage_visible` en estación.
-  - Permite ocultar el círculo de cobertura manteniendo el heat map activo.
-
-- **Menú contextual de estación simplificado**
-  - Para capas de estación, se deja solo la acción principal `Update parameters`.
-  - Se ocultan opciones no deseadas en ese contexto.
-
-- **Editor de estación por pestañas**
-  - El modal `Update parameters` de estación pasa a usar pestañas para agrupar funcionalidades:
-    - `General`
-    - `Radio`
-    - `Visual`
-    - `Heat map`
-
-## 2026-07-05l
-
-- **Opciones de visualización: densidad de puntos en heat map**
-  - Se añade selector `Densidad heat map` en editor/opciones de visualización de estación (`Baja`, `Media`, `Alta`).
-  - La densidad seleccionada afecta directamente al muestreo del heat map (paso espacial dinámico) para mostrar menos o más puntos.
-  - `Opciones de visualización` queda disponible también para capas de estación, abriendo su editor directamente.
-
-- **Persistencia de parámetro**
-  - Nuevo parámetro de estación `heatmap_density` en creación, edición y lectura de configuración de estación.
-
-## 2026-07-05k
-
-- **Heat map de estación: UX y densidad mejoradas**
-  - El heat map deja de activarse por defecto al crear estaciones nuevas.
-  - Nueva acción en menú contextual de estación (`click derecho`):
-    - `Mostrar heat map` cuando está apagado.
-    - `Ocultar heat map` cuando está encendido.
-  - La malla de muestreo aumenta densidad de puntos (paso espacial más fino y radio dinámico por cobertura) para mejorar definición visual.
-  - Se añade barra de color/leyenda de cobertura en pantalla, visible solo cuando hay heat map activo.
-
-- **Sincronización de visualización**
-  - Al editar parámetros de estación o cambiar visibilidad, el heat map y su leyenda se actualizan en tiempo real.
-
 ## 2026-07-05j
 
 - **Fix crítico: conversión TEME → ECEF en propagador**
@@ -122,10 +65,6 @@
 
 - **Tooltips contextuales en telemetría/info**
   - Hover en campos de información de satélites y estaciones para mostrar descripción rápida del dato.
-
-- **Heat map de cobertura acumulada (MVP)**
-  - Se añade mapa de calor acumulado en 3D para estaciones (muestreo temporal y color por ratio de cobertura).
-  - Integrado con visibilidad y estado de la estación.
 
 - **Centro de alertas persistente**
   - Sustitución de toasts efímeros por centro de alertas desplegable, acumulable y gestionable manualmente.

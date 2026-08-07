@@ -817,7 +817,6 @@ export function setupObjectSidebar({
     onRequestUpdateGroundStation,
     onPreviewGroundStation = () => null,
     onClearGroundStationPreview = () => {},
-    onRequestToggleGroundStationHeatMap,
     onRequestDuplicateLayer,
     onRequestRenameLayer,
     getLayerDisplayName,
@@ -1155,7 +1154,6 @@ export function setupObjectSidebar({
     contextMenu.innerHTML = `
         <button class="catalog-context-action" id="contextRenameBtn" type="button">Renombrar capa</button>
         <button class="catalog-context-action" id="contextUpdateStationBtn" type="button">Update parameters</button>
-        <button class="catalog-context-action" id="contextToggleHeatMapBtn" type="button">Mostrar heat map</button>
         <button class="catalog-context-action" id="contextExplainBtn" type="button">${uiText("explainParams")}</button>
         <button class="catalog-context-action" id="contextVizBtn" type="button">${uiText("vizOptions")}</button>
         <div class="catalog-context-separator"></div>
@@ -1390,15 +1388,15 @@ export function setupObjectSidebar({
     groundStationModal.id = "groundStationModal";
     groundStationModal.innerHTML = `
         <div class="catalog-filter-panel ground-station-panel" role="dialog" aria-modal="true" aria-label="Nueva estacion terrestre" id="groundStationPanel">
-            <div class="catalog-filter-header">
-                <h3 id="groundStationTitle">Nueva estacion terrestre</h3>
-                <button class="catalog-close-btn" id="groundStationCloseBtn" type="button" aria-label="Cerrar">✕</button>
+            <div class="catalog-filter-header ground-station-design-header">
+                <div><h3 id="groundStationTitle">Nueva estación terrestre</h3><p>Previsualiza la cobertura antes de crear la capa.</p></div>
+                <span class="ground-station-design-badge">DISEÑO DE ESTACIÓN</span>
+                <button class="catalog-close-btn" id="groundStationCloseBtn" type="button" aria-label="Cerrar">×</button>
             </div>
             <div class="ground-station-tabs" id="groundStationTabs">
                 <button type="button" class="ground-station-tab-btn active" data-gs-tab="general">General</button>
                 <button type="button" class="ground-station-tab-btn" data-gs-tab="radio">Radio</button>
                 <button type="button" class="ground-station-tab-btn" data-gs-tab="visual">Visual</button>
-                <button type="button" class="ground-station-tab-btn" data-gs-tab="heatmap">Heat map</button>
             </div>
             <div class="ground-station-tab-panel active" data-gs-tab-panel="general">
                 <div class="catalog-filter-grid ground-station-grid">
@@ -1429,7 +1427,7 @@ export function setupObjectSidebar({
                     <label class="catalog-filter-field">
                         <span>Envolvente RF calculada (km)</span>
                         <input id="gsCoverageRadiusInput" type="number" readonly value="—" aria-describedby="gsRfRangeHint" />
-                        <small id="gsRfRangeHint">Derivada de potencia, frecuencia, ganancias y RX mínima.</small>
+                        <small id="gsRfRangeHint">R (km) = 10^((Ptx + Gtx + Grx − Prx,min − 32.44 − 20 log10(fMHz)) / 20).</small>
                     </label>
                 </div>
             </div>
@@ -1480,22 +1478,6 @@ export function setupObjectSidebar({
                     <label class="catalog-filter-field checkbox">
                         <span>Mostrar circulo cobertura</span>
                         <input id="gsCoverageVisibleInput" type="checkbox" checked />
-                    </label>
-                </div>
-            </div>
-            <div class="ground-station-tab-panel" data-gs-tab-panel="heatmap">
-                <div class="catalog-filter-grid ground-station-grid">
-                    <label class="catalog-filter-field checkbox">
-                        <span>Heat map acumulado</span>
-                        <input id="gsHeatEnabledInput" type="checkbox" />
-                    </label>
-                    <label class="catalog-filter-field">
-                        <span>Densidad heat map</span>
-                        <select id="gsHeatDensityInput">
-                            <option value="low">Baja</option>
-                            <option value="medium" selected>Media</option>
-                            <option value="high">Alta</option>
-                        </select>
                     </label>
                 </div>
             </div>
@@ -1637,7 +1619,6 @@ export function setupObjectSidebar({
     const contextExportBtn = contextMenu.querySelector("#contextExportBtn");
     const contextRenameBtn = contextMenu.querySelector("#contextRenameBtn");
     const contextUpdateStationBtn = contextMenu.querySelector("#contextUpdateStationBtn");
-    const contextToggleHeatMapBtn = contextMenu.querySelector("#contextToggleHeatMapBtn");
     const contextRemoveLayerBtn = contextMenu.querySelector("#contextRemoveLayerBtn");
 
     const addTleFromCatalogBtn = addMenu.querySelector("#addTleFromCatalogBtn");
@@ -1671,8 +1652,6 @@ export function setupObjectSidebar({
     const gsPointSymbolInput = groundStationModal.querySelector("#gsPointSymbolInput");
     const gsPointColorInput = groundStationModal.querySelector("#gsPointColorInput");
     const gsCoverageVisibleInput = groundStationModal.querySelector("#gsCoverageVisibleInput");
-    const gsHeatEnabledInput = groundStationModal.querySelector("#gsHeatEnabledInput");
-    const gsHeatDensityInput = groundStationModal.querySelector("#gsHeatDensityInput");
     const gsTabButtons = groundStationModal.querySelectorAll("[data-gs-tab]");
     const gsTabPanels = groundStationModal.querySelectorAll("[data-gs-tab-panel]");
 
@@ -2057,9 +2036,7 @@ export function setupObjectSidebar({
             point_size_px: Number(gsPointSizeInput?.value),
             point_symbol: String(gsPointSymbolInput?.value || "circle").trim(),
             point_color: String(gsPointColorInput?.value || "#3cc4ff").trim(),
-            coverage_visible: gsCoverageVisibleInput?.checked !== false,
-            heatmap_enabled: gsHeatEnabledInput?.checked === true,
-            heatmap_density: String(gsHeatDensityInput?.value || "medium").trim().toLowerCase()
+            coverage_visible: gsCoverageVisibleInput?.checked !== false
         };
     }
 
@@ -2072,6 +2049,11 @@ export function setupObjectSidebar({
 
     function openGroundStationModal(layerId = null) {
         closeAddMenu();
+        // Station design owns the right-hand workspace in the same way as the
+        // manual-orbit designer. Close incompatible inspectors first.
+        window.dispatchEvent(new CustomEvent("orbit:manual-orbit-close", { detail: { reason: "ground-station-design" } }));
+        window.dispatchEvent(new Event("orbit:propagated-parameters-close"));
+        window.dispatchEvent(new CustomEvent("orbit:ground-station-design-state", { detail: { active: true } }));
         editingGroundStationId = layerId ? String(layerId) : null;
 
         const isEditing = Boolean(editingGroundStationId);
@@ -2096,8 +2078,6 @@ export function setupObjectSidebar({
             gsPointSymbolInput.value = String(current.point_symbol || "circle");
             gsPointColorInput.value = String(current.point_color || "#3cc4ff");
             gsCoverageVisibleInput.checked = current.coverage_visible !== false;
-            gsHeatEnabledInput.checked = current.heatmap_enabled !== false;
-            gsHeatDensityInput.value = String(current.heatmap_density || "medium").toLowerCase();
         } else {
             gsNameInput.value = "";
             gsLatInput.value = "40.4168";
@@ -2115,8 +2095,6 @@ export function setupObjectSidebar({
             gsPointSymbolInput.value = "circle";
             gsPointColorInput.value = "#3cc4ff";
             gsCoverageVisibleInput.checked = true;
-            gsHeatEnabledInput.checked = false;
-            gsHeatDensityInput.value = "medium";
         }
 
         syncStationRangeControls();
@@ -2129,8 +2107,7 @@ export function setupObjectSidebar({
                 name: gsNameInput.value, latitude_deg: gsLatInput.value, longitude_deg: gsLonInput.value, altitude_m: gsAltInput.value, time_zone: gsTimeZoneInput.value,
                 min_elevation_deg: gsMaskInput.value, frequency_mhz: gsFreqInput.value, tx_power_dbm: gsTxPowerInput.value, tx_gain_dbi: gsTxGainInput.value,
                 rx_gain_dbi: gsRxGainInput.value, min_link_power_dbm: gsMinLinkPowerInput.value, coverage_radius_km: gsCoverageRadiusInput.value, point_size_px: gsPointSizeInput.value,
-                point_symbol: gsPointSymbolInput.value, point_color: gsPointColorInput.value, coverage_visible: gsCoverageVisibleInput.checked,
-                heatmap_enabled: gsHeatEnabledInput.checked, heatmap_density: gsHeatDensityInput.value
+                point_symbol: gsPointSymbolInput.value, point_color: gsPointColorInput.value, coverage_visible: gsCoverageVisibleInput.checked
             } }
         }));
         gsNameInput?.focus();
@@ -2140,8 +2117,40 @@ export function setupObjectSidebar({
         onClearGroundStationPreview();
         editingGroundStationId = null;
         groundStationModal.classList.remove("open");
+        window.dispatchEvent(new CustomEvent("orbit:ground-station-design-state", { detail: { active: false } }));
         window.dispatchEvent(new Event("orbit:ground-station-close"));
     }
+
+    async function requestCloseGroundStationModal() {
+        if (!groundStationModal.classList.contains("open")) return;
+        const confirmed = await askConfirmation({
+            title: "Salir del diseño de estación",
+            message: "Se cerrará el modo exclusivo de diseño y se descartará la previsualización que aún no se haya añadido a Layers.",
+            confirmText: "Salir del diseño",
+            cancelText: "Seguir diseñando"
+        });
+        if (confirmed) closeGroundStationModal();
+    }
+
+    // Switching from station design to manual orbit changes the whole scene,
+    // not merely a side panel. Intercept it before the manual-orbit runtime
+    // receives the event so the user can explicitly keep or discard the draft.
+    window.addEventListener("orbit:manual-orbit-toggle", (event) => {
+        if (event.detail?.open !== true || event.detail?.stationDesignConfirmed === true || !groundStationModal.classList.contains("open")) return;
+        event.stopImmediatePropagation();
+        void askConfirmation({
+            title: "Cambiar a diseño de órbita manual",
+            message: "Se cerrará el modo exclusivo de diseño de estación y se descartará su previsualización no confirmada.",
+            confirmText: "Cambiar a órbita",
+            cancelText: "Seguir diseñando la estación"
+        }).then((confirmed) => {
+            if (!confirmed) return;
+            closeGroundStationModal();
+            window.dispatchEvent(new CustomEvent("orbit:manual-orbit-toggle", {
+                detail: { ...event.detail, stationDesignConfirmed: true }
+            }));
+        });
+    }, true);
 
     async function submitGroundStation() {
         const payload = readGroundStationEditorPayload();
@@ -2460,7 +2469,6 @@ export function setupObjectSidebar({
         contextExplainBtn.hidden = isGroundStation || isCelestialBody;
         contextExportBtn.hidden = isGroundStation || isCelestialBody;
         contextUpdateStationBtn.hidden = !isGroundStation;
-        contextToggleHeatMapBtn.hidden = true;
         contextVizBtn.hidden = isGroundStation || isCelestialBody;
         contextGroundTrackBtn.hidden = isGroundStation || isCelestialBody;
         if (!isGroundStation && !isCelestialBody) {
@@ -2468,12 +2476,6 @@ export function setupObjectSidebar({
         }
         contextRenameBtn.hidden = isGroundStation || isEarth;
         contextRemoveLayerBtn.hidden = isEarth;
-
-        if (isGroundStation && typeof getGroundStationParams === "function") {
-            const params = getGroundStationParams(satelliteId) || {};
-            const heatEnabled = params.heatmap_enabled === true;
-            contextToggleHeatMapBtn.textContent = heatEnabled ? "Ocultar heat map" : "Mostrar heat map";
-        }
 
         window.dispatchEvent(new CustomEvent("orbit:layer-context-menu", {
             detail: {
@@ -2618,16 +2620,15 @@ export function setupObjectSidebar({
         openGroundStationModal();
     });
 
-    groundStationCloseBtn?.addEventListener("click", closeGroundStationModal);
-    groundStationCancelBtn?.addEventListener("click", closeGroundStationModal);
+    groundStationCloseBtn?.addEventListener("click", () => { void requestCloseGroundStationModal(); });
+    groundStationCancelBtn?.addEventListener("click", () => { void requestCloseGroundStationModal(); });
     groundStationCreateBtn?.addEventListener("click", () => {
         submitGroundStation();
     });
     [
         gsNameInput, gsLatInput, gsLonInput, gsAltInput, gsTimeZoneInput, gsMaskInput,
         gsFreqInput, gsTxPowerInput, gsTxGainInput, gsRxGainInput, gsMinLinkPowerInput,
-        gsPointSizeInput, gsPointSymbolInput, gsPointColorInput, gsCoverageVisibleInput,
-        gsHeatEnabledInput, gsHeatDensityInput
+        gsPointSizeInput, gsPointSymbolInput, gsPointColorInput, gsCoverageVisibleInput
     ].filter(Boolean).forEach((input) => {
         input.addEventListener("input", () => {
             if (groundStationModal.classList.contains("open")) syncGroundStationPreview();
@@ -2635,12 +2636,6 @@ export function setupObjectSidebar({
         input.addEventListener("change", () => {
             if (groundStationModal.classList.contains("open")) syncGroundStationPreview();
         });
-    });
-
-    groundStationModal.addEventListener("click", (event) => {
-        if (event.target === groundStationModal) {
-            closeGroundStationModal();
-        }
     });
 
     removeAllLayersHeaderBtn.addEventListener("click", async (event) => {
@@ -2972,33 +2967,6 @@ export function setupObjectSidebar({
         const id = contextTargetId;
         closeContextMenu();
         openGroundStationModal(id);
-    });
-
-    contextToggleHeatMapBtn.addEventListener("click", async () => {
-        if (!contextTargetId) {
-            return;
-        }
-        const id = contextTargetId;
-        closeContextMenu();
-
-        if (typeof onRequestToggleGroundStationHeatMap !== "function") {
-            showErrorPopup("El cambio de heat map no esta disponible en este contexto.");
-            return;
-        }
-
-        const current = typeof getGroundStationParams === "function"
-            ? getGroundStationParams(id)
-            : null;
-        const enabledNow = current?.heatmap_enabled === true;
-        const updated = await onRequestToggleGroundStationHeatMap(id, !enabledNow);
-        if (!updated) {
-            showErrorPopup("No se pudo cambiar el estado del heat map.");
-            return;
-        }
-
-        renderList();
-        renderInfo();
-        showInfoPopup(!enabledNow ? "Heat map activado." : "Heat map ocultado.");
     });
 
     contextExportBtn.addEventListener("click", () => {
@@ -4046,10 +4014,9 @@ export function setupObjectSidebar({
 
     window.addEventListener("orbit:ground-station-submit", (event) => {
         const values = event.detail || {};
-        const inputs = { name: gsNameInput, latitude_deg: gsLatInput, longitude_deg: gsLonInput, altitude_m: gsAltInput, time_zone: gsTimeZoneInput, min_elevation_deg: gsMaskInput, frequency_mhz: gsFreqInput, tx_power_dbm: gsTxPowerInput, tx_gain_dbi: gsTxGainInput, rx_gain_dbi: gsRxGainInput, min_link_power_dbm: gsMinLinkPowerInput, coverage_radius_km: gsCoverageRadiusInput, point_size_px: gsPointSizeInput, point_symbol: gsPointSymbolInput, point_color: gsPointColorInput, heatmap_density: gsHeatDensityInput };
+        const inputs = { name: gsNameInput, latitude_deg: gsLatInput, longitude_deg: gsLonInput, altitude_m: gsAltInput, time_zone: gsTimeZoneInput, min_elevation_deg: gsMaskInput, frequency_mhz: gsFreqInput, tx_power_dbm: gsTxPowerInput, tx_gain_dbi: gsTxGainInput, rx_gain_dbi: gsRxGainInput, min_link_power_dbm: gsMinLinkPowerInput, coverage_radius_km: gsCoverageRadiusInput, point_size_px: gsPointSizeInput, point_symbol: gsPointSymbolInput, point_color: gsPointColorInput };
         Object.entries(inputs).forEach(([key, input]) => { if (input && values[key] !== undefined) input.value = values[key]; });
         gsCoverageVisibleInput.checked = values.coverage_visible !== false;
-        gsHeatEnabledInput.checked = values.heatmap_enabled === true;
         submitGroundStation();
     });
 

@@ -89,18 +89,21 @@ export default function GroundStationsPanel() {
         const hide = () => setOpen(false);
         const receive = (event) => setState(event.detail || initialState);
         const receiveResult = (event) => { setLoading(false); setResult(event.detail || null); };
+        const hideForDesign = (event) => { if (event.detail?.active === true) setOpen(false); };
         const openPasses = (event) => { setStationId(String(event.detail?.stationId || "")); setPosition({ x: Math.max(12, Math.round((window.innerWidth - 960) / 2)), y: 76 }); setFloating(true); setOpen(true); refresh(); };
         window.addEventListener("orbit:ground-stations-open", show);
         window.addEventListener("orbit:ground-stations-close", hide);
         window.addEventListener("orbit:ground-stations-state", receive);
         window.addEventListener("orbit:ground-stations-analysis-result", receiveResult);
         window.addEventListener("orbit:ground-station-passes-open", openPasses);
+        window.addEventListener("orbit:ground-station-design-state", hideForDesign);
         return () => {
             window.removeEventListener("orbit:ground-stations-open", show);
             window.removeEventListener("orbit:ground-stations-close", hide);
             window.removeEventListener("orbit:ground-stations-state", receive);
             window.removeEventListener("orbit:ground-stations-analysis-result", receiveResult);
             window.removeEventListener("orbit:ground-station-passes-open", openPasses);
+            window.removeEventListener("orbit:ground-station-design-state", hideForDesign);
         };
     }, []);
 

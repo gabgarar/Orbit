@@ -43,7 +43,7 @@ resolution in small viewports.
 !!! warning "Analytical use"
 
     The viewer is an inspection tool. Do not use the thickness of a trace,
-    the color, projection or density of the heat map as evidence of
+    the appearance of the RF coverage envelope as evidence of
     orbital precision, link availability or statistical uncertainty.
 
 ## Local maps Earth 2 km

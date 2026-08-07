@@ -58,7 +58,7 @@ pública independiente del gateway.
 | Catálogo | Búsqueda, filtros, paginación, importación TLE y OMM JSON/XML con TLE, refresco remoto controlado y persistencia local. | No existe autenticación, autorización, multitenencia ni control de acceso por usuario. |
 | Propagación de catálogo | SGP4 con estado nativo TEME y salida transformada para visualización. | El registro predeterminado de satélites de catálogo no ofrece un selector de propagador alternativo. |
 | Órbitas manuales | Dos cuerpos analítico, SGP4 mediante TLE sintético y Cowell RK4. | Las órbitas manuales son transitorias y no equivalen a un sistema de determinación de órbita. |
-| Estaciones de tierra | Máscara de elevación, AOS/LOS, footprint, heatmap visual y presupuesto de enlace simplificado. | AOS/LOS se obtiene mediante muestreo por paso; no emplea búsqueda de raíces de alta precisión. |
+| Estaciones de tierra | Máscara de elevación, AOS/LOS, envolvente RF visual y presupuesto de enlace simplificado. | AOS/LOS se obtiene mediante muestreo por paso; no emplea búsqueda de raíces de alta precisión. |
 | Exportación | TLE, OMM JSON/XML, OCM simplificado, OEM de cabecera y efemérides SGP4 en CSV, JSON u OEM. | Las salidas OMM, OCM y OEM no deben interpretarse como cobertura completa de todos los perfiles de sus estándares. |
 | API | REST, WebSocket, OpenAPI/Swagger y ReDoc. | No hay versión pública formal de API, SDK distribuido ni CLI de producto. |
 

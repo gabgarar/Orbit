@@ -19,11 +19,6 @@ export function calculateFreeSpacePathLossDb(frequencyMhz, rangeKm) {
     return 32.45 + (20 * Math.log10(frequencyMhz)) + (20 * Math.log10(rangeKm));
 }
 
-export function normalizeHeatMapDensity(value) {
-    const normalized = String(value || "").trim().toLowerCase();
-    return normalized === "low" || normalized === "high" ? normalized : "medium";
-}
-
 export function calculateGeoDistanceKm(latitudeA, longitudeA, latitudeB, longitudeB) {
     const toRadians = (degrees) => degrees * (Math.PI / 180);
     const deltaLatitude = toRadians(Number(latitudeB) - Number(latitudeA));

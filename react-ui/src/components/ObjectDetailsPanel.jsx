@@ -96,6 +96,7 @@ export default function ObjectDetailsPanel() {
     const [tab, setTab] = useState("overview");
     const [dismissedId, setDismissedId] = useState(null);
     const [designMode, setDesignMode] = useState(false);
+    const [stationDesignMode, setStationDesignMode] = useState(false);
     const lastSelection = useRef({ id: null, revision: null });
 
     // The runtime clears its transient selection when the user clicks the globe
@@ -127,7 +128,13 @@ export default function ObjectDetailsPanel() {
         return () => window.removeEventListener("orbit:manual-orbit-design-state", onDesignMode);
     }, []);
 
-    if (designMode || !detail || dismissedId === detail.id) return null;
+    useEffect(() => {
+        const onStationDesign = (event) => setStationDesignMode(event.detail?.active === true);
+        window.addEventListener("orbit:ground-station-design-state", onStationDesign);
+        return () => window.removeEventListener("orbit:ground-station-design-state", onStationDesign);
+    }, []);
+
+    if (designMode || stationDesignMode || !detail || dismissedId === detail.id) return null;
 
     const details = buildObjectDetails(detail);
     const isGroundStation = String(detail.layerType || "").toUpperCase() === "GROUND_STATION";

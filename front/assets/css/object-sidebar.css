@@ -385,6 +385,7 @@ body.with-toolbars #objectSidebar.collapsed {
     justify-content: flex-end;
     padding: 76px 12px 12px;
     box-sizing: border-box;
+    pointer-events: none;
 }
 
 #groundStationModal.open {
@@ -398,6 +399,7 @@ body.with-toolbars #objectSidebar.collapsed {
     padding: 16px;
     gap: 14px;
     container-type: inline-size;
+    pointer-events: auto;
 }
 
 .ground-station-grid {
@@ -428,7 +430,7 @@ body.with-toolbars #objectSidebar.collapsed {
     box-sizing: border-box;
 }
 
-/* A checkbox is a primary control in the Heat map tab, not a text field. */
+/* A checkbox is a primary control, not a text field. */
 .ground-station-panel .catalog-filter-field.checkbox input[type="checkbox"] {
     width: 24px;
     min-width: 24px;
@@ -609,10 +611,28 @@ body.with-toolbars #objectSidebar.collapsed {
     cursor: pointer;
 }
 
-.ground-station-panel .catalog-filter-header::after {
-    content: "DISEÑO DE ESTACIÓN";
+.ground-station-design-header {
+    align-items: flex-start;
+    border-bottom: 1px solid #203956;
+    padding-bottom: 12px;
+}
+
+.ground-station-design-header h3 {
+    margin: 0;
+    color: #eef5ff;
+    font: 700 15px/1.2 system-ui, sans-serif;
+}
+
+.ground-station-design-header p {
+    margin: 5px 0 0;
+    color: #879bb8;
+    font: 500 10px/1.35 system-ui, sans-serif;
+}
+
+.ground-station-design-badge {
     margin-left: auto;
-    margin-right: 9px;
+    margin-top: 2px;
+    margin-right: 2px;
     border: 1px solid #365786;
     border-radius: 999px;
     padding: 3px 6px;
@@ -620,6 +640,25 @@ body.with-toolbars #objectSidebar.collapsed {
     font-size: 8px;
     font-weight: 800;
     letter-spacing: .05em;
+}
+
+.ground-station-panel .catalog-close-btn {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    min-height: 30px;
+    flex: 0 0 30px;
+    border: 1px solid #294361;
+    border-radius: 7px;
+    background: #0c192b;
+    color: #bdcbe0;
+    font: 400 21px/1 system-ui, sans-serif;
+}
+
+.ground-station-panel .catalog-close-btn:hover {
+    border-color: #5075a6;
+    background: #14243d;
+    color: #f4f8ff;
 }
 
 .ground-station-panel .catalog-filter-field input[readonly] {
