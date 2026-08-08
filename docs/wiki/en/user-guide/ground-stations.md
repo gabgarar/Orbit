@@ -201,6 +201,8 @@ $$
 
 Positions and ENU components are expressed in metres. \(\varphi\), \(\lambda\), and \(\epsilon\) are computed in radians, although the interface accepts and displays degrees. The base ephemeris is sampled at the requested step. When two adjacent samples change operational state, Orbit evaluates the same propagator and ITRF geometry again by bisection to bracket AOS or LOS to approximately 0.5 s. The published maximum elevation remains the maximum among profile samples, not a continuously optimised maximum.
 
+The expanded **AOS/LOS tables** analysis scans the profile at 20 s and refines every AOS/LOS crossing to approximately 0.5 s. This keeps multiple vertices for an ordinary LEO contact without blocking the interface with an unnecessary 24-hour series. The chart receives only the neighbourhood of each pass, with 120 s before and after it. A station's next-pass cards use an even lighter 30 s discovery request, do not download the complete elevation series, and run only a small number of requests concurrently. That is a UI forecast; an operational decision should open the table. As with any discrete sampling, a complete contact shorter than the step may not be bracketed; reduce the step through the API when that detection level is required.
+
 !!! warning "Pass resolution"
 
     Refinement only improves a transition already bracketed by two samples. An excessively large step can miss a short pass entirely or misrepresent peak elevation. A smaller step improves profile fidelity and window detection, but does not make the result an operations-certified prediction. Orbit does not yet model local obstruction, refraction, time-varying rain, interference, availability, antenna scheduling, or acquisition.

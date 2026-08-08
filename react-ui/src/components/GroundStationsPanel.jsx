@@ -158,6 +158,10 @@ function PassElevationChart({ result, timeZone: stationTimeZone }) {
     const [selectedPass, setSelectedPass] = useState(0);
     useEffect(() => setSelectedPass(0), [result?.satellite, result?.analysisWindow?.startTime, result?.analysisWindow?.endTime]);
     const allSamples = Array.isArray(result?.samples) ? result.samples : [];
+    const sampleStepSeconds = Number(result?.step_seconds);
+    const sampleStepLabel = Number.isFinite(sampleStepSeconds) && sampleStepSeconds > 0
+        ? `${Math.round(sampleStepSeconds)} s`
+        : "10 s";
     const passes = Array.isArray(result?.passes) ? result.passes : [];
     const orderedPasses = [...passes].sort((left, right) => Date.parse(left.aos) - Date.parse(right.aos));
     const focusedPass = orderedPasses[selectedPass] || orderedPasses[0] || null;
@@ -203,7 +207,7 @@ function PassElevationChart({ result, timeZone: stationTimeZone }) {
     const ticks = [0, 0.25, 0.5, 0.75, 1].map((fraction) => new Date(start + ((end - start) * fraction)));
     return <section className="mt-3 rounded-[9px] border border-[#203b59] bg-[linear-gradient(155deg,rgba(8,19,35,.96),rgba(5,13,25,.96))] p-2.5">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1"><div><strong className="block text-[11px] text-[#e4eefc]">Perfil de elevación</strong><span className="text-[9px] text-[#879bb8]">Pase de {result.satellite} · {result.referenceFrame || "ITRF"} · cálculo {result.timeScale || "UTC"} · visualización {timeZone}</span></div><label className="text-[9px] text-[#91a8c8]">Pase <select value={selectedPass} onChange={(event) => setSelectedPass(Number(event.target.value))} className="ml-1 rounded-[5px] border border-[#31506f] bg-[#0e2037] px-1.5 py-1 text-[9px] font-bold text-[#d8e7fc]">{orderedPasses.map((pass, index) => <option key={`${pass.aos}-${index}`} value={index}>Pase {index + 1} · {Number(pass.max_elevation_deg).toFixed(1)}°</option>)}</select></label></div>
-        <div className="mb-1 flex items-center justify-end gap-2 px-1"><span className="hidden text-[9px] font-medium text-[#7189aa] lg:inline">Vista detallada · muestras ≤ 10 s</span><button className="inline-flex h-6 items-center rounded-[5px] border border-[#31506f] bg-[#0e2037] px-2 text-[9px] font-bold text-[#a9c7ed] hover:bg-[#173554]" type="button" onClick={() => downloadChartPng(svgRef.current, `passes-${result.satellite}`)}>Export PNG</button></div>
+        <div className="mb-1 flex items-center justify-end gap-2 px-1"><span className="hidden text-[9px] font-medium text-[#7189aa] lg:inline">Vista detallada · muestras ≤ {sampleStepLabel}</span><button className="inline-flex h-6 items-center rounded-[5px] border border-[#31506f] bg-[#0e2037] px-2 text-[9px] font-bold text-[#a9c7ed] hover:bg-[#173554]" type="button" onClick={() => downloadChartPng(svgRef.current, `passes-${result.satellite}`)}>Export PNG</button></div>
         <svg ref={svgRef} className="block min-h-[250px] w-full select-none" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Elevación del satélite durante el pase seleccionado">
             <defs><linearGradient id="pass-elevation-line" gradientUnits="userSpaceOnUse" x1={pad.left} y1="0" x2={width - pad.right} y2="0"><stop offset="0%" stopColor="#6cb8ff" />{hasPassWindow && <><stop offset={`${(aosOffset * 100).toFixed(4)}%`} stopColor="#6cb8ff" /><stop offset={`${(aosOffset * 100).toFixed(4)}%`} stopColor="#6ff0a1" /><stop offset={`${(losOffset * 100).toFixed(4)}%`} stopColor="#6ff0a1" /><stop offset={`${(losOffset * 100).toFixed(4)}%`} stopColor="#a58aff" /></>}<stop offset="100%" stopColor="#a58aff" /></linearGradient><clipPath id="pass-elevation-clip"><rect x={pad.left} y={pad.top} width={plotWidth} height={plotHeight} rx="4" /></clipPath></defs>
             <rect x={pad.left} y={pad.top} width={plotWidth} height={plotHeight} fill="#09172a" stroke="#29425f" strokeWidth=".9" rx="4" />

@@ -108,6 +108,138 @@ def test_aos_los_uses_the_station_elevation_mask_for_samples_and_passes():
     assert response["passes"] == []
 
 
+def test_aos_los_uses_position_only_ephemerides_and_can_omit_samples():
+    """Event-only consumers retain pass extraction without the large chart body."""
+
+    calls = []
+    points = [_itrf_point(elevation_deg=45, azimuth_deg=0)]
+
+    def resolve_propagator(*_args):
+        return "TEST", object()
+
+    def build_ephemeris(*args):
+        calls.append(args)
+        return {
+            "points": points,
+            "reference_frame": "ITRF",
+            "transport_time_scale": "UTC",
+        }
+
+    router = create_ground_stations_router(resolve_propagator, build_ephemeris, lambda value: value)
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/aos-los" and "POST" in route.methods)
+    response = endpoint(_request(StationInput(lat_deg=0, lon_deg=0, min_elevation_deg=10)).model_copy(
+        update={"include_samples": False}
+    ))
+
+    assert calls[0][-2:] == (False, True)
+    assert response["count"] == 1
+    assert response["samples"] == []
+    assert len(response["passes"]) == 1
+
+
+def test_get_aos_los_can_omit_samples_without_changing_the_count():
+    endpoint = _get_endpoint_for([_itrf_point(elevation_deg=45, azimuth_deg=0)])
+
+    response = endpoint(
+        sat_id="TEST",
+        station_lat_deg=0,
+        station_lon_deg=0,
+        station_height_m=0,
+        min_elevation_deg=10,
+        max_range_km=None,
+        mechanical_elevation_min_deg=0,
+        mechanical_elevation_max_deg=90,
+        mechanical_azimuth_min_deg=-180,
+        mechanical_azimuth_max_deg=180,
+        operation_mode="tracking",
+        boresight_azimuth_deg=0,
+        boresight_elevation_deg=90,
+        beam_half_angle_deg=None,
+        pattern_type="gaussian",
+        hpbw_azimuth_deg=None,
+        hpbw_elevation_deg=None,
+        side_lobe_level_db=25,
+        start_time=START,
+        end_time=START + timedelta(minutes=1),
+        step_seconds=30,
+        include_samples=False,
+    )
+
+    assert response["count"] == 1
+    assert response["samples"] == []
+    assert len(response["passes"]) == 1
+
+
+def test_post_aos_los_can_return_only_chart_samples_near_refined_passes():
+    """A detailed chart need not receive every vertex from its 24-hour scan."""
+    station = StationInput(lat_deg=0, lon_deg=0, min_elevation_deg=10)
+    points = [
+        _itrf_point(elevation_deg=0, azimuth_deg=0, time=START),
+        _itrf_point(elevation_deg=45, azimuth_deg=0, time=START + timedelta(seconds=30)),
+        _itrf_point(elevation_deg=40, azimuth_deg=0, time=START + timedelta(seconds=60)),
+        _itrf_point(elevation_deg=0, azimuth_deg=0, time=START + timedelta(seconds=90)),
+        _itrf_point(elevation_deg=0, azimuth_deg=0, time=START + timedelta(seconds=120)),
+    ]
+    request = AosLosRequest(
+        sat_id="TEST",
+        station=station,
+        start_time=START,
+        end_time=START + timedelta(minutes=2),
+        step_seconds=30,
+        include_samples=True,
+        chart_padding_seconds=0,
+    )
+
+    response = _post_endpoint_for(points)(request)
+
+    assert response["count"] == 5
+    assert response["returned_sample_count"] == 2
+    assert response["sample_scope"] == "pass-windows"
+    assert response["chart_padding_seconds"] == 0
+    assert [sample["time"] for sample in response["samples"]] == [
+        (START + timedelta(seconds=30)).isoformat(),
+        (START + timedelta(seconds=60)).isoformat(),
+    ]
+    assert len(response["passes"]) == 1
+
+
+def test_get_aos_los_accepts_chart_padding_and_reports_the_compact_scope():
+    endpoint = _get_endpoint_for([
+        _itrf_point(elevation_deg=45, azimuth_deg=0, time=START),
+    ])
+
+    response = endpoint(
+        sat_id="TEST",
+        station_lat_deg=0,
+        station_lon_deg=0,
+        station_height_m=0,
+        min_elevation_deg=10,
+        max_range_km=None,
+        mechanical_elevation_min_deg=0,
+        mechanical_elevation_max_deg=90,
+        mechanical_azimuth_min_deg=-180,
+        mechanical_azimuth_max_deg=180,
+        operation_mode="tracking",
+        boresight_azimuth_deg=0,
+        boresight_elevation_deg=90,
+        beam_half_angle_deg=None,
+        pattern_type="gaussian",
+        hpbw_azimuth_deg=None,
+        hpbw_elevation_deg=None,
+        side_lobe_level_db=25,
+        start_time=START,
+        end_time=START + timedelta(minutes=1),
+        step_seconds=30,
+        include_samples=True,
+        chart_padding_seconds=120,
+    )
+
+    assert response["count"] == 1
+    assert response["returned_sample_count"] == 1
+    assert response["sample_scope"] == "pass-windows"
+    assert response["chart_padding_seconds"] == 120
+
+
 @pytest.mark.parametrize(
     ("point", "station"),
     [

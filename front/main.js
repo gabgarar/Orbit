@@ -357,6 +357,16 @@ const PROPAGATED_PARAMETERS_DEFAULT_HOURS = 24;
 const PROPAGATED_PARAMETERS_MIN_SAMPLES = 25;
 const PROPAGATED_PARAMETERS_MAX_SAMPLES = 121;
 const PROPAGATED_PARAMETERS_MANUAL_REFRESH_DEBOUNCE_MS = 280;
+// The detailed AOS/LOS panel remains deliberately dense: it is the
+// authoritative operator result and drives the elevation plot.  The station
+// sidebar only needs a forecast of the next contact, so it uses a lighter
+// request below and never downloads an unused 24-hour sample series.
+// Twenty seconds keeps several profile vertices for ordinary LEO contacts
+// while avoiding an 8,641-point / 24-hour request. AOS and LOS themselves
+// are still refined by the service to its sub-second transition tolerance.
+const GROUND_STATION_ANALYSIS_STEP_SECONDS = 20;
+const GROUND_STATION_BACKGROUND_PASS_STEP_SECONDS = 30;
+const GROUND_STATION_CHART_PADDING_SECONDS = 120;
 const PROPAGATED_PARAMETERS_MAX_RANGE_HOURS = 365 * 24;
 
 const simulationState = {
@@ -1190,7 +1200,10 @@ const groundStationTelemetryService = createGroundStationTelemetryService({
     calculateSatelliteDownlink,
     calculateRfModel: calculateStationRfModel,
     getPasses: async (satelliteId, station, startDate, endDate) => {
-        const { query, linkContract } = createGroundStationPassQuery(station, satelliteId, startDate, endDate, { stepSeconds: 10 });
+        const { query, linkContract } = createGroundStationPassQuery(station, satelliteId, startDate, endDate, {
+            stepSeconds: GROUND_STATION_BACKGROUND_PASS_STEP_SECONDS,
+            includeSamples: false
+        });
         // The catalogue explicitly supplied RF metadata but it cannot close
         // this station's receiver contract. Returning no operational pass is
         // more truthful than quietly switching to reciprocal planning.
@@ -1525,7 +1538,11 @@ function satelliteRfProfileSignature(satelliteId) {
     ].join("|");
 }
 
-function createGroundStationPassQuery(station, satelliteId, startDate, endDate, { stepSeconds = 10 } = {}) {
+function createGroundStationPassQuery(station, satelliteId, startDate, endDate, {
+    stepSeconds = GROUND_STATION_ANALYSIS_STEP_SECONDS,
+    includeSamples = true,
+    chartPaddingSeconds = null
+} = {}) {
     const rf = getGroundStationRfModel(station);
     const linkContract = getGroundStationPassLinkContract(station, satelliteId);
     const query = new URLSearchParams({
@@ -1552,7 +1569,15 @@ function createGroundStationPassQuery(station, satelliteId, startDate, endDate, 
         side_lobe_level_db: String(rf.side_lobe_level_db),
         start_time: startDate.toISOString(),
         end_time: endDate.toISOString(),
-        step_seconds: String(stepSeconds)
+        step_seconds: String(stepSeconds),
+        // The next-pass cards need only AOS/LOS.  Keeping this explicit lets
+        // the API skip several megabytes of 24-hour chart vertices. The
+        // dedicated analysis explicitly requests only the windows needed by
+        // its selected-pass elevation chart.
+        include_samples: String(Boolean(includeSamples)),
+        ...(Number.isFinite(chartPaddingSeconds) && chartPaddingSeconds >= 0
+            ? { chart_padding_seconds: String(chartPaddingSeconds) }
+            : {})
     });
     return { query, linkContract };
 }
@@ -2878,7 +2903,11 @@ async function analyzeGroundStationPasses(detail = {}) {
         analysisWindow
     };
     try {
-        const { query, linkContract } = createGroundStationPassQuery(station, satelliteId, startDate, endDate, { stepSeconds: 10 });
+        const { query, linkContract } = createGroundStationPassQuery(station, satelliteId, startDate, endDate, {
+            stepSeconds: GROUND_STATION_ANALYSIS_STEP_SECONDS,
+            includeSamples: true,
+            chartPaddingSeconds: GROUND_STATION_CHART_PADDING_SECONDS
+        });
         if (!linkContract.available) {
             if (isCurrentGroundStationPassAnalysis(requestContext)) {
                 clearGroundStationAnalysisVisuals();

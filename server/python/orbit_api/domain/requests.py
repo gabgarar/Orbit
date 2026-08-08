@@ -443,6 +443,14 @@ class AosLosRequest(TleSourceRequest):
     start_time: datetime.datetime
     end_time: datetime.datetime
     step_seconds: float = Field(default=10.0, gt=0, le=600)
+    # Pass extraction always evaluates the full internal sample sequence.
+    # Realtime telemetry consumers can omit that potentially large sequence
+    # from the HTTP response once they only need the AOS/LOS windows.
+    include_samples: bool = True
+    # ``None`` preserves the historical full-window chart response.  A
+    # caller that only plots individual contacts can instead request the
+    # samples surrounding each refined AOS/LOS interval.
+    chart_padding_seconds: float | None = Field(default=None, ge=0, le=3_600)
 
     @model_validator(mode="after")
     def validate_time_range(self):

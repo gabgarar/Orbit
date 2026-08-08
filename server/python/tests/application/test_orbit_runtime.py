@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from orbit_api.application.orbit_runtime import OrbitRuntime
 from orbit_api.frames import FrameId, FrameTransformService, StateVector
+from orbit_api.orbits.propagators.sgp4.propagator import SGP4Propagator
 from orbit_api.timekeeping import (
     EarthOrientation,
     LeapSecondTable,
@@ -202,3 +203,44 @@ def test_native_ephemeris_serializes_explicit_eme2000_and_itrf2020_metadata():
     # current UI consumers; it must never claim the generic ECI frame.
     first_eci = first_point["eci"]
     assert first_eci == {**first_native, "legacy_field": True}
+
+
+def test_position_only_ephemeris_keeps_itrf_positions_and_skips_frame_derivatives(monkeypatch):
+    """Access planning must not pay for velocities it cannot consume."""
+
+    runtime = OrbitRuntime()
+    propagator = SGP4Propagator(
+        "1 25544U 98067A   24001.00000000  .00000000  00000+0  00000+0 0  9991",
+        "2 25544  51.6400  10.0000 0005000  30.0000 330.0000 15.50000000000000",
+        frame_transformer=runtime.frame_transformer,
+    )
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    end = start + timedelta(seconds=30)
+
+    normal = runtime.build_ephemeris("ISS", propagator, start, end, 30, False)
+    expected_position = normal["points"][0]["position"]
+
+    calls = 0
+    original_native_state_at = propagator.native_state_at
+
+    def counted_native_state_at(moment):
+        nonlocal calls
+        calls += 1
+        return original_native_state_at(moment)
+
+    def derivative_must_not_run(*_args, **_kwargs):
+        raise AssertionError("A position-only AOS/LOS ephemeris must not transform velocity")
+
+    monkeypatch.setattr(propagator, "native_state_at", counted_native_state_at)
+    monkeypatch.setattr(runtime.frame_transformer, "_matrix_derivatives", derivative_must_not_run)
+
+    position_only = runtime.build_ephemeris("ISS", propagator, start, end, 30, False, True)
+
+    assert position_only is not normal
+    assert position_only["position_only"] is True
+    assert position_only["points"][0]["position"] == pytest.approx(expected_position)
+    assert "velocity" not in position_only["points"][0]
+    assert "native_state" not in position_only["points"][0]
+    # One native TEME evaluation per sample: the regular build used two when
+    # it serialised both renderer and native views.
+    assert calls == position_only["count"]

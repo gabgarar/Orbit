@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import math
+from dataclasses import replace
 
 from sgp4.api import Satrec, jday
 
@@ -109,6 +110,36 @@ class SGP4Propagator:
 
         return self._frame_transformer.transform(
             self.native_state_at(instant),
+            target_frame=target_frame,
+            target_realization=target_realization,
+            earth_orientation=self._legacy_earth_orientation,
+        )
+
+    def position_at(
+        self,
+        instant: datetime.datetime,
+        *,
+        target_frame: FrameId | str = FrameId.ITRF,
+        target_realization: str | None = None,
+    ) -> StateVector:
+        """Return a target-frame position without calculating rotation derivatives.
+
+        SGP4 still produces its native six-component TEME state in one call,
+        but access-window planning has no use for transformed velocity.  By
+        removing it before the shared transformation, the frame service can
+        skip the finite-difference matrix derivatives while retaining the
+        exact TEME, UT1 and polar-motion position transformation used by
+        :meth:`state_at`.
+        """
+
+        native = self.native_state_at(instant)
+        return self._frame_transformer.transform(
+            replace(
+                native,
+                velocity_m_s=None,
+                acceleration_m_s2=None,
+                covariance=None,
+            ),
             target_frame=target_frame,
             target_realization=target_realization,
             earth_orientation=self._legacy_earth_orientation,

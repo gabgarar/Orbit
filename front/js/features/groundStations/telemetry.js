@@ -8,20 +8,63 @@ export function createGroundStationTelemetryService({
     calculateRfModel
 }) {
     const passCache = new Map();
+    const maxPassRefreshConcurrency = 2;
+
+    async function collectNextPasses(satelliteIds, station, startDate, endDate) {
+        const outcomes = new Array(satelliteIds.length);
+        let nextIndex = 0;
+
+        async function runWorker() {
+            while (nextIndex < satelliteIds.length) {
+                const index = nextIndex;
+                nextIndex += 1;
+                const satelliteId = satelliteIds[index];
+                try {
+                    const passes = await getPasses(satelliteId, station, startDate, endDate);
+                    const firstPass = passes?.[0];
+                    outcomes[index] = {
+                        satellite: satelliteId,
+                        ok: true,
+                        row: firstPass ? {
+                            satellite: satelliteId,
+                            aos: firstPass.aos || "-",
+                            los: firstPass.los || "-",
+                            max_elevation_deg: Number(firstPass.max_elevation_deg)
+                        } : null
+                    };
+                } catch {
+                    // A single unavailable propagator must not suppress the
+                    // next-pass summary for all the other active satellites.
+                    outcomes[index] = { satellite: satelliteId, ok: false, row: null };
+                }
+            }
+        }
+
+        const workerCount = Math.min(maxPassRefreshConcurrency, satelliteIds.length);
+        await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+        return outcomes;
+    }
 
     async function refreshPasses(station, startDate, endDate) {
         const cached = passCache.get(station.id);
         if (cached?.loading) return;
         passCache.set(station.id, { ...cached, loading: true });
-        try {
-            const rows = (await Promise.all(getSatelliteStates().slice(0, 10).map(async ({ id }) => {
-                const passes = await getPasses(id, station, startDate, endDate);
-                return passes?.[0] ? { satellite: id, aos: passes[0].aos || "-", los: passes[0].los || "-", max_elevation_deg: Number(passes[0].max_elevation_deg) } : null;
-            }))).filter(Boolean);
-            passCache.set(station.id, { loading: false, updatedAt: Date.now(), rows });
-        } catch {
-            passCache.set(station.id, { loading: false, updatedAt: Date.now(), rows: [] });
+        const satelliteIds = [...new Set(getSatelliteStates()
+            .map(({ id }) => id)
+            .filter(Boolean))];
+        const outcomes = await collectNextPasses(satelliteIds, station, startDate, endDate);
+        const previousRows = new Map((cached?.rows || []).map((row) => [row.satellite, row]));
+
+        for (const outcome of outcomes) {
+            if (!outcome.ok) continue;
+            if (outcome.row) previousRows.set(outcome.satellite, outcome.row);
+            else previousRows.delete(outcome.satellite);
         }
+
+        const rows = satelliteIds
+            .map((satelliteId) => previousRows.get(satelliteId))
+            .filter(Boolean);
+        passCache.set(station.id, { loading: false, updatedAt: Date.now(), rows });
     }
 
     function build(station, dates) {

@@ -49,7 +49,18 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
 
     def calculate_access_windows(payload: AosLosRequest) -> dict:
         name, propagator = resolve_propagator(payload.sat_id, payload.line1, payload.line2)
-        ephemeris = build_ephemeris(name, propagator, payload.start_time, payload.end_time, payload.step_seconds, False)
+        # AOS/LOS consumes only ITRF positions.  Request the runtime's
+        # position-only ephemeris so it does not calculate/serialize velocity
+        # derivatives or duplicate native samples for every planning point.
+        ephemeris = build_ephemeris(
+            name,
+            propagator,
+            payload.start_time,
+            payload.end_time,
+            payload.step_seconds,
+            False,
+            True,
+        )
         def visibility_sample(point: dict) -> dict:
             position = point.get("position") or {}
             elevation = elevation_degrees(
@@ -186,7 +197,7 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
                 if (upper - lower).total_seconds() <= 0.5:
                     break
                 middle = lower + ((upper - lower) / 2)
-                refined = build_ephemeris(name, propagator, middle, middle, 1.0, False)
+                refined = build_ephemeris(name, propagator, middle, middle, 1.0, False, True)
                 point = (refined.get("points") or [None])[0]
                 if not point:
                     return None
@@ -198,6 +209,78 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
             return (lower + ((upper - lower) / 2)).isoformat()
 
         samples = [visibility_sample(point) for point in ephemeris["points"]]
+        passes = extract_passes(
+            samples,
+            payload.station.min_elevation_deg,
+            refine_transition=refine_visibility_transition,
+        )
+
+        def parse_utc_time(value: object) -> datetime.datetime | None:
+            """Parse an API timestamp without making a malformed sample fatal."""
+            try:
+                parsed = datetime.datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                return None
+            return ensure_utc(parsed)
+
+        def samples_for_pass_charts() -> list[dict]:
+            """Keep chart vertices inside refined access windows plus padding.
+
+            The full coarse sequence has already been evaluated above, so this
+            is only a response-shaping operation: pass discovery and the
+            sub-second AOS/LOS refinement retain exactly the same result.
+            """
+            if payload.chart_padding_seconds is None:
+                return samples
+
+            padding = datetime.timedelta(seconds=payload.chart_padding_seconds)
+            windows: list[tuple[datetime.datetime, datetime.datetime]] = []
+            for access_pass in passes:
+                aos = parse_utc_time(access_pass.get("aos"))
+                los = parse_utc_time(access_pass.get("los"))
+                if aos is not None and los is not None and los >= aos:
+                    windows.append((aos - padding, los + padding))
+
+            if not windows:
+                return []
+
+            # Nearby passes can have overlapping padding. Merge their
+            # intervals once so the sample scan stays linear in the common
+            # case of a long planning window.
+            windows.sort(key=lambda interval: interval[0])
+            merged_windows: list[tuple[datetime.datetime, datetime.datetime]] = []
+            for lower, upper in windows:
+                if merged_windows and lower <= merged_windows[-1][1]:
+                    previous_lower, previous_upper = merged_windows[-1]
+                    merged_windows[-1] = (previous_lower, max(previous_upper, upper))
+                else:
+                    merged_windows.append((lower, upper))
+
+            compact_samples: list[dict] = []
+            window_index = 0
+            for sample in samples:
+                sample_time = parse_utc_time(sample.get("time"))
+                if sample_time is None:
+                    continue
+                while window_index < len(merged_windows) and sample_time > merged_windows[window_index][1]:
+                    window_index += 1
+                if window_index >= len(merged_windows):
+                    break
+                lower, upper = merged_windows[window_index]
+                if lower <= sample_time <= upper:
+                    compact_samples.append(sample)
+            return compact_samples
+
+        if not payload.include_samples:
+            returned_samples: list[dict] = []
+            sample_scope = "omitted"
+        elif payload.chart_padding_seconds is None:
+            returned_samples = samples
+            sample_scope = "full-window"
+        else:
+            returned_samples = samples_for_pass_charts()
+            sample_scope = "pass-windows"
+
         return {
             "satellite": name,
             "station": payload.station.model_dump(),
@@ -210,13 +293,16 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
             "reference_frame": str(ephemeris.get("reference_frame") or "ITRF"),
             "time_scale": str(ephemeris.get("transport_time_scale") or ephemeris.get("time_scale") or "UTC"),
             "step_seconds": payload.step_seconds,
-            "passes": extract_passes(
-                samples,
-                payload.station.min_elevation_deg,
-                refine_transition=refine_visibility_transition,
-            ),
-            "samples": samples,
+            "passes": passes,
+            # The internal sequence is still evaluated so AOS/LOS and its
+            # refined crossings are identical.  Streaming users that only
+            # need event windows can avoid a multi-megabyte response; chart
+            # clients can request only contact-adjacent vertices.
+            "samples": returned_samples,
             "count": len(samples),
+            "returned_sample_count": len(returned_samples),
+            "sample_scope": sample_scope,
+            "chart_padding_seconds": payload.chart_padding_seconds,
         }
 
     @router.get("/aos-los")
@@ -242,6 +328,8 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
         start_time: Annotated[datetime.datetime | None, Query()] = None,
         end_time: Annotated[datetime.datetime | None, Query()] = None,
         step_seconds: float = Query(default=10.0, gt=0, le=600),
+        include_samples: bool = Query(default=True),
+        chart_padding_seconds: Annotated[float | None, Query(ge=0, le=3_600)] = None,
     ) -> dict:
         now = utc_now()
         return calculate_access_windows(AosLosRequest(
@@ -268,6 +356,8 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
             start_time=start_time or now,
             end_time=end_time or now + datetime.timedelta(hours=24),
             step_seconds=step_seconds,
+            include_samples=include_samples,
+            chart_padding_seconds=chart_padding_seconds,
         ))
 
     @router.post("/aos-los")

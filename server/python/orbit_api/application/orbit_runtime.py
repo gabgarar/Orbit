@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import json
 import threading
+from dataclasses import replace
 
 from fastapi import HTTPException
 
@@ -180,6 +181,65 @@ class OrbitRuntime:
             provenance={"compatibility": "legacy tuple propagator"},
         )
 
+    def renderer_position_at(self, propagator: OrbitPropagator, moment: datetime.datetime) -> StateVector:
+        """Return the common ITRF renderer position without velocity work.
+
+        Access-window planning needs only a terrestrial position.  Calling a
+        normal ``state_at`` implementation for every sample also transforms
+        velocity, which makes :class:`FrameTransformService` evaluate matrix
+        derivatives that AOS/LOS never consumes.  Prefer a propagator's
+        dedicated position adapter when it has one (SGP4 uses this to retain
+        its legacy DUT1 override).  Otherwise transform its native state with
+        velocity, acceleration and covariance deliberately removed.
+
+        The returned ITRF *position* is the same frame transformation used by
+        the normal renderer path; only unneeded derivatives are skipped.
+        """
+
+        utc = self.ensure_utc(moment)
+        position_provider = getattr(propagator, "position_at", None)
+        if callable(position_provider):
+            result = position_provider(utc, target_frame=FrameId.ITRF)
+            if not isinstance(result, StateVector):
+                raise ValueError("position_at debe devolver un StateVector")
+            return result if result.velocity_m_s is None else replace(
+                result,
+                velocity_m_s=None,
+                acceleration_m_s2=None,
+                covariance=None,
+            )
+
+        native_provider = getattr(propagator, "native_state_at", None)
+        if callable(native_provider):
+            native_state = native_provider(utc)
+            if not isinstance(native_state, StateVector):
+                raise ValueError("native_state_at debe devolver un StateVector")
+            transformer = getattr(propagator, "frame_transformer", None)
+            if not isinstance(transformer, FrameTransformService):
+                transformer = self._frame_transformer
+            return transformer.transform(
+                replace(
+                    native_state,
+                    velocity_m_s=None,
+                    acceleration_m_s2=None,
+                    covariance=None,
+                ),
+                target_frame=FrameId.ITRF,
+            )
+
+        # Legacy tuple providers cannot avoid producing six components, but
+        # the public access ephemeris still remains position-only.
+        x, y, z, _vx, _vy, _vz = propagator.propagate_datetime(utc)
+        return StateVector(
+            epoch=utc,
+            time_scale="UTC",
+            frame=FrameId.ITRF,
+            frame_realization=None,
+            center="EARTH",
+            position_m=(float(x), float(y), float(z)),
+            provenance={"compatibility": "legacy tuple propagator"},
+        )
+
     def native_state_at(self, propagator: OrbitPropagator, moment: datetime.datetime) -> StateVector | None:
         """Return a propagator's declared native state when it exposes one."""
 
@@ -243,7 +303,16 @@ class OrbitRuntime:
     def find_catalog_entry(self, sat_id: str):
         return find_entry(self.load_catalog_entries(), sat_id)
 
-    def build_ephemeris(self, name: str, prop: OrbitPropagator, start_time: datetime.datetime, end_time: datetime.datetime, step_seconds: float, include_velocity=True):
+    def build_ephemeris(
+        self,
+        name: str,
+        prop: OrbitPropagator,
+        start_time: datetime.datetime,
+        end_time: datetime.datetime,
+        step_seconds: float,
+        include_velocity=True,
+        position_only: bool = False,
+    ):
         start_utc, end_utc = self.ensure_utc(start_time), self.ensure_utc(end_time)
         step = float(step_seconds)
         if step <= 0:
@@ -256,7 +325,7 @@ class OrbitRuntime:
             self._frame_transformer.cache_token_at(end_utc),
         )
         cache_key = hashlib.sha1(
-            f"{name}|{start_utc.isoformat()}|{end_utc.isoformat()}|{step}|{include_velocity}|{eop_token}".encode("utf-8")
+            f"{name}|{start_utc.isoformat()}|{end_utc.isoformat()}|{step}|{include_velocity}|{position_only}|{eop_token}".encode("utf-8")
         ).hexdigest()
         cached = self._ephemeris_cache.get(cache_key)
         if cached is not None:
@@ -266,12 +335,18 @@ class OrbitRuntime:
         ) or callable(getattr(prop, "propagate_eci_datetime", None))
 
         def sample(moment: datetime.datetime) -> dict:
-            renderer_state = self.renderer_state_at(prop, moment)
-            native_state = self.native_state_at(prop, moment) if native_samples_available else None
+            renderer_state = (
+                self.renderer_position_at(prop, moment)
+                if position_only
+                else self.renderer_state_at(prop, moment)
+            )
+            native_state = None if position_only else (
+                self.native_state_at(prop, moment) if native_samples_available else None
+            )
             return self.serialize_state(
                 name,
                 moment,
-                include_velocity=include_velocity,
+                include_velocity=False if position_only else include_velocity,
                 state=renderer_state,
                 native_state=native_state,
             )
@@ -298,6 +373,7 @@ class OrbitRuntime:
             "start_time": start_utc.isoformat(),
             "end_time": end_utc.isoformat(),
             "step_seconds": step,
+            "position_only": position_only,
             "points": points,
             "count": len(points),
             "cached": False,
