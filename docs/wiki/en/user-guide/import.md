@@ -43,6 +43,23 @@ When an OEM domain is activated, the [Timeline](timeline.md) remains
 limited to its samples. Keep the source file available: your samples
 They are not reliably restored from a project document.
 
+## Ground stations
+
+Import independent stations from **Import** in **Ground Stations** or from
+**Import stations** in project actions. This action adds valid stations to the
+open project; it does not replace its layer tree or import an orbital object.
+
+| Format | Recommended use | Minimum import requirement |
+| --- | --- | --- |
+| GeoJSON RFC 7946 | GIS and mapping tools. | A `Point` `Feature` with valid WGS-84 coordinates. |
+| Orbit JSON | Native copy of Orbit stations. | An `orbit-ground-stations` envelope with a `stations` list. |
+| CSV | Tabular editing. | `latitude_deg` and `longitude_deg` columns. |
+
+The UI limit is 5 MiB. Each feature or row is validated independently: Orbit
+imports valid stations, skips invalid ones, and reports both counts. See
+[Ground-station interchange](../formats/ground-stations/interchange.md) for
+the contract, accepted extensions, and data recalculated by Orbit.
+
 ## Formats not exposed by the interface
 
 | Format | Current situation |

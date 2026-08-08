@@ -43,6 +43,24 @@ Cuando se activa el dominio de un OEM, la [Línea temporal](timeline.md) queda
 limitada a sus muestras. Mantenga el archivo fuente disponible: sus muestras
 no se restauran de manera fiable desde un documento de proyecto.
 
+## Estaciones terrestres
+
+Las estaciones se importan de forma independiente desde **Importar** en
+**Ground Stations** o desde **Importar estaciones** en las acciones del
+proyecto. Esta acción añade las estaciones válidas al proyecto abierto; no
+reemplaza su árbol de capas ni importa un objeto orbital.
+
+| Formato | Uso recomendado | Requisito mínimo de importación |
+| --- | --- | --- |
+| GeoJSON RFC 7946 | GIS y herramientas cartográficas. | Una `Feature` `Point` con coordenadas WGS-84 válidas. |
+| Orbit JSON | Copia nativa de estaciones Orbit. | Contenedor `orbit-ground-stations` con una lista `stations`. |
+| CSV | Edición tabular. | Columnas `latitude_deg` y `longitude_deg`. |
+
+El límite de la interfaz es 5 MiB. Cada entidad o fila se valida de manera
+independiente: Orbit importa las estaciones válidas, omite las inválidas y
+notifica ambos recuentos. Consulte [Intercambio de estaciones terrestres](../formats/ground-stations/interchange.md)
+para el contrato, las extensiones admitidas y los datos que se recalculan.
+
 ## Formatos no expuestos por la interfaz
 
 | Formato | Situación actual |

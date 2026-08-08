@@ -16,9 +16,11 @@ Complete coverage of all profiles of your standards.
 
 ## Ground stations
 
-Ground-station GeoJSON export is not a REST endpoint. The application generates
-an RFC 7946 <code>FeatureCollection</code> locally from authored station-layer
-contracts and downloads an <code>application/geo+json</code> file. It does not
-call this API or turn an AOS/LOS response into export geometry. See
-[Ground-station GeoJSON interchange](../../formats/ground-stations/interchange.md)
-for the schema and its limits.
+Ground-station interchange is not a REST endpoint. The application imports and
+generates GeoJSON RFC 7946, Orbit JSON, and CSV locally from authored
+station-layer contracts. GeoJSON downloads as <code>application/geo+json</code>,
+Orbit JSON as <code>application/json</code>, and CSV as <code>text/csv</code>.
+
+Those operations do not call this API or turn an AOS/LOS response into an
+interchange file. See [Ground-station interchange](../../formats/ground-stations/interchange.md)
+for the schema, local validation, and limits.

@@ -18,8 +18,8 @@ limits affecting data retention and technical interpretation.
 | [3D View](three-d-view.md) | Change projection, navigation, camera and local recording. |
 | [Timeline](timeline.md) | Work in static, real-time or range simulation mode. |
 | [Ground Stations](ground-stations.md) | Configure stations and view sampled visibility. |
-| [Import](import.md) | Incorporate TLE, OMM and OEM data within available limits. |
-| [Export](export.md) | Download projects, elements and anniversaries. |
+| [Import](import.md) | Incorporate orbital data and GeoJSON, Orbit JSON, or CSV stations within available limits. |
+| [Export](export.md) | Download projects, elements, ephemerides, and stations. |
 
 ## Principles of use
 

@@ -1,69 +1,51 @@
-# Intercambio externo: GeoJSON
+# Intercambio de estaciones terrestres
 
-[Inicio](../../index.md) · [Formatos de estaciones de tierra](index.md) · [Estaciones de tierra](../../user-guide/ground-stations.md) · [JSON de proyecto](project-json.md)
+[Inicio](../../index.md) · [Formatos de estaciones](index.md) · [Estaciones de tierra](../../user-guide/ground-stations.md) · [JSON de proyecto](project-json.md)
 
 ## Visión general
 
-Orbit exporta las estaciones terrestres del espacio de trabajo como un archivo
-**GeoJSON RFC 7946**. Es una exportación de configuración: conserva posición,
-identidad y parámetros introducidos para inspeccionarlos o reutilizarlos en
-herramientas geoespaciales. No exporta resultados de pases, mallas de cobertura,
-valores RF derivados ni estado del renderizador.
+Orbit puede exportar e importar estaciones terrestres como archivos
+independientes. El intercambio conserva la posición WGS-84 y la configuración
+autorada de la estación; no reutiliza resultados de cálculo, entidades Cesium
+ni geometría derivada de la escena.
 
-GeoJSON es el formato de intercambio inicial recomendado porque es un único
-archivo UTF-8, nativo del ecosistema web y legible directamente por QGIS, GDAL,
-PostGIS y muchas API cartográficas. Es preferible aquí a Shapefile: Shapefile
-requiere varios ficheros coordinados (<code>.shp</code>, <code>.shx</code>,
-<code>.dbf</code>, ...), limita los nombres de campos y no representa bien una
-configuración RF estructurada ni texto Unicode. Orbit no cambia la geometría ni
-el datum solo para encajar en un formato heredado.
+| Formato | Extensión | Cuándo usarlo | Importar y exportar |
+| --- | --- | --- | --- |
+| **GeoJSON** | `.geojson` | GIS, QGIS, PostGIS y APIs cartográficas. | Sí. |
+| **Orbit JSON** | `.json` | Copia nativa y versionada de estaciones para volver a abrirlas en Orbit. | Sí. |
+| **CSV** | `.csv` | Revisión o edición tabular en una hoja de cálculo. | Sí. |
 
-!!! info "Intercambio, no copia de proyecto"
+GeoJSON es la opción recomendada para interoperabilidad geográfica. Orbit JSON
+es la ruta nativa para conservar el contrato de estación admitido por Orbit.
+CSV es un perfil tabular práctico: no debe tratarse como una copia sin pérdida
+cuando una herramienta externa modifica tipos, codificación o columnas.
 
-    GeoJSON sirve para compartir e inspeccionar estaciones. Para reabrir el
-    espacio de trabajo con carpetas, capas, visualización y demás estado de
-    Orbit, use [JSON de proyecto](project-json.md). La importación GeoJSON de
-    estaciones todavía no está implementada.
+## Usar el selector de intercambio
 
-## Exportar estaciones
+Para incorporar un archivo, pulse **Importar** en el panel **Ground Stations**
+o **Importar estaciones** en las acciones del proyecto. Para descargar una
+estación concreta, abra su acción **Exportar**; desde las acciones del proyecto
+puede exportar todas las estaciones del espacio de trabajo. El selector muestra
+los tres formatos disponibles antes de iniciar la descarga.
 
-Use **Exportar GeoJSON** sobre una estación para descargar esa capa, o la acción
-equivalente del proyecto para descargar todas las estaciones terrestres del
-espacio de trabajo. El resultado es una <code>FeatureCollection</code>.
+La importación añade capas al proyecto abierto; no reemplaza el proyecto ni
+elimina las estaciones existentes. Si un identificador del archivo no puede
+usarse en el espacio de trabajo actual, Orbit asigna un identificador de capa
+válido sin alterar el nombre mostrado ni la configuración de la estación.
 
-La exportación parte del contrato autorado de la estación. No depende del
-instante activo, de que haya un satélite seleccionado ni de una consulta AOS/LOS
-previa. Así se puede compartir configuración sin convertir una envolvente de
-planificación en una afirmación de disponibilidad o SNR.
+!!! info "Validación al importar"
 
-## Geometría y sistema de referencia
+    La interfaz acepta archivos de hasta **5 MiB**. Valida cada entidad GeoJSON
+    o fila CSV por separado. Las entradas sin una posición válida, fuera de los
+    límites WGS-84 o con una estructura incompatible se omiten y Orbit informa
+    cuántos registros fueron importados y cuántos fueron rechazados. Un formato
+    no reconocido o un documento mal formado no crea ninguna capa.
 
-Cada estación se escribe como una <code>Feature</code> con geometría
-<code>Point</code>:
+## GeoJSON RFC 7946
 
-~~~json
-{
-  "type": "Point",
-  "coordinates": [-3.70379, 40.41678, 667.0]
-}
-~~~
-
-El orden es siempre **<code>[longitud, latitud, altitud_m]</code>**, nunca
-latitud-longitud. Las dos primeras componentes son coordenadas geográficas
-WGS-84 en grados. La tercera es la altura elipsoidal WGS-84 en metros que usa la
-estación en Orbit.
-
-RFC 7946 fija WGS-84 para GeoJSON. Por ello Orbit no añade la propiedad
-<code>crs</code>, obsoleta en GeoJSON estándar. Una aplicación que necesite una
-altura ortométrica debe convertirla con un geoide conocido; no debe interpretar
-silenciosamente <code>altitude_m</code> como altura sobre el nivel medio del mar.
-
-## Esquema de la colección
-
-La raíz es una <code>FeatureCollection</code>. <code>Feature.id</code> y
-<code>properties.station_id</code> identifican la misma capa. Las propiedades
-que QGIS suele necesitar como columnas son planas; la configuración RF y visual
-completa se conserva en objetos con espacio de nombres.
+Cada estación se representa como una `Feature` con geometría `Point`. Las
+coordenadas están siempre en el orden **`[longitud, latitud, altitud_m]`**:
+longitud y latitud WGS-84 en grados, seguida de altura elipsoidal en metros.
 
 ~~~json
 {
@@ -71,21 +53,21 @@ completa se conserva en objetos con espacio de nombres.
   "features": [
     {
       "type": "Feature",
-      "id": "ground-station:1",
+      "id": "gst:1",
       "geometry": {
         "type": "Point",
         "coordinates": [-3.70379, 40.41678, 667.0]
       },
       "properties": {
-        "station_id": "ground-station:1",
-        "name": "Est. Madrid",
+        "station_id": "gst:1",
+        "name": "Estación Madrid",
+        "station_schema_version": 2,
         "altitude_m": 667.0,
         "time_zone": "Europe/Madrid",
         "min_elevation_deg": 10.0,
         "frequency_mhz": 2200.0,
         "polarization": "RHCP",
         "operation_mode": "tracking",
-        "station_schema_version": 2,
         "orbit:rf": {
           "antenna_diameter_m": 2.4,
           "antenna_efficiency": 0.62,
@@ -94,6 +76,7 @@ completa se conserva en objetos con espacio de nombres.
         },
         "orbit:visual": {
           "coverage_visible": true,
+          "visible": true,
           "point_color": "#3cc4ff"
         },
         "monitor_satellite_ids": []
@@ -103,72 +86,97 @@ completa se conserva en objetos con espacio de nombres.
 }
 ~~~
 
-### Propiedades planas
+Las propiedades planas facilitan consultas GIS. La configuración RF completa
+se conserva en `properties["orbit:rf"]`; las preferencias autoradas de
+presentación, incluida la visibilidad de la capa, están en
+`properties["orbit:visual"]`. El importador acepta tanto ese perfil exportado
+por Orbit como propiedades planas compatibles, pero la geometría `Point` es la
+fuente de la posición.
 
-| Propiedad | Tipo | Significado |
-| --- | --- | --- |
-| <code>station_id</code> | cadena | Identificador persistente de la capa; coincide con <code>Feature.id</code>. |
-| <code>name</code> | cadena | Nombre mostrado de la estación. |
-| <code>altitude_m</code> | número | Altura elipsoidal WGS-84 en metros; se repite para facilitar consultas tabulares. |
-| <code>time_zone</code> | cadena | Zona IANA de presentación, por ejemplo <code>Europe/Madrid</code>; no altera cálculos físicos en UTC. |
-| <code>min_elevation_deg</code> | número | Máscara de elevación operacional, en grados. |
-| <code>frequency_mhz</code> | número | Frecuencia física normalizada, en MHz. |
-| <code>polarization</code> | cadena | <code>RHCP</code>, <code>LHCP</code> o lineal según el contrato de Orbit. |
-| <code>operation_mode</code> | cadena | <code>tracking</code>, <code>scan</code> o <code>stationary</code>. |
-| <code>station_schema_version</code> | entero | Versión del contrato de estación de Orbit. |
-| <code>monitor_satellite_ids</code> | matriz de cadenas | Identificadores guardados por el proyecto; no crean una asociación de pases obligatoria. |
+El archivo no incorpora un miembro `crs`: RFC 7946 fija GeoJSON a WGS-84. La
+altura es elipsoidal, no una altura ortométrica ni una altura sobre el terreno.
 
-### Configuración RF y visual
-
-<code>orbit:rf</code> contiene los parámetros RF **introducidos** que no deben
-perderse en el intercambio: apertura y eficiencia, frecuencia y unidad,
-polarización y tilt, potencia y unidad, modos/forzados de ganancia, patrón,
-HPBW, lóbulos secundarios, umbral RX, temperatura de sistema, ancho de banda,
-SNR requerida, pérdidas, RMS de apuntado, boresight y límites mecánicos. Las
-claves siguen [JSON de proyecto](project-json.md), por ejemplo
-<code>antenna_diameter_m</code>, <code>tx_power_dbm</code>,
-<code>pattern_type</code> o <code>mechanical_elevation_max_deg</code>.
-
-<code>orbit:visual</code> contiene solo preferencias de presentación como
-símbolo, tamaño, color y visibilidad de cobertura. <code>monitor_satellite_ids</code>,
-cuando exista, mantiene contexto del proyecto, pero no filtra las tablas AOS/LOS:
-en Orbit se puede elegir libremente cualquier satélite compatible para analizar
-pases.
-
-Los objetos <code>orbit:rf</code> y <code>orbit:visual</code> no son geometrías
-GIS ni resultados. Las herramientas que solo admitan columnas planas pueden
-conservarlos como JSON o ignorarlos y seguir usando la posición y las
-propiedades planas.
-
-## Abrir el archivo en QGIS
+### Abrir GeoJSON en QGIS
 
 1. Seleccione **Capa → Añadir capa → Añadir capa vectorial**.
-2. Elija el archivo <code>.geojson</code> exportado por Orbit y ábralo.
-3. Compruebe que QGIS lo interpreta como una capa <code>Point</code> geográfica
-   WGS-84.
-4. Abra la tabla de atributos para consultar <code>name</code>,
-   <code>frequency_mhz</code>, <code>min_elevation_deg</code> y los demás campos
-   planos.
+2. Abra el archivo `.geojson` exportado por Orbit.
+3. Compruebe que se interpreta como una capa `Point` geográfica WGS-84.
+4. Consulte los campos planos como `name`, `frequency_mhz` y
+   `min_elevation_deg` desde la tabla de atributos.
 
-La altura Z se conserva en la geometría. Para verla en una escena 3D de QGIS,
-configure la elevación de la capa con su valor Z; no use esa visualización como
-modelo de visibilidad RF. La malla de patrón, la huella, la orografía, la
-refracción y los pases no forman parte del GeoJSON.
+La componente Z se conserva para una escena 3D de QGIS. Esa visualización no
+es un modelo RF ni un cálculo de visibilidad.
 
-## Límites y compatibilidad
+## Orbit JSON
 
-- La exportación es unidireccional en la versión actual: Orbit todavía no importa
-  GeoJSON de estaciones.
-- El archivo describe estaciones puntuales y configuración, no geometría
-  dinámica de satélites ni cobertura calculada.
-- No exporta rangos RF, <code>G/T</code>, SNR, potencia recibida, AOS, LOS ni
-  resultados dependientes de una capa remota: son derivados que Orbit recalcula.
-- El patrón simplificado de Orbit no es un patrón de antena medido. Su presencia
-  en <code>orbit:rf</code> no certifica el rendimiento de una estación física.
-- La zona IANA solo es una preferencia de etiquetas locales. Los instantes de
-  operación y AOS/LOS deben seguir intercambiándose en UTC.
+Orbit JSON es un contenedor de intercambio nativo para una lista de estaciones.
+Es versionado y está pensado para volver a importar el contrato admitido por
+Orbit sin depender de las convenciones de atributos de una herramienta GIS.
+Orbit identifica el documento por su envolvente, por lo que acepta un `.json`
+descargado y también el nombre compatible `.orbit-ground-stations.json`.
 
-Para una integración que necesite estaciones de redes geodésicas, logs IGS,
-SINEX, KML o altura ortométrica, declare datum vertical, época, unidades y
-mapeo de atributos antes de convertir datos. Orbit no deduce esos datos a partir
-del nombre de una columna.
+~~~json
+{
+  "format": "orbit-ground-stations",
+  "version": 1,
+  "stations": [
+    {
+      "id": "gst:1",
+      "name": "Estación Madrid",
+      "station_schema_version": 2,
+      "latitude_deg": 40.41678,
+      "longitude_deg": -3.70379,
+      "altitude_m": 667.0,
+      "time_zone": "Europe/Madrid",
+      "min_elevation_deg": 10.0,
+      "antenna_diameter_m": 2.4,
+      "frequency_mhz": 2200.0,
+      "coverage_visible": true
+    }
+  ]
+}
+~~~
+
+`format` identifica el contenedor y `version` identifica el contrato de
+intercambio, no la versión de la aplicación. Cada objeto de `stations` usa el
+contrato de estación descrito en [JSON de proyecto](project-json.md), sin el
+árbol de carpetas, el modo temporal, otras capas ni manejadores de renderizado.
+
+## CSV
+
+El CSV contiene una fila por estación y cabeceras estables, entre ellas
+`station_id`, `name`, `latitude_deg`, `longitude_deg`, `altitude_m`,
+`min_elevation_deg` y los campos RF/visuales escalares conocidos por Orbit.
+`monitor_satellite_ids` se escribe como una matriz JSON dentro de su celda.
+
+Para importar un CSV creado manualmente, son obligatorias las columnas
+`latitude_deg` y `longitude_deg`. Los campos ausentes usan los valores por
+defecto de la estación; las celdas numéricas o booleanas vacías del perfil
+exportado representan valores opcionales nulos. Mantenga el separador coma y
+la codificación UTF-8 si va a reimportar el archivo.
+
+## Datos que Orbit recalcula
+
+Ninguno de los formatos exporta o acepta como fuente de verdad:
+
+- mallas 2D/3D, huella, patrón discreto o entidades del visor;
+- alcance RF, `G/T`, pérdidas agregadas, SNR o potencia recibida derivados;
+- muestras de elevación, AOS, LOS, tablas de pases o una respuesta de la API;
+- una asociación obligatoria entre estación y satélite;
+- carpetas, otras capas, selección, cámara o modo temporal del proyecto.
+
+Tras importar, Orbit vuelve a calcular los modelos RF, la cobertura y los
+resultados AOS/LOS con el instante, satélite y configuración actualmente
+seleccionados.
+
+## Compatibilidad
+
+Los tres formatos representan estaciones puntuales WGS-84. Si un sistema
+externo utiliza otro datum, altura ortométrica, época geodésica o unidades
+distintas, convierta y documente esos datos antes de importarlos. Orbit no
+deduce el datum vertical, la zona horaria ni la semántica RF a partir del
+nombre de una columna.
+
+Para restaurar el espacio de trabajo completo, incluidos árbol de capas y
+estado de proyecto, use [JSON de proyecto](project-json.md), no un archivo de
+intercambio de estaciones.

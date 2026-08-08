@@ -23,18 +23,19 @@ Persisted HPBW values are full half-power widths. They do not turn the pattern i
 
 `coverage_visible` controls presentation only. The 2D footprint, mount-stop sector/annulus, 3D mesh, pattern sections, and discrete gain map are regenerated from the contract; they are not independent physical data and do not determine AOS/LOS by themselves. Range, footprint, and RF metric values that accompany an export are presentation caches and are recalculated on load.
 
-## Relationship to GeoJSON
+## Relationship to station interchange
 
-[GeoJSON](interchange.md) is an interchange projection of each station, not a
-replacement for this document. It exposes a WGS-84 <code>Point</code> geometry
-and a subset of identity/configuration; it preserves the authored RF contract
-under <code>properties["orbit:rf"]</code> and presentation preferences under
-<code>properties["orbit:visual"]</code>.
+The [station-interchange formats](interchange.md) do not replace this document.
+**GeoJSON** exposes WGS-84 <code>Point</code> geometry and retains the authored
+RF contract under <code>properties["orbit:rf"]</code> and presentation
+preferences under <code>properties["orbit:visual"]</code>. **Orbit JSON** holds
+only a versioned station list. **CSV** flattens scalar fields for tabular
+editing.
 
-It does not carry the folder tree, other layers, time mode, selection state,
-Cesium handles, derived meshes, ranges, <code>G/T</code>, SNR, or AOS/LOS
-analysis. Export Project JSON for a complete, reopenable workspace copy; export
-GeoJSON for QGIS or a GIS system.
+None carries the folder tree, other layers, time mode, selection state, Cesium
+handles, derived meshes, ranges, <code>G/T</code>, SNR, or AOS/LOS analysis.
+Export Project JSON for a complete, reopenable workspace copy; use GeoJSON for
+GIS and Orbit JSON to restore only stations.
 
 ## Scope
 

@@ -14,6 +14,7 @@ it is not equivalent to a function exposed by the interface, gateway, or public 
 | [WMO](omm.md) | JSON/XML catalog limited to embedded TLE elements. |
 | [OEM](oem.md) | Segmented Python Reader; catalog import only if it contains TLE. |
 | [SP3](sp3.md) | Native Python position/velocity reader. |
+| [Ground-station formats](ground-stations/index.md) | Local GeoJSON, Orbit JSON, and CSV import and export. |
 | [OPM](opm.md) | Not available. |
 | [CPF](cpf.md) | Not available. |
 | [RINEX](rinex.md) | Not available. |

@@ -4,12 +4,12 @@
 
 ## Visión general
 
-Una estación es hoy una capa del proyecto, no un objeto de catálogo ni un
-producto de intercambio externo. Sus coordenadas se introducen en grados y
-metros, y se conservan junto con la configuración visual y de cobertura.
+Una estación es una capa de proyecto con posición WGS-84 y configuración RF
+autorada. Puede persistirse dentro de un proyecto completo o intercambiarse de
+forma independiente sin convertirla en un objeto de catálogo.
 
 | Ruta | Estado | Uso |
 | --- | --- | --- |
-| [JSON de proyecto](project-json.md) | Disponible. | Persistencia del espacio de trabajo. |
-| [Intercambio GeoJSON](interchange.md) | Exportación disponible. | Intercambio de estaciones puntuales y su configuración autorada. |
+| [JSON de proyecto](project-json.md) | Disponible. | Persistencia del espacio de trabajo completo. |
+| [Intercambio de estaciones](interchange.md) | Importación y exportación disponibles. | GeoJSON, Orbit JSON y CSV para estaciones independientes. |
 | [RINEX](../rinex.md) | No disponible. | No crea estaciones ni observaciones GNSS. |

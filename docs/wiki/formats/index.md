@@ -14,6 +14,7 @@ no equivale a una función expuesta por la interfaz, el gateway o la API públic
 | [OMM](omm.md) | Catálogo JSON/XML limitado a elementos TLE embebidos. |
 | [OEM](oem.md) | Lector Python segmentado; importación de catálogo solo si contiene TLE. |
 | [SP3](sp3.md) | Lector Python nativo de posiciones/velocidades. |
+| [Formatos de estaciones de tierra](ground-stations/index.md) | Importación y exportación local de GeoJSON, Orbit JSON y CSV. |
 | [OPM](opm.md) | No disponible. |
 | [CPF](cpf.md) | No disponible. |
 | [RINEX](rinex.md) | No disponible. |

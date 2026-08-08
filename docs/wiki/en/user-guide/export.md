@@ -15,15 +15,22 @@ workspace; Don't assume it incorporates tabulated local OEMs.
 
 ## Exporting ground stations
 
-Ground stations can be downloaded individually or together as RFC 7946 GeoJSON.
-The format uses WGS-84 points in longitude, latitude, ellipsoidal-height-in-
-metres order, plus Orbit authored RF configuration. It is suitable for QGIS,
-GDAL, PostGIS, and other GIS workflows.
+Use **Export** on one station to download that layer, or the project's
+**Export stations** action to download every station layer. The picker lets you
+choose a format before it creates the file.
 
-It is neither a Shapefile nor a project copy: it does not include coverage
-meshes, pass results, SNR, derived ranges, or the workspace tree. See
-[Ground-station GeoJSON interchange](../formats/ground-stations/interchange.md)
-for the full schema and QGIS instructions.
+| Format | Use | Downloaded file |
+| --- | --- | --- |
+| GeoJSON | GIS interchange with WGS-84 points and RF/visual properties. | `.geojson` |
+| Orbit JSON | Versioned native station copy for importing back into Orbit. | `.json` |
+| CSV | Editable table containing scalar station fields. | `.csv` |
+
+Export is built from the authored contract, not from the active instant or an
+AOS/LOS analysis. It therefore contains no coverage meshes, pass results, SNR,
+derived ranges, viewer entities, or workspace tree. GeoJSON is recommended for
+QGIS, GDAL, PostGIS, and other GIS workflows; Orbit JSON is the native option
+for importing stations again. See [Ground-station interchange](../formats/ground-stations/interchange.md)
+for each format's schema and limitations.
 
 ## Export catalog item
 

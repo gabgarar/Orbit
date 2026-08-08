@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadChartPng } from "../../../front/js/runtime/chartPngExport.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
+import { openGroundStationExportMenu } from "./GroundStationExportMenu.jsx";
 
 const initialState = { stations: [], satellites: [], activeStationId: "", activeSatelliteId: "", now: null };
 const inputClass = "min-h-8 w-full rounded-md border border-[#284465] bg-[#091323] px-2 text-[11px] font-semibold text-[#d9e6fa] outline-none focus:border-[#5d86ff]";
@@ -25,6 +26,11 @@ function viewportBounds() {
 
 function clamp(value, minimum, maximum) {
     return Math.min(Math.max(value, minimum), maximum);
+}
+
+function exportMenuAnchor(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return { left: rect.left, top: rect.bottom + 6 };
 }
 
 function floatingTopMargin(viewport) {
@@ -374,7 +380,10 @@ export default function GroundStationsPanel() {
             <section className="rounded-lg border border-[#203956] bg-[rgba(13,29,51,.7)] p-2.5">
                 <div className="mb-2 flex items-center justify-between">
                     <strong className="text-[11px]">Estación activa</strong>
-                    {!floating && <button type="button" onClick={() => { cancelPendingAnalysis(); setOpen(false); window.dispatchEvent(new Event("orbit:ground-stations-create-request")); }} className="rounded-md border border-[#466cff] bg-[#263f96] px-2 py-1 text-[10px] font-bold text-white">+ Añadir</button>}
+                    {!floating && <div className="flex items-center gap-1.5">
+                        <button type="button" onClick={() => window.dispatchEvent(new Event("orbit:ground-stations-import-request"))} className="rounded-md border border-[#31506f] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a9c7ed]">Importar</button>
+                        <button type="button" onClick={() => { cancelPendingAnalysis(); setOpen(false); window.dispatchEvent(new Event("orbit:ground-stations-create-request")); }} className="rounded-md border border-[#466cff] bg-[#263f96] px-2 py-1 text-[10px] font-bold text-white">+ Añadir</button>
+                    </div>}
                 </div>
                 {state.stations.length
                     ? <select className={inputClass} value={stationId} onChange={(event) => { cancelPendingAnalysis(); setStationId(event.target.value); setResult(null); }}>{state.stations.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.latitude_deg.toFixed(3)}°, {item.longitude_deg.toFixed(3)}°</option>)}</select>
@@ -383,8 +392,8 @@ export default function GroundStationsPanel() {
                     <p className="mb-0 text-[10px] text-[#8ea4c4]">Máscara aplicada: {station.min_elevation_deg}° · ITRF/WGS‑84</p>
                     {!floating && <div className="mt-2 flex flex-wrap gap-2">
                         <button type="button" onClick={() => { setFloatingRect((current) => clampFloatingRect(current)); setFloating(true); }} className="rounded border border-[#3f785e] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a8ebc5]">Tablas AOS / LOS</button>
-                        <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("orbit:ground-stations-export-geojson", { detail: { stationId } }))} className="rounded border border-[#31506f] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a9c7ed]">Exportar GeoJSON</button>
-                        {state.stations.length > 1 && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("orbit:ground-stations-export-geojson", { detail: {} }))} className="rounded border border-[#31506f] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a9c7ed]">Exportar todas</button>}
+                        <button type="button" data-ground-station-export-control="true" onClick={(event) => openGroundStationExportMenu({ stationId, source: "ground-stations-panel", anchor: exportMenuAnchor(event) })} className="rounded border border-[#31506f] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a9c7ed]">Exportar</button>
+                        {state.stations.length > 1 && <button type="button" data-ground-station-export-control="true" onClick={(event) => openGroundStationExportMenu({ source: "ground-stations-panel", anchor: exportMenuAnchor(event) })} className="rounded border border-[#31506f] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a9c7ed]">Exportar todas</button>}
                     </div>}
                 </>}
             </section>

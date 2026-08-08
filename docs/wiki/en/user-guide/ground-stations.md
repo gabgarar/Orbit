@@ -215,15 +215,19 @@ The expanded **AOS/LOS tables** analysis scans the profile at 20 s and refines e
 4. Enable coverage when you want to inspect the planning footprint or volume.
 5. Save the [Project](projects.md) to retain the complete RF contract.
 
-## Exporting stations
+## Importing and exporting stations
 
-Select **Export GeoJSON** from a station context menu to download that layer, or
-use the equivalent project action to download every workspace station. The file
-uses RFC 7946 GeoJSON, with WGS-84 points in longitude, latitude, ellipsoidal
-height-in-metres order. It retains the authored RF contract, not calculated
-range, mesh, AOS/LOS, or SNR.
+Select **Import** to add a GeoJSON, Orbit JSON, or CSV file to the open
+project. Import validates each record, adds valid ones, and reports skipped
+ones. It does not restore a simulation or replace the current project.
 
-GeoJSON is the recommended format for opening stations in QGIS or sharing them
-with mapping tools; use [Project JSON](projects.md) when you need to reopen the
-whole workspace. See [Ground-station GeoJSON interchange](../formats/ground-stations/interchange.md)
+Select **Export** in a station action to choose GeoJSON, Orbit JSON, or CSV;
+project actions can do the same for every station. GeoJSON is recommended for
+QGIS and other GIS workflows. Orbit JSON is the native station copy for
+importing back into Orbit. CSV supports tabular editing and contains no
+calculated results.
+
+All three formats retain position and authored configuration, but not range,
+mesh, AOS/LOS, SNR, pass results, or viewer entities. Use [Project JSON](projects.md)
+when you need to restore the complete workspace. See [Ground-station interchange](../formats/ground-stations/interchange.md)
 for the schema, RF fields, QGIS workflow, and interoperability limits.

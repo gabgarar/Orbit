@@ -6,3 +6,4 @@ export function applyAntialiasMode({ viewer, systemConfig, logger }) {
     if (typeof viewer.scene.msaaSamples === "number") viewer.scene.msaaSamples = mode === "msaa" ? 4 : 1;
     logger.info(`Antialias mode: ${mode}`);
 }
+ 

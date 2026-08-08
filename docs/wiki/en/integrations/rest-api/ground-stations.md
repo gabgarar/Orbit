@@ -30,14 +30,19 @@ The API does not receive the complete RF chain from the designer or a remote RF 
 
 Consequently, this endpoint does not claim satellite SNR: real SNR requires effective EIRP, remote-terminal polarisation, and an entirely contained occupied signal: \(|\Delta f|+B_{\mathrm{signal}}/2\le B_{\mathrm{RX}}/2\). Those checks are performed by the client when a layer publishes a complete remote RF profile.
 
-## Relationship to GeoJSON export
+## Relationship to station interchange
 
-Ground-station
-[GeoJSON export](../../formats/ground-stations/interchange.md) does not
-serialise an <code>/api/aos-los</code> response: it starts from authored
-workspace configuration. The file therefore contains no elevation samples,
-AOS/LOS, range, SNR, or results dependent on a remote satellite. Those remain
-calculated API and client RF-model results, with physical instants in UTC.
+Station import and export in
+[GeoJSON, Orbit JSON, and CSV](../../formats/ground-stations/interchange.md)
+are local application operations, not REST routes. They start from an authored
+layer contract and neither serialise nor inject an <code>/api/aos-los</code>
+response.
+
+The files therefore contain no elevation samples, AOS/LOS, range, SNR, or
+results dependent on a remote satellite. Those remain calculated API and client
+RF-model results, with physical instants in UTC. After importing a station, the
+client requests a new analysis when the operator chooses its satellite, instant,
+and window.
 
 ## Output and visibility criterion
 

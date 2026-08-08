@@ -61,7 +61,12 @@ import {
     sampleStationGroundFootprint
 } from "./js/features/groundStations/rfModel.js";
 import { buildStationFieldOfRegardMesh, buildStationPatternMesh } from "./js/features/groundStations/rfPatternMesh.js";
-import { downloadGroundStationsGeoJson } from "./js/features/groundStations/geojson.js";
+import {
+    GROUND_STATION_EXPORT_FORMATS,
+    GroundStationInterchangeError,
+    downloadGroundStationsExport,
+    parseGroundStationsDocument
+} from "./js/features/groundStations/interchange.js";
 import { createProjectLifecycle } from "./js/runtime/projectLifecycle.js";
 import { setupCameraActions } from "./js/runtime/camera/actions.js";
 import { createFreeCameraKeyboardControls } from "./js/runtime/camera/freeKeyboardControls.js";
@@ -2776,36 +2781,134 @@ function publishGroundStationsState() {
     }));
 }
 
-function groundStationGeoJsonFileName(stations) {
-    if (stations.length !== 1) return "orbit-ground-stations.geojson";
+const GROUND_STATION_IMPORT_ACCEPT = ".geojson,.geo.json,.orbit-ground-stations.json,.orbit.json,.json,.csv,application/geo+json,application/json,text/csv";
+const GROUND_STATION_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
+
+function groundStationExportFileName(stations, format) {
+    const extensionByFormat = {
+        [GROUND_STATION_EXPORT_FORMATS.GEOJSON]: ".geojson",
+        [GROUND_STATION_EXPORT_FORMATS.ORBIT_JSON]: ".json",
+        [GROUND_STATION_EXPORT_FORMATS.CSV]: ".csv"
+    };
+    const extension = extensionByFormat[format] || ".geojson";
+    if (stations.length !== 1) return `orbit-ground-stations${extension}`;
     const stem = String(stations[0]?.name || stations[0]?.id || "station")
         .trim()
         .toLowerCase()
         .replace(/[^a-z0-9_-]+/gi, "-")
         .replace(/^-+|-+$/g, "") || "station";
-    return `orbit-ground-station-${stem}.geojson`;
+    return `orbit-ground-station-${stem}${extension}`;
 }
 
-function exportGroundStationsGeoJson(stationId = null) {
+function groundStationExportLabel(format) {
+    if (format === GROUND_STATION_EXPORT_FORMATS.ORBIT_JSON) return "Orbit JSON";
+    if (format === GROUND_STATION_EXPORT_FORMATS.CSV) return "CSV";
+    return "GeoJSON";
+}
+
+function getGroundStationsForExport(stationId = null) {
     const requestedId = String(stationId || "").trim();
     const selected = requestedId ? groundStationLayers.get(requestedId) : null;
-    const stations = requestedId ? (selected ? [selected] : []) : [...groundStationLayers.values()];
+    return requestedId ? (selected ? [selected] : []) : [...groundStationLayers.values()];
+}
+
+function exportGroundStations(stationId = null, format = GROUND_STATION_EXPORT_FORMATS.GEOJSON) {
+    const stations = getGroundStationsForExport(stationId);
     if (!stations.length) {
-        showErrorPopup(requestedId
+        void showAppAlert(stationId
             ? "La estación seleccionada ya no está disponible para exportar."
             : "No hay estaciones de tierra para exportar.");
         return null;
     }
-    const collection = downloadGroundStationsGeoJson(stations, {
-        fileName: groundStationGeoJsonFileName(stations)
-    });
-    const exportedCount = collection.features.length;
-    if (!exportedCount) {
-        showErrorPopup("No se pudo exportar ninguna estación: revisa que las coordenadas WGS-84 sean válidas.");
-        return collection;
+
+    try {
+        const exported = downloadGroundStationsExport(stations, format, {
+            fileName: groundStationExportFileName(stations, format)
+        });
+        const exportedCount = format === GROUND_STATION_EXPORT_FORMATS.GEOJSON
+            ? exported.document.features.length
+            : (format === GROUND_STATION_EXPORT_FORMATS.ORBIT_JSON
+                ? exported.document.stations.length
+                : stations.filter((station) => Number.isFinite(Number(station?.latitude_deg)) && Number.isFinite(Number(station?.longitude_deg))).length);
+        if (!exportedCount) {
+            void showAppAlert("No se pudo exportar ninguna estación: revisa que las coordenadas WGS-84 sean válidas.");
+            return exported;
+        }
+        void showAppAlert(`${groundStationExportLabel(format)} exportado: ${exportedCount} ${exportedCount === 1 ? "estación" : "estaciones"}.`);
+        return exported;
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        void showAppAlert(`No se pudo exportar las estaciones: ${reason}`);
+        return null;
     }
-    showInfoPopup(`GeoJSON exportado: ${exportedCount} ${exportedCount === 1 ? "estación" : "estaciones"}.`);
-    return collection;
+}
+
+async function importGroundStationsFile(file) {
+    if (!file || typeof file.text !== "function") {
+        return { imported: [], rejected: [], error: "No se seleccionó ningún archivo de estaciones." };
+    }
+    if (Number.isFinite(Number(file.size)) && Number(file.size) > GROUND_STATION_IMPORT_MAX_BYTES) {
+        const limitMb = GROUND_STATION_IMPORT_MAX_BYTES / (1024 * 1024);
+        const message = `El archivo de estaciones supera el límite de ${limitMb} MB.`;
+        void showAppAlert(message);
+        return { imported: [], rejected: [], error: message };
+    }
+
+    try {
+        const parsed = parseGroundStationsDocument(await file.text(), { fileName: file.name || "" });
+        const imported = [];
+        const rejected = [...parsed.rejected];
+        for (const station of parsed.stations) {
+            try {
+                const id = createGroundStationLayer(station);
+                if (id) {
+                    imported.push(id);
+                } else {
+                    rejected.push({ id: station.id || null, reason: "invalid-station" });
+                }
+            } catch (error) {
+                logger.warn("No se pudo importar una estación terrestre", error);
+                rejected.push({ id: station.id || null, reason: "create-failed" });
+            }
+        }
+
+        if (imported.length) {
+            openLeftSatellitesPanel();
+            objectSidebar?.renderList?.();
+            publishGroundStationsState();
+        }
+        const format = groundStationExportLabel(parsed.format);
+        if (!imported.length) {
+            const message = `No se pudo importar ninguna estación desde ${file.name || "el archivo"}.`;
+            void showAppAlert(rejected.length ? `${message} Se rechazaron ${rejected.length} registros inválidos.` : message);
+        } else {
+            const rejectedText = rejected.length ? ` Se omitieron ${rejected.length} registros inválidos.` : "";
+            void showAppAlert(`${format}: se importaron ${imported.length} ${imported.length === 1 ? "estación" : "estaciones"}.${rejectedText}`);
+        }
+        return { imported, rejected, format: parsed.format };
+    } catch (error) {
+        const message = error instanceof GroundStationInterchangeError || error instanceof Error
+            ? error.message
+            : String(error);
+        void showAppAlert(`No se pudo importar ${file.name || "el archivo"}: ${message}`);
+        return { imported: [], rejected: [], error: message };
+    }
+}
+
+function requestGroundStationImport() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = GROUND_STATION_IMPORT_ACCEPT;
+    input.hidden = true;
+    input.addEventListener("change", () => {
+        const file = input.files?.[0] || null;
+        input.remove();
+        if (file) {
+            void importGroundStationsFile(file);
+        }
+    }, { once: true });
+    document.body.appendChild(input);
+    input.click();
 }
 
 function cancelGroundStationPassAnalysis() {
@@ -3595,9 +3698,19 @@ window.addEventListener("orbit:satellite-context-action", (event) => {
         }
         return;
     }
+    if (action.type === "export-station") {
+        if (layerId && String(getLayerType(layerId) || "").toUpperCase() === "GROUND_STATION") {
+            window.dispatchEvent(new CustomEvent("orbit:ground-stations-export-menu-open", {
+                detail: { stationId: layerId, source: "satellite-context", anchor: null }
+            }));
+        }
+        return;
+    }
+    // Compatibility with already-mounted UI bundles while the generic export
+    // picker is rolled out. New UI dispatches `export-station` above.
     if (action.type === "export-station-geojson") {
         if (layerId && String(getLayerType(layerId) || "").toUpperCase() === "GROUND_STATION") {
-            exportGroundStationsGeoJson(layerId);
+            exportGroundStations(layerId, GROUND_STATION_EXPORT_FORMATS.GEOJSON);
         }
         return;
     }
@@ -6135,12 +6248,23 @@ function setupPropagatedParametersInspector() {
     setupPropagatedParametersInspector();
 
     window.addEventListener("orbit:ground-stations-request-state", publishGroundStationsState);
+    window.addEventListener("orbit:ground-stations-export-request", (event) => {
+        const detail = event.detail || {};
+        exportGroundStations(detail.stationId, detail.format);
+    });
+    window.addEventListener("orbit:ground-stations-import-request", requestGroundStationImport);
     window.addEventListener("orbit:ground-stations-export-geojson", (event) => {
-        exportGroundStationsGeoJson(event.detail?.stationId);
+        // Kept for legacy controls that have not yet mounted the format picker.
+        exportGroundStations(event.detail?.stationId, GROUND_STATION_EXPORT_FORMATS.GEOJSON);
     });
     window.addEventListener("orbit:project-action", (event) => {
         if (event.detail === "export-ground-stations") {
-            exportGroundStationsGeoJson();
+            window.dispatchEvent(new CustomEvent("orbit:ground-stations-export-menu-open", {
+                detail: { stationId: null, source: "project", anchor: null }
+            }));
+        }
+        if (event.detail === "import-ground-stations") {
+            requestGroundStationImport();
         }
     });
     window.addEventListener("orbit:ground-stations-create-request", () => {

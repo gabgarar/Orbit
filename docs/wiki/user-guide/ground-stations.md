@@ -215,17 +215,20 @@ El análisis abierto de **Tablas AOS/LOS** explora el perfil a 20 s y refina cad
 4. Active cobertura si desea inspeccionar la huella o el volumen de planificación.
 5. Guarde el [Proyecto](projects.md) para conservar el contrato RF completo.
 
-## Exportar estaciones
+## Importar y exportar estaciones
 
-Seleccione **Exportar GeoJSON** en el menú contextual de una estación para
-descargar esa capa, o use la acción equivalente del proyecto para descargar
-todas las estaciones del espacio de trabajo. El archivo usa GeoJSON RFC 7946,
-con puntos WGS-84 en el orden longitud, latitud y altura elipsoidal en metros.
-Conserva el contrato RF autorado, no el rango, la malla, AOS/LOS o SNR
-calculados.
+Pulse **Importar** para añadir un archivo GeoJSON, Orbit JSON o CSV al proyecto
+abierto. La importación valida cada registro, añade los válidos y comunica los
+que se omiten. No restaura una simulación ni sustituye el proyecto actual.
 
-GeoJSON es el formato recomendado para abrir las estaciones en QGIS o
-compartirlas con herramientas cartográficas; use el [JSON de proyecto](projects.md)
-si necesita volver a abrir el espacio de trabajo completo. Consulte
-[Intercambio GeoJSON de estaciones](../formats/ground-stations/interchange.md)
+Seleccione **Exportar** en la acción de una estación para elegir entre GeoJSON,
+Orbit JSON y CSV; las acciones del proyecto permiten hacer lo mismo con todas
+las estaciones. GeoJSON es la opción recomendada para QGIS y otros flujos GIS.
+Orbit JSON es la copia nativa de estaciones para reimportarlas en Orbit. CSV
+sirve para edición tabular y no contiene resultados calculados.
+
+Los tres formatos conservan posición y configuración autorada, pero no el
+rango, malla, AOS/LOS, SNR, resultados de pases ni entidades del visor. Use el
+[JSON de proyecto](projects.md) si necesita restaurar el espacio de trabajo
+completo. Consulte [Intercambio de estaciones terrestres](../formats/ground-stations/interchange.md)
 para el esquema, campos RF, uso en QGIS y límites de interoperabilidad.

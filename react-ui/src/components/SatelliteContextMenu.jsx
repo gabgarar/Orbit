@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { openGroundStationExportMenu } from "./GroundStationExportMenu.jsx";
 
 const baseButtonClass = "!h-8 !rounded-lg !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-tertiary)] !px-3 !text-left !font-sans !text-xs !leading-none !font-bold !text-[var(--orbit-text-primary)] !cursor-pointer hover:!bg-[var(--orbit-bg-hover)] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[var(--orbit-border-focus)]";
 
@@ -51,9 +52,18 @@ export default function SatelliteContextMenu() {
         {isGroundStation && <button
             className={baseButtonClass}
             type="button"
-            onClick={() => selectAction("export-station-geojson")}
+            data-ground-station-export-control="true"
+            onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                openGroundStationExportMenu({
+                    stationId: menu.id,
+                    source: "satellite-context",
+                    anchor: { left: rect.left, top: rect.bottom + 6 }
+                });
+                setMenu(null);
+            }}
         >
-            Exportar GeoJSON
+            Exportar…
         </button>}
         {!isCelestialBody && !isGroundStation && <button
             className={baseButtonClass}

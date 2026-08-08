@@ -3,6 +3,7 @@ import { CalendarIcon, ChevronDownIcon, EyeIcon, EyeOffIcon, FolderIcon, GroundS
 import CameraControls from "../features/camera/CameraControls.jsx";
 import { getLayerActionsState, LAYER_ACTIONS_STATE_EVENT } from "../../../front/js/runtime/layerActionsState.js";
 import { emitPropagatedParametersClose, emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
+import { openGroundStationExportMenu } from "./GroundStationExportMenu.jsx";
 
 function publishLayersPanelState(open) {
     window.dispatchEvent(new CustomEvent("orbit:layers-panel-state", { detail: { open } }));
@@ -20,9 +21,10 @@ function isManualOrbitPanelOpen() {
 const PROJECT_ACTIONS = [
     { action: "new", label: "Nuevo proyecto", description: "Crea un espacio de trabajo vacío" },
     { action: "open", label: "Importar proyecto", description: "Abre un archivo .json de Orbit" },
+    { action: "import-ground-stations", label: "Importar estaciones", description: "Añade GeoJSON, Orbit JSON o CSV" },
     { action: "save", label: "Guardar proyecto", description: "Guarda los cambios del proyecto" },
     { action: "export", label: "Exportar proyecto", description: "Descarga una copia .json" },
-    { action: "export-ground-stations", label: "Exportar estaciones", description: "Descarga las estaciones y RF en GeoJSON" }
+    { action: "export-ground-stations", label: "Exportar estaciones", description: "Elige GeoJSON, Orbit JSON o CSV" }
 ];
 
 function ProjectActionsMenu({ source, left, top, onSelect }) {
@@ -47,7 +49,7 @@ function ProjectActionsMenu({ source, left, top, onSelect }) {
             type="button"
             role="menuitem"
             key={action}
-            onClick={() => onSelect(action)}
+            onClick={(event) => onSelect(action, event)}
         >
             <span className="grid min-w-0 gap-[3px]">
                 <span className="text-[11px] leading-none font-semibold text-[#e0eafe]">{label}</span>
@@ -295,15 +297,23 @@ export default function WorkspaceSidebar() {
         event.stopPropagation();
         const margin = 8;
         const menuWidth = 228;
-        const menuHeight = 268;
+        const menuHeight = 326;
         setProjectActionsMenu({
             source: "context",
             left: Math.max(margin, Math.min(event.clientX, window.innerWidth - menuWidth - margin)),
             top: Math.max(margin, Math.min(event.clientY, window.innerHeight - menuHeight - margin))
         });
     };
-    const selectProjectAction = (action) => {
+    const selectProjectAction = (action, event) => {
         setProjectActionsMenu(null);
+        if (action === "export-ground-stations") {
+            const rect = event?.currentTarget?.getBoundingClientRect?.();
+            openGroundStationExportMenu({
+                source: "project",
+                anchor: rect ? { left: rect.left, top: rect.bottom + 6 } : null
+            });
+            return;
+        }
         window.dispatchEvent(new CustomEvent("orbit:project-action", { detail: action }));
     };
     return <>

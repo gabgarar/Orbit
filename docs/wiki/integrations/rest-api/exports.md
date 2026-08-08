@@ -16,10 +16,12 @@ cobertura completa de todos los perfiles de sus estándares.
 
 ## Estaciones terrestres
 
-La exportación GeoJSON de estaciones no es un endpoint REST. La aplicación
-genera localmente una <code>FeatureCollection</code> RFC 7946 a partir del
-contrato autorado de las capas de estación y descarga un archivo
-<code>application/geo+json</code>. No llama a esta API ni convierte una respuesta
-de AOS/LOS en una geometría de exportación. Consulte
-[Intercambio GeoJSON de estaciones](../../formats/ground-stations/interchange.md)
-para el esquema y sus límites.
+El intercambio de estaciones no es un endpoint REST. La aplicación importa y
+genera localmente GeoJSON RFC 7946, Orbit JSON y CSV a partir del contrato
+autorado de las capas. GeoJSON se descarga como <code>application/geo+json</code>,
+Orbit JSON como <code>application/json</code> y CSV como
+<code>text/csv</code>.
+
+Estas operaciones no llaman a esta API ni convierten una respuesta AOS/LOS en
+un archivo de intercambio. Consulte [Intercambio de estaciones terrestres](../../formats/ground-stations/interchange.md)
+para el esquema, la validación local y los límites.

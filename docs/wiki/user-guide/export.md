@@ -15,15 +15,23 @@ espacio de trabajo; no asuma que incorpora OEM locales tabulados.
 
 ## Exportar estaciones terrestres
 
-Las estaciones se pueden descargar individualmente o en conjunto como GeoJSON
-RFC 7946. El formato usa puntos WGS-84 con el orden longitud, latitud y altura
-elipsoidal en metros, más la configuración RF autorada de Orbit. Es apropiado
-para QGIS, GDAL, PostGIS y otros flujos GIS.
+Use **Exportar** sobre una estación para descargar esa capa, o la acción
+**Exportar estaciones** del proyecto para descargar todas las capas de
+estación. El selector permite elegir el formato antes de crear el archivo.
 
-No es un Shapefile ni una copia de proyecto: no incluye mallas de cobertura,
-resultados de pases, SNR, rangos derivados o el árbol del espacio de trabajo.
-Para el esquema completo y las instrucciones de QGIS consulte
-[Intercambio GeoJSON de estaciones](../formats/ground-stations/interchange.md).
+| Formato | Uso | Archivo descargado |
+| --- | --- | --- |
+| GeoJSON | Intercambio GIS con puntos WGS-84 y propiedades RF/visuales. | `.geojson` |
+| Orbit JSON | Copia nativa versionada de estaciones para volver a importarlas en Orbit. | `.json` |
+| CSV | Tabla editable con los campos escalares de estación. | `.csv` |
+
+La exportación se construye desde el contrato autorado, no desde el instante
+activo ni desde un análisis AOS/LOS. Por ello no contiene mallas de cobertura,
+resultados de pases, SNR, rangos derivados, entidades del visor o el árbol del
+espacio de trabajo. GeoJSON es la opción recomendada para QGIS, GDAL, PostGIS y
+otros flujos GIS; Orbit JSON es la opción nativa para reimportar estaciones.
+Consulte [Intercambio de estaciones terrestres](../formats/ground-stations/interchange.md)
+para el esquema y las limitaciones de cada formato.
 
 ## Exportar elemento de catálogo
 

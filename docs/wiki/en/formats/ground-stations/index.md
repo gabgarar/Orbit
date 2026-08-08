@@ -4,12 +4,12 @@
 
 ## Overview
 
-A station is currently a project layer, not a catalogue object or external
-interchange product. Its coordinates are entered in degrees and metres, and
-are stored together with visual and coverage settings.
+A station is a project layer with a WGS-84 position and authored RF
+configuration. It can be persisted inside a complete project or exchanged
+independently without becoming a catalogue object.
 
 | Route | Status | Use |
 | --- | --- | --- |
-| [Project JSON](project-json.md) | Available. | Workspace persistence. |
-| [GeoJSON interchange](interchange.md) | Export available. | Interchange of point stations and their authored configuration. |
+| [Project JSON](project-json.md) | Available. | Complete-workspace persistence. |
+| [Station interchange](interchange.md) | Import and export available. | GeoJSON, Orbit JSON, and CSV for independent stations. |
 | [RINEX](../rinex.md) | Unavailable. | Does not create stations or GNSS observations. |

@@ -52,7 +52,10 @@ const VISUAL_FIELDS = Object.freeze([
     "point_size_px",
     "point_symbol",
     "point_color",
-    "coverage_visible"
+    "coverage_visible",
+    // This is an authored layer preference, not a Cesium handle. Preserve it
+    // so a GeoJSON exported by Orbit can restore a deliberately hidden layer.
+    "visible"
 ]);
 
 function finiteNumber(value) {

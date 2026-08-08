@@ -58,6 +58,7 @@ const STATION = {
     point_color: "#3cc4ff",
     point_size_px: 12,
     coverage_visible: true,
+    visible: false,
     entity: { runtime: true },
     coverageEntity: { runtime: true },
     patternMeshEntity: { runtime: true }
@@ -86,6 +87,7 @@ test("ground-station GeoJSON uses RFC 7946 WGS-84 point coordinates and QGIS-fri
     assert.equal(feature.properties.frequency_mhz, 2200);
     assert.equal(feature.properties.polarization, "RHCP");
     assert.equal(feature.properties.operation_mode, "tracking");
+    assert.equal(feature.properties["orbit:visual"].visible, false);
 });
 
 test("ground-station GeoJSON preserves authored RF settings under the orbit:rf namespace without renderer handles", () => {

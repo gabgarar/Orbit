@@ -30,15 +30,19 @@ La API no recibe toda la cadena RF del diseñador ni un perfil RF remoto. El cli
 
 Por tanto, este endpoint no afirma una SNR de satélite: una SNR real exige EIRP efectivo, polarización del terminal remoto y que toda la señal ocupada cumpla \(|\Delta f|+B_{\mathrm{señal}}/2\le B_{\mathrm{RX}}/2\). Esas comprobaciones pertenecen al cliente cuando una capa publica un perfil RF remoto completo.
 
-## Relación con la exportación GeoJSON
+## Relación con el intercambio de estaciones
 
-La exportación de estaciones a
-[GeoJSON](../../formats/ground-stations/interchange.md) no serializa una
-respuesta de <code>/api/aos-los</code>: parte de la configuración autorada en el
-espacio de trabajo. Por tanto, el archivo no contiene muestras de elevación,
-AOS/LOS, rango, SNR ni resultados dependientes de un satélite remoto. Esos
-valores siguen siendo resultados calculados de la API y del modelo RF cliente,
-con sus instantes físicos en UTC.
+La importación y exportación de estaciones en
+[GeoJSON, Orbit JSON y CSV](../../formats/ground-stations/interchange.md) es
+una operación local de la aplicación, no una ruta REST. Parte del contrato
+autorado de la capa y no serializa ni reinyecta una respuesta de
+<code>/api/aos-los</code>.
+
+Por ello los archivos no contienen muestras de elevación, AOS/LOS, rango, SNR
+ni resultados dependientes de un satélite remoto. Esos valores siguen siendo
+resultados calculados de la API y del modelo RF cliente, con sus instantes
+físicos en UTC. Después de importar una estación, el cliente vuelve a solicitar
+un análisis cuando el operador elige satélite, instante y ventana.
 
 ## Salida y criterio de visibilidad
 

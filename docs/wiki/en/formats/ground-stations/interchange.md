@@ -1,68 +1,49 @@
-# External interchange: GeoJSON
+# Ground-station interchange
 
-[Home](../../index.md) · [Ground-station formats](index.md) · [Ground stations](../../user-guide/ground-stations.md) · [Project JSON](project-json.md)
+[Home](../../index.md) · [Ground-station formats](index.md) · [Ground Stations](../../user-guide/ground-stations.md) · [Project JSON](project-json.md)
 
 ## Overview
 
-Orbit exports workspace ground stations as an **RFC 7946 GeoJSON** file. It is a
-configuration export: it retains position, identity, and authored parameters so
-they can be inspected or reused in geospatial tools. It does not export pass
-results, coverage meshes, derived RF values, or renderer state.
+Orbit can export and import ground stations as independent files. Interchange
+preserves the WGS-84 position and authored station configuration; it does not
+reuse calculation results, Cesium entities, or scene-derived geometry.
 
-GeoJSON is the recommended initial interchange format because it is one UTF-8
-file, native to the web ecosystem, and read directly by QGIS, GDAL, PostGIS, and
-many mapping APIs. It is a better fit here than Shapefile: Shapefile needs
-coordinated sidecar files (<code>.shp</code>, <code>.shx</code>,
-<code>.dbf</code>, ...), restricts field names, and does not represent
-structured RF configuration or Unicode text well. Orbit does not change geometry
-or datum merely to fit a legacy format.
+| Format | Extension | Use it for | Import and export |
+| --- | --- | --- | --- |
+| **GeoJSON** | `.geojson` | GIS, QGIS, PostGIS, and mapping APIs. | Yes. |
+| **Orbit JSON** | `.json` | A native, versioned copy of stations for reopening in Orbit. | Yes. |
+| **CSV** | `.csv` | Reviewing or editing a table in a spreadsheet. | Yes. |
 
-!!! info "Interchange, not a project copy"
+GeoJSON is the recommended choice for geographic interoperability. Orbit JSON
+is the native route for preserving the station contract supported by Orbit.
+CSV is a convenient tabular profile: it must not be treated as a lossless copy
+when an external tool changes types, encoding, or columns.
 
-    Use GeoJSON to share and inspect stations. To reopen the workspace with
-    folders, layers, visualisation, and other Orbit state, use
-    [Project JSON](project-json.md). GeoJSON station import is not implemented
-    yet.
+## Using the interchange selector
 
-## Exporting stations
+To add a file, select **Import** in the **Ground Stations** panel or **Import
+stations** from project actions. To download one station, open its **Export**
+action; project actions can export every ground station in the workspace. The
+picker displays the three formats before starting a download.
 
-Use **Export GeoJSON** on a station to download that layer, or the equivalent
-project action to download every workspace ground station. The result is a
-<code>FeatureCollection</code>.
+Import adds layers to the current project. It does not replace the project or
+delete existing stations. When a file identifier cannot be used in the current
+workspace, Orbit assigns a valid layer identifier without changing the shown
+name or station configuration.
 
-Export is made from the station's authored contract. It does not depend on the
-active instant, a selected satellite, or a prior AOS/LOS request. This makes it
-safe to share configuration without turning a planning envelope into an
-availability or SNR claim.
+!!! info "Import validation"
 
-## Geometry and reference system
+    The UI accepts files up to **5 MiB**. It validates every GeoJSON feature or
+    CSV row separately. Records without a valid position, outside WGS-84
+    bounds, or with an incompatible structure are skipped and Orbit reports
+    both imported and rejected counts. An unknown format or malformed document
+    creates no layers.
 
-Each station is written as a <code>Feature</code> with <code>Point</code>
-geometry:
+## GeoJSON RFC 7946
 
-~~~json
-{
-  "type": "Point",
-  "coordinates": [-3.70379, 40.41678, 667.0]
-}
-~~~
-
-The order is always **<code>[longitude, latitude, altitude_m]</code>**, never
-latitude-longitude. The first two components are WGS-84 geographic coordinates
-in degrees. The third is the WGS-84 ellipsoidal height in metres used by the
-Orbit station.
-
-RFC 7946 fixes GeoJSON to WGS-84. Orbit therefore does not add the obsolete
-<code>crs</code> member used by older GeoJSON dialects. An application needing
-orthometric height must convert it with a known geoid; it must not silently
-interpret <code>altitude_m</code> as height above mean sea level.
-
-## Collection schema
-
-The root is a <code>FeatureCollection</code>. <code>Feature.id</code> and
-<code>properties.station_id</code> identify the same layer. Properties QGIS is
-likely to need as columns are flat; complete RF and visual configuration are
-retained in namespaced objects.
+Each station is a `Feature` with `Point` geometry. Coordinates are always
+**`[longitude, latitude, altitude_m]`**: WGS-84 longitude and latitude in
+degrees, followed by ellipsoidal height in metres.
 
 ~~~json
 {
@@ -70,21 +51,21 @@ retained in namespaced objects.
   "features": [
     {
       "type": "Feature",
-      "id": "ground-station:1",
+      "id": "gst:1",
       "geometry": {
         "type": "Point",
         "coordinates": [-3.70379, 40.41678, 667.0]
       },
       "properties": {
-        "station_id": "ground-station:1",
+        "station_id": "gst:1",
         "name": "Madrid Station",
+        "station_schema_version": 2,
         "altitude_m": 667.0,
         "time_zone": "Europe/Madrid",
         "min_elevation_deg": 10.0,
         "frequency_mhz": 2200.0,
         "polarization": "RHCP",
         "operation_mode": "tracking",
-        "station_schema_version": 2,
         "orbit:rf": {
           "antenna_diameter_m": 2.4,
           "antenna_efficiency": 0.62,
@@ -93,6 +74,7 @@ retained in namespaced objects.
         },
         "orbit:visual": {
           "coverage_visible": true,
+          "visible": true,
           "point_color": "#3cc4ff"
         },
         "monitor_satellite_ids": []
@@ -102,71 +84,92 @@ retained in namespaced objects.
 }
 ~~~
 
-### Flat properties
+Flat properties support GIS queries. Complete RF configuration is kept in
+`properties["orbit:rf"]`; authored presentation preferences, including layer
+visibility, are in `properties["orbit:visual"]`. The importer accepts that
+Orbit-exported profile and compatible flat properties, but the `Point` geometry
+is the source of position.
 
-| Property | Type | Meaning |
-| --- | --- | --- |
-| <code>station_id</code> | string | Persistent layer identifier; matches <code>Feature.id</code>. |
-| <code>name</code> | string | Station display name. |
-| <code>altitude_m</code> | number | WGS-84 ellipsoidal height in metres; repeated for easy tabular queries. |
-| <code>time_zone</code> | string | IANA presentation zone, such as <code>Europe/Madrid</code>; it does not alter physical UTC calculations. |
-| <code>min_elevation_deg</code> | number | Operational elevation mask, in degrees. |
-| <code>frequency_mhz</code> | number | Normalised physical frequency, in MHz. |
-| <code>polarization</code> | string | <code>RHCP</code>, <code>LHCP</code>, or linear according to the Orbit contract. |
-| <code>operation_mode</code> | string | <code>tracking</code>, <code>scan</code>, or <code>stationary</code>. |
-| <code>station_schema_version</code> | integer | Version of the Orbit station contract. |
-| <code>monitor_satellite_ids</code> | array of strings | Identifiers stored by the project; they do not create a mandatory pass association. |
+The file contains no `crs` member: RFC 7946 fixes GeoJSON to WGS-84. Height is
+ellipsoidal, not orthometric height or height above terrain.
 
-### RF and visual configuration
-
-<code>orbit:rf</code> contains the **authored** RF parameters that must not be
-lost during interchange: aperture and efficiency, frequency and unit,
-polarisation and tilt, power and unit, gain modes/overrides, pattern, HPBW, side
-lobes, RX threshold, system temperature, bandwidth, required SNR, losses,
-pointing RMS, boresight, and mechanical limits. Its keys follow
-[Project JSON](project-json.md), for example <code>antenna_diameter_m</code>,
-<code>tx_power_dbm</code>, <code>pattern_type</code>, or
-<code>mechanical_elevation_max_deg</code>.
-
-<code>orbit:visual</code> contains presentation preferences only, such as
-symbol, size, colour, and coverage visibility. When present,
-<code>monitor_satellite_ids</code> preserves project context, but does not filter
-AOS/LOS tables: in Orbit, any compatible satellite can be selected freely for
-pass analysis.
-
-The <code>orbit:rf</code> and <code>orbit:visual</code> objects are not GIS
-geometries or results. Tools that only accept flat fields can retain them as JSON
-or ignore them while still using the point geometry and flat properties.
-
-## Opening the file in QGIS
+### Opening GeoJSON in QGIS
 
 1. Select **Layer → Add Layer → Add Vector Layer**.
-2. Choose the <code>.geojson</code> file exported by Orbit and open it.
-3. Check that QGIS reads it as a WGS-84 geographic <code>Point</code> layer.
-4. Open the attribute table to inspect <code>name</code>,
-   <code>frequency_mhz</code>, <code>min_elevation_deg</code>, and the remaining
-   flat fields.
+2. Open the `.geojson` file exported by Orbit.
+3. Verify that QGIS interprets it as a WGS-84 geographic `Point` layer.
+4. Inspect flat fields such as `name`, `frequency_mhz`, and
+   `min_elevation_deg` in the attribute table.
 
-The Z height is retained in the geometry. To view it in a QGIS 3D scene,
-configure layer elevation from its Z value; do not treat that display as an RF
-visibility model. The pattern mesh, footprint, terrain, refraction, and passes
-are not part of the GeoJSON.
+The Z component remains available to a QGIS 3D scene. That visualisation is
+not an RF model or a visibility calculation.
 
-## Limits and compatibility
+## Orbit JSON
 
-- Export is one-way in the current version: Orbit does not yet import GeoJSON
-  ground stations.
-- The file describes point stations and configuration, not dynamic satellite
-  geometry or calculated coverage.
-- It does not export RF range, <code>G/T</code>, SNR, received power, AOS, LOS,
-  or results dependent on a remote layer; those are derived values that Orbit
-  recalculates.
-- Orbit's simplified pattern is not a measured antenna pattern. Its presence in
-  <code>orbit:rf</code> does not certify physical station performance.
-- The IANA zone is only a local-label preference. Operational instants and
-  AOS/LOS must still be exchanged in UTC.
+Orbit JSON is a native interchange container for a list of stations. It is
+versioned and intended to import the Orbit-supported contract again without
+depending on GIS attribute conventions. Orbit identifies the document from its
+envelope, so a downloaded `.json` file and a compatible
+`.orbit-ground-stations.json` name are both accepted.
 
-For an integration that needs geodetic-network stations, IGS logs, SINEX, KML,
-or orthometric height, explicitly define vertical datum, epoch, units, and
-attribute mapping before converting data. Orbit does not infer them from a
-column name.
+~~~json
+{
+  "format": "orbit-ground-stations",
+  "version": 1,
+  "stations": [
+    {
+      "id": "gst:1",
+      "name": "Madrid Station",
+      "station_schema_version": 2,
+      "latitude_deg": 40.41678,
+      "longitude_deg": -3.70379,
+      "altitude_m": 667.0,
+      "time_zone": "Europe/Madrid",
+      "min_elevation_deg": 10.0,
+      "antenna_diameter_m": 2.4,
+      "frequency_mhz": 2200.0,
+      "coverage_visible": true
+    }
+  ]
+}
+~~~
+
+`format` identifies the container and `version` identifies the interchange
+contract, not the application version. Each object in `stations` uses the
+station contract described in [Project JSON](project-json.md), without the
+folder tree, time mode, other layers, or rendering handles.
+
+## CSV
+
+CSV holds one row per station with stable headers including `station_id`,
+`name`, `latitude_deg`, `longitude_deg`, `altitude_m`,
+`min_elevation_deg`, and the scalar RF/visual fields known to Orbit.
+`monitor_satellite_ids` is written as a JSON array in its cell.
+
+A manually authored CSV must include `latitude_deg` and `longitude_deg`.
+Missing fields use station defaults; empty numeric or Boolean cells from the
+exported profile represent optional null values. Keep comma separation and
+UTF-8 encoding when the file is intended for re-import.
+
+## Data recalculated by Orbit
+
+None of the formats exports or accepts as a source of truth:
+
+- 2D/3D meshes, footprint, discrete pattern, or viewer entities;
+- derived RF range, `G/T`, aggregate losses, SNR, or received power;
+- elevation samples, AOS, LOS, pass tables, or an API response;
+- a mandatory association between a station and a satellite;
+- folders, other layers, selection, camera, or project time mode.
+
+After import, Orbit recalculates RF models, coverage, and AOS/LOS results using
+the currently selected instant, satellite, and configuration.
+
+## Compatibility
+
+All three formats represent WGS-84 point stations. When an external system
+uses another datum, orthometric height, geodetic epoch, or units, convert and
+document that information before import. Orbit does not infer vertical datum,
+time zone, or RF semantics from a column name.
+
+Use [Project JSON](project-json.md), not a station-interchange file, to restore
+the complete workspace including its layer tree and project state.

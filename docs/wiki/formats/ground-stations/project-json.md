@@ -23,18 +23,20 @@ Los HPBW guardados son anchos completos a media potencia. No convierten el patr�
 
 `coverage_visible` controla únicamente la presentación. La huella 2D, el sector/anillo derivado de los topes de montura, la malla 3D, los cortes de patrón y el mapa discreto de ganancia se regeneran desde el contrato; no son datos físicos independientes ni determinan por sí mismos AOS/LOS. Los valores de alcance, huella y métricas RF que puedan acompañar una exportación son cachés de presentación y se recalculan al cargar.
 
-## Relación con GeoJSON
+## Relación con el intercambio de estaciones
 
-[GeoJSON](interchange.md) es una proyección de intercambio de cada estación,
-no una sustitución de este documento. Expone una geometría <code>Point</code>
-WGS-84 y un subconjunto de identidad/configuración; conserva el contrato RF
-autorado bajo <code>properties["orbit:rf"]</code> y las preferencias de
-presentación bajo <code>properties["orbit:visual"]</code>.
+Los formatos de [intercambio de estaciones](interchange.md) no sustituyen este
+documento. **GeoJSON** expone una geometría <code>Point</code> WGS-84 y conserva
+el contrato RF autorado bajo <code>properties["orbit:rf"]</code> y las
+preferencias de presentación bajo <code>properties["orbit:visual"]</code>.
+**Orbit JSON** contiene solamente la lista versionada de estaciones. **CSV**
+aplana los campos escalares para su edición tabular.
 
-No transporta el árbol de carpetas, otras capas, el modo temporal, estado de
+Ninguno transporta el árbol de carpetas, otras capas, modo temporal, estado de
 selección, manejadores Cesium, mallas derivadas, rangos, <code>G/T</code>, SNR ni
 análisis AOS/LOS. Para una copia reabrible y completa del espacio de trabajo,
-exporte el proyecto JSON; para QGIS o un sistema GIS, exporte GeoJSON.
+exporte el proyecto JSON; para GIS use GeoJSON y para restaurar solo estaciones
+use Orbit JSON.
 
 ## Alcance
 
