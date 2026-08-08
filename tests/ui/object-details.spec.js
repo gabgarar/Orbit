@@ -89,3 +89,104 @@ test("the selected-orbit card has separate Overview, Orbit, Telemetry, Input and
     await expect(panel.getByText("Posición ITRF", { exact: true })).toBeVisible();
     await expect(panel.getByText("Velocidad ITRF", { exact: true })).toBeVisible();
 });
+
+test("the ground-station pattern tab distinguishes directivity from an available downlink SNR map", async ({ page }) => {
+    await openWorkspace(page);
+    await page.evaluate(() => {
+        window.dispatchEvent(new CustomEvent("orbit:selected-object", {
+            detail: {
+                id: "GROUND-RF-1",
+                selectionRevision: 1,
+                name: "RF test station",
+                layerType: "GROUND_STATION",
+                active: true,
+                visible: true,
+                telemetry: {
+                    station: {
+                        id: "GROUND-RF-1",
+                        name: "RF test station",
+                        latitude_deg: 40.4168,
+                        longitude_deg: -3.7038,
+                        altitude_m: 667,
+                        min_elevation_deg: 10,
+                        antenna_diameter_m: 1.2,
+                        antenna_efficiency: 0.6,
+                        frequency_mhz: 2200,
+                        polarization: "RHCP",
+                        tx_power_dbm: 38,
+                        system_temperature_k: 500,
+                        receiver_bandwidth_hz: 25000,
+                        operation_mode: "tracking"
+                    }
+                }
+            }
+        }));
+    });
+
+    const panel = page.locator(".object-details-panel");
+    await expect(panel).toBeVisible();
+    await panel.getByRole("tab", { name: "Antenna radiation pattern", exact: true }).click();
+    await expect(panel.getByText("Mapa angular de ganancia", { exact: true })).toBeVisible();
+    await expect(panel.getByText(/El mapa de SNR se habilita/)).toBeVisible();
+
+    await page.evaluate(() => {
+        window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+            detail: {
+                analysisSelection: { stationId: "GROUND-RF-1", satelliteLayerId: "sat:RF-SAT" },
+                satelliteName: "RF-SAT",
+                rangeKm: 1000,
+                satelliteRfProfile: {
+                    eirp_dbm: 42,
+                    frequency_mhz: 2200,
+                    polarization: "RHCP",
+                    bandwidth_hz: 20000
+                }
+            }
+        }));
+    });
+
+    await expect(panel.getByText("Mapa angular de margen SNR", { exact: true })).toBeVisible();
+    await expect(panel.getByText(/Muestra angular del enlace de bajada hacia RF-SAT/)).toBeVisible();
+});
+
+test("a ground-station context menu exposes a focused GeoJSON export action", async ({ page }) => {
+    await openWorkspace(page);
+    await page.evaluate(() => {
+        window.dispatchEvent(new CustomEvent("orbit:layer-context-menu", {
+            detail: {
+                id: "ground-station:madrid",
+                left: 40,
+                top: 40,
+                layerType: "GROUND_STATION",
+                groundStation: true,
+                visible: true
+            }
+        }));
+        const events = [];
+        const listener = (event) => {
+            events.push(event.detail);
+            event.stopImmediatePropagation();
+        };
+        window.__orbitGroundStationExportProbe = { events, listener };
+        window.addEventListener("orbit:layer-context-action", listener, true);
+    });
+
+    try {
+        const menu = page.locator("#catalogContextMenu");
+        await expect(menu).toBeVisible();
+        await expect(menu.getByRole("button", { name: "Exportar GeoJSON", exact: true })).toBeVisible();
+        await menu.getByRole("button", { name: "Exportar GeoJSON", exact: true }).click();
+        await expect(menu).toBeHidden();
+        expect(await page.evaluate(() => window.__orbitGroundStationExportProbe.events)).toEqual([{
+            action: "export-station-geojson",
+            id: "ground-station:madrid",
+            source: "layer"
+        }]);
+    } finally {
+        await page.evaluate(() => {
+            const probe = window.__orbitGroundStationExportProbe;
+            if (probe) window.removeEventListener("orbit:layer-context-action", probe.listener, true);
+            delete window.__orbitGroundStationExportProbe;
+        });
+    }
+});

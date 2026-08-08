@@ -395,9 +395,12 @@ body.with-toolbars #objectSidebar.collapsed {
 .ground-station-panel {
     width: min(430px, calc(100vw - 24px));
     max-height: calc(100dvh - 88px);
+    min-height: 0;
     overflow: hidden;
     padding: 16px;
     gap: 14px;
+    box-sizing: border-box;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
     container-type: inline-size;
     pointer-events: auto;
 }
@@ -1685,7 +1688,7 @@ body.with-toolbars #objectSidebar.collapsed {
 
 .ground-station-tabs {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
     margin: 10px 0 12px;
 }
@@ -1695,8 +1698,8 @@ body.with-toolbars #objectSidebar.collapsed {
     border-radius: 8px;
     background: var(--orbit-bg-input);
     color: var(--orbit-text-secondary);
-    font: 700 11px/1 sans-serif;
-    padding: 8px 6px;
+    font: 700 10px/1 sans-serif;
+    padding: 8px 4px;
     cursor: pointer;
 }
 
@@ -1712,6 +1715,27 @@ body.with-toolbars #objectSidebar.collapsed {
 
 .ground-station-tab-panel.active {
     display: block;
+}
+
+.ground-station-rf-summary {
+    min-height: 0;
+    border: 1px solid rgba(60, 115, 92, .72);
+    border-radius: 8px;
+    background: linear-gradient(135deg, rgba(7, 38, 31, .62), rgba(10, 25, 42, .68));
+    padding: 9px 10px;
+    color: #b9e4cd;
+    font: 600 10px/1.5 system-ui, sans-serif;
+}
+
+.ground-station-pointing-note {
+    margin: 10px 2px 0;
+    color: var(--orbit-text-secondary);
+    font: 500 10px/1.45 system-ui, sans-serif;
+}
+
+.ground-station-panel .catalog-filter-field input:disabled {
+    opacity: .5;
+    cursor: not-allowed;
 }
 
 .object-info-key {

@@ -335,6 +335,18 @@ function createCatalogEntryMeta(entry = {}, fallbackName = "") {
         // provides it. The details inspector can then expose OMM/OEM/SP3
         // fields without pretending that a generic TLE record contains them.
         inputMetadata: entry?.inputMetadata ?? entry?.input_metadata ?? entry?.sourceMetadata ?? entry?.source_metadata ?? null,
+        // RF metadata is intentionally optional. Standard TLE/OMM/SP3/OEM
+        // inputs usually do not carry it, but a catalogue/provider can expose
+        // a complete remote terminal profile without changing the runtime
+        // model. Ground-station telemetry only calculates a real SNR when
+        // this object has EIRP, carrier, polarisation and bandwidth.
+        rfProfile: entry?.rfProfile
+            ?? entry?.rf_profile
+            ?? entry?.inputMetadata?.rfProfile
+            ?? entry?.inputMetadata?.rf_profile
+            ?? entry?.input_metadata?.rfProfile
+            ?? entry?.input_metadata?.rf_profile
+            ?? null,
         perigee_km: Number.isFinite(Number(entry?.perigee_km)) ? Number(entry.perigee_km) : null,
         decayRisk: entry?.decayRisk === true
     };

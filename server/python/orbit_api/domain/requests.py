@@ -5,7 +5,14 @@ import math
 import re
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from orbit_api.core.settings import (
     AUTO_MAX_ORBIT_SAMPLES,
@@ -13,7 +20,6 @@ from orbit_api.core.settings import (
     PROPAGATION_HOURS_MIN,
 )
 from orbit_api.timekeeping import ensure_utc
-
 
 # These are the selectable *new-design* manual propagation families. A
 # manual state is defined in EME2000 at an epoch, so it must be propagated by
@@ -356,14 +362,67 @@ class OrbitRequest(TleSourceRequest):
     samples: int | None = Field(default=None, ge=2, le=AUTO_MAX_ORBIT_SAMPLES)
 
 
+def _azimuth_within_limits(azimuth_deg: float, minimum_deg: float, maximum_deg: float) -> bool:
+    """Return whether an azimuth belongs to a wrapped mechanical interval."""
+    azimuth = ((float(azimuth_deg) + 180.0) % 360.0) - 180.0
+    minimum = ((float(minimum_deg) + 180.0) % 360.0) - 180.0
+    maximum = ((float(maximum_deg) + 180.0) % 360.0) - 180.0
+    if math.isclose(minimum, maximum, abs_tol=1e-12):
+        return True
+    return minimum <= azimuth <= maximum if minimum <= maximum else azimuth >= minimum or azimuth <= maximum
+
+
 class StationInput(BaseModel):
     lat_deg: float = Field(ge=-90, le=90)
     lon_deg: float = Field(ge=-180, le=180)
     height_m: float = Field(default=0.0, ge=-1_000, le=100_000)
     min_elevation_deg: float = Field(default=10.0, ge=0, le=90)
-    # Optional RF slant-range gate. Keeping it in the station contract makes
-    # AOS/LOS agree with the visual coverage volume and live link geometry.
-    max_range_km: float | None = Field(default=None, gt=0, le=50_000)
+    # Optional RF slant-range gate. This is an operational value, deliberately
+    # independent from the shorter renderer range used to keep a 3D lobe
+    # responsive. One million km is a safety bound for malformed requests and
+    # remains well beyond ordinary Earth-orbit access planning.
+    max_range_km: float | None = Field(default=None, gt=0, le=1_000_000)
+    # Mechanical and pointing data are operational geometry, not propagation
+    # inputs. They are kept with the station request so all AOS/LOS consumers
+    # agree with the live scene about what the antenna can physically reach.
+    mechanical_elevation_min_deg: float = Field(default=0.0, ge=0, le=90)
+    mechanical_elevation_max_deg: float = Field(default=90.0, ge=0, le=90)
+    mechanical_azimuth_min_deg: float = Field(default=-180.0, ge=-180, le=180)
+    mechanical_azimuth_max_deg: float = Field(default=180.0, ge=-180, le=180)
+    operation_mode: Literal["tracking", "scan", "stationary"] = "tracking"
+    boresight_azimuth_deg: float = Field(default=0.0, ge=-180, le=180)
+    boresight_elevation_deg: float = Field(default=90.0, ge=0, le=90)
+    # Retained for legacy callers that only supplied a circular fixed-beam
+    # description. New callers provide the two HPBW values and a pattern; the
+    # half-power contour is a diagnostic, while the directional budget is the
+    # actual stationary-station range gate. Scan is intentionally a
+    # field-of-regard model until a time-tagged scan schedule exists; the
+    # AOS/LOS route reports it as potential coverage, never as an operational
+    # peak-gain pass.
+    beam_half_angle_deg: float | None = Field(default=None, gt=0, le=90)
+    # The backend needs the same angular pattern contract as the browser when
+    # it turns the boresight range into an operational AOS/LOS range. These
+    # fields are optional for compatibility with older API clients; a
+    # stationary request falls back to its declared beam half-angle.
+    pattern_type: Literal["gaussian", "cosine"] = "gaussian"
+    hpbw_azimuth_deg: float | None = Field(default=None, gt=0, le=180)
+    hpbw_elevation_deg: float | None = Field(default=None, gt=0, le=180)
+    side_lobe_level_db: float = Field(default=25.0, ge=0, le=120)
+
+    @model_validator(mode="after")
+    def validate_mechanical_elevation_limits(self):
+        if self.mechanical_elevation_min_deg > self.mechanical_elevation_max_deg:
+            raise ValueError("mechanical_elevation_min_deg no puede superar mechanical_elevation_max_deg")
+        if self.operation_mode == "stationary":
+            if not self.mechanical_elevation_min_deg <= self.boresight_elevation_deg <= self.mechanical_elevation_max_deg:
+                raise ValueError("el boresight de elevacion debe estar dentro de los limites mecanicos")
+            if not _azimuth_within_limits(
+                self.boresight_azimuth_deg,
+                self.mechanical_azimuth_min_deg,
+                self.mechanical_azimuth_max_deg,
+            ):
+                raise ValueError("el boresight de azimut debe estar dentro de los limites mecanicos")
+        return self
 
 
 class EphemerisRequest(TleSourceRequest):

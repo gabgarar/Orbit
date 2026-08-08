@@ -13,6 +13,18 @@ del archivo abierto. Incluye el estado serializable descrito en
 [Proyectos](projects.md). Use esta opción para trasladar la composición del
 espacio de trabajo; no asuma que incorpora OEM locales tabulados.
 
+## Exportar estaciones terrestres
+
+Las estaciones se pueden descargar individualmente o en conjunto como GeoJSON
+RFC 7946. El formato usa puntos WGS-84 con el orden longitud, latitud y altura
+elipsoidal en metros, más la configuración RF autorada de Orbit. Es apropiado
+para QGIS, GDAL, PostGIS y otros flujos GIS.
+
+No es un Shapefile ni una copia de proyecto: no incluye mallas de cobertura,
+resultados de pases, SNR, rangos derivados o el árbol del espacio de trabajo.
+Para el esquema completo y las instrucciones de QGIS consulte
+[Intercambio GeoJSON de estaciones](../formats/ground-stations/interchange.md).
+
 ## Exportar elemento de catálogo
 
 El diálogo de exportación muestra las acciones compatibles con el formato de
@@ -65,4 +77,3 @@ Para una efeméride de precisión, registre junto al archivo exportado:
 
 El último punto es imprescindible cuando la salida requiere reducción
 terrestre. Consulte [Operación de tiempo y EOP](../operations/time-eop.md).
-

@@ -13,3 +13,13 @@
 Las exportaciones de catálogo verifican que el formato solicitado corresponda
 al origen cuando procede. OMM, OCM y OEM generados por Orbit no declaran
 cobertura completa de todos los perfiles de sus estándares.
+
+## Estaciones terrestres
+
+La exportación GeoJSON de estaciones no es un endpoint REST. La aplicación
+genera localmente una <code>FeatureCollection</code> RFC 7946 a partir del
+contrato autorado de las capas de estación y descarga un archivo
+<code>application/geo+json</code>. No llama a esta API ni convierte una respuesta
+de AOS/LOS en una geometría de exportación. Consulte
+[Intercambio GeoJSON de estaciones](../../formats/ground-stations/interchange.md)
+para el esquema y sus límites.

@@ -19,6 +19,25 @@ export function calculateElevationDegrees(Cesium, stationCartesian, satelliteCar
     return Cesium.Math.toDegrees(Math.asin(dot));
 }
 
+/**
+ * Return the target azimuth clockwise from geodetic north, in degrees.
+ * The local ENU construction intentionally mirrors the Python AOS/LOS
+ * service, so mechanical limits are evaluated in the same terrestrial frame.
+ */
+export function calculateAzimuthDegrees(Cesium, stationCartesian, satelliteCartesian) {
+    const station = Cesium.Cartographic.fromCartesian(stationCartesian, Cesium.Ellipsoid.WGS84);
+    if (!station) return null;
+    const delta = Cesium.Cartesian3.subtract(satelliteCartesian, stationCartesian, new Cesium.Cartesian3());
+    const latitude = station.latitude;
+    const longitude = station.longitude;
+    const east = (-Math.sin(longitude) * delta.x) + (Math.cos(longitude) * delta.y);
+    const north = (-Math.sin(latitude) * Math.cos(longitude) * delta.x)
+        - (Math.sin(latitude) * Math.sin(longitude) * delta.y)
+        + (Math.cos(latitude) * delta.z);
+    const azimuth = Cesium.Math.toDegrees(Math.atan2(east, north));
+    return ((azimuth + 180) % 360 + 360) % 360 - 180;
+}
+
 export function calculateFreeSpacePathLossDb(frequencyMhz, rangeKm) {
     if (!Number.isFinite(frequencyMhz) || frequencyMhz <= 0 || !Number.isFinite(rangeKm) || rangeKm <= 0) {
         return null;

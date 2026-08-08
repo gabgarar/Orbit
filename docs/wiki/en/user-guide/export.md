@@ -13,6 +13,18 @@ of the open file. Includes the serializable state described in
 [Projects](projects.md). Use this option to move the composition of the
 workspace; Don't assume it incorporates tabulated local OEMs.
 
+## Exporting ground stations
+
+Ground stations can be downloaded individually or together as RFC 7946 GeoJSON.
+The format uses WGS-84 points in longitude, latitude, ellipsoidal-height-in-
+metres order, plus Orbit authored RF configuration. It is suitable for QGIS,
+GDAL, PostGIS, and other GIS workflows.
+
+It is neither a Shapefile nor a project copy: it does not include coverage
+meshes, pass results, SNR, derived ranges, or the workspace tree. See
+[Ground-station GeoJSON interchange](../formats/ground-stations/interchange.md)
+for the full schema and QGIS instructions.
+
 ## Export catalog item
 
 The export dialog displays the actions supported by the export format.

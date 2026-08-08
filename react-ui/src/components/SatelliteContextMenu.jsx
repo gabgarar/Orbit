@@ -48,6 +48,13 @@ export default function SatelliteContextMenu() {
         >
             Actualizar parámetros
         </button>}
+        {isGroundStation && <button
+            className={baseButtonClass}
+            type="button"
+            onClick={() => selectAction("export-station-geojson")}
+        >
+            Exportar GeoJSON
+        </button>}
         {!isCelestialBody && !isGroundStation && <button
             className={baseButtonClass}
             type="button"

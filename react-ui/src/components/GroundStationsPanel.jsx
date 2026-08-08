@@ -64,6 +64,49 @@ function utc(value) {
     return Number.isNaN(date.getTime()) ? "—" : `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
+function resolveStationTimeZone(...values) {
+    for (const value of values) {
+        const candidate = typeof value === "string" ? value.trim() : "";
+        if (!candidate) continue;
+        try {
+            return new Intl.DateTimeFormat("en-GB", { timeZone: candidate }).resolvedOptions().timeZone || "UTC";
+        } catch {
+            // Imported station metadata can contain an obsolete or invalid
+            // IANA identifier. Keep looking before falling back to UTC.
+        }
+    }
+    return "UTC";
+}
+
+function formatStationTime(value, timeZone, { includeZone = true } = {}) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    const resolvedTimeZone = resolveStationTimeZone(timeZone);
+    return new Intl.DateTimeFormat("es-ES", {
+        timeZone: resolvedTimeZone,
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        ...(includeZone ? { timeZoneName: "short" } : {})
+    }).format(date).replace(",", "");
+}
+
+function formatStationAxisTime(value, timeZone) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    return new Intl.DateTimeFormat("es-ES", {
+        timeZone: resolveStationTimeZone(timeZone),
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+    }).format(date).replace(",", "");
+}
+
 function isSameAnalysisRange(analysisWindow, simulation) {
     if (analysisWindow?.source !== "simulation-range" || simulation?.mode !== "range") return false;
     const analysisStart = Date.parse(analysisWindow.startTime);
@@ -82,15 +125,16 @@ function exportPasses(result) {
     anchor.href = url; anchor.download = "orbit-ground-station-passes.csv"; anchor.click(); URL.revokeObjectURL(url);
 }
 
-function PassesTable({ passes }) {
+function PassesTable({ passes, timeZone }) {
     const rows = Array.isArray(passes) ? passes : [];
+    const displayTimeZone = resolveStationTimeZone(timeZone);
     return <div className="orbit-scrollbar mt-2 overflow-x-auto rounded-[7px] border border-[#265143] bg-[rgba(5,20,17,.42)]">
         <table className="w-full min-w-[460px] border-collapse text-left text-[10px]">
             <thead className="bg-[rgba(19,57,46,.72)] text-[9px] font-bold uppercase tracking-wide text-[#9fc7b1]">
                 <tr>
                     <th scope="col" className="px-2 py-1.5">Pase</th>
-                    <th scope="col" className="px-2 py-1.5">AOS (UTC)</th>
-                    <th scope="col" className="px-2 py-1.5">LOS (UTC)</th>
+                    <th scope="col" className="px-2 py-1.5">AOS ({displayTimeZone})</th>
+                    <th scope="col" className="px-2 py-1.5">LOS ({displayTimeZone})</th>
                     <th scope="col" className="px-2 py-1.5 text-right">Máx.</th>
                 </tr>
             </thead>
@@ -99,8 +143,8 @@ function PassesTable({ passes }) {
                     const maxElevation = Number(pass.max_elevation_deg);
                     return <tr key={`${pass.aos}-${index}`} className="transition-colors hover:bg-[rgba(37,92,72,.22)]">
                         <th scope="row" className="px-2 py-1.5 font-semibold text-[#e1faea]">{index + 1}</th>
-                        <td className="whitespace-nowrap px-2 py-1.5">{utc(pass.aos)}</td>
-                        <td className="whitespace-nowrap px-2 py-1.5">{utc(pass.los)}</td>
+                        <td className="whitespace-nowrap px-2 py-1.5">{formatStationTime(pass.aos, displayTimeZone)}</td>
+                        <td className="whitespace-nowrap px-2 py-1.5">{formatStationTime(pass.los, displayTimeZone)}</td>
                         <td className="whitespace-nowrap px-2 py-1.5 text-right font-semibold text-[#9ee8bf]">{Number.isFinite(maxElevation) ? `${maxElevation.toFixed(1)}°` : "—"}</td>
                     </tr>;
                 })}
@@ -109,7 +153,7 @@ function PassesTable({ passes }) {
     </div>;
 }
 
-function PassElevationChart({ result }) {
+function PassElevationChart({ result, timeZone: stationTimeZone }) {
     const svgRef = useRef(null);
     const [selectedPass, setSelectedPass] = useState(0);
     useEffect(() => setSelectedPass(0), [result?.satellite, result?.analysisWindow?.startTime, result?.analysisWindow?.endTime]);
@@ -153,15 +197,13 @@ function PassElevationChart({ result }) {
         const control2 = { x: point.x - ((next.x - previous.x) / 6), y: point.y - ((next.y - previous.y) / 6) };
         return `${value} C${control1.x.toFixed(1)},${control1.y.toFixed(1)} ${control2.x.toFixed(1)},${control2.y.toFixed(1)} ${point.x.toFixed(1)},${point.y.toFixed(1)}`;
     }, "");
-    // The pass table and the global timeline use UTC. Keep the chart in that
-    // same operational time scale instead of mixing an IANA display zone into
-    // one of the three pass views.
-    const timeZone = "UTC";
-    const formatter = new Intl.DateTimeFormat(undefined, { timeZone, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" });
+    // API samples and AOS/LOS instants remain UTC. Only their presentation is
+    // localized to the station so table, graph and operator view agree.
+    const timeZone = resolveStationTimeZone(stationTimeZone, result?.stationTimeZone, result?.station?.time_zone);
     const ticks = [0, 0.25, 0.5, 0.75, 1].map((fraction) => new Date(start + ((end - start) * fraction)));
     return <section className="mt-3 rounded-[9px] border border-[#203b59] bg-[linear-gradient(155deg,rgba(8,19,35,.96),rgba(5,13,25,.96))] p-2.5">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1"><div><strong className="block text-[11px] text-[#e4eefc]">Perfil de elevación</strong><span className="text-[9px] text-[#879bb8]">Pase de {result.satellite} · {result.referenceFrame || "ITRF"} · {result.timeScale || "UTC"}</span></div><label className="text-[9px] text-[#91a8c8]">Pase <select value={selectedPass} onChange={(event) => setSelectedPass(Number(event.target.value))} className="ml-1 rounded-[5px] border border-[#31506f] bg-[#0e2037] px-1.5 py-1 text-[9px] font-bold text-[#d8e7fc]">{orderedPasses.map((pass, index) => <option key={`${pass.aos}-${index}`} value={index}>Pase {index + 1} · {Number(pass.max_elevation_deg).toFixed(1)}°</option>)}</select></label></div>
-        <div className="mb-1 flex items-center justify-end gap-2 px-1"><span className="hidden text-[9px] font-medium text-[#7189aa] lg:inline">Vista detallada · muestras 30 s</span><button className="inline-flex h-6 items-center rounded-[5px] border border-[#31506f] bg-[#0e2037] px-2 text-[9px] font-bold text-[#a9c7ed] hover:bg-[#173554]" type="button" onClick={() => downloadChartPng(svgRef.current, `passes-${result.satellite}`)}>Export PNG</button></div>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1"><div><strong className="block text-[11px] text-[#e4eefc]">Perfil de elevación</strong><span className="text-[9px] text-[#879bb8]">Pase de {result.satellite} · {result.referenceFrame || "ITRF"} · cálculo {result.timeScale || "UTC"} · visualización {timeZone}</span></div><label className="text-[9px] text-[#91a8c8]">Pase <select value={selectedPass} onChange={(event) => setSelectedPass(Number(event.target.value))} className="ml-1 rounded-[5px] border border-[#31506f] bg-[#0e2037] px-1.5 py-1 text-[9px] font-bold text-[#d8e7fc]">{orderedPasses.map((pass, index) => <option key={`${pass.aos}-${index}`} value={index}>Pase {index + 1} · {Number(pass.max_elevation_deg).toFixed(1)}°</option>)}</select></label></div>
+        <div className="mb-1 flex items-center justify-end gap-2 px-1"><span className="hidden text-[9px] font-medium text-[#7189aa] lg:inline">Vista detallada · muestras ≤ 10 s</span><button className="inline-flex h-6 items-center rounded-[5px] border border-[#31506f] bg-[#0e2037] px-2 text-[9px] font-bold text-[#a9c7ed] hover:bg-[#173554]" type="button" onClick={() => downloadChartPng(svgRef.current, `passes-${result.satellite}`)}>Export PNG</button></div>
         <svg ref={svgRef} className="block min-h-[250px] w-full select-none" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Elevación del satélite durante el pase seleccionado">
             <defs><linearGradient id="pass-elevation-line" gradientUnits="userSpaceOnUse" x1={pad.left} y1="0" x2={width - pad.right} y2="0"><stop offset="0%" stopColor="#6cb8ff" />{hasPassWindow && <><stop offset={`${(aosOffset * 100).toFixed(4)}%`} stopColor="#6cb8ff" /><stop offset={`${(aosOffset * 100).toFixed(4)}%`} stopColor="#6ff0a1" /><stop offset={`${(losOffset * 100).toFixed(4)}%`} stopColor="#6ff0a1" /><stop offset={`${(losOffset * 100).toFixed(4)}%`} stopColor="#a58aff" /></>}<stop offset="100%" stopColor="#a58aff" /></linearGradient><clipPath id="pass-elevation-clip"><rect x={pad.left} y={pad.top} width={plotWidth} height={plotHeight} rx="4" /></clipPath></defs>
             <rect x={pad.left} y={pad.top} width={plotWidth} height={plotHeight} fill="#09172a" stroke="#29425f" strokeWidth=".9" rx="4" />
@@ -172,10 +214,10 @@ function PassElevationChart({ result }) {
                 <path d={path} fill="none" stroke="url(#pass-elevation-line)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
             </g>
             {hasPassWindow && <><text x={aosX + 4} y={pad.top + 13} fill="#82e8aa" fontSize="9" fontWeight="700">AOS</text><text x={losX - 4} y={pad.top + 13} fill="#82e8aa" fontSize="9" fontWeight="700" textAnchor="end">LOS</text></>}
-            {ticks.map((tick, index) => <g key={tick.toISOString()}><line x1={pad.left + index * plotWidth / 4} x2={pad.left + index * plotWidth / 4} y1={pad.top} y2={pad.top + plotHeight} stroke="#8090a3" strokeOpacity=".18" strokeWidth=".7" /><text x={pad.left + index * plotWidth / 4} y={height - 20} textAnchor={index === 0 ? "start" : index === 4 ? "end" : "middle"} fill="#8ea2bd" fontSize="9.5">{formatter.format(tick).replace(",", "")}</text></g>)}
-            <text x={pad.left} y="17" fill="#d9eaff" fontSize="11.5" fontWeight="700">Elevación de {result.satellite} (deg)</text><text x={width - pad.right} y="17" fill="#89a6cb" fontSize="9.5" fontWeight="600" textAnchor="end">{result.referenceFrame || "ITRF"} · {result.timeScale || "UTC"}</text><text x={width - pad.right} y={height - 4} fill="#8197b5" fontSize="9.5" fontWeight="600" textAnchor="end">HORA ({result.timeScale || "UTC"})</text>
+            {ticks.map((tick, index) => <g key={tick.toISOString()}><line x1={pad.left + index * plotWidth / 4} x2={pad.left + index * plotWidth / 4} y1={pad.top} y2={pad.top + plotHeight} stroke="#8090a3" strokeOpacity=".18" strokeWidth=".7" /><text x={pad.left + index * plotWidth / 4} y={height - 20} textAnchor={index === 0 ? "start" : index === 4 ? "end" : "middle"} fill="#8ea2bd" fontSize="9.5">{formatStationAxisTime(tick, timeZone)}</text></g>)}
+            <text x={pad.left} y="17" fill="#d9eaff" fontSize="11.5" fontWeight="700">Elevación de {result.satellite} (deg)</text><text x={width - pad.right} y="17" fill="#89a6cb" fontSize="9.5" fontWeight="600" textAnchor="end">{result.referenceFrame || "ITRF"} · cálculo {result.timeScale || "UTC"}</text><text x={width - pad.right} y={height - 4} fill="#8197b5" fontSize="9.5" fontWeight="600" textAnchor="end">HORA LOCAL ({timeZone})</text>
         </svg>
-        <p className="m-0 px-1 pt-1 text-[9px] leading-snug text-[#86a999]">Azul: elevación calculada. Verde: tramo que cumple máscara y envolvente RF.</p>
+        <p className="m-0 px-1 pt-1 text-[9px] leading-snug text-[#86a999]">Azul: elevación calculada. Verde: tramo operativo; usa el enlace de bajada si existe perfil RF satelital y, si no, la envolvente recíproca de planificación.</p>
     </section>;
 }
 
@@ -296,9 +338,12 @@ export default function GroundStationsPanel() {
     useEffect(() => { if (!stationId && state.stations[0]) setStationId(state.stations[0].id); }, [state.stations, stationId]);
     useEffect(() => { if (!satelliteId && state.satellites[0]) setSatelliteId(state.satellites[0].id); }, [state.satellites, satelliteId]);
     const station = useMemo(() => state.stations.find((item) => item.id === stationId), [state.stations, stationId]);
-    const liveLinkBudgetDbm = Number.isFinite(Number(result?.rangeKm)) && station
-        ? Number(station.tx_power_dbm) + Number(station.tx_gain_dbi || 0) + Number(station.rx_gain_dbi || 0) - (32.44 + (20 * Math.log10(Number(station.frequency_mhz))) + (20 * Math.log10(Number(result.rangeKm))))
-        : Number.NaN;
+    const stationTimeZone = resolveStationTimeZone(result?.stationTimeZone, result?.station?.time_zone, station?.time_zone);
+    const liveLinkBudgetDbm = Number(result?.linkBudgetDbm);
+    const liveLinkMarginDb = Number(result?.linkMarginDb);
+    const stationDownlinkReceivedPowerDbm = Number(result?.satelliteReceivedPowerDbm);
+    const stationDownlinkSnrDb = Number(result?.satelliteSnrDb);
+    const satelliteProfileAvailable = result?.satelliteLinkAvailable === true;
 
     if (!open) return null;
     const cancelPendingAnalysis = () => window.dispatchEvent(new Event("orbit:ground-stations-analysis-cancel"));
@@ -322,10 +367,56 @@ export default function GroundStationsPanel() {
     return <aside className={`${floating ? "fixed z-[10140] flex min-h-0 min-w-0" : "fixed top-[82px] right-3 z-[10140] flex max-h-[calc(100dvh-102px)] w-[min(390px,calc(100vw-24px))]"} flex-col overflow-hidden rounded-[12px] border border-[#2b4e7b] bg-[rgba(7,16,31,.96)] font-[system-ui,sans-serif] text-[#e7f0ff] shadow-[0_18px_48px_rgba(0,0,0,.48)]`} style={floatingStyle} aria-label="Operaciones de estaciones terrestres">
         <header onPointerDown={floating ? beginDrag : undefined} className={`flex shrink-0 items-center justify-between border-b border-[#203956] px-3 py-2.5${floating ? " cursor-move select-none" : ""}`}><div><h2 className="m-0 text-[13px] font-bold tracking-wide">{floating ? "TABLAS AOS / LOS" : "GROUND STATIONS"}</h2><p className="mt-0.5 mb-0 text-[10px] text-[#8ea4c4]">{floating ? "Arrastra esta barra para mover el análisis" : "Operación de pases y visibilidad"}</p></div><PanelCloseButton label={floating ? "Cerrar tablas AOS / LOS" : "Cerrar estaciones terrestres"} onPointerDown={(event) => event.stopPropagation()} onClick={() => floating ? setOpen(false) : window.dispatchEvent(new Event("orbit:ground-stations-close"))} /></header>
         <div className="orbit-scrollbar grid min-h-0 flex-1 gap-3 overflow-x-hidden overflow-y-auto overscroll-contain p-3 pr-2.5">
-            <section className="rounded-lg border border-[#203956] bg-[rgba(13,29,51,.7)] p-2.5"><div className="mb-2 flex items-center justify-between"><strong className="text-[11px]">Estación activa</strong>{!floating && <button type="button" onClick={() => { cancelPendingAnalysis(); setOpen(false); window.dispatchEvent(new Event("orbit:ground-stations-create-request")); }} className="rounded-md border border-[#466cff] bg-[#263f96] px-2 py-1 text-[10px] font-bold text-white">+ Añadir</button>}</div>{state.stations.length ? <select className={inputClass} value={stationId} onChange={(event) => { cancelPendingAnalysis(); setStationId(event.target.value); setResult(null); }}>{state.stations.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.latitude_deg.toFixed(3)}°, {item.longitude_deg.toFixed(3)}°</option>)}</select> : <p className="m-0 text-[11px] text-[#aabbd2]">Crea una estación para iniciar un análisis.</p>}{station && <><p className="mb-0 text-[10px] text-[#8ea4c4]">Máscara aplicada: {station.min_elevation_deg}° · ITRF/WGS‑84</p>{!floating && <div className="mt-2"><button type="button" onClick={() => { setFloatingRect((current) => clampFloatingRect(current)); setFloating(true); }} className="rounded border border-[#3f785e] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a8ebc5]">Tablas AOS / LOS</button></div>}</>}</section>
-            {station && <section className="rounded-lg border border-[#285345] bg-[rgba(7,31,26,.62)] p-2.5"><div className="flex items-center justify-between gap-3"><strong className="text-[11px]">Configuración aplicada</strong><strong className="shrink-0 text-[10px] text-[#8cebb1]">RF {Number(station.radio_range_km || 0).toFixed(1)} km</strong></div><p className="my-1 text-[9px] leading-snug text-[#96bba7]">Parámetros de solo lectura. Edítalos al crear la estación o desde sus datos.</p><div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[10px]"><span className="text-[#9fc7b1]">Máscara</span><strong className="text-right">{Number(station.min_elevation_deg).toFixed(1)}°</strong><span className="text-[#9fc7b1]">Frecuencia</span><strong className="text-right">{Number(station.frequency_mhz).toFixed(1)} MHz</strong><span className="text-[#9fc7b1]">Potencia TX</span><strong className="text-right">{Number(station.tx_power_dbm).toFixed(1)} dBm</strong><span className="text-[#9fc7b1]">G TX / G RX</span><strong className="text-right">{Number(station.tx_gain_dbi).toFixed(1)} / {Number(station.rx_gain_dbi).toFixed(1)} dBi</strong><span className="text-[#9fc7b1]">RX mínima</span><strong className="text-right">{Number(station.min_link_power_dbm ?? -80).toFixed(1)} dBm</strong></div></section>}
+            <section className="rounded-lg border border-[#203956] bg-[rgba(13,29,51,.7)] p-2.5">
+                <div className="mb-2 flex items-center justify-between">
+                    <strong className="text-[11px]">Estación activa</strong>
+                    {!floating && <button type="button" onClick={() => { cancelPendingAnalysis(); setOpen(false); window.dispatchEvent(new Event("orbit:ground-stations-create-request")); }} className="rounded-md border border-[#466cff] bg-[#263f96] px-2 py-1 text-[10px] font-bold text-white">+ Añadir</button>}
+                </div>
+                {state.stations.length
+                    ? <select className={inputClass} value={stationId} onChange={(event) => { cancelPendingAnalysis(); setStationId(event.target.value); setResult(null); }}>{state.stations.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.latitude_deg.toFixed(3)}°, {item.longitude_deg.toFixed(3)}°</option>)}</select>
+                    : <p className="m-0 text-[11px] text-[#aabbd2]">Crea una estación para iniciar un análisis.</p>}
+                {station && <>
+                    <p className="mb-0 text-[10px] text-[#8ea4c4]">Máscara aplicada: {station.min_elevation_deg}° · ITRF/WGS‑84</p>
+                    {!floating && <div className="mt-2 flex flex-wrap gap-2">
+                        <button type="button" onClick={() => { setFloatingRect((current) => clampFloatingRect(current)); setFloating(true); }} className="rounded border border-[#3f785e] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a8ebc5]">Tablas AOS / LOS</button>
+                        <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("orbit:ground-stations-export-geojson", { detail: { stationId } }))} className="rounded border border-[#31506f] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a9c7ed]">Exportar GeoJSON</button>
+                        {state.stations.length > 1 && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("orbit:ground-stations-export-geojson", { detail: {} }))} className="rounded border border-[#31506f] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a9c7ed]">Exportar todas</button>}
+                    </div>}
+                </>}
+            </section>
+            {station && <section className="rounded-lg border border-[#285345] bg-[rgba(7,31,26,.62)] p-2.5">
+                <div className="flex items-center justify-between gap-3"><strong className="text-[11px]">Modelo RF aplicado</strong><strong className="shrink-0 text-[10px] text-[#8cebb1]">RF {Number(station.radio_range_km || 0).toFixed(1)} km</strong></div>
+                <p className="my-1 text-[9px] leading-snug text-[#96bba7]">La envolvente sirve para planificación recíproca. El enlace real de bajada y su SNR solo se calculan cuando el satélite aporta su perfil RF.</p>
+                <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[10px]">
+                    <span className="text-[#9fc7b1]">Máscara / modo</span><strong className="text-right">{Number(station.min_elevation_deg).toFixed(1)}° · {station.rf?.operation_mode || "tracking"}</strong>
+                    <span className="text-[#9fc7b1]">Plato / eficiencia</span><strong className="text-right">{Number(station.rf?.antenna_diameter_m || 0).toFixed(2)} m · {Number(station.rf?.antenna_efficiency || 0).toFixed(2)}</strong>
+                    <span className="text-[#9fc7b1]">Frecuencia</span><strong className="text-right">{Number(station.frequency_mhz).toFixed(1)} MHz</strong>
+                    <span className="text-[#9fc7b1]">Gmáx / HPBW</span><strong className="text-right">{Number(station.rf?.gain_max_dbi ?? station.tx_gain_dbi).toFixed(1)} dBi · {Number(station.rf?.hpbw_azimuth_deg ?? 0).toFixed(2)}°</strong>
+                    <span className="text-[#9fc7b1]">G/T / pérdidas</span><strong className="text-right">{Number(station.rf?.system_gt_db_per_k ?? 0).toFixed(1)} dB/K · {Number(station.rf?.total_system_loss_db ?? 0).toFixed(1)} dB</strong>
+                    <span className="text-[#9fc7b1]">Huella en suelo</span><strong className="text-right">{Number(station.ground_footprint_radius_km ?? 0).toFixed(1)} km</strong>
+                </div>
+                {station.rf?.operation_mode === "scan" ? <p className="mb-0 mt-2 text-[9px] leading-snug text-[#efc56f]">Barrido: la envolvente muestra cobertura potencial. Sin una agenda de apuntado y permanencia, Orbit no publicará pases ni enlaces operativos.</p> : null}
+            </section>}
             <section className="rounded-lg border border-[#203956] bg-[rgba(13,29,51,.7)] p-2.5"><strong className="text-[11px]">Analizar pases</strong><label className="mt-2 grid gap-1 text-[10px] text-[#9fb3d0]">Satélite<select className={inputClass} value={satelliteId} onChange={(event) => { cancelPendingAnalysis(); setSatelliteId(event.target.value); setResult(null); }} disabled={!state.satellites.length}><option value="">Selecciona una capa</option>{state.satellites.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>{!state.satellites.length && <p className="mb-0 text-[10px] text-[#d8aa67]">No hay satélites disponibles en Layers.</p>}{station && <p className="mb-0 text-[10px] text-[#8ea4c4]">Usa la máscara de {station.name}: {station.min_elevation_deg}°.</p>}<button type="button" disabled={!stationId || !satelliteId || loading} onClick={analyze} className="mt-3 w-full rounded-md border border-[#597dff] bg-[#304dc0] py-2 text-[11px] font-bold text-white disabled:opacity-45">{loading ? "Calculando…" : "Analizar pases"}</button></section>
-            {result && <section className="rounded-lg border border-[#2b5b4a] bg-[rgba(11,46,37,.5)] p-2.5"><div className="flex justify-between"><strong className="text-[11px]">Resultado</strong><span className="text-[10px] text-[#8fe7b7]">{result.visibleNow ? "IN VIEW" : "OUT OF VIEW"}</span></div><p className="my-1 text-[10px] text-[#b8d6c7]">{result.error || `${result.satellite} · ${result.referenceFrame || "ITRF"} · ${result.timeScale || "UTC"} · ${result.passes?.length || 0} pases`}</p>{result.analysisWindow?.startTime && !result.error ? <p className="mb-2 text-[9px] leading-snug text-[#90b9a4]">Ventana analizada: {utc(result.analysisWindow.startTime)} → {utc(result.analysisWindow.endTime)}{result.analysisWindow.source === "simulation-range" ? " · rango de simulación" : " · próximas 24 h"}</p> : null}{Number.isFinite(result.rangeKm) && <div className="mb-2 grid grid-cols-2 gap-1 rounded border border-[#285143] bg-[rgba(4,22,17,.46)] p-1.5 text-[10px]"><span className="text-[#9fc7b1]">Distancia actual</span><strong className="text-right text-[#e1faea]">{Number(result.rangeKm).toFixed(1)} km</strong><span className="text-[#9fc7b1]">Presupuesto enlace</span><strong className="text-right text-[#a7edc1]">{Number.isFinite(liveLinkBudgetDbm) ? `${liveLinkBudgetDbm.toFixed(1)} dBm` : "-"}</strong></div>}{result.passes?.length ? <PassesTable passes={result.passes} /> : <p className="mb-0 text-[10px] text-[#b4cbbf]">No hay pases en la ventana temporal seleccionada.</p>}<PassElevationChart result={result} />{result.passes?.length ? <button className="mt-2 rounded border border-[#3f785e] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a8ebc5]" type="button" onClick={() => exportPasses(result)}>Exportar CSV</button> : null}</section>}
+            {result && <section className="rounded-lg border border-[#2b5b4a] bg-[rgba(11,46,37,.5)] p-2.5">
+                <div className="flex justify-between"><strong className="text-[11px]">Resultado</strong><span className="text-[10px] text-[#8fe7b7]">{result.visibleNow ? "IN VIEW" : "OUT OF VIEW"}</span></div>
+                <p className="my-1 text-[10px] text-[#b8d6c7]">{result.error || `${result.satellite} · ${result.referenceFrame || "ITRF"} · ${result.timeScale || "UTC"} · ${result.passes?.length || 0} pases`}</p>
+                {!result.error && result.linkContract ? <p className="mt-0 mb-2 text-[9px] leading-snug text-[#90b9a4]">Base del acceso: {result.linkContract === "actual-downlink" ? "enlace real de bajada satélite → estación" : "envolvente RF de planificación recíproca"}.</p> : null}
+                {result.analysisWindow?.startTime && !result.error ? <div className="mb-2 text-[9px] leading-snug text-[#90b9a4]">
+                    <p className="m-0">Ventana de cálculo (UTC): {utc(result.analysisWindow.startTime)} → {utc(result.analysisWindow.endTime)}{result.analysisWindow.source === "simulation-range" ? " · rango de simulación" : " · próximas 24 h"}</p>
+                    <p className="mt-0.5 mb-0">Visualización local ({stationTimeZone}): {formatStationTime(result.analysisWindow.startTime, stationTimeZone)} → {formatStationTime(result.analysisWindow.endTime, stationTimeZone)}</p>
+                </div> : null}
+                {Number.isFinite(result.rangeKm) && <div className="mb-2 grid grid-cols-2 gap-1 rounded border border-[#285143] bg-[rgba(4,22,17,.46)] p-1.5 text-[10px]">
+                    <span className="text-[#9fc7b1]">Distancia actual</span><strong className="text-right text-[#e1faea]">{Number(result.rangeKm).toFixed(1)} km</strong>
+                    <span className="text-[#9fc7b1]">P_RX planificado (estación)</span><strong className="text-right text-[#a7edc1]">{Number.isFinite(liveLinkBudgetDbm) ? `${liveLinkBudgetDbm.toFixed(1)} dBm` : "-"}</strong>
+                    <span className="text-[#9fc7b1]">Margen de planificación</span><strong className="text-right text-[#a7edc1]">{Number.isFinite(liveLinkMarginDb) ? `${liveLinkMarginDb.toFixed(1)} dB` : "-"}</strong>
+                    <span className="text-[#9fc7b1]">P_RX downlink (estación)</span><strong className="text-right text-[#a7edc1]">{satelliteProfileAvailable && Number.isFinite(stationDownlinkReceivedPowerDbm) ? `${stationDownlinkReceivedPowerDbm.toFixed(1)} dBm` : "Perfil RF del satélite no disponible"}</strong>
+                    <span className="text-[#9fc7b1]">SNR downlink (estación)</span><strong className="text-right text-[#a7edc1]">{satelliteProfileAvailable && Number.isFinite(stationDownlinkSnrDb) ? `${stationDownlinkSnrDb.toFixed(1)} dB` : "Perfil RF del satélite no disponible"}</strong>
+                </div>}
+                {result.passes?.length ? <><p className="mt-2 mb-0 text-[9px] leading-snug text-[#90b9a4]">AOS y LOS se reciben y exportan en UTC; esta tabla los muestra en la hora local de la estación.</p><PassesTable passes={result.passes} timeZone={stationTimeZone} /></> : <p className="mb-0 text-[10px] text-[#b4cbbf]">No hay pases en la ventana temporal seleccionada.</p>}
+                <PassElevationChart result={result} timeZone={stationTimeZone} />
+                {result.passes?.length ? <button className="mt-2 rounded border border-[#3f785e] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a8ebc5]" type="button" onClick={() => exportPasses(result)}>Exportar CSV</button> : null}
+            </section>}
         </div>
         {floating && <><span className="pointer-events-none absolute right-1 bottom-1 size-3 border-r border-b border-[#6389bc] opacity-75" aria-hidden="true" />{FLOATING_RESIZE_HANDLES.map(([direction, className]) => <div key={direction} className={`absolute z-40 touch-none ${className}`} aria-hidden="true" onPointerDown={(event) => beginResize(direction, event)} />)}</>}
     </aside>;

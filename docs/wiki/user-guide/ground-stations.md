@@ -2,81 +2,173 @@
 
 [Inicio](../index.md) · [Guía de usuario](index.md) · [Capas](layers.md) · [Línea temporal](timeline.md) · [Exportar](export.md)
 
-Una estación de tierra es una capa del espacio de trabajo con posición,
-máscara de elevación y atributos de presentación y radio simplificados. Las
-estaciones se guardan dentro del documento de proyecto.
+Una estación de tierra es una capa del espacio de trabajo que combina su posición WGS-84 con un modelo RF determinista. El mismo contrato de estación alimenta el diseñador, la cobertura de la escena, la telemetría instantánea y AOS/LOS, pero cada consumidor declara su propósito: el renderizador limita el alcance dibujado para mantener la escena ágil y el servicio recibe una puerta de alcance operativo explícita. La huella dibujada no sustituye por sí sola el criterio de acceso.
 
-## Parámetros configurables
+## Visión general
 
-| Grupo | Campos |
-| --- | --- |
-| General | Nombre, latitud, longitud, altitud, máscara de elevación y radio de cobertura. |
-| Tiempo | Zona horaria IANA de la estación, por ejemplo `Europe/Madrid` o `UTC`. |
-| Radio | Frecuencia, potencia de transmisión, ganancia de transmisión y ganancia de recepción. |
-| Visual | Tamaño y color del símbolo. |
-| Cobertura | Visibilidad de cobertura y mapa de calor, cuando se habilitan. |
+Orbit distingue dos resultados que no deben confundirse:
 
-Las coordenadas de interfaz se introducen en grados para latitud y longitud y
-en metros para altitud. La máscara de elevación determina el umbral utilizado
-para clasificar una muestra como visible.
+- La **envolvente de planificación recíproca** estima hasta qué distancia una terminal equivalente a la estación podría cerrar el enlace. Sirve para diseño y visualización; no afirma que un satélite arbitrario vaya a recibir o transmitir correctamente.
+- Un **enlace de satélite real** requiere un perfil RF remoto completo: EIRP efectivo hacia la estación, frecuencia o canal compatible, polarización y ancho de banda. Orbit valida que la señal pueda sintonizarse dentro de la banda de recepción antes de calcular potencia o SNR. Si una capa no publica esos datos, presenta el presupuesto de planificación y marca SNR como no disponible. No inventa una calidad de enlace.
 
-## Visibilidad y pases
+La geometría y la línea de vista se evalúan en ITRF/WGS-84. La escala física y los instantes que transporta la API son UTC. La zona horaria IANA de la estación —por ejemplo `Europe/Madrid`— solo formatea las etiquetas de la tabla y de la gráfica en hora local, incluidos los cambios de horario de verano; no cambia el cálculo físico ni los instantes exportados en CSV.
 
-El acceso operativo comienza en **Ground Stations** de la barra superior. El
-panel permite seleccionar una estación y una capa orbital y calcular los pases
-de las siguientes 24 h desde la época activa. Usa siempre la máscara de
-elevación configurada al crear o editar la estación; no existe una segunda
-máscara temporal en el análisis. El resultado indica AOS, LOS y elevación máxima; activa el ground track de la
-capa y dibuja en verde el enlace estación-satélite mientras el satélite supera
-la máscara. La geometría de la estación y los estados de visibilidad se
-evalúan en ITRF/WGS-84. Las marcas verdes de AOS/LOS aparecen en la línea temporal
-simulada y la tabla de pases puede exportarse como CSV. El perfil de elevación
-del panel representa las muestras calculadas cada 30 s: azul para toda la
-trayectoria y verde únicamente donde supera la máscara. No representa todavía
-crepúsculo, Sol, Luna ni restricciones astronómicas.
+## Crear o editar una estación
 
-Cada par estación–satélite monitorizado dibuja automáticamente una línea verde
-en la escena mientras la elevación instantánea supera la máscara de esa
-estación. La línea desaparece al perder visibilidad; no se dibuja para capas
-que la estación no monitoriza. El eje temporal de la carta usa la zona horaria
-IANA de la estación y conserva el desfase UTC en cada etiqueta.
+El diseñador permite modificar parámetros y revisar valores derivados antes de añadir la capa al proyecto. La ficha de la estación conserva el mismo contrato RF y muestra sus métricas calculadas.
 
-Actualmente el cálculo operativo de pases está habilitado para las capas con
-TLE/SGP4. Las capas OEM, SP3 y los diseños manuales conservan su visualización,
-pero requieren un proveedor de efemérides de acceso general antes de poder
-planificar pases desde este panel.
+### Geometría y contexto
 
-## Monitorización
+| Campo | Unidad o valores | Uso en Orbit |
+| --- | --- | --- |
+| Nombre | Texto | Identifica la capa y las tablas de pases. |
+| Latitud, longitud, altitud | grados, grados, m | Posición WGS-84 convertida a ITRF para obtener ángulos locales. |
+| Zona horaria | Nombre IANA, por ejemplo Europe/Madrid | Formatea ejes y horas locales. |
+| Máscara de elevación | grados | Límite operativo del horizonte. |
 
-Al crear una estación, Orbit solicita qué capas TLE/SGP4 debe monitorizar. La
-misma asignación puede modificarse desde **Satélites monitorizados** en el
-panel de estación. Al activar una nueva capa satelital, aparece el flujo
-inverso para seleccionar las estaciones que la seguirán. La ficha de cada
-estación ofrece **Tablas AOS / LOS** como acceso directo a sus pases.
+### Antena y patrón de radiación
 
-Orbit calcula elevación de los estados propagados y devuelve muestras con una
-marca de visibilidad. Los intervalos AOS/LOS se extraen al cruzar el umbral de
-la máscara durante el muestreo de la efeméride.
+| Campo | Unidad o valores | Uso en Orbit |
+| --- | --- | --- |
+| Diámetro del plato | m | Calcula ganancia y ancho de haz de una apertura circular. |
+| Eficiencia | 0–1 | Escala la ganancia derivada del plato. |
+| Frecuencia | MHz o Hz | Determina longitud de onda, pérdida de espacio libre y tamaño de haz. |
+| Polarización | RHCP, LHCP o lineal | Se usa con un perfil remoto completo para calcular pérdida por desajuste. |
+| Patrón | gaussiano o cos^n | Define la caída de ganancia fuera de boresight. |
+| HPBW de azimut/elevación | grados, opcional | Permite imponer el ancho de haz conocido; no transforma el patrón simplificado en una medición. |
+| Nivel de lóbulos secundarios | dB por debajo del principal | Fija un suelo conservador; Orbit no inventa posiciones de lóbulos. |
 
-~~~mermaid
-flowchart LR
-    S[Estado propagado] --> E[Elevación en la estación]
-    E --> M{Máscara de elevación}
-    M -->|superada| V[Muestra visible]
-    M -->|no superada| N[Muestra no visible]
-    V --> P[Extracción de pases]
-    N --> P
-~~~
+Para un plato circular, Orbit usa:
 
-!!! warning "Resolución de AOS y LOS"
+$$
+G_{\max}=10\log_{10}\left[\eta\left(\frac{\pi D}{\lambda}\right)^2\right],
+\qquad
+\lambda=\frac{c}{f}.
+$$
 
-    La detección de pases se obtiene mediante muestreo por paso. No utiliza
-    búsqueda de raíces de alta precisión para el instante de cruce. Reduzca el
-    paso de muestreo en el flujo que construye la efeméride si se necesita una
-    mayor resolución y valide el resultado con herramientas apropiadas para
-    misión.
+El HPBW derivado es:
 
-### Ecuaciones de visibilidad implementadas
+$$
+\operatorname{HPBW}\approx70\frac{\lambda}{D}\quad[\mathrm{deg}].
+$$
+
+\(D\) es el diámetro en m, \(\eta\) la eficiencia adimensional, \(\lambda\) la longitud de onda en m, \(c\) la velocidad de la luz en m/s y \(f\) la frecuencia en Hz. \(G_{\max}\) se expresa en dBi. HPBW es el ancho completo a media potencia: un desplazamiento unidimensional de HPBW/2 equivale a una pérdida de 3 dB.
+
+Orbit evalúa un patrón **continuo** en cada dirección, no una región binaria. Para los desplazamientos respecto al boresight, define:
+
+$$
+q=\sqrt{\left(\frac{\Delta A}{\operatorname{HPBW}_{A}/2}\right)^2+
+\left(\frac{\Delta E}{\operatorname{HPBW}_{E}/2}\right)^2}.
+$$
+
+En el patrón gaussiano, la pérdida relativa es:
+
+$$
+\Delta G=\max\left(-3q^2,-L_{\mathrm{SLL}}\right)\quad[\mathrm{dB}].
+$$
+
+El patrón `cos^n` calibra su exponente para que la semianchura de HPBW también produzca −3 dB. \(\Delta A\) y \(\Delta E\) son los errores de azimut y elevación en grados; \(L_{\mathrm{SLL}}\) es el nivel de lóbulos secundarios introducido en dB por debajo del máximo. El suelo de lóbulos limita la caída de ganancia, pero Orbit no inventa la posición de lóbulos medidos. Por tanto, el contorno HPBW es un diagnóstico de −3 dB, nunca un corte duro de acceso.
+
+### Potencia, ruido y pérdidas
+
+| Campo | Unidad | Uso en Orbit |
+| --- | --- | --- |
+| Potencia TX | dBm o W | Se normaliza a dBm para el presupuesto. |
+| Ganancia TX/RX | dBi, calculada o forzada | Una ganancia forzada sustituye la derivada del plato para ese puerto. |
+| Potencia mínima RX | dBm | Umbral de recepción para la envolvente y un enlace disponible. |
+| Temperatura de sistema | K | Determina el ruido térmico del receptor. |
+| Ancho de banda de recepción | Hz | Determina ruido térmico y cálculo de SNR. |
+| Pérdidas atmosféricas, lluvia, cable y conectores | dB | Se suman como pérdidas independientes. |
+| Precisión RMS de apuntado | miligrados | Reduce la ganancia efectiva según HPBW. |
+| SNR requerida | dB | Umbral adicional solo cuando existe un perfil RF remoto completo y compatible. |
+
+El suelo de ruido y la figura de mérito se calculan como:
+
+$$
+N=-198.6+10\log_{10}(T_{\mathrm{sys}})+10\log_{10}(B)\quad[\mathrm{dBm}],
+$$
+
+$$
+\frac{G}{T}=G_{\mathrm{RX,ef}}-L_{\mathrm{hardware}}-10\log_{10}(T_{\mathrm{sys}})
+\quad[\mathrm{dB/K}].
+$$
+
+\(T_{\mathrm{sys}}\) se introduce en K, \(B\) en Hz, \(G_{\mathrm{RX,ef}}\) en dBi y \(L_{\mathrm{hardware}}\) en dB. Cable y conectores pertenecen al término de hardware; las pérdidas atmosféricas y de lluvia se aplican al trayecto. La pérdida por apuntado se calcula con el RMS y el HPBW, y reduce las ganancias efectivas.
+
+### Apuntado y límites mecánicos
+
+| Campo | Valores | Efecto |
+| --- | --- | --- |
+| Modo | seguimiento, barrido o estacionario | Define cómo se interpreta el haz frente a un objetivo. |
+| Boresight | azimut y elevación, grados | Dirección fija usada por el modo estacionario. |
+| Límites mecánicos | azimut y elevación, grados | El objetivo debe poder ser alcanzado por la montura. |
+
+En **seguimiento**, la estación orienta el haz al objetivo dentro de sus límites mecánicos; para el presupuesto, el objetivo se evalúa a ganancia de apuntamiento. En **barrido**, Orbit representa el campo de consideración mecánico como **cobertura potencial**: un objetivo alcanzable puede formar parte de la planificación, pero aún no existe una agenda, velocidad, tiempo de permanencia ni ley de barrido que garantice que la antena lo esté siguiendo en ese instante. En **estacionario**, el boresight queda fijo y se aplica la ganancia continua de su patrón en la dirección observada. El HPBW marca el contorno de −3 dB, no una pared binaria: dentro de máscara y límites mecánicos, el patrón direccional y el umbral de enlace determinan si el objetivo queda operativo.
+
+!!! warning "Interpretación del modo de barrido"
+
+    Hasta que Orbit incorpore una agenda de seguimiento o una ley de barrido, un AOS/LOS calculado en modo `scan` representa acceso geométrica y RF potencial dentro de la montura. No confirma asignación de recurso, adquisición, ni tiempo de enlace utilizable.
+
+## Modelo de enlace y envolvente
+
+La pérdida de espacio libre es:
+
+$$
+L_{\mathrm{FS}}=32.44+20\log_{10}(f_{\mathrm{MHz}})+20\log_{10}(R_{\mathrm{km}})
+\quad[\mathrm{dB}].
+$$
+
+Para una terminal de referencia, la potencia de planificación es:
+
+$$
+P_{\mathrm{RX}}=P_{\mathrm{TX}}+G_{\mathrm{TX}}(\theta,\phi)+G_{\mathrm{RX,ref}}
+-L_{\mathrm{FS}}-L_{\mathrm{prop}}-L_{\mathrm{hardware}}.
+$$
+
+Orbit despeja la distancia máxima cuando \(P_{\mathrm{RX}}\ge P_{\mathrm{RX,min}}\). Aquí \(f\) está en MHz, \(R\) en km, \(P\) en dBm y las ganancias y pérdidas en dB/dBi. \(G_{\mathrm{TX}}(\theta,\phi)\) es el patrón gaussiano o cos^n con reducción por apuntado y suelo de lóbulos secundarios configurados.
+
+Cuando una capa de satélite publica un perfil RF remoto completo, Orbit calcula el enlace descendente en vez de reutilizar esta envolvente recíproca:
+
+$$
+P_{\mathrm{RX,real}}=\operatorname{EIRP}_{\mathrm{remota}}+G_{\mathrm{RX}}(\theta,\phi)
+-L_{\mathrm{FS}}-L_{\mathrm{prop}}-L_{\mathrm{hardware}}-L_{\mathrm{pol}},
+$$
+
+$$
+\operatorname{SNR}=P_{\mathrm{RX,real}}-N.
+$$
+
+Además de EIRP, polarización y ancho de banda del remoto, **toda** la señal ocupada debe caber dentro de la recepción centrada de la estación:
+
+$$
+|f_{\mathrm{remota}}-f_{\mathrm{estación}}|+\frac{B_{\mathrm{remota}}}{2}
+\le\frac{B_{\mathrm{RX}}}{2}.
+$$
+
+La condición evita aceptar un portador centrado cuyo espectro quede recortado por el filtro del receptor. Si falla, Orbit deja potencia real y SNR como no disponibles; no aproxima un enlace con datos incompatibles.
+
+!!! info "Límite de interpretación"
+
+    La envolvente no es un mapa de disponibilidad ni una predicción de enlace con una capa TLE, OMM, OEM o SP3 arbitraria. Sin EIRP efectivo, frecuencia o canal compatible, polarización y ancho de banda del terminal remoto, Orbit no puede conocer la potencia recibida real ni SNR. El resultado se etiqueta explícitamente como envolvente de planificación recíproca.
+
+La escena obtiene de este modelo una huella en 2D y un volumen de cobertura en 3D. En 2D, la huella es una proyección geodésica del campo de consideración: los topes de azimut producen sectores y un tope de elevación inferior a 90° puede producir un sector anular. Es una ayuda visual, no un mapa de línea de vista sobre terreno ni la condición de AOS/LOS. En 3D, el modo estacionario construye una malla direccional sobre todo el campo mecánicamente alcanzable: la distancia de cada dirección sigue la ley de rango de espacio libre y el patrón continuo configurado. Seguimiento y barrido muestran el campo mecánico potencial, ya que no existe un único apuntamiento fijo.
+
+El rango dibujado se limita para mantener la escena ágil, mientras que el rango físico calculado sigue disponible en las métricas. La solicitud AOS/LOS usa una puerta de alcance operativo explícita; no se debe inferir de la apariencia o del tamaño de la huella. La pestaña **Patrón** ofrece cortes 2D y una muestra discreta \(G(\theta,\phi)\) para inspeccionar ganancia relativa. Tras analizar un satélite que publique un perfil RF completo, también presenta una muestra angular de \(P_{\mathrm{RX}}\) y margen SNR a la distancia instantánea: esa muestra es alrededor del boresight, no un mapa de disponibilidad sobre la Tierra. La malla y las curvas se derivan de los parámetros introducidos, no de un patrón de antena medido.
+
+## Visibilidad, AOS y LOS
+
+**Ground Stations** permite seleccionar libremente una estación y una capa TLE/SGP4 de catálogo presente en Layers. No es necesaria una asociación permanente entre satélite y estación. Las capas manuales, OEM y SP3 conservan su visualización, pero todavía no tienen un proveedor general de acceso para planificar pases. La tabla calcula una ventana de 24 h desde la época activa y lista AOS, LOS y elevación máxima; se puede exportar como CSV. Los instantes de la respuesta y del CSV se conservan en UTC; la tabla y la gráfica los presentan en la zona IANA de la estación.
+
+Todas las vistas aplican la misma condición operativa:
+
+1. La elevación supera la máscara.
+2. El azimut y la elevación están dentro de los límites mecánicos.
+3. En modo estacionario, el patrón de un boresight fijo aplica su ganancia direccional.
+4. El presupuesto de planificación alcanza el umbral de recepción con esa ganancia.
+
+Una línea verde estación–satélite se dibuja solo mientras se cumplen esas condiciones. La carta de elevación usa una curva única: cambia de color en el tramo operativo y marca AOS/LOS con líneas verticales. Las marcas de la línea temporal corresponden a los mismos intervalos calculados.
+
+### Geometría implementada
 
 Orbit convierte la estación geodésica WGS-84 a ITRF. Con semieje mayor \(a\), excentricidad cuadrada \(e^2\), latitud \(\varphi\), longitud \(\lambda\) y altura \(h\):
 
@@ -93,7 +185,7 @@ $$
 \end{bmatrix}.
 $$
 
-Para \(\Delta\mathbf r=\mathbf r_{\mathrm{sat,ITRF}}-\mathbf r_{\mathrm{est}}\), las componentes locales que calcula el servicio son:
+Para \(\Delta\mathbf r=\mathbf r_{\mathrm{sat,ITRF}}-\mathbf r_{\mathrm{est}}\), las componentes ENU son:
 
 $$
 \begin{aligned}
@@ -103,36 +195,35 @@ U&=\cos\varphi\cos\lambda\,\Delta x+\cos\varphi\sin\lambda\,\Delta y+\sin\varphi
 \end{aligned}
 $$
 
-La elevación y la clasificación de visibilidad son:
-
 $$
-\epsilon=\operatorname{atan2}\left(U,\sqrt{E^2+N^2}\right),
-\qquad
-\mathrm{visible}\iff\epsilon\ge\epsilon_{\min}.
+\epsilon=\operatorname{atan2}\left(U,\sqrt{E^2+N^2}\right).
 $$
 
-AOS y LOS se extraen de la primera y última muestra que cumplen ese umbral; no se refina el instante de cruce.
+Las posiciones y componentes ENU se expresan en metros. \(\varphi\), \(\lambda\) y \(\epsilon\) se calculan en radianes, aunque la interfaz recibe y muestra grados. La efeméride base se muestrea con el paso solicitado. Cuando dos muestras contiguas cambian de estado operativo, Orbit vuelve a evaluar el mismo propagador y la misma geometría ITRF mediante bisección hasta acotar AOS o LOS a aproximadamente 0.5 s. La elevación máxima publicada sigue siendo la máxima de las muestras del perfil, no un máximo optimizado de forma continua.
 
-### Variables, unidades y uso en Orbit
+!!! warning "Resolución de pases"
 
-\(a\), \(N\), \(h\), \(E\), \(N\), \(U\), \(\Delta\mathbf r\) y las posiciones ITRF se expresan en metros; \(e^2\) es adimensional y \(\varphi\), \(\lambda\), \(\epsilon\) y \(\epsilon_{\min}\) se convierten a radianes durante el cálculo. La interfaz recibe latitud/longitud en grados y altitud o máscara en metros/grados, pero `ground_stations.visibility` las normaliza antes de evaluar ENU y el umbral. AOS/LOS se derivan de muestras discretas, no de una raíz continua.
-
-## Cobertura y radio
-
-El footprint y el mapa de calor son representaciones visuales asociadas a la
-capa. Los campos de radio permiten un presupuesto de enlace simplificado, no
-un modelo completo de cadena RF. No hay modelado publicado de antenas,
-propagación atmosférica, interferencia, disponibilidad, planificación de red
-ni medidas recibidas.
+    El refinamiento solo mejora una transición que ya ha quedado encerrada entre dos muestras. Un paso demasiado grande puede omitir por completo un pase breve o representar mal el máximo de elevación. Un paso menor mejora el perfil y la detección de ventanas, pero no convierte el resultado en una predicción certificada para operación. Orbit no modela todavía obstáculo local, refracción, lluvia dependiente del tiempo, interferencias, disponibilidad, agenda de antena ni adquisición.
 
 ## Uso en un proyecto
 
-1. Cree o edite la estación desde el espacio de trabajo.
-2. Introduzca sus parámetros y guarde los cambios.
-3. Active su visibilidad y, si corresponde, cobertura o mapa de calor.
-4. Seleccione una época o rango temporal antes de consultar la visibilidad.
-5. Guarde o exporte el [Proyecto](projects.md) para conservar la estación.
+1. Cree una estación y complete geometría, antena, RF y apuntado.
+2. Revise las métricas derivadas antes de seleccionar **Añadir a Layers**.
+3. En **Ground Stations**, seleccione cualquier estación disponible y una capa TLE/SGP4 de catálogo para abrir las tablas AOS/LOS.
+4. Active cobertura si desea inspeccionar la huella o el volumen de planificación.
+5. Guarde el [Proyecto](projects.md) para conservar el contrato RF completo.
 
-Las estaciones no son objetos de catálogo y no se exportan como un estándar
-externo de estación desde el diálogo de efemérides. Actualmente se conservan
-en el JSON de proyecto.
+## Exportar estaciones
+
+Seleccione **Exportar GeoJSON** en el menú contextual de una estación para
+descargar esa capa, o use la acción equivalente del proyecto para descargar
+todas las estaciones del espacio de trabajo. El archivo usa GeoJSON RFC 7946,
+con puntos WGS-84 en el orden longitud, latitud y altura elipsoidal en metros.
+Conserva el contrato RF autorado, no el rango, la malla, AOS/LOS o SNR
+calculados.
+
+GeoJSON es el formato recomendado para abrir las estaciones en QGIS o
+compartirlas con herramientas cartográficas; use el [JSON de proyecto](projects.md)
+si necesita volver a abrir el espacio de trabajo completo. Consulte
+[Intercambio GeoJSON de estaciones](../formats/ground-stations/interchange.md)
+para el esquema, campos RF, uso en QGIS y límites de interoperabilidad.

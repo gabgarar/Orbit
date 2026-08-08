@@ -1,5 +1,13 @@
 /** Coordinates satellite, duplicate, ground-station and celestial layers behind one UI-facing API. */
-export function createCompositeLayerManager({ satellites, groundStations, duplicates, names, getSatelliteSourceId, celestialBodies = null }) {
+export function createCompositeLayerManager({
+    satellites,
+    groundStations,
+    duplicates,
+    names,
+    getSatelliteSourceId,
+    celestialBodies = null,
+    applyGroundStationVisibility = null
+}) {
     const isCelestial = (id) => celestialBodies?.has?.(id) === true;
     const getName = (id) => names.get(id)
         || groundStations.get(id)?.name
@@ -23,10 +31,19 @@ export function createCompositeLayerManager({ satellites, groundStations, duplic
         }
         if (groundStations.has(id)) {
             const station = groundStations.get(id);
+            if (typeof applyGroundStationVisibility === "function") {
+                applyGroundStationVisibility(station, visible === true);
+                return;
+            }
+            // Standalone consumers can still use the manager without the
+            // Cesium-aware callback. The application injects that callback so
+            // the 2D footprint, fallback volume and custom mesh always obey
+            // the same mutually-exclusive presentation rules.
             station.visible = visible === true;
             station.entity && (station.entity.show = station.visible);
             station.coverageEntity && (station.coverageEntity.show = station.visible && station.coverage_visible !== false);
             station.coverageVolumeEntity && (station.coverageVolumeEntity.show = station.visible && station.coverage_visible !== false);
+            station.patternPrimitive && (station.patternPrimitive.show = station.visible && station.coverage_visible !== false);
             return;
         }
         satellites.setVisible(getSatelliteSourceId(id), visible);

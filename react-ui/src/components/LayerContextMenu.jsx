@@ -63,7 +63,7 @@ export default function LayerContextMenu() {
     const isCelestialBody = layerType === "CELESTIAL_BODY" || isEarth;
     const visibilityAction = ["toggle-visibility", menu.visible === false ? "Mostrar capa" : "Ocultar capa"];
     const baseActions = menu.groundStation
-        ? [["center-view", "Centrar vista"], visibilityAction, ["station", "Update parameters"], ["remove", "Eliminar capa"]]
+        ? [["center-view", "Centrar vista"], visibilityAction, ["station", "Update parameters"], ["export-station-geojson", "Exportar GeoJSON"], ["remove", "Eliminar capa"]]
         : [
             ["center-view", "Centrar vista"],
             visibilityAction,

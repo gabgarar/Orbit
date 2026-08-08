@@ -1,6 +1,56 @@
 import { buildProjectDocument, isProjectDocument, normalizeProjectName } from "./projectDocument.js";
 import { downloadProjectDocument, readProjectDocument, saveProjectDocument } from "./projectFileIO.js";
 
+const GROUND_STATION_RUNTIME_FIELDS = new Set([
+    "entity",
+    "coverageEntity",
+    "coverageVolumeEntity",
+    "patternEntity",
+    "patternMeshEntity",
+    "patternMeshSignature",
+    "patternPrimitive",
+    "pointingConeEntity"
+]);
+
+function serializeGroundStation(station) {
+    if (!station || typeof station !== "object" || Array.isArray(station)) {
+        return null;
+    }
+    // Cesium entities belong to the live scene, not to an .orbit project.
+    // Keep every authored RF field (including future additions) while
+    // explicitly dropping renderer handles that cannot be JSON serialized.
+    return Object.fromEntries(Object.entries(station)
+        .filter(([key]) => !GROUND_STATION_RUNTIME_FIELDS.has(key)));
+}
+
+function normalizeRestorationIdMap(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return {};
+    }
+    return Object.fromEntries(Object.entries(value)
+        .filter(([sourceId, targetId]) => String(sourceId || "").trim() && String(targetId || "").trim())
+        .map(([sourceId, targetId]) => [String(sourceId), String(targetId)]));
+}
+
+function remapLayerNames(layerNames, idMap) {
+    if (!layerNames || typeof layerNames !== "object" || Array.isArray(layerNames)) {
+        return {};
+    }
+    return Object.fromEntries(Object.entries(layerNames)
+        .map(([layerId, name]) => [idMap[layerId] || layerId, name]));
+}
+
+function remapLayerTree(snapshot, idMap) {
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot) || !Object.keys(idMap).length) {
+        return snapshot;
+    }
+    const layerParents = snapshot.layerParents && typeof snapshot.layerParents === "object" && !Array.isArray(snapshot.layerParents)
+        ? Object.fromEntries(Object.entries(snapshot.layerParents)
+            .map(([layerId, folderId]) => [idMap[layerId] || layerId, folderId]))
+        : snapshot.layerParents;
+    return { ...snapshot, layerParents };
+}
+
 export function createProjectLifecycle(deps) {
     const {
         getProjectName, setProjectName, getProjectFileHandle, setProjectFileHandle,
@@ -9,6 +59,7 @@ export function createProjectLifecycle(deps) {
         getLayerNameOverrides, clearSatelliteVisualizationConfigs, getObjectSidebar,
         getSimulationState, applySimulationRange, restoreSimulation = null, showConfirm, showAlert, getAlertTitle,
         getManualOrbitEntries = () => [], restoreManualOrbits = async () => ({ restored: [], failed: [] }),
+        restoreGroundStations = async () => ({ restored: [], failed: [], idMap: {} }),
         getCelestialBodies = () => [], restoreCelestialBodies = () => [], clearCelestialBodies = () => {}
     } = deps;
 
@@ -31,7 +82,9 @@ export function createProjectLifecycle(deps) {
             celestialBodies: getCelestialBodies(),
             layerNames: Object.fromEntries(getLayerNameOverrides()),
             layerTree: getObjectSidebar()?.getProjectTree?.(),
-            groundStations: [...getGroundStationLayers().values()].map(({ entity: _entity, coverageEntity: _coverageEntity, coverageVolumeEntity: _coverageVolumeEntity, ...station }) => station),
+            groundStations: [...getGroundStationLayers().values()]
+                .map(serializeGroundStation)
+                .filter(Boolean),
             simulation: {
                 mode: simulation.mode,
                 startDate: simulation.startDate,
@@ -99,8 +152,8 @@ export function createProjectLifecycle(deps) {
         }
         clearContents(); setProjectFileHandle(handle);
         setProjectName(normalizeProjectName(project.name || file.name.replace(/\.json$/i, "")));
-        Object.entries(project.layerNames || {}).forEach(([id, name]) => getLayerNameOverrides().set(id, name));
         const manualOrbits = Array.isArray(project.manualOrbits) ? project.manualOrbits : [];
+        const groundStations = Array.isArray(project.groundStations) ? project.groundStations : [];
         const manualIds = new Set(manualOrbits
             .map((entry) => String(entry?.id || "").trim())
             .filter(Boolean));
@@ -131,7 +184,22 @@ export function createProjectLifecycle(deps) {
             // definition becomes invalid or a propagator is unavailable.
             showAlert("El proyecto se abrio, pero alguna orbita manual no pudo restaurarse.", getAlertTitle());
         }
-        getObjectSidebar()?.setProjectTree?.(project.layerTree); updateTitle(); getObjectSidebar()?.renderList?.();
+        let groundStationIdMap = {};
+        try {
+            const restoration = await restoreGroundStations(groundStations);
+            groundStationIdMap = normalizeRestorationIdMap(restoration?.idMap);
+            if (Array.isArray(restoration?.failed) && restoration.failed.length) {
+                showAlert("El proyecto se abrio, pero alguna estacion terrestre no pudo restaurarse.", getAlertTitle());
+            }
+        } catch {
+            // Ground-station layers are local workspace data. A malformed
+            // station must not prevent satellites, bodies or manual orbits
+            // from opening with the rest of the project.
+            showAlert("El proyecto se abrio, pero alguna estacion terrestre no pudo restaurarse.", getAlertTitle());
+        }
+        Object.entries(remapLayerNames(project.layerNames, groundStationIdMap))
+            .forEach(([id, name]) => getLayerNameOverrides().set(id, name));
+        getObjectSidebar()?.setProjectTree?.(remapLayerTree(project.layerTree, groundStationIdMap)); updateTitle(); getObjectSidebar()?.renderList?.();
         window.dispatchEvent(new Event("orbit:project-opened")); return true;
     };
 

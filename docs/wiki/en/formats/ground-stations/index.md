@@ -11,5 +11,5 @@ are stored together with visual and coverage settings.
 | Route | Status | Use |
 | --- | --- | --- |
 | [Project JSON](project-json.md) | Available. | Workspace persistence. |
-| [External interchange](interchange.md) | Unavailable. | No station importer or exporter. |
+| [GeoJSON interchange](interchange.md) | Export available. | Interchange of point stations and their authored configuration. |
 | [RINEX](../rinex.md) | Unavailable. | Does not create stations or GNSS observations. |

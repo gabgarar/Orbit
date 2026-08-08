@@ -951,33 +951,36 @@ test("El editor de estaciones de tierra mantiene sus formularios accesibles", as
     await expect(page.locator("#groundStationModal")).toHaveClass(/open/);
     const groundStationPanel = page.locator("#groundStationModal .ground-station-panel");
     await expectPanelInsideViewport(page, "#groundStationModal .ground-station-panel");
-    await expectVisibleControlsInsideViewport(page, ["#groundStationModal .ground-station-panel"]);
 
     const hasHorizontalOverflow = async () => groundStationPanel.evaluate((panel) => panel.scrollWidth > panel.clientWidth + 1);
     expect(await hasHorizontalOverflow(), "Ground station form must not create horizontal scrolling").toBeFalsy();
 
-    for (const [tab, fieldSelector] of [["Radio", 'input[type="number"]'], ["Visual", 'input[type="color"]'], ["Heat map", 'input[type="checkbox"]']]) {
+    for (const [tab, fieldSelector] of [["Antena", 'input[type="number"]'], ["Radio", 'input[type="number"]'], ["Apuntado", 'select'], ["Visual", 'input[type="color"]']]) {
         const tabButton = groundStationPanel.getByRole("button", { name: tab, exact: true });
         await tabButton.click();
         await expect(tabButton).toHaveClass(/active/);
-        await expect(groundStationPanel.locator(fieldSelector).first()).toBeVisible();
-        await expectVisibleControlsInsideViewport(page, ["#groundStationModal .ground-station-panel"]);
+        const activeTabPanel = groundStationPanel.locator(".ground-station-tab-panel.active");
+        const firstControl = activeTabPanel.locator(fieldSelector).first();
+        const lastControl = activeTabPanel.locator("input, select").last();
+        await firstControl.scrollIntoViewIfNeeded();
+        await expect(firstControl).toBeVisible();
+        await expect(firstControl).toBeInViewport();
+        await lastControl.scrollIntoViewIfNeeded();
+        await expect(lastControl).toBeVisible();
+        await expect(lastControl).toBeInViewport();
         expect(await hasHorizontalOverflow(), "Ground station form must not create horizontal scrolling").toBeFalsy();
     }
 
-    const heatmapToggle = groundStationPanel.locator('input[type="checkbox"]');
-    await expect(heatmapToggle).toBeVisible();
-    const heatmapToggleSize = await heatmapToggle.evaluate((input) => {
+    const coverageToggle = groundStationPanel.locator('#gsCoverageVisibleInput');
+    await expect(coverageToggle).toBeVisible();
+    const coverageToggleSize = await coverageToggle.evaluate((input) => {
         const rect = input.getBoundingClientRect();
         return { width: rect.width, height: rect.height };
     });
-    expect(heatmapToggleSize.width, "Heat map toggle must be easy to activate").toBeGreaterThanOrEqual(22);
-    expect(heatmapToggleSize.height, "Heat map toggle must be easy to activate").toBeGreaterThanOrEqual(22);
-
-    await page.evaluate(() => window.dispatchEvent(new CustomEvent("orbit:heat-legend", { detail: true })));
-    const heatLegend = page.locator("#groundStationHeatLegend");
-    await expect(heatLegend).toBeVisible();
-    await expectPanelSurfaceTransparency(page, "#groundStationHeatLegend");
+    expect(coverageToggleSize.width, "Coverage visibility toggle must be easy to activate").toBeGreaterThanOrEqual(22);
+    expect(coverageToggleSize.height, "Coverage visibility toggle must be easy to activate").toBeGreaterThanOrEqual(22);
+    await expect(groundStationPanel.getByRole("button", { name: "Heat map", exact: true })).toHaveCount(0);
+    await expect(page.locator("#groundStationHeatLegend")).toHaveCount(0);
 });
 
 test("La bienvenida crea un proyecto y entrega el control al visor", async ({ page }) => {

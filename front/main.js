@@ -45,12 +45,23 @@ import { getAdaptiveResolutionScale, getAdaptiveUiScale } from "./js/runtime/ada
 import { setupResizableSidePanel } from "./js/ui/resizableSidePanel.js";
 import { loadSystemConfig, saveSystemConfigWithRetry } from "./js/services/systemConfig.js";
 import {
-    calculateElevationDegrees,
-    calculateFreeSpacePathLossDb,
-    calculateGeoDistanceKm
+    calculateAzimuthDegrees,
+    calculateElevationDegrees
 } from "./js/features/groundStations/geometry.js";
 import { createGroundStationSymbol } from "./js/features/groundStations/symbols.js";
 import { createGroundStationTelemetryService } from "./js/features/groundStations/telemetry.js";
+import {
+    calculateGroundFootprintRadiusKm,
+    calculateSatelliteDownlink,
+    calculateSatelliteDownlinkEnvelope,
+    calculateStationPlanningLink,
+    calculateStationRfModel,
+    evaluateStationFieldOfRegard,
+    MAX_RF_VISUAL_RANGE_KM,
+    sampleStationGroundFootprint
+} from "./js/features/groundStations/rfModel.js";
+import { buildStationFieldOfRegardMesh, buildStationPatternMesh } from "./js/features/groundStations/rfPatternMesh.js";
+import { downloadGroundStationsGeoJson } from "./js/features/groundStations/geojson.js";
 import { createProjectLifecycle } from "./js/runtime/projectLifecycle.js";
 import { setupCameraActions } from "./js/runtime/camera/actions.js";
 import { createFreeCameraKeyboardControls } from "./js/runtime/camera/freeKeyboardControls.js";
@@ -388,6 +399,7 @@ const projectLifecycle = createProjectLifecycle({
     getObjectSidebar: () => objectSidebar,
     getManualOrbitEntries: getManualOrbitProjectEntries,
     restoreManualOrbits: restoreManualOrbitsFromProject,
+    restoreGroundStations: restoreGroundStationsFromProject,
     getSimulationState: () => simulationState,
     applySimulationRange,
     restoreSimulation: restoreProjectSimulationState,
@@ -949,6 +961,11 @@ const compositeLayers = createCompositeLayerManager({
         setActive: setSatelliteLayerActive,
         isVisible: isSatelliteVisible,
         setVisible: setSatelliteVisible
+    },
+    applyGroundStationVisibility: (station, visible) => {
+        station.visible = visible === true;
+        if (station.entity) station.entity.show = station.visible;
+        applyGroundStationVisuals(station);
     }
 });
 
@@ -1149,17 +1166,13 @@ function focusManualOrbitDesignEarth() {
 }
 
 
-function computeFreeSpacePathLossDb(freqMhz, rangeKm) {
-    return calculateFreeSpacePathLossDb(freqMhz, rangeKm);
-}
-
 const groundStationTelemetryService = createGroundStationTelemetryService({
     getLayerName: getLayerDisplayName,
     getSatelliteStates: () => getCompositeLayerIds()
         .filter((layerId) => !isGroundStationLayerId(layerId) && !isCelestialBodyLayerId(layerId))
         .map((layerId) => {
             const id = getSatelliteSourceIdFromLayerId(layerId);
-            return { id, geo: getSatelliteTelemetry(id)?.geo };
+            return { id, geo: getSatelliteTelemetry(id)?.geo, rf_profile: getCatalogEntryMeta(id)?.rfProfile || null };
         })
         .filter((satellite) => satellite.geo),
     calculateElevationDegrees: (station, satellite) => {
@@ -1167,25 +1180,21 @@ const groundStationTelemetryService = createGroundStationTelemetryService({
         const geo = satellite.geo;
         const satellitePosition = Cesium.Cartesian3.fromDegrees(Number(geo.longitude_deg) || 0, Number(geo.latitude_deg) || 0, Number(geo.altitude_m) || 0);
         const rangeKm = Cesium.Cartesian3.distance(stationPosition, satellitePosition) / 1000;
-        return { elevationDeg: computeStationElevationDeg(stationPosition, satellitePosition), rangeKm };
+        return {
+            elevationDeg: computeStationElevationDeg(stationPosition, satellitePosition),
+            azimuthDeg: calculateAzimuthDegrees(Cesium, stationPosition, satellitePosition),
+            rangeKm
+        };
     },
-    calculateFreeSpacePathLossDb: computeFreeSpacePathLossDb,
+    calculatePlanningLink: calculateStationPlanningLink,
+    calculateSatelliteDownlink,
+    calculateRfModel: calculateStationRfModel,
     getPasses: async (satelliteId, station, startDate, endDate) => {
-        const query = new URLSearchParams({
-            sat_id: satelliteId,
-            station_lat_deg: String(station.latitude_deg),
-            station_lon_deg: String(station.longitude_deg),
-            station_height_m: String(station.altitude_m),
-            min_elevation_deg: String(station.min_elevation_deg),
-            max_range_km: String(calculateGroundStationRadioRangeKm(station)),
-            start_time: startDate.toISOString(),
-            end_time: endDate.toISOString(),
-            // Keep the pass samples at the same 30 s cadence used by the
-            // timestamped range ephemeris that draws a simulated trajectory.
-            // That lets the table, elevation plot, timeline marker and 3D
-            // coverage volume all refer to the same physical samples.
-            step_seconds: "30"
-        });
+        const { query, linkContract } = createGroundStationPassQuery(station, satelliteId, startDate, endDate, { stepSeconds: 10 });
+        // The catalogue explicitly supplied RF metadata but it cannot close
+        // this station's receiver contract. Returning no operational pass is
+        // more truthful than quietly switching to reciprocal planning.
+        if (!linkContract.available) return [];
         const response = await fetch(`/api/aos-los?${query}`);
         return response.ok ? (await response.json()).passes : [];
     }
@@ -1232,9 +1241,7 @@ function setCompositeLayerVisibility(layerId, visible) {
         if (!station) {
             return;
         }
-        station.visible = visible === true;
-        if (station.entity) station.entity.show = station.visible;
-        applyGroundStationVisuals(station);
+        compositeLayers.setVisibility(layerId, visible);
         emitObjectStateChanged({ layerId, sourceId: layerId, reason: "visibility" });
         return;
     }
@@ -1282,6 +1289,7 @@ function removeGroundStationLayer(layerId) {
     if (station.entity) viewer.entities.remove(station.entity);
     if (station.coverageEntity) viewer.entities.remove(station.coverageEntity);
     if (station.coverageVolumeEntity) viewer.entities.remove(station.coverageVolumeEntity);
+    removeGroundStationPatternMesh(station);
     groundStationLayers.delete(layerId);
     syncGroundStationVisibilityLinks();
     layerDisplayNameOverrides.delete(layerId);
@@ -1390,13 +1398,190 @@ function createStationSymbolImage(symbol = "circle", color = "#3cc4ff", size = 1
     return createGroundStationSymbol(symbol, color, size);
 }
 
+// RF calculations live in one pure module. Store only its small derived
+// presentation values on the runtime station; the authored antenna contract
+// remains the source persisted in a project document.
+function getGroundStationRfModel(station) {
+    const model = calculateStationRfModel(station || {});
+    if (station) {
+        station.radio_range_km = Number.isFinite(model.max_range_km)
+            ? Math.max(0, model.max_range_km)
+            : 0;
+        station.operational_radio_range_km = Number.isFinite(model.operational_range_km)
+            ? model.operational_range_km
+            : 0;
+        station.visual_radio_range_km = Number.isFinite(model.visual_range_km)
+            ? model.visual_range_km
+            : Math.min(MAX_RF_VISUAL_RANGE_KM, Math.max(0, station.operational_radio_range_km));
+        station.ground_footprint_radius_km = Number.isFinite(model.ground_footprint_radius_km)
+            ? model.ground_footprint_radius_km
+            : calculateGroundFootprintRadiusKm(station.radio_range_km, station.min_elevation_deg);
+    }
+    return model;
+}
+
+function getGroundStationRfAuthoredFields(values = {}) {
+    const model = calculateStationRfModel(values);
+    const optionalNumber = (value) => {
+        if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return null;
+        return Number.isFinite(Number(value)) ? Number(value) : null;
+    };
+    return {
+        station_schema_version: 2,
+        antenna_diameter_m: model.antenna_diameter_m,
+        antenna_efficiency: model.antenna_efficiency,
+        frequency_unit: model.frequency_unit,
+        frequency_mhz: model.frequency_mhz,
+        frequency_hz: model.frequency_mhz * 1e6,
+        polarization: model.polarization,
+        polarization_tilt_deg: model.polarization_tilt_deg,
+        tx_power_unit: model.tx_power_unit,
+        tx_power_dbm: model.tx_power_dbm,
+        tx_power_w: model.tx_power_w,
+        tx_gain_mode: model.tx_gain_mode,
+        rx_gain_mode: model.rx_gain_mode,
+        tx_gain_override_dbi: model.tx_gain_override_dbi,
+        rx_gain_override_dbi: model.rx_gain_override_dbi,
+        // Keep legacy flat aliases readable by older saved project files and
+        // existing inspector surfaces. In derived mode they are refreshed
+        // from the aperture instead of becoming an implicit override.
+        tx_gain_dbi: model.tx_gain_dbi,
+        rx_gain_dbi: model.rx_gain_dbi,
+        min_link_power_dbm: model.min_link_power_dbm,
+        hpbw_azimuth_deg: optionalNumber(values.hpbw_azimuth_deg),
+        hpbw_elevation_deg: optionalNumber(values.hpbw_elevation_deg),
+        pattern_type: model.pattern_type,
+        side_lobe_level_db: model.side_lobe_level_db,
+        system_temperature_k: model.system_temperature_k,
+        atmospheric_loss_db: model.atmospheric_loss_db,
+        rain_loss_db: model.rain_loss_db,
+        cable_loss_db: model.cable_loss_db,
+        connector_loss_db: model.connector_loss_db,
+        pointing_rms_mdeg: model.pointing_rms_mdeg,
+        receiver_bandwidth_hz: model.receiver_bandwidth_hz,
+        required_snr_db: model.required_snr_db,
+        operation_mode: model.operation_mode,
+        boresight_azimuth_deg: model.boresight_azimuth_deg,
+        boresight_elevation_deg: model.boresight_elevation_deg,
+        mechanical_elevation_min_deg: model.mechanical_elevation_min_deg,
+        mechanical_elevation_max_deg: model.mechanical_elevation_max_deg,
+        mechanical_azimuth_min_deg: model.mechanical_azimuth_min_deg,
+        mechanical_azimuth_max_deg: model.mechanical_azimuth_max_deg,
+        reference_rx_gain_dbi: model.reference_rx_gain_dbi,
+        reference_rx_threshold_dbm: model.reference_rx_threshold_dbm
+    };
+}
+
 function calculateGroundStationRadioRangeKm(station) {
-    const frequencyMhz = Number(station?.frequency_mhz);
-    const budgetDbm = Number(station?.tx_power_dbm) + Number(station?.tx_gain_dbi) + Number(station?.rx_gain_dbi);
-    const minimumReceivedDbm = Number.isFinite(Number(station?.min_link_power_dbm)) ? Number(station.min_link_power_dbm) : -80;
-    if (!Number.isFinite(frequencyMhz) || frequencyMhz <= 0 || !Number.isFinite(budgetDbm)) return 1;
-    const rangeKm = 10 ** ((budgetDbm - minimumReceivedDbm - 32.44 - (20 * Math.log10(frequencyMhz))) / 20);
-    return Math.max(1, Math.min(5000, rangeKm));
+    const model = getGroundStationRfModel(station);
+    return Number.isFinite(model.operational_range_km)
+        && model.operational_range_km > 0
+        ? model.operational_range_km
+        // This only protects the HTTP contract for a malformed legacy record.
+        // A valid RF model preserves its calculated range, even below 1 km.
+        : 0.001;
+}
+
+// A published satellite RF profile changes the meaning of a pass from the
+// station's reciprocal *planning* envelope to a validated satellite-to-
+// station downlink. Never silently fall back to planning if the profile is
+// incomplete or off-channel: that would turn a known unavailable link green.
+function getGroundStationPassLinkContract(station, satelliteId) {
+    const profile = getCatalogEntryMeta(satelliteId)?.rfProfile;
+    if (profile && typeof profile === "object") {
+        const envelope = calculateSatelliteDownlinkEnvelope(station, profile);
+        return {
+            kind: "actual-downlink",
+            profile,
+            envelope,
+            available: envelope.available === true,
+            reason: envelope.reason || null,
+            maxRangeKm: envelope.available === true
+                ? Math.max(0.001, Number(envelope.operational_max_range_km) || 0.001)
+                : 0.001
+        };
+    }
+    return {
+        kind: "reciprocal-planning",
+        profile: null,
+        envelope: null,
+        available: true,
+        reason: null,
+        maxRangeKm: calculateGroundStationRadioRangeKm(station)
+    };
+}
+
+function satelliteRfProfileSignature(satelliteId) {
+    const profile = getCatalogEntryMeta(satelliteId)?.rfProfile;
+    if (!profile || typeof profile !== "object") return "planning";
+    return [
+        "downlink",
+        profile.eirp_dbm,
+        profile.frequency_mhz,
+        profile.frequency_hz,
+        profile.polarization,
+        profile.polarization_tilt_deg,
+        profile.bandwidth_hz
+    ].join("|");
+}
+
+function createGroundStationPassQuery(station, satelliteId, startDate, endDate, { stepSeconds = 10 } = {}) {
+    const rf = getGroundStationRfModel(station);
+    const linkContract = getGroundStationPassLinkContract(station, satelliteId);
+    const query = new URLSearchParams({
+        sat_id: satelliteId,
+        station_lat_deg: String(station.latitude_deg),
+        station_lon_deg: String(station.longitude_deg),
+        station_height_m: String(station.altitude_m),
+        min_elevation_deg: String(station.min_elevation_deg),
+        // The backend applies the identical directional range law. For an
+        // actual remote profile this is the downlink's boresight envelope;
+        // otherwise it remains explicitly the reciprocal planning envelope.
+        max_range_km: String(linkContract.maxRangeKm),
+        mechanical_elevation_min_deg: String(rf.mechanical_elevation_min_deg),
+        mechanical_elevation_max_deg: String(rf.mechanical_elevation_max_deg),
+        mechanical_azimuth_min_deg: String(rf.mechanical_azimuth_min_deg),
+        mechanical_azimuth_max_deg: String(rf.mechanical_azimuth_max_deg),
+        operation_mode: String(rf.operation_mode),
+        boresight_azimuth_deg: String(rf.boresight_azimuth_deg),
+        boresight_elevation_deg: String(rf.boresight_elevation_deg),
+        beam_half_angle_deg: String(Math.max(rf.hpbw_azimuth_deg, rf.hpbw_elevation_deg) / 2),
+        pattern_type: String(rf.pattern_type),
+        hpbw_azimuth_deg: String(rf.hpbw_azimuth_deg),
+        hpbw_elevation_deg: String(rf.hpbw_elevation_deg),
+        side_lobe_level_db: String(rf.side_lobe_level_db),
+        start_time: startDate.toISOString(),
+        end_time: endDate.toISOString(),
+        step_seconds: String(stepSeconds)
+    });
+    return { query, linkContract };
+}
+
+function evaluateGroundStationTarget(station, stationPosition, satellitePosition, satelliteRfProfile = null) {
+    if (!station || !stationPosition || !satellitePosition) {
+        return { usable: false, rangeKm: Number.NaN, elevationDeg: Number.NaN, azimuthDeg: Number.NaN, link: null, planningLink: null, downlink: null, fieldOfRegard: null };
+    }
+    const rangeKm = Cesium.Cartesian3.distance(stationPosition, satellitePosition) / 1000;
+    const elevationDeg = computeStationElevationDeg(stationPosition, satellitePosition);
+    const azimuthDeg = calculateAzimuthDegrees(Cesium, stationPosition, satellitePosition);
+    const fieldOfRegard = evaluateStationFieldOfRegard(station, azimuthDeg, elevationDeg);
+    const planningLink = calculateStationPlanningLink(station, rangeKm, { azimuthDeg, elevationDeg });
+    const hasSatelliteProfile = satelliteRfProfile && typeof satelliteRfProfile === "object";
+    const downlink = hasSatelliteProfile
+        ? calculateSatelliteDownlink(station, satelliteRfProfile, rangeKm, { azimuthDeg, elevationDeg })
+        : null;
+    const link = downlink || planningLink;
+    return {
+        rangeKm,
+        elevationDeg,
+        azimuthDeg,
+        fieldOfRegard,
+        link,
+        planningLink,
+        downlink,
+        link_contract: hasSatelliteProfile ? "actual-downlink" : "reciprocal-planning",
+        usable: fieldOfRegard.usable === true && link.usable === true
+    };
 }
 
 function isGroundStationCoverageVolumeVisible() {
@@ -1404,9 +1589,14 @@ function isGroundStationCoverageVolumeVisible() {
 }
 
 function getGroundStationCoverageHalfAngleRadians(station) {
-    const maskDeg = Number.isFinite(Number(station?.min_elevation_deg))
-        ? Number(station.min_elevation_deg)
-        : 10;
+    const model = getGroundStationRfModel(station);
+    if (model.operation_mode === "stationary") {
+        return Cesium.Math.toRadians(Math.max(0.1, Math.min(89, Math.max(model.hpbw_azimuth_deg, model.hpbw_elevation_deg) / 2)));
+    }
+    const maskDeg = Math.max(
+        model.min_elevation_deg,
+        model.mechanical_elevation_min_deg
+    );
     // Cesium measures the ellipsoid cone from the local +Z axis. Local +Z is
     // the antenna zenith, therefore elevation 90° is 0° from that axis.
     return Cesium.Math.toRadians(Math.max(0, Math.min(90, 90 - maskDeg)));
@@ -1419,6 +1609,128 @@ function getGroundStationUpOrientation(position) {
     );
 }
 
+function getGroundStationCoverageOrientation(position, station) {
+    const model = getGroundStationRfModel(station);
+    if (model.operation_mode !== "stationary") {
+        return getGroundStationUpOrientation(position);
+    }
+    // EllipsoidGraphics uses its local +Z axis as the cone axis. The station
+    // mount is expressed in local ENU: azimuth is the heading and the tilt
+    // from zenith is 90 degrees minus the requested elevation.
+    return Cesium.Transforms.headingPitchRollQuaternion(
+        position,
+        new Cesium.HeadingPitchRoll(
+            Cesium.Math.toRadians(model.boresight_azimuth_deg),
+            Cesium.Math.toRadians(90 - model.boresight_elevation_deg),
+            0
+        )
+    );
+}
+
+function removeGroundStationPatternMesh(station) {
+    if (!station?.patternPrimitive || !viewer.scene?.primitives) return;
+    viewer.scene.primitives.remove(station.patternPrimitive);
+    station.patternPrimitive = null;
+    station.patternMeshSignature = null;
+}
+
+function getGroundStationPatternMeshSignature(station, position, model) {
+    const coordinate = (value) => Number.isFinite(Number(value)) ? Number(value).toFixed(2) : "?";
+    return [
+        station?.id,
+        coordinate(position?.x), coordinate(position?.y), coordinate(position?.z),
+        station?.point_color,
+        coordinate(model?.visual_range_km),
+        coordinate(model?.hpbw_azimuth_deg), coordinate(model?.hpbw_elevation_deg),
+        coordinate(model?.side_lobe_level_db), model?.pattern_type,
+        coordinate(model?.boresight_azimuth_deg), coordinate(model?.boresight_elevation_deg),
+        coordinate(model?.min_elevation_deg), coordinate(model?.mechanical_elevation_min_deg), coordinate(model?.mechanical_elevation_max_deg),
+        coordinate(model?.mechanical_azimuth_min_deg), coordinate(model?.mechanical_azimuth_max_deg), model?.operation_mode
+    ].join("|");
+}
+
+function createGroundStationPatternPrimitive(station, position, model) {
+    const mesh = model.operation_mode === "stationary"
+        ? buildStationPatternMesh(station, { maxRangeKm: model.visual_range_km, azimuthSamples: 48, radialSamples: 12 })
+        : buildStationFieldOfRegardMesh(station, { maxRangeKm: model.visual_range_km, azimuthSamples: 48, elevationSamples: 12 });
+    if (!mesh.valid || !mesh.positions_enu_m.length || !mesh.indices.length) return null;
+
+    const localToFixed = Cesium.Transforms.eastNorthUpToFixedFrame(position);
+    const values = new Float64Array(mesh.positions_enu_m.length);
+    const localPoint = new Cesium.Cartesian3();
+    const fixedPoint = new Cesium.Cartesian3();
+    for (let index = 0; index < mesh.positions_enu_m.length; index += 3) {
+        localPoint.x = mesh.positions_enu_m[index];
+        localPoint.y = mesh.positions_enu_m[index + 1];
+        localPoint.z = mesh.positions_enu_m[index + 2];
+        Cesium.Matrix4.multiplyByPoint(localToFixed, localPoint, fixedPoint);
+        values[index] = fixedPoint.x;
+        values[index + 1] = fixedPoint.y;
+        values[index + 2] = fixedPoint.z;
+    }
+    const geometry = new Cesium.Geometry({
+        attributes: {
+            position: new Cesium.GeometryAttribute({
+                componentDatatype: Cesium.ComponentDatatype.DOUBLE,
+                componentsPerAttribute: 3,
+                values
+            })
+        },
+        indices: Uint32Array.from(mesh.indices),
+        primitiveType: Cesium.PrimitiveType.TRIANGLES,
+        boundingSphere: Cesium.BoundingSphere.fromVertices(values)
+    });
+    const color = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.18);
+    const primitive = new Cesium.Primitive({
+        geometryInstances: new Cesium.GeometryInstance({
+            geometry,
+            attributes: {
+                color: Cesium.ColorGeometryInstanceAttribute.fromColor(color)
+            }
+        }),
+        appearance: new Cesium.PerInstanceColorAppearance({
+            flat: true,
+            translucent: true,
+            closed: false,
+            faceForward: true,
+            renderState: {
+                depthTest: { enabled: true },
+                depthMask: false,
+                blending: Cesium.BlendingState.ALPHA_BLEND
+            }
+        }),
+        asynchronous: false,
+        allowPicking: false
+    });
+    return viewer.scene.primitives.add(primitive);
+}
+
+function syncGroundStationPatternMesh(station, position, model, show) {
+    const shouldShow = show && viewer.scene?.mode === Cesium.SceneMode.SCENE3D;
+    if (!shouldShow || !position) {
+        removeGroundStationPatternMesh(station);
+        return false;
+    }
+    const signature = getGroundStationPatternMeshSignature(station, position, model);
+    if (station.patternPrimitive && station.patternMeshSignature === signature) {
+        station.patternPrimitive.show = true;
+        return true;
+    }
+    removeGroundStationPatternMesh(station);
+    try {
+        station.patternPrimitive = createGroundStationPatternPrimitive(station, position, model);
+        station.patternMeshSignature = station.patternPrimitive ? signature : null;
+        return Boolean(station.patternPrimitive);
+    } catch (error) {
+        // The operational gate never relies on this visual mesh. A renderer
+        // capability issue should therefore fall back to the Cesium cone,
+        // without breaking the station designer or AOS/LOS calculations.
+        logger.warn("No se pudo construir la malla RF de la estación", error);
+        removeGroundStationPatternMesh(station);
+        return false;
+    }
+}
+
 function refreshGroundStationCoveragePresentation() {
     for (const station of groundStationLayers.values()) {
         applyGroundStationVisuals(station);
@@ -1426,10 +1738,115 @@ function refreshGroundStationCoveragePresentation() {
     viewer.scene?.requestRender?.();
 }
 
+function stationGroundProjectionPoint(station, azimuthDeg, groundRadiusKm, heightMeters) {
+    // This is a visual WGS-84-near great-circle projection of the already
+    // sampled local RF envelope. It never feeds AOS/LOS; the backend retains
+    // exact ITRF/WGS-84 line-of-sight geometry for access decisions.
+    const earthRadiusKm = 6_371.0088;
+    const angularDistance = Math.max(0, Number(groundRadiusKm) || 0) / earthRadiusKm;
+    const latitude = Cesium.Math.toRadians(Number(station.latitude_deg) || 0);
+    const longitude = Cesium.Math.toRadians(Number(station.longitude_deg) || 0);
+    const bearing = Cesium.Math.toRadians(Number(azimuthDeg) || 0);
+    const projectedLatitude = Math.asin(
+        (Math.sin(latitude) * Math.cos(angularDistance))
+        + (Math.cos(latitude) * Math.sin(angularDistance) * Math.cos(bearing))
+    );
+    const projectedLongitude = longitude + Math.atan2(
+        Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude),
+        Math.cos(angularDistance) - (Math.sin(latitude) * Math.sin(projectedLatitude))
+    );
+    return Cesium.Cartesian3.fromRadians(projectedLongitude, projectedLatitude, heightMeters);
+}
+
+function applyGroundStationFootprint(station, model, visualRangeKm, coverageVisible, showVolume) {
+    const entity = station?.coverageEntity;
+    if (!entity) return;
+    const footprint = sampleStationGroundFootprint(station, {
+        azimuthSamples: 72,
+        maxRangeKm: visualRangeKm
+    });
+    if (!footprint.valid || !footprint.samples.length) {
+        entity.show = false;
+        return;
+    }
+    const color = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff");
+    const heightMeters = Math.max(250, Number(station.altitude_m) + 250);
+    const fullAzimuth = footprint.azimuth_span_deg >= 359.999;
+    const simpleDisk = fullAzimuth
+        && footprint.max_elevation_deg >= 89.999
+        && model.operation_mode !== "stationary";
+
+    if (simpleDisk) {
+        const radiusMeters = Math.max(1, Number(footprint.samples[0]?.outer_radius_km) || 0) * 1000;
+        entity.polygon = undefined;
+        entity.ellipse = {
+            semiMajorAxis: radiusMeters,
+            semiMinorAxis: radiusMeters,
+            granularity: Cesium.Math.toRadians(0.25),
+            height: heightMeters,
+            material: color.withAlpha(0.11),
+            outline: true,
+            outlineColor: color.withAlpha(0.74)
+        };
+    } else {
+        const outer = footprint.samples.map((sample) => stationGroundProjectionPoint(
+            station,
+            sample.azimuth_deg,
+            sample.outer_radius_km,
+            heightMeters
+        ));
+        const inner = footprint.samples
+            .filter((sample) => Number(sample.inner_radius_km) > 0.001)
+            .map((sample) => stationGroundProjectionPoint(
+                station,
+                sample.azimuth_deg,
+                sample.inner_radius_km,
+                heightMeters
+            ))
+            .reverse();
+        let hierarchy;
+        if (fullAzimuth) {
+            // A full elevation-limited mount is a true annulus: the inner
+            // ring is the ground intersection at its upper elevation stop.
+            hierarchy = new Cesium.PolygonHierarchy(
+                outer,
+                inner.length >= 3 ? [new Cesium.PolygonHierarchy(inner)] : []
+            );
+        } else {
+            // A restricted azimuth mount is a sector, not a clipped circle.
+            // Build one closed contour so its radial side walls connect the
+            // outer/inner boundaries. When the upper elevation reaches the
+            // zenith there is no inner boundary, so close it at the station.
+            const stationCenter = stationGroundProjectionPoint(station, 0, 0, heightMeters);
+            const sectorPositions = inner.length >= 2
+                ? [...outer, ...inner]
+                : [...outer, stationCenter];
+            hierarchy = new Cesium.PolygonHierarchy(sectorPositions);
+        }
+        entity.ellipse = undefined;
+        entity.polygon = {
+            hierarchy,
+            height: heightMeters,
+            perPositionHeight: false,
+            arcType: Cesium.ArcType.GEODESIC,
+            granularity: Cesium.Math.toRadians(0.25),
+            material: color.withAlpha(0.11),
+            outline: true,
+            outlineColor: color.withAlpha(0.74)
+        };
+    }
+    entity.show = coverageVisible && !showVolume;
+}
+
 function applyGroundStationVisuals(station) {
     if (!station || !station.entity) {
         return;
     }
+
+    // Restoration can create an initially hidden station. Set this here,
+    // alongside its coverage entities, so loading a project has the same
+    // visibility result as toggling the Layer eye in a live workspace.
+    station.entity.show = station.visible === true;
 
     const symbolImage = createStationSymbolImage(station.point_symbol, station.point_color, station.point_size_px);
     station.entity.billboard = {
@@ -1440,46 +1857,44 @@ function applyGroundStationVisuals(station) {
     };
     station.entity.point = undefined;
 
-    station.radio_range_km = calculateGroundStationRadioRangeKm(station);
+    const rfModel = getGroundStationRfModel(station);
+    const visualRangeKm = Number.isFinite(rfModel.visual_range_km)
+        ? rfModel.visual_range_km
+        : calculateGroundStationRadioRangeKm(station);
     const coverageVisible = station.visible === true && station.coverage_visible !== false;
     const showVolume = coverageVisible && isGroundStationCoverageVolumeVisible();
+    // A full-travel tracking/scan mount is a disk. Restricted azimuth,
+    // elevation ceilings, and stationary directivity instead become a sector
+    // or annular sector. Never draw a convenient but false 360 degree circle.
+    applyGroundStationFootprint(station, rfModel, visualRangeKm, coverageVisible, showVolume);
 
-    if (station.coverageEntity?.ellipse) {
-        station.coverageEntity.ellipse.semiMajorAxis = station.radio_range_km * 1000;
-        station.coverageEntity.ellipse.semiMinorAxis = station.radio_range_km * 1000;
-        station.coverageEntity.ellipse.granularity = Cesium.Math.toRadians(0.25);
-        // A very wide ellipse drawn almost on the terrain z-fights with the
-        // globe. Lift only the visual overlay as its radius grows; this does
-        // not alter the RF calculation or the station position.
-        station.coverageEntity.ellipse.height = Math.max(
-            12000,
-            Number(station.altitude_m) + 12000,
-            Math.min(90000, station.radio_range_km * 18)
-        );
-        station.coverageEntity.ellipse.material = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.11);
-        station.coverageEntity.ellipse.outlineColor = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.74);
-        // A map is a zenith projection of the local coverage volume. The
-        // circle is the useful, geographically correct 2D representation.
-        station.coverageEntity.show = coverageVisible && !showVolume;
-    }
-
+    const coveragePosition = station.coverageVolumeEntity?.position?.getValue(Cesium.JulianDate.now());
+    const hasPatternMesh = syncGroundStationPatternMesh(station, coveragePosition, rfModel, showVolume);
     if (station.coverageVolumeEntity?.ellipsoid) {
-        const rangeMeters = station.radio_range_km * 1000;
+        const rangeMeters = visualRangeKm * 1000;
         station.coverageVolumeEntity.ellipsoid.radii = new Cesium.Cartesian3(rangeMeters, rangeMeters, rangeMeters);
         station.coverageVolumeEntity.ellipsoid.minimumCone = 0;
         station.coverageVolumeEntity.ellipsoid.maximumCone = getGroundStationCoverageHalfAngleRadians(station);
         station.coverageVolumeEntity.ellipsoid.material = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.09);
         station.coverageVolumeEntity.ellipsoid.outlineColor = Cesium.Color.fromCssColorString(station.point_color || "#3cc4ff").withAlpha(0.78);
-        station.coverageVolumeEntity.orientation = getGroundStationUpOrientation(station.coverageVolumeEntity.position.getValue(Cesium.JulianDate.now()));
-        // This is a spherical sector: range limits its radius and the mask
-        // clips directions below the accepted elevation. A valid pass is
-        // therefore inside it, and its rim is the visual elevation mask.
-        station.coverageVolumeEntity.show = showVolume;
+        station.coverageVolumeEntity.orientation = getGroundStationCoverageOrientation(coveragePosition, station);
+        // This is only a fallback for renderer capability failures. The
+        // custom mesh above is the accurate visual: it clips mount azimuth
+        // and elevation in tracking/scan and uses the directional pattern in
+        // stationary mode. Do not expose a misleading circular fallback for
+        // a restricted mount.
+        const fullAzimuthTravel = Math.abs(Number(rfModel.mechanical_azimuth_max_deg) - Number(rfModel.mechanical_azimuth_min_deg)) >= 359.999
+            || Math.abs(Number(rfModel.mechanical_azimuth_max_deg) - Number(rfModel.mechanical_azimuth_min_deg)) < 1e-9;
+        const genericFallbackIsFaithful = fullAzimuthTravel
+            && Number(rfModel.mechanical_elevation_max_deg) >= 89.999
+            && rfModel.operation_mode !== "stationary";
+        station.coverageVolumeEntity.show = showVolume && !hasPatternMesh && genericFallbackIsFaithful;
     }
 }
 
 function clearGroundStationPreview() {
     if (!groundStationPreview) return;
+    removeGroundStationPatternMesh(groundStationPreview);
     for (const entity of [groundStationPreview.entity, groundStationPreview.coverageEntity, groundStationPreview.coverageVolumeEntity]) {
         if (entity) viewer.entities.remove(entity);
     }
@@ -1534,11 +1949,9 @@ function previewGroundStation(params = {}) {
         latitude_deg: latitudeDeg,
         longitude_deg: longitudeDeg,
         altitude_m: altitudeM,
-        frequency_mhz: Number(params.frequency_mhz),
-        tx_power_dbm: Number(params.tx_power_dbm),
-        tx_gain_dbi: Number(params.tx_gain_dbi),
-        rx_gain_dbi: Number(params.rx_gain_dbi),
-        min_link_power_dbm: Number(params.min_link_power_dbm),
+        time_zone: String(params.time_zone || "UTC").trim() || "UTC",
+        min_elevation_deg: Number.isFinite(Number(params.min_elevation_deg)) ? Number(params.min_elevation_deg) : 10,
+        ...getGroundStationRfAuthoredFields(params),
         point_size_px: Number(params.point_size_px),
         point_color: String(params.point_color || "#3cc4ff"),
         point_symbol: String(params.point_symbol || "circle"),
@@ -1549,7 +1962,75 @@ function previewGroundStation(params = {}) {
     groundStationPreview.coverageVolumeEntity.position = position;
     groundStationPreview.entity.label.text = `PREVIEW · ${groundStationPreview.name}`;
     applyGroundStationVisuals(groundStationPreview);
-    return { radio_range_km: groundStationPreview.radio_range_km };
+    const rfModel = getGroundStationRfModel(groundStationPreview);
+    return {
+        radio_range_km: groundStationPreview.radio_range_km,
+        ground_footprint_radius_km: groundStationPreview.ground_footprint_radius_km,
+        rf: rfModel
+    };
+}
+
+function getReusableGroundStationSequence(value) {
+    const match = /^gst:([1-9]\d{0,6})$/.exec(String(value || "").trim());
+    if (!match) {
+        return null;
+    }
+    const sequence = Number(match[1]);
+    return Number.isSafeInteger(sequence) && sequence > 0 ? sequence : null;
+}
+
+function reserveGroundStationLayerId(requestedId = null) {
+    const requested = String(requestedId || "").trim();
+    const requestedSequence = getReusableGroundStationSequence(requested);
+    if (requestedSequence !== null && !groundStationLayers.has(requested)) {
+        groundStationSequence = Math.max(groundStationSequence, requestedSequence + 1);
+        return requested;
+    }
+
+    let stationId = `gst:${groundStationSequence++}`;
+    while (groundStationLayers.has(stationId)) {
+        stationId = `gst:${groundStationSequence++}`;
+    }
+    return stationId;
+}
+
+function restoreGroundStationsFromProject(entries) {
+    const restored = [];
+    const failed = [];
+    const idMap = {};
+    const seenRequestedIds = new Set();
+
+    for (const entry of Array.isArray(entries) ? entries : []) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            failed.push({ id: null, reason: "invalid-record" });
+            continue;
+        }
+        const requestedId = String(entry.id || "").trim();
+        if (requestedId && seenRequestedIds.has(requestedId)) {
+            failed.push({ id: requestedId, reason: "duplicate-id" });
+            continue;
+        }
+        if (requestedId) {
+            seenRequestedIds.add(requestedId);
+        }
+
+        try {
+            const stationId = createGroundStationLayer(entry);
+            if (!stationId) {
+                failed.push({ id: requestedId || null, reason: "invalid-geometry" });
+                continue;
+            }
+            if (requestedId && requestedId !== stationId) {
+                idMap[requestedId] = stationId;
+            }
+            restored.push(stationId);
+        } catch (error) {
+            logger.warn("No se pudo restaurar una estacion terrestre", error);
+            failed.push({ id: requestedId || null, reason: "restore-failed" });
+        }
+    }
+
+    return { restored, failed, idMap };
 }
 
 function createGroundStationLayer(params = {}) {
@@ -1559,16 +2040,13 @@ function createGroundStationLayer(params = {}) {
         return null;
     }
 
-    const stationId = `gst:${groundStationSequence++}`;
+    const stationId = reserveGroundStationLayerId(params.id);
     const altitudeM = Number.isFinite(Number(params.altitude_m)) ? Number(params.altitude_m) : 0;
     const timeZone = String(params.time_zone || "UTC").trim() || "UTC";
     const minElevationDeg = Number.isFinite(Number(params.min_elevation_deg)) ? Number(params.min_elevation_deg) : 10;
-    const frequencyMhz = Number.isFinite(Number(params.frequency_mhz)) ? Number(params.frequency_mhz) : 2200;
-    const txPowerDbm = Number.isFinite(Number(params.tx_power_dbm)) ? Number(params.tx_power_dbm) : 38;
-    const txGainDbi = Number.isFinite(Number(params.tx_gain_dbi)) ? Number(params.tx_gain_dbi) : 18;
-    const rxGainDbi = Number.isFinite(Number(params.rx_gain_dbi)) ? Number(params.rx_gain_dbi) : 21;
-    const minLinkPowerDbm = Number.isFinite(Number(params.min_link_power_dbm)) ? Number(params.min_link_power_dbm) : -80;
-    const coverageRadiusKm = Number.isFinite(Number(params.coverage_radius_km)) ? Number(params.coverage_radius_km) : 1200;
+    const rfAuthoredFields = getGroundStationRfAuthoredFields(params);
+    const rfModel = calculateStationRfModel({ ...params, ...rfAuthoredFields });
+    const coverageRadiusKm = Number.isFinite(rfModel.ground_footprint_radius_km) ? rfModel.ground_footprint_radius_km : 1;
     const pointSizePx = Number.isFinite(Number(params.point_size_px)) ? Number(params.point_size_px) : 11;
     const pointColor = String(params.point_color || "#3cc4ff").trim() || "#3cc4ff";
     const pointSymbol = String(params.point_symbol || "circle").trim() || "circle";
@@ -1576,7 +2054,8 @@ function createGroundStationLayer(params = {}) {
     const monitoredSatelliteIds = Array.isArray(params.monitor_satellite_ids)
         ? params.monitor_satellite_ids.map((id) => String(id || "").trim()).filter(Boolean)
         : [];
-    const displayName = String(params.name || `Estacion ${groundStationSequence - 1}`).trim() || `Estacion ${groundStationSequence - 1}`;
+    const stationSequence = getReusableGroundStationSequence(stationId) || Math.max(1, groundStationSequence - 1);
+    const displayName = String(params.name || `Estacion ${stationSequence}`).trim() || `Estacion ${stationSequence}`;
 
     const position = Cesium.Cartesian3.fromDegrees(lon, lat, altitudeM);
     const stationEntity = viewer.entities.add({
@@ -1640,18 +2119,14 @@ function createGroundStationLayer(params = {}) {
         altitude_m: altitudeM,
         time_zone: timeZone,
         min_elevation_deg: minElevationDeg,
-        frequency_mhz: frequencyMhz,
-        tx_power_dbm: txPowerDbm,
-        tx_gain_dbi: txGainDbi,
-        rx_gain_dbi: rxGainDbi,
-        min_link_power_dbm: minLinkPowerDbm,
+        ...rfAuthoredFields,
         coverage_radius_km: coverageRadiusKm,
         point_size_px: pointSizePx,
         point_color: pointColor,
         point_symbol: pointSymbol,
         coverage_visible: coverageVisible,
         monitor_satellite_ids: monitoredSatelliteIds,
-        visible: true,
+        visible: params.visible !== false,
         entity: stationEntity,
         coverageEntity,
         coverageVolumeEntity
@@ -1660,7 +2135,9 @@ function createGroundStationLayer(params = {}) {
     applyGroundStationVisuals(groundStationLayers.get(stationId));
     syncGroundStationVisibilityLinks();
 
-    layerDisplayNameOverrides.set(stationId, displayName);
+    if (!layerDisplayNameOverrides.has(stationId)) {
+        layerDisplayNameOverrides.set(stationId, displayName);
+    }
     return stationId;
 }
 
@@ -1669,6 +2146,7 @@ function getGroundStationParams(layerId) {
     if (!station) {
         return null;
     }
+    const rfModel = getGroundStationRfModel(station);
     return {
         name: station.name,
         latitude_deg: station.latitude_deg,
@@ -1676,18 +2154,15 @@ function getGroundStationParams(layerId) {
         altitude_m: station.altitude_m,
         time_zone: station.time_zone || "UTC",
         min_elevation_deg: station.min_elevation_deg,
-        frequency_mhz: station.frequency_mhz,
-        tx_power_dbm: station.tx_power_dbm,
-        tx_gain_dbi: station.tx_gain_dbi,
-        rx_gain_dbi: station.rx_gain_dbi,
-        min_link_power_dbm: station.min_link_power_dbm ?? -80,
+        ...getGroundStationRfAuthoredFields(station),
         radio_range_km: station.radio_range_km,
-        coverage_radius_km: station.coverage_radius_km,
+        ground_footprint_radius_km: station.ground_footprint_radius_km,
         point_size_px: station.point_size_px,
         point_symbol: station.point_symbol,
         point_color: station.point_color,
         coverage_visible: station.coverage_visible !== false,
-        monitor_satellite_ids: [...(station.monitor_satellite_ids || [])]
+        monitor_satellite_ids: [...(station.monitor_satellite_ids || [])],
+        rf_metrics: rfModel
     };
 }
 
@@ -1708,16 +2183,15 @@ function updateGroundStationLayer(layerId, patch = {}) {
     station.altitude_m = nextAlt;
     station.time_zone = String(patch.time_zone || station.time_zone || "UTC").trim() || "UTC";
     station.min_elevation_deg = Number.isFinite(Number(patch.min_elevation_deg)) ? Number(patch.min_elevation_deg) : station.min_elevation_deg;
-    station.frequency_mhz = Number.isFinite(Number(patch.frequency_mhz)) ? Number(patch.frequency_mhz) : station.frequency_mhz;
-    station.tx_power_dbm = Number.isFinite(Number(patch.tx_power_dbm)) ? Number(patch.tx_power_dbm) : station.tx_power_dbm;
-    station.tx_gain_dbi = Number.isFinite(Number(patch.tx_gain_dbi)) ? Number(patch.tx_gain_dbi) : station.tx_gain_dbi;
-    station.rx_gain_dbi = Number.isFinite(Number(patch.rx_gain_dbi)) ? Number(patch.rx_gain_dbi) : station.rx_gain_dbi;
-    station.min_link_power_dbm = Number.isFinite(Number(patch.min_link_power_dbm)) ? Number(patch.min_link_power_dbm) : (station.min_link_power_dbm ?? -80);
-    station.coverage_radius_km = Number.isFinite(Number(patch.coverage_radius_km)) ? Number(patch.coverage_radius_km) : station.coverage_radius_km;
+    Object.assign(station, getGroundStationRfAuthoredFields({ ...station, ...patch }));
     station.point_size_px = Number.isFinite(Number(patch.point_size_px)) ? Number(patch.point_size_px) : station.point_size_px;
     station.point_symbol = String(patch.point_symbol || station.point_symbol || "circle").trim() || "circle";
     station.point_color = String(patch.point_color || station.point_color || "#3cc4ff").trim() || "#3cc4ff";
-    station.coverage_visible = patch.coverage_visible !== false;
+    // An edit to an RF/text field must not resurrect a deliberately hidden
+    // coverage overlay. Only an explicit checkbox value changes visibility.
+    if (patch.coverage_visible !== undefined) {
+        station.coverage_visible = patch.coverage_visible !== false;
+    }
 
     const nextPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
     if (station.entity) {
@@ -2178,8 +2652,13 @@ function syncGroundStationVisibilityLinks() {
                         const satellitePosition = satellite.position?.getValue?.(time);
                         if (!currentStation?.visible || !isCompositeLayerActive(satelliteLayerId) || !satellitePosition) return [];
                         const stationPosition = Cesium.Cartesian3.fromDegrees(currentStation.longitude_deg, currentStation.latitude_deg, currentStation.altitude_m);
-                        const withinRadioEnvelope = (Cesium.Cartesian3.distance(stationPosition, satellitePosition) / 1000) <= calculateGroundStationRadioRangeKm(currentStation);
-                        return withinRadioEnvelope && computeStationElevationDeg(stationPosition, satellitePosition) >= currentStation.min_elevation_deg
+                        const satelliteId = getSatelliteSourceIdFromLayerId(satelliteLayerId);
+                        const satelliteRfProfile = getCatalogEntryMeta(satelliteId)?.rfProfile || null;
+                        // If a remote RF profile is present, a green line is a
+                        // real downlink that closes, not a planning-only
+                        // envelope. Layers without RF metadata retain the
+                        // explicitly reciprocal planning presentation.
+                        return evaluateGroundStationTarget(currentStation, stationPosition, satellitePosition, satelliteRfProfile).usable
                             ? [stationPosition, satellitePosition]
                             : [];
                     }, false),
@@ -2203,6 +2682,8 @@ function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElev
     clearGroundStationAnalysisVisuals();
     const satellite = getCompositeLayerEntity(satelliteLayerId);
     if (!station || !satellite?.position) return;
+    const satelliteId = getSatelliteSourceIdFromLayerId(satelliteLayerId);
+    const satelliteRfProfile = getCatalogEntryMeta(satelliteId)?.rfProfile || null;
     const stationPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
     groundStationAnalysisLink = viewer.entities.add({
         id: `ground-station-link:${station.id}`,
@@ -2210,8 +2691,8 @@ function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElev
             positions: new Cesium.CallbackProperty((time) => {
                 const satellitePosition = satellite.position?.getValue?.(time);
                 if (!satellitePosition) return [];
-                const rangeKm = Cesium.Cartesian3.distance(stationPosition, satellitePosition) / 1000;
-                if (rangeKm > calculateGroundStationRadioRangeKm(station) || computeStationElevationDeg(stationPosition, satellitePosition) < minimumElevationDeg) return [];
+                const target = evaluateGroundStationTarget(station, stationPosition, satellitePosition, satelliteRfProfile);
+                if (!target.usable || target.elevationDeg < minimumElevationDeg) return [];
                 return [stationPosition, satellitePosition];
             }, false),
             width: 1.8,
@@ -2222,28 +2703,84 @@ function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElev
 }
 
 function publishGroundStationsState() {
-    const stations = [...groundStationLayers.values()].map((station) => ({
-        id: station.id,
-        name: station.name,
-        latitude_deg: station.latitude_deg,
-        longitude_deg: station.longitude_deg,
-        altitude_m: station.altitude_m,
-        time_zone: station.time_zone || "UTC",
-        min_elevation_deg: station.min_elevation_deg,
-        frequency_mhz: station.frequency_mhz,
-        tx_power_dbm: station.tx_power_dbm,
-        tx_gain_dbi: station.tx_gain_dbi,
-        rx_gain_dbi: station.rx_gain_dbi,
-        min_link_power_dbm: station.min_link_power_dbm ?? -80,
-        radio_range_km: station.radio_range_km,
-        monitor_satellite_ids: [...(station.monitor_satellite_ids || [])]
-    }));
+    const stations = [...groundStationLayers.values()].map((station) => {
+        const rf = getGroundStationRfModel(station);
+        return {
+            id: station.id,
+            name: station.name,
+            latitude_deg: station.latitude_deg,
+            longitude_deg: station.longitude_deg,
+            altitude_m: station.altitude_m,
+            time_zone: station.time_zone || "UTC",
+            min_elevation_deg: station.min_elevation_deg,
+            frequency_mhz: rf.frequency_mhz,
+            frequency_hz: rf.frequency_mhz * 1e6,
+            frequency_unit: rf.frequency_unit,
+            tx_power_unit: rf.tx_power_unit,
+            tx_power_dbm: rf.tx_power_dbm,
+            tx_power_w: rf.tx_power_w,
+            tx_gain_dbi: rf.tx_gain_dbi,
+            rx_gain_dbi: rf.rx_gain_dbi,
+            min_link_power_dbm: rf.min_link_power_dbm,
+            radio_range_km: station.radio_range_km,
+            ground_footprint_radius_km: station.ground_footprint_radius_km,
+            monitor_satellite_ids: [...(station.monitor_satellite_ids || [])],
+            rf: {
+                station_schema_version: station.station_schema_version || 2,
+                antenna_diameter_m: rf.antenna_diameter_m,
+                antenna_efficiency: rf.antenna_efficiency,
+                polarization: rf.polarization,
+                pattern_type: rf.pattern_type,
+                operation_mode: rf.operation_mode,
+                gain_max_dbi: rf.gain_max_dbi,
+                hpbw_azimuth_deg: rf.hpbw_azimuth_deg,
+                hpbw_elevation_deg: rf.hpbw_elevation_deg,
+                pointing_loss_db: rf.pointing_loss_db,
+                total_system_loss_db: rf.total_system_loss_db,
+                system_gt_db_per_k: rf.system_gt_db_per_k,
+                receiver_noise_floor_dbm: rf.receiver_noise_floor_dbm,
+                range_contract: rf.range_contract
+            }
+        };
+    });
     const satellites = getCompositeLayerIds()
         .filter((id) => !isGroundStationLayerId(id) && !isCelestialBodyLayerId(id))
         .map((id) => ({ id, name: getLayerDisplayName(id) }));
     window.dispatchEvent(new CustomEvent("orbit:ground-stations-state", {
         detail: { stations, satellites, now: getDisplayedSimulationDate()?.toISOString?.() || null }
     }));
+}
+
+function groundStationGeoJsonFileName(stations) {
+    if (stations.length !== 1) return "orbit-ground-stations.geojson";
+    const stem = String(stations[0]?.name || stations[0]?.id || "station")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/gi, "-")
+        .replace(/^-+|-+$/g, "") || "station";
+    return `orbit-ground-station-${stem}.geojson`;
+}
+
+function exportGroundStationsGeoJson(stationId = null) {
+    const requestedId = String(stationId || "").trim();
+    const selected = requestedId ? groundStationLayers.get(requestedId) : null;
+    const stations = requestedId ? (selected ? [selected] : []) : [...groundStationLayers.values()];
+    if (!stations.length) {
+        showErrorPopup(requestedId
+            ? "La estación seleccionada ya no está disponible para exportar."
+            : "No hay estaciones de tierra para exportar.");
+        return null;
+    }
+    const collection = downloadGroundStationsGeoJson(stations, {
+        fileName: groundStationGeoJsonFileName(stations)
+    });
+    const exportedCount = collection.features.length;
+    if (!exportedCount) {
+        showErrorPopup("No se pudo exportar ninguna estación: revisa que las coordenadas WGS-84 sean válidas.");
+        return collection;
+    }
+    showInfoPopup(`GeoJSON exportado: ${exportedCount} ${exportedCount === 1 ? "estación" : "estaciones"}.`);
+    return collection;
 }
 
 function cancelGroundStationPassAnalysis() {
@@ -2256,24 +2793,47 @@ function cancelGroundStationPassAnalysis() {
 
 function groundStationAnalysisSignature(station) {
     if (!station) return "";
+    const rf = getGroundStationRfModel(station);
     return [
         station.latitude_deg,
         station.longitude_deg,
         station.altitude_m,
         station.min_elevation_deg,
-        station.frequency_mhz,
-        station.tx_power_dbm,
-        station.tx_gain_dbi,
-        station.rx_gain_dbi,
-        station.min_link_power_dbm
-    ].map((value) => Number(value)).join("|");
+        rf.frequency_mhz,
+        rf.tx_power_dbm,
+        rf.tx_gain_dbi,
+        rf.rx_gain_dbi,
+        rf.min_link_power_dbm,
+        rf.antenna_diameter_m,
+        rf.antenna_efficiency,
+        rf.hpbw_azimuth_deg,
+        rf.hpbw_elevation_deg,
+        rf.pattern_type,
+        rf.side_lobe_level_db,
+        rf.system_temperature_k,
+        rf.atmospheric_loss_db,
+        rf.rain_loss_db,
+        rf.cable_loss_db,
+        rf.connector_loss_db,
+        rf.pointing_rms_mdeg,
+        rf.operation_mode,
+        rf.boresight_azimuth_deg,
+        rf.boresight_elevation_deg,
+        rf.mechanical_elevation_min_deg,
+        rf.mechanical_elevation_max_deg,
+        rf.mechanical_azimuth_min_deg,
+        rf.mechanical_azimuth_max_deg,
+        rf.reference_rx_gain_dbi,
+        rf.reference_rx_threshold_dbm
+    ].join("|");
 }
 
-function isCurrentGroundStationPassAnalysis({ requestId, stationId, station, stationSignature, satelliteLayerId, satelliteId, analysisWindow }) {
+function isCurrentGroundStationPassAnalysis({ requestId, stationId, station, stationSignature, satelliteLayerId, satelliteId, satelliteRfSignature, analysisWindow }) {
     if (requestId !== groundStationAnalysisRequestSequence) return false;
     if (groundStationLayers.get(stationId) !== station) return false;
     if (groundStationAnalysisSignature(station) !== stationSignature) return false;
     if (getSatelliteSourceIdFromLayerId(satelliteLayerId) !== satelliteId) return false;
+    if (satelliteRfProfileSignature(satelliteId) !== satelliteRfSignature) return false;
 
     const currentWindow = getGroundStationAnalysisWindow();
     if (currentWindow.source !== analysisWindow.source) return false;
@@ -2314,20 +2874,35 @@ async function analyzeGroundStationPasses(detail = {}) {
         stationSignature,
         satelliteLayerId,
         satelliteId,
+        satelliteRfSignature: satelliteRfProfileSignature(satelliteId),
         analysisWindow
     };
     try {
-        const query = new URLSearchParams({
-            sat_id: satelliteId,
-            station_lat_deg: String(station.latitude_deg),
-            station_lon_deg: String(station.longitude_deg),
-            station_height_m: String(station.altitude_m),
-            min_elevation_deg: String(minElevationDeg),
-            max_range_km: String(calculateGroundStationRadioRangeKm(station)),
-            start_time: startDate.toISOString(),
-            end_time: endDate.toISOString(),
-            step_seconds: "30"
-        });
+        const { query, linkContract } = createGroundStationPassQuery(station, satelliteId, startDate, endDate, { stepSeconds: 10 });
+        if (!linkContract.available) {
+            if (isCurrentGroundStationPassAnalysis(requestContext)) {
+                clearGroundStationAnalysisVisuals();
+                window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+                    detail: {
+                        error: `El perfil RF del satélite no permite un enlace de bajada (${linkContract.reason || "perfil incompleto"}).`,
+                        passes: [],
+                        samples: [],
+                        stationName: String(station.name || stationId),
+                        satelliteName: String(getLayerDisplayName(satelliteLayerId) || satelliteId),
+                        stationTimeZone: station.time_zone || "UTC",
+                        referenceFrame: "ITRF",
+                        timeScale: "UTC",
+                        analysisSelection: { stationId, satelliteLayerId },
+                        linkContract: linkContract.kind,
+                        satelliteRfProfile: linkContract.profile || null,
+                        satelliteLinkAvailable: false,
+                        satelliteLinkStatus: linkContract.reason || "satellite-rf-profile-required",
+                        visibleNow: false
+                    }
+                }));
+            }
+            return;
+        }
         const response = await fetch(`/api/aos-los?${query}`, { signal: abortController.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const result = await response.json();
@@ -2341,14 +2916,15 @@ async function analyzeGroundStationPasses(detail = {}) {
         const displayedDate = getDisplayedSimulationDate();
         const displayedJulianDate = Cesium.JulianDate.fromDate(displayedDate);
         const satellitePosition = satelliteEntity?.position?.getValue?.(displayedJulianDate);
-        const rangeKm = satellitePosition ? Cesium.Cartesian3.distance(stationPosition, satellitePosition) / 1000 : Number.NaN;
-        const currentElevation = satellitePosition
-            ? computeStationElevationDeg(stationPosition, satellitePosition)
-            : Number.NaN;
-        const pathLossDb = Number.isFinite(rangeKm) ? computeFreeSpacePathLossDb(station.frequency_mhz, rangeKm) : Number.NaN;
-        const linkBudgetDbm = Number.isFinite(pathLossDb)
-            ? station.tx_power_dbm + station.tx_gain_dbi + station.rx_gain_dbi - pathLossDb
-            : Number.NaN;
+        const satelliteRfProfile = linkContract.profile;
+        const currentTarget = satellitePosition
+            ? evaluateGroundStationTarget(station, stationPosition, satellitePosition, satelliteRfProfile)
+            : null;
+        const rangeKm = currentTarget?.rangeKm ?? Number.NaN;
+        const currentElevation = currentTarget?.elevationDeg ?? Number.NaN;
+        const currentAzimuth = currentTarget?.azimuthDeg ?? Number.NaN;
+        const planningLink = currentTarget?.planningLink ?? null;
+        const satelliteLink = currentTarget?.downlink ?? null;
         window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
             detail: {
                 ...result,
@@ -2363,10 +2939,20 @@ async function analyzeGroundStationPasses(detail = {}) {
                     source: analysisWindow.source
                 },
                 analysisSelection: { stationId, satelliteLayerId },
+                linkContract: linkContract.kind,
+                satelliteRfProfile: linkContract.profile || null,
                 rangeKm,
-                linkBudgetDbm,
+                linkBudgetDbm: planningLink?.received_power_dbm ?? Number.NaN,
+                linkMarginDb: planningLink?.link_margin_db ?? Number.NaN,
+                satelliteLinkAvailable: satelliteLink?.available === true,
+                satelliteReceivedPowerDbm: satelliteLink?.received_power_dbm ?? Number.NaN,
+                satelliteSnrDb: satelliteLink?.snr_db ?? Number.NaN,
+                satelliteLinkMarginDb: satelliteLink?.link_margin_db ?? Number.NaN,
+                satelliteLinkStatus: satelliteLink?.available === true ? "available" : satelliteLink?.reason || "satellite-rf-profile-required",
+                azimuthDeg: currentAzimuth,
+                rfModel: getGroundStationRfModel(station),
                 visibleNow: Number.isFinite(currentElevation) && Number.isFinite(rangeKm)
-                    ? currentElevation >= minElevationDeg && rangeKm <= calculateGroundStationRadioRangeKm(station)
+                    ? currentTarget?.usable === true && currentElevation >= minElevationDeg
                     : false
             }
         }));
@@ -2943,7 +3529,7 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
 
     const viewportPadding = 10;
     const estimatedWidth = 230;
-    const estimatedHeight = isCelestialBody ? 54 : (isGroundStation ? 92 : (canEditManualOrbit ? 198 : 160));
+    const estimatedHeight = isCelestialBody ? 54 : (isGroundStation ? 126 : (canEditManualOrbit ? 198 : 160));
     const maxLeft = Math.max(viewportPadding, window.innerWidth - estimatedWidth - viewportPadding);
     const maxTop = Math.max(viewportPadding, window.innerHeight - estimatedHeight - viewportPadding);
     const safeLeft = Math.min(Math.max(viewportPadding, x), maxLeft);
@@ -2977,6 +3563,12 @@ window.addEventListener("orbit:satellite-context-action", (event) => {
     if (action.type === "station") {
         if (layerId && String(getLayerType(layerId) || "").toUpperCase() === "GROUND_STATION") {
             objectSidebar?.openGroundStationEditor?.(layerId);
+        }
+        return;
+    }
+    if (action.type === "export-station-geojson") {
+        if (layerId && String(getLayerType(layerId) || "").toUpperCase() === "GROUND_STATION") {
+            exportGroundStationsGeoJson(layerId);
         }
         return;
     }
@@ -5514,6 +6106,14 @@ function setupPropagatedParametersInspector() {
     setupPropagatedParametersInspector();
 
     window.addEventListener("orbit:ground-stations-request-state", publishGroundStationsState);
+    window.addEventListener("orbit:ground-stations-export-geojson", (event) => {
+        exportGroundStationsGeoJson(event.detail?.stationId);
+    });
+    window.addEventListener("orbit:project-action", (event) => {
+        if (event.detail === "export-ground-stations") {
+            exportGroundStationsGeoJson();
+        }
+    });
     window.addEventListener("orbit:ground-stations-create-request", () => {
         openLeftSatellitesPanel();
         objectSidebar?.openGroundStationEditor?.();

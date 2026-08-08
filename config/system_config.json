@@ -1,7 +1,7 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 313.98740444444445,
+      "propagation_hours": 25.984086666666666,
       "future_show": true,
       "ground_track_show": false,
       "future_line_width": 2.5,
@@ -16,7 +16,7 @@
       "decay_alert_perigee_km": 200
     },
     "realtime": {
-      "state_interval_seconds": 1,
+      "state_interval_seconds": 0.1,
       "orbit_interval_seconds": 10
     },
     "logging": {
@@ -24,7 +24,7 @@
       "level": "info"
     },
     "rendering": {
-      "antialias_mode": "off",
+      "antialias_mode": "msaa",
       "antialias_enabled": true,
       "background_color": "#ffffff",
       "sky_atmosphere": true,

@@ -127,7 +127,8 @@ function buildGroundStationInfoText(telemetry, sectionOpenState = {}) {
         row("Satelites activos", formatNumber(realtime.active_satellites, 0)),
         row("Mejor elevacion", formatNumber(realtime.best_elevation_deg, 1), " deg"),
         row("Mejor rango", formatNumber(realtime.best_range_km, 1), " km"),
-        row("Mejor enlace", Number.isFinite(realtime.best_link_dbm) ? formatNumber(realtime.best_link_dbm, 1) : "-", " dBm")
+        row("Mejor enlace", Number.isFinite(realtime.best_link_dbm) ? formatNumber(realtime.best_link_dbm, 1) : "-", " dBm"),
+        row("Mejor SNR", Number.isFinite(realtime.best_snr_db) ? formatNumber(realtime.best_snr_db, 1) : "Perfil RF remoto no disponible", Number.isFinite(realtime.best_snr_db) ? " dB" : "")
     ].join("");
 
     const radioRows = [
@@ -1395,7 +1396,9 @@ export function setupObjectSidebar({
             </div>
             <div class="ground-station-tabs" id="groundStationTabs">
                 <button type="button" class="ground-station-tab-btn active" data-gs-tab="general">General</button>
+                <button type="button" class="ground-station-tab-btn" data-gs-tab="antenna">Antena</button>
                 <button type="button" class="ground-station-tab-btn" data-gs-tab="radio">Radio</button>
+                <button type="button" class="ground-station-tab-btn" data-gs-tab="pointing">Apuntado</button>
                 <button type="button" class="ground-station-tab-btn" data-gs-tab="visual">Visual</button>
             </div>
             <div class="ground-station-tab-panel active" data-gs-tab-panel="general">
@@ -1425,45 +1428,82 @@ export function setupObjectSidebar({
                         <input id="gsMaskInput" type="number" step="0.1" min="0" max="90" value="10" />
                     </label>
                     <label class="catalog-filter-field">
-                        <span class="rf-range-label">Envolvente RF calculada (km)
+                        <span class="rf-range-label">Envolvente RF de diseño (km)
                             <span class="rf-formula-trigger" tabindex="0" aria-describedby="gsRfRangeHint" aria-label="Ver fórmula de la envolvente RF">
                                 <span aria-hidden="true">?</span>
                                 <span class="rf-formula-tooltip" id="gsRfRangeHint" role="tooltip">
                                     <span class="rf-formula-tooltip__title">Envolvente RF · espacio libre</span>
-                                    <span class="rf-formula" aria-label="R en kilómetros es diez elevado a Ptx más Gtx más Grx menos Prx mínimo menos 32,44 menos veinte por logaritmo decimal de f en megahercios, todo dividido entre veinte.">
-                                        <i>R</i> <span>(km)</span> = 10<sup>(<i>P</i><sub>tx</sub> + <i>G</i><sub>tx</sub> + <i>G</i><sub>rx</sub> − <i>P</i><sub>rx,min</sub> − 32.44 − 20 log<sub>10</sub>(<i>f</i><sub>MHz</sub>)) / 20</sup>
+                                    <span class="rf-formula" aria-label="R en kilómetros depende de potencia, ganancias efectivas, pérdidas, sensibilidad y frecuencia.">
+                                        <i>R</i> <span>(km)</span> = 10<sup>(<i>P</i><sub>tx</sub> + <i>G</i><sub>tx,ef</sub> + <i>G</i><sub>rx,ref</sub> − <i>L</i> − <i>P</i><sub>rx,min</sub> − 32.44 − 20 log<sub>10</sub>(<i>f</i><sub>MHz</sub>)) / 20</sup>
                                     </span>
-                                    <span class="rf-formula-tooltip__note">Radio teórico para el umbral de potencia RX configurado.</span>
+                                    <span class="rf-formula-tooltip__note">Envolvente de planificación recíproca. Un SNR real exige el perfil RF del satélite.</span>
                                 </span>
                             </span>
                         </span>
                         <input id="gsCoverageRadiusInput" type="number" readonly value="—" aria-describedby="gsRfRangeHint" />
                     </label>
+                    <div class="catalog-filter-field ground-station-rf-summary" id="gsRfSummary" aria-live="polite"></div>
+                </div>
+            </div>
+            <div class="ground-station-tab-panel" data-gs-tab-panel="antenna">
+                <div class="catalog-filter-grid ground-station-grid">
+                    <label class="catalog-filter-field"><span>Diámetro de plato (m)</span><input id="gsDishDiameterInput" type="number" min="0.01" step="0.01" value="1.2" /></label>
+                    <label class="catalog-filter-field"><span>Eficiencia de plato (0–1)</span><input id="gsDishEfficiencyInput" type="number" min="0.01" max="1" step="0.01" value="0.60" /></label>
+                    <label class="catalog-filter-field"><span>Polarización</span><select id="gsPolarizationInput"><option value="RHCP">RHCP</option><option value="LHCP">LHCP</option><option value="LINEAR">Lineal</option></select></label>
+                    <label class="catalog-filter-field"><span>Ángulo lineal (deg)</span><input id="gsPolarizationTiltInput" type="number" min="-180" max="180" step="0.1" value="0" /></label>
+                    <label class="catalog-filter-field"><span>Tipo de patrón</span><select id="gsPatternTypeInput"><option value="gaussian">Gaussiano</option><option value="cosine">cosⁿ</option></select></label>
+                    <label class="catalog-filter-field"><span>Lóbulos secundarios bajo principal (dB)</span><input id="gsSideLobeInput" type="number" min="0" max="120" step="0.1" value="25" /></label>
+                    <label class="catalog-filter-field"><span>HPBW azimut forzado (deg)</span><input id="gsHpbwAzInput" type="number" min="0.05" max="180" step="0.01" placeholder="Derivado del plato" /></label>
+                    <label class="catalog-filter-field"><span>HPBW elevación forzado (deg)</span><input id="gsHpbwElInput" type="number" min="0.05" max="180" step="0.01" placeholder="Derivado del plato" /></label>
+                    <label class="catalog-filter-field"><span>Ganancia TX</span><select id="gsTxGainModeInput"><option value="derived">Derivada del plato</option><option value="override">Forzar valor</option></select></label>
+                    <label class="catalog-filter-field"><span>Override G TX (dBi)</span><input id="gsTxGainInput" type="number" step="0.1" placeholder="Sólo si se fuerza" /></label>
+                    <label class="catalog-filter-field"><span>Ganancia RX</span><select id="gsRxGainModeInput"><option value="derived">Derivada del plato</option><option value="override">Forzar valor</option></select></label>
+                    <label class="catalog-filter-field"><span>Override G RX (dBi)</span><input id="gsRxGainInput" type="number" step="0.1" placeholder="Sólo si se fuerza" /></label>
                 </div>
             </div>
             <div class="ground-station-tab-panel" data-gs-tab-panel="radio">
                 <div class="catalog-filter-grid ground-station-grid">
                     <label class="catalog-filter-field">
-                        <span>Frecuencia (MHz)</span>
+                        <span>Unidad de frecuencia</span>
+                        <select id="gsFrequencyUnitInput"><option value="mhz">MHz</option><option value="hz">Hz</option></select>
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span id="gsFrequencyLabel">Frecuencia (MHz)</span>
                         <input id="gsFreqInput" type="number" step="0.1" min="1" value="2200" />
                     </label>
                     <label class="catalog-filter-field">
-                        <span>Potencia TX (dBm)</span>
+                        <span>Unidad potencia TX</span>
+                        <select id="gsTxPowerUnitInput"><option value="dbm">dBm</option><option value="w">W</option></select>
+                    </label>
+                    <label class="catalog-filter-field">
+                        <span id="gsTxPowerLabel">Potencia TX (dBm)</span>
                         <input id="gsTxPowerInput" type="number" step="0.1" value="38" />
-                    </label>
-                    <label class="catalog-filter-field">
-                        <span>Ganancia TX (dBi)</span>
-                        <input id="gsTxGainInput" type="number" step="0.1" value="18" />
-                    </label>
-                    <label class="catalog-filter-field">
-                        <span>Ganancia RX (dBi)</span>
-                        <input id="gsRxGainInput" type="number" step="0.1" value="21" />
                     </label>
                     <label class="catalog-filter-field">
                         <span>Potencia mínima RX (dBm)</span>
                         <input id="gsMinLinkPowerInput" type="number" step="0.1" value="-80" />
                     </label>
+                    <label class="catalog-filter-field"><span>Temperatura sistema Tsys (K)</span><input id="gsSystemTemperatureInput" type="number" min="1" step="1" value="500" /></label>
+                    <label class="catalog-filter-field"><span>Ancho de banda RX (Hz)</span><input id="gsBandwidthInput" type="number" min="1" step="1" value="25000" /></label>
+                    <label class="catalog-filter-field"><span>SNR requerida (dB)</span><input id="gsRequiredSnrInput" type="number" step="0.1" value="0" /></label>
+                    <label class="catalog-filter-field"><span>Pérdidas atmosféricas (dB)</span><input id="gsAtmosphericLossInput" type="number" min="0" step="0.1" value="0.5" /></label>
+                    <label class="catalog-filter-field"><span>Pérdidas por lluvia (dB)</span><input id="gsRainLossInput" type="number" min="0" step="0.1" value="0" /></label>
+                    <label class="catalog-filter-field"><span>Cables (dB)</span><input id="gsCableLossInput" type="number" min="0" step="0.1" value="1" /></label>
+                    <label class="catalog-filter-field"><span>Conectores (dB)</span><input id="gsConnectorLossInput" type="number" min="0" step="0.1" value="0.5" /></label>
                 </div>
+            </div>
+            <div class="ground-station-tab-panel" data-gs-tab-panel="pointing">
+                <div class="catalog-filter-grid ground-station-grid">
+                    <label class="catalog-filter-field"><span>Modo de operación</span><select id="gsOperationModeInput"><option value="tracking">Seguimiento</option><option value="scan">Barrido</option><option value="stationary">Estacionario</option></select></label>
+                    <label class="catalog-filter-field"><span>Error RMS de apuntado (milideg)</span><input id="gsPointingRmsInput" type="number" min="0" step="1" value="50" /></label>
+                    <label class="catalog-filter-field"><span>Boresight azimut (deg)</span><input id="gsBoresightAzInput" type="number" min="-180" max="180" step="0.1" value="0" /></label>
+                    <label class="catalog-filter-field"><span>Boresight elevación (deg)</span><input id="gsBoresightElInput" type="number" min="0" max="90" step="0.1" value="90" /></label>
+                    <label class="catalog-filter-field"><span>Azimut mecánico mínimo (deg)</span><input id="gsMechanicalAzMinInput" type="number" min="-180" max="180" step="0.1" value="-180" /></label>
+                    <label class="catalog-filter-field"><span>Azimut mecánico máximo (deg)</span><input id="gsMechanicalAzMaxInput" type="number" min="-180" max="180" step="0.1" value="180" /></label>
+                    <label class="catalog-filter-field"><span>Elevación mecánica mínima (deg)</span><input id="gsMechanicalElMinInput" type="number" min="0" max="90" step="0.1" value="0" /></label>
+                    <label class="catalog-filter-field"><span>Elevación mecánica máxima (deg)</span><input id="gsMechanicalElMaxInput" type="number" min="0" max="90" step="0.1" value="90" /></label>
+                </div>
+                <p class="ground-station-pointing-note">Seguimiento orienta el haz al objetivo; barrido muestra la envolvente mecánica sin inventar un calendario de scan; estacionario mantiene el boresight indicado.</p>
             </div>
             <div class="ground-station-tab-panel" data-gs-tab-panel="visual">
                 <div class="catalog-filter-grid ground-station-grid">
@@ -1652,12 +1692,42 @@ export function setupObjectSidebar({
     const gsAltInput = groundStationModal.querySelector("#gsAltInput");
     const gsTimeZoneInput = groundStationModal.querySelector("#gsTimeZoneInput");
     const gsMaskInput = groundStationModal.querySelector("#gsMaskInput");
+    const gsDishDiameterInput = groundStationModal.querySelector("#gsDishDiameterInput");
+    const gsDishEfficiencyInput = groundStationModal.querySelector("#gsDishEfficiencyInput");
+    const gsPolarizationInput = groundStationModal.querySelector("#gsPolarizationInput");
+    const gsPolarizationTiltInput = groundStationModal.querySelector("#gsPolarizationTiltInput");
+    const gsPatternTypeInput = groundStationModal.querySelector("#gsPatternTypeInput");
+    const gsSideLobeInput = groundStationModal.querySelector("#gsSideLobeInput");
+    const gsHpbwAzInput = groundStationModal.querySelector("#gsHpbwAzInput");
+    const gsHpbwElInput = groundStationModal.querySelector("#gsHpbwElInput");
+    const gsFrequencyUnitInput = groundStationModal.querySelector("#gsFrequencyUnitInput");
+    const gsFrequencyLabel = groundStationModal.querySelector("#gsFrequencyLabel");
     const gsFreqInput = groundStationModal.querySelector("#gsFreqInput");
+    const gsTxPowerUnitInput = groundStationModal.querySelector("#gsTxPowerUnitInput");
+    const gsTxPowerLabel = groundStationModal.querySelector("#gsTxPowerLabel");
     const gsTxPowerInput = groundStationModal.querySelector("#gsTxPowerInput");
+    const gsTxGainModeInput = groundStationModal.querySelector("#gsTxGainModeInput");
     const gsTxGainInput = groundStationModal.querySelector("#gsTxGainInput");
+    const gsRxGainModeInput = groundStationModal.querySelector("#gsRxGainModeInput");
     const gsRxGainInput = groundStationModal.querySelector("#gsRxGainInput");
     const gsMinLinkPowerInput = groundStationModal.querySelector("#gsMinLinkPowerInput");
+    const gsSystemTemperatureInput = groundStationModal.querySelector("#gsSystemTemperatureInput");
+    const gsBandwidthInput = groundStationModal.querySelector("#gsBandwidthInput");
+    const gsRequiredSnrInput = groundStationModal.querySelector("#gsRequiredSnrInput");
+    const gsAtmosphericLossInput = groundStationModal.querySelector("#gsAtmosphericLossInput");
+    const gsRainLossInput = groundStationModal.querySelector("#gsRainLossInput");
+    const gsCableLossInput = groundStationModal.querySelector("#gsCableLossInput");
+    const gsConnectorLossInput = groundStationModal.querySelector("#gsConnectorLossInput");
+    const gsOperationModeInput = groundStationModal.querySelector("#gsOperationModeInput");
+    const gsPointingRmsInput = groundStationModal.querySelector("#gsPointingRmsInput");
+    const gsBoresightAzInput = groundStationModal.querySelector("#gsBoresightAzInput");
+    const gsBoresightElInput = groundStationModal.querySelector("#gsBoresightElInput");
+    const gsMechanicalAzMinInput = groundStationModal.querySelector("#gsMechanicalAzMinInput");
+    const gsMechanicalAzMaxInput = groundStationModal.querySelector("#gsMechanicalAzMaxInput");
+    const gsMechanicalElMinInput = groundStationModal.querySelector("#gsMechanicalElMinInput");
+    const gsMechanicalElMaxInput = groundStationModal.querySelector("#gsMechanicalElMaxInput");
     const gsCoverageRadiusInput = groundStationModal.querySelector("#gsCoverageRadiusInput");
+    const gsRfSummary = groundStationModal.querySelector("#gsRfSummary");
     const gsPointSizeInput = groundStationModal.querySelector("#gsPointSizeInput");
     const gsPointSymbolInput = groundStationModal.querySelector("#gsPointSymbolInput");
     const gsPointColorInput = groundStationModal.querySelector("#gsPointColorInput");
@@ -1696,11 +1766,31 @@ export function setupObjectSidebar({
     addStationRangeControl(gsLonInput, { min: -180, max: 180, step: 0.01 });
     addStationRangeControl(gsAltInput, { min: 0, max: 12000, step: 10 });
     addStationRangeControl(gsMaskInput, { min: 0, max: 90, step: 0.5 });
+    addStationRangeControl(gsDishDiameterInput, { min: 0.1, max: 15, step: 0.05 });
+    addStationRangeControl(gsDishEfficiencyInput, { min: 0.1, max: 1, step: 0.01 });
+    addStationRangeControl(gsPolarizationTiltInput, { min: -180, max: 180, step: 0.5 });
+    addStationRangeControl(gsSideLobeInput, { min: 0, max: 60, step: 0.5 });
+    addStationRangeControl(gsHpbwAzInput, { min: 0.05, max: 90, step: 0.05 });
+    addStationRangeControl(gsHpbwElInput, { min: 0.05, max: 90, step: 0.05 });
     addStationRangeControl(gsFreqInput, { min: 100, max: 6000, step: 1 });
     addStationRangeControl(gsTxPowerInput, { min: -30, max: 80, step: 0.5 });
     addStationRangeControl(gsTxGainInput, { min: -10, max: 60, step: 0.5 });
     addStationRangeControl(gsRxGainInput, { min: -10, max: 60, step: 0.5 });
     addStationRangeControl(gsMinLinkPowerInput, { min: -160, max: -20, step: 0.5 });
+    addStationRangeControl(gsSystemTemperatureInput, { min: 10, max: 3000, step: 10 });
+    addStationRangeControl(gsBandwidthInput, { min: 1000, max: 1000000, step: 1000 });
+    addStationRangeControl(gsRequiredSnrInput, { min: -20, max: 40, step: 0.5 });
+    addStationRangeControl(gsAtmosphericLossInput, { min: 0, max: 30, step: 0.1 });
+    addStationRangeControl(gsRainLossInput, { min: 0, max: 30, step: 0.1 });
+    addStationRangeControl(gsCableLossInput, { min: 0, max: 30, step: 0.1 });
+    addStationRangeControl(gsConnectorLossInput, { min: 0, max: 30, step: 0.1 });
+    addStationRangeControl(gsPointingRmsInput, { min: 0, max: 10000, step: 10 });
+    addStationRangeControl(gsBoresightAzInput, { min: -180, max: 180, step: 1 });
+    addStationRangeControl(gsBoresightElInput, { min: 0, max: 90, step: 0.5 });
+    addStationRangeControl(gsMechanicalAzMinInput, { min: -180, max: 180, step: 1 });
+    addStationRangeControl(gsMechanicalAzMaxInput, { min: -180, max: 180, step: 1 });
+    addStationRangeControl(gsMechanicalElMinInput, { min: 0, max: 90, step: 0.5 });
+    addStationRangeControl(gsMechanicalElMaxInput, { min: 0, max: 90, step: 0.5 });
     addStationRangeControl(gsPointSizeInput, { min: 4, max: 48, step: 1 });
     const syncStationRangeControls = () => {
         groundStationModal.querySelectorAll(".ground-station-number-control").forEach((control) => {
@@ -1711,6 +1801,71 @@ export function setupObjectSidebar({
                 range.value = String(Math.min(Number(range.max), Math.max(Number(range.min), value)));
             }
         });
+    };
+
+    const getTxPowerUnit = () => gsTxPowerUnitInput?.value === "w" ? "w" : "dbm";
+    const getFrequencyUnit = () => gsFrequencyUnitInput?.value === "hz" ? "hz" : "mhz";
+    const txPowerToDbm = (value, unit) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return null;
+        if (unit !== "w") return numeric;
+        return numeric > 0 ? 10 * Math.log10(numeric * 1000) : null;
+    };
+    const dbmToTxPower = (value, unit) => unit === "w" ? 10 ** ((value - 30) / 10) : value;
+    const syncTxPowerPresentation = ({ convert = false } = {}) => {
+        const nextUnit = getTxPowerUnit();
+        const previousUnit = gsTxPowerInput?.dataset.powerUnit || nextUnit;
+        if (convert && gsTxPowerInput && previousUnit !== nextUnit) {
+            const dbm = txPowerToDbm(gsTxPowerInput.value, previousUnit);
+            if (dbm !== null) {
+                gsTxPowerInput.value = String(nextUnit === "w" ? Number(dbmToTxPower(dbm, nextUnit).toPrecision(7)) : Number(dbm.toFixed(2)));
+            }
+        }
+        if (gsTxPowerInput) {
+            gsTxPowerInput.dataset.powerUnit = nextUnit;
+            gsTxPowerInput.min = nextUnit === "w" ? "0.001" : "-30";
+            gsTxPowerInput.max = nextUnit === "w" ? "1000" : "80";
+            gsTxPowerInput.step = nextUnit === "w" ? "0.001" : "0.1";
+            const range = gsTxPowerInput.parentElement?.querySelector("input[type='range']");
+            if (range) {
+                range.min = nextUnit === "w" ? "0.001" : "-30";
+                range.max = nextUnit === "w" ? "1000" : "80";
+                range.step = nextUnit === "w" ? "0.001" : "0.5";
+            }
+        }
+        if (gsTxPowerLabel) gsTxPowerLabel.textContent = `Potencia TX (${nextUnit === "w" ? "W" : "dBm"})`;
+        syncStationRangeControls();
+    };
+    const frequencyToMhz = (value, unit) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return null;
+        return unit === "hz" ? numeric / 1e6 : numeric;
+    };
+    const mhzToFrequency = (value, unit) => unit === "hz" ? value * 1e6 : value;
+    const syncFrequencyPresentation = ({ convert = false } = {}) => {
+        const nextUnit = getFrequencyUnit();
+        const previousUnit = gsFreqInput?.dataset.frequencyUnit || nextUnit;
+        if (convert && gsFreqInput && previousUnit !== nextUnit) {
+            const mhz = frequencyToMhz(gsFreqInput.value, previousUnit);
+            if (mhz !== null) {
+                const converted = mhzToFrequency(mhz, nextUnit);
+                gsFreqInput.value = String(nextUnit === "hz" ? Math.round(converted) : Number(converted.toFixed(6)));
+            }
+        }
+        if (gsFreqInput) {
+            gsFreqInput.dataset.frequencyUnit = nextUnit;
+            gsFreqInput.min = nextUnit === "hz" ? "1000000" : "1";
+            gsFreqInput.max = nextUnit === "hz" ? "6000000000" : "6000";
+            gsFreqInput.step = nextUnit === "hz" ? "1000000" : "0.1";
+            const range = gsFreqInput.parentElement?.querySelector("input[type='range']");
+            if (range) {
+                range.min = nextUnit === "hz" ? "1000000" : "100";
+                range.max = nextUnit === "hz" ? "6000000000" : "6000";
+                range.step = nextUnit === "hz" ? "1000000" : "1";
+            }
+        }
+        if (gsFrequencyLabel) gsFrequencyLabel.textContent = `Frecuencia (${nextUnit === "hz" ? "Hz" : "MHz"})`;
+        syncStationRangeControls();
     };
 
     const setGroundStationTab = (tabId) => {
@@ -2030,6 +2185,15 @@ export function setupObjectSidebar({
     }
 
     function readGroundStationEditorPayload() {
+        const optionalNumber = (input) => {
+            const text = String(input?.value ?? "").trim();
+            return text === "" ? null : Number(text);
+        };
+        const frequencyUnit = getFrequencyUnit();
+        const frequency = Number(gsFreqInput?.value);
+        const frequencyMhz = frequencyToMhz(frequency, frequencyUnit);
+        const txPowerUnit = getTxPowerUnit();
+        const txPower = Number(gsTxPowerInput?.value);
         return {
             name: String(gsNameInput?.value || "").trim() || "Estacion terrestre",
             latitude_deg: Number(gsLatInput?.value),
@@ -2037,11 +2201,40 @@ export function setupObjectSidebar({
             altitude_m: Number(gsAltInput?.value),
             time_zone: String(gsTimeZoneInput?.value || "UTC").trim() || "UTC",
             min_elevation_deg: Number(gsMaskInput?.value),
-            frequency_mhz: Number(gsFreqInput?.value),
-            tx_power_dbm: Number(gsTxPowerInput?.value),
-            tx_gain_dbi: Number(gsTxGainInput?.value),
-            rx_gain_dbi: Number(gsRxGainInput?.value),
+            antenna_diameter_m: Number(gsDishDiameterInput?.value),
+            antenna_efficiency: Number(gsDishEfficiencyInput?.value),
+            polarization: String(gsPolarizationInput?.value || "RHCP"),
+            polarization_tilt_deg: Number(gsPolarizationTiltInput?.value),
+            pattern_type: String(gsPatternTypeInput?.value || "gaussian"),
+            side_lobe_level_db: Number(gsSideLobeInput?.value),
+            hpbw_azimuth_deg: optionalNumber(gsHpbwAzInput),
+            hpbw_elevation_deg: optionalNumber(gsHpbwElInput),
+            frequency_unit: frequencyUnit,
+            frequency_mhz: frequencyMhz,
+            frequency_hz: frequencyMhz === null ? null : frequencyMhz * 1e6,
+            tx_power_unit: txPowerUnit,
+            tx_power_dbm: txPowerUnit === "dbm" ? txPower : null,
+            tx_power_w: txPowerUnit === "w" ? txPower : null,
+            tx_gain_mode: String(gsTxGainModeInput?.value || "derived"),
+            tx_gain_override_dbi: optionalNumber(gsTxGainInput),
+            rx_gain_mode: String(gsRxGainModeInput?.value || "derived"),
+            rx_gain_override_dbi: optionalNumber(gsRxGainInput),
             min_link_power_dbm: Number(gsMinLinkPowerInput?.value),
+            system_temperature_k: Number(gsSystemTemperatureInput?.value),
+            receiver_bandwidth_hz: Number(gsBandwidthInput?.value),
+            required_snr_db: Number(gsRequiredSnrInput?.value),
+            atmospheric_loss_db: Number(gsAtmosphericLossInput?.value),
+            rain_loss_db: Number(gsRainLossInput?.value),
+            cable_loss_db: Number(gsCableLossInput?.value),
+            connector_loss_db: Number(gsConnectorLossInput?.value),
+            operation_mode: String(gsOperationModeInput?.value || "tracking"),
+            pointing_rms_mdeg: Number(gsPointingRmsInput?.value),
+            boresight_azimuth_deg: Number(gsBoresightAzInput?.value),
+            boresight_elevation_deg: Number(gsBoresightElInput?.value),
+            mechanical_azimuth_min_deg: Number(gsMechanicalAzMinInput?.value),
+            mechanical_azimuth_max_deg: Number(gsMechanicalAzMaxInput?.value),
+            mechanical_elevation_min_deg: Number(gsMechanicalElMinInput?.value),
+            mechanical_elevation_max_deg: Number(gsMechanicalElMaxInput?.value),
             coverage_radius_km: Number(gsCoverageRadiusInput?.value),
             point_size_px: Number(gsPointSizeInput?.value),
             point_symbol: String(gsPointSymbolInput?.value || "circle").trim(),
@@ -2051,9 +2244,21 @@ export function setupObjectSidebar({
     }
 
     function syncGroundStationPreview() {
+        const updateGainOverrideState = () => {
+            if (gsTxGainInput) gsTxGainInput.disabled = gsTxGainModeInput?.value !== "override";
+            if (gsRxGainInput) gsRxGainInput.disabled = gsRxGainModeInput?.value !== "override";
+        };
+        updateGainOverrideState();
         const preview = onPreviewGroundStation(readGroundStationEditorPayload(), { editing: Boolean(editingGroundStationId) });
         if (gsCoverageRadiusInput && Number.isFinite(Number(preview?.radio_range_km))) {
             gsCoverageRadiusInput.value = Number(preview.radio_range_km).toFixed(1);
+        }
+        if (gsRfSummary) {
+            const rf = preview?.rf;
+            const format = (value, digits = 1) => Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—";
+            gsRfSummary.textContent = rf
+                ? `Gmáx ${format(rf.gain_max_dbi)} dBi · HPBW ${format(rf.hpbw_azimuth_deg, 2)}° / ${format(rf.hpbw_elevation_deg, 2)}° · G/T ${format(rf.system_gt_db_per_k)} dB/K · pérdidas ${format(rf.total_system_loss_db)} dB · huella ${format(preview.ground_footprint_radius_km)} km`
+                : "Introduce una ubicación válida para calcular la estación RF.";
         }
     }
 
@@ -2078,11 +2283,46 @@ export function setupObjectSidebar({
             gsAltInput.value = String(Number(current.altitude_m ?? 0));
             gsTimeZoneInput.value = String(current.time_zone || "UTC");
             gsMaskInput.value = String(Number(current.min_elevation_deg ?? 10));
-            gsFreqInput.value = String(Number(current.frequency_mhz ?? 2200));
-            gsTxPowerInput.value = String(Number(current.tx_power_dbm ?? 38));
-            gsTxGainInput.value = String(Number(current.tx_gain_dbi ?? 18));
-            gsRxGainInput.value = String(Number(current.rx_gain_dbi ?? 21));
+            gsDishDiameterInput.value = String(Number(current.antenna_diameter_m ?? 1.2));
+            gsDishEfficiencyInput.value = String(Number(current.antenna_efficiency ?? 0.6));
+            gsPolarizationInput.value = String(current.polarization || "RHCP");
+            gsPolarizationTiltInput.value = String(Number(current.polarization_tilt_deg ?? 0));
+            gsPatternTypeInput.value = String(current.pattern_type || "gaussian");
+            gsSideLobeInput.value = String(Number(current.side_lobe_level_db ?? 25));
+            const optionalInputValue = (value) => value !== null && value !== undefined
+                && !(typeof value === "string" && value.trim() === "") && Number.isFinite(Number(value))
+                ? String(Number(value))
+                : "";
+            gsHpbwAzInput.value = optionalInputValue(current.hpbw_azimuth_deg);
+            gsHpbwElInput.value = optionalInputValue(current.hpbw_elevation_deg);
+            gsFrequencyUnitInput.value = current.frequency_unit === "hz" ? "hz" : "mhz";
+            gsFreqInput.value = gsFrequencyUnitInput.value === "hz"
+                ? String(Math.round(Number(current.frequency_hz ?? (Number(current.frequency_mhz ?? 2200) * 1e6))))
+                : String(Number(current.frequency_mhz ?? 2200));
+            gsTxPowerUnitInput.value = current.tx_power_unit === "w" ? "w" : "dbm";
+            gsTxPowerInput.value = gsTxPowerUnitInput.value === "w"
+                ? String(Number(current.tx_power_w ?? (10 ** ((Number(current.tx_power_dbm ?? 38) - 30) / 10))))
+                : String(Number(current.tx_power_dbm ?? 38));
+            gsTxGainModeInput.value = String(current.tx_gain_mode || "derived");
+            gsTxGainInput.value = optionalInputValue(current.tx_gain_override_dbi);
+            gsRxGainModeInput.value = String(current.rx_gain_mode || "derived");
+            gsRxGainInput.value = optionalInputValue(current.rx_gain_override_dbi);
             gsMinLinkPowerInput.value = String(Number(current.min_link_power_dbm ?? -80));
+            gsSystemTemperatureInput.value = String(Number(current.system_temperature_k ?? 500));
+            gsBandwidthInput.value = String(Number(current.receiver_bandwidth_hz ?? 25000));
+            gsRequiredSnrInput.value = String(Number(current.required_snr_db ?? 0));
+            gsAtmosphericLossInput.value = String(Number(current.atmospheric_loss_db ?? 0.5));
+            gsRainLossInput.value = String(Number(current.rain_loss_db ?? 0));
+            gsCableLossInput.value = String(Number(current.cable_loss_db ?? 1));
+            gsConnectorLossInput.value = String(Number(current.connector_loss_db ?? 0.5));
+            gsOperationModeInput.value = String(current.operation_mode || "tracking");
+            gsPointingRmsInput.value = String(Number(current.pointing_rms_mdeg ?? 50));
+            gsBoresightAzInput.value = String(Number(current.boresight_azimuth_deg ?? 0));
+            gsBoresightElInput.value = String(Number(current.boresight_elevation_deg ?? 90));
+            gsMechanicalAzMinInput.value = String(Number(current.mechanical_azimuth_min_deg ?? -180));
+            gsMechanicalAzMaxInput.value = String(Number(current.mechanical_azimuth_max_deg ?? 180));
+            gsMechanicalElMinInput.value = String(Number(current.mechanical_elevation_min_deg ?? 0));
+            gsMechanicalElMaxInput.value = String(Number(current.mechanical_elevation_max_deg ?? 90));
             gsCoverageRadiusInput.value = String(Number(current.radio_range_km ?? current.coverage_radius_km ?? 0));
             gsPointSizeInput.value = String(Number(current.point_size_px ?? 11));
             gsPointSymbolInput.value = String(current.point_symbol || "circle");
@@ -2095,11 +2335,38 @@ export function setupObjectSidebar({
             gsAltInput.value = "667";
             gsTimeZoneInput.value = "UTC";
             gsMaskInput.value = "10";
+            gsDishDiameterInput.value = "1.2";
+            gsDishEfficiencyInput.value = "0.6";
+            gsPolarizationInput.value = "RHCP";
+            gsPolarizationTiltInput.value = "0";
+            gsPatternTypeInput.value = "gaussian";
+            gsSideLobeInput.value = "25";
+            gsHpbwAzInput.value = "";
+            gsHpbwElInput.value = "";
+            gsFrequencyUnitInput.value = "mhz";
             gsFreqInput.value = "2200";
+            gsTxPowerUnitInput.value = "dbm";
             gsTxPowerInput.value = "38";
-            gsTxGainInput.value = "18";
-            gsRxGainInput.value = "21";
+            gsTxGainModeInput.value = "derived";
+            gsTxGainInput.value = "";
+            gsRxGainModeInput.value = "derived";
+            gsRxGainInput.value = "";
             gsMinLinkPowerInput.value = "-80";
+            gsSystemTemperatureInput.value = "500";
+            gsBandwidthInput.value = "25000";
+            gsRequiredSnrInput.value = "0";
+            gsAtmosphericLossInput.value = "0.5";
+            gsRainLossInput.value = "0";
+            gsCableLossInput.value = "1";
+            gsConnectorLossInput.value = "0.5";
+            gsOperationModeInput.value = "tracking";
+            gsPointingRmsInput.value = "50";
+            gsBoresightAzInput.value = "0";
+            gsBoresightElInput.value = "90";
+            gsMechanicalAzMinInput.value = "-180";
+            gsMechanicalAzMaxInput.value = "180";
+            gsMechanicalElMinInput.value = "0";
+            gsMechanicalElMaxInput.value = "90";
             gsCoverageRadiusInput.value = "—";
             gsPointSizeInput.value = "11";
             gsPointSymbolInput.value = "circle";
@@ -2107,18 +2374,15 @@ export function setupObjectSidebar({
             gsCoverageVisibleInput.checked = true;
         }
 
+        syncFrequencyPresentation();
+        syncTxPowerPresentation();
         syncStationRangeControls();
         setGroundStationTab("general");
 
         groundStationModal.classList.add("open");
         syncGroundStationPreview();
         window.dispatchEvent(new CustomEvent("orbit:ground-station-open", {
-            detail: { editing: isEditing, values: {
-                name: gsNameInput.value, latitude_deg: gsLatInput.value, longitude_deg: gsLonInput.value, altitude_m: gsAltInput.value, time_zone: gsTimeZoneInput.value,
-                min_elevation_deg: gsMaskInput.value, frequency_mhz: gsFreqInput.value, tx_power_dbm: gsTxPowerInput.value, tx_gain_dbi: gsTxGainInput.value,
-                rx_gain_dbi: gsRxGainInput.value, min_link_power_dbm: gsMinLinkPowerInput.value, coverage_radius_km: gsCoverageRadiusInput.value, point_size_px: gsPointSizeInput.value,
-                point_symbol: gsPointSymbolInput.value, point_color: gsPointColorInput.value, coverage_visible: gsCoverageVisibleInput.checked
-            } }
+            detail: { editing: isEditing, values: readGroundStationEditorPayload() }
         }));
         gsNameInput?.focus();
     }
@@ -2173,6 +2437,55 @@ export function setupObjectSidebar({
         if (!Number.isFinite(payload.longitude_deg) || payload.longitude_deg < -180 || payload.longitude_deg > 180) {
             showErrorPopup("Longitud invalida para la estacion.");
             return;
+        }
+        if (!Number.isFinite(payload.antenna_diameter_m) || payload.antenna_diameter_m <= 0
+            || !Number.isFinite(payload.antenna_efficiency) || payload.antenna_efficiency <= 0 || payload.antenna_efficiency > 1) {
+            showErrorPopup("Introduce un diámetro de plato positivo y una eficiencia entre 0 y 1.");
+            return;
+        }
+        if (!Number.isFinite(payload.frequency_mhz) || payload.frequency_mhz <= 0
+            || !Number.isFinite(payload.system_temperature_k) || payload.system_temperature_k <= 0
+            || !Number.isFinite(payload.receiver_bandwidth_hz) || payload.receiver_bandwidth_hz <= 0) {
+            showErrorPopup("Frecuencia, temperatura de sistema y ancho de banda deben ser positivos.");
+            return;
+        }
+        if ((payload.tx_power_unit === "w" && (!Number.isFinite(payload.tx_power_w) || payload.tx_power_w <= 0))
+            || (payload.tx_power_unit !== "w" && !Number.isFinite(payload.tx_power_dbm))) {
+            showErrorPopup("La potencia TX debe ser un valor válido en la unidad seleccionada.");
+            return;
+        }
+        if (!Number.isFinite(payload.mechanical_elevation_min_deg)
+            || !Number.isFinite(payload.mechanical_elevation_max_deg)
+            || payload.mechanical_elevation_min_deg > payload.mechanical_elevation_max_deg) {
+            showErrorPopup("Los límites mecánicos de elevación no son válidos.");
+            return;
+        }
+
+        if (!Number.isFinite(payload.mechanical_azimuth_min_deg)
+            || !Number.isFinite(payload.mechanical_azimuth_max_deg)) {
+            showErrorPopup("Los límites mecánicos de azimut no son válidos.");
+            return;
+        }
+        if (payload.min_elevation_deg > payload.mechanical_elevation_max_deg) {
+            showErrorPopup("La máscara de elevación no puede superar el límite mecánico máximo.");
+            return;
+        }
+        if (payload.operation_mode === "stationary") {
+            const normalizeAzimuth = (value) => ((Number(value) + 180) % 360 + 360) % 360 - 180;
+            const boreAzimuth = normalizeAzimuth(payload.boresight_azimuth_deg);
+            const minAzimuth = normalizeAzimuth(payload.mechanical_azimuth_min_deg);
+            const maxAzimuth = normalizeAzimuth(payload.mechanical_azimuth_max_deg);
+            const fullAzimuthTravel = Math.abs(minAzimuth - maxAzimuth) < 1e-9;
+            const azimuthReachable = fullAzimuthTravel
+                || (minAzimuth <= maxAzimuth
+                    ? boreAzimuth >= minAzimuth && boreAzimuth <= maxAzimuth
+                    : boreAzimuth >= minAzimuth || boreAzimuth <= maxAzimuth);
+            const elevationReachable = payload.boresight_elevation_deg >= payload.mechanical_elevation_min_deg
+                && payload.boresight_elevation_deg <= payload.mechanical_elevation_max_deg;
+            if (!elevationReachable || !azimuthReachable) {
+                showErrorPopup("El boresight estacionario debe estar dentro de los límites mecánicos de la montura.");
+                return;
+            }
         }
 
         if (editingGroundStationId) {
@@ -2472,7 +2785,7 @@ export function setupObjectSidebar({
         // Keep the orbital-analysis and optional manual-edit actions inside
         // the viewport instead of letting the last entry slip under the
         // simulation dock.
-        const menuHeight = isEarth ? 158 : (isCelestialBody ? 166 : (isGroundStation ? 162 : (isManualOrbit ? 394 : 356)));
+        const menuHeight = isEarth ? 158 : (isCelestialBody ? 166 : (isGroundStation ? 198 : (isManualOrbit ? 394 : 356)));
         const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
         const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
 
@@ -2635,9 +2948,21 @@ export function setupObjectSidebar({
     groundStationCreateBtn?.addEventListener("click", () => {
         submitGroundStation();
     });
+    gsTxPowerUnitInput?.addEventListener("change", () => {
+        syncTxPowerPresentation({ convert: true });
+        if (groundStationModal.classList.contains("open")) syncGroundStationPreview();
+    });
+    gsFrequencyUnitInput?.addEventListener("change", () => {
+        syncFrequencyPresentation({ convert: true });
+        if (groundStationModal.classList.contains("open")) syncGroundStationPreview();
+    });
     [
         gsNameInput, gsLatInput, gsLonInput, gsAltInput, gsTimeZoneInput, gsMaskInput,
-        gsFreqInput, gsTxPowerInput, gsTxGainInput, gsRxGainInput, gsMinLinkPowerInput,
+        gsDishDiameterInput, gsDishEfficiencyInput, gsPolarizationInput, gsPolarizationTiltInput, gsPatternTypeInput, gsSideLobeInput, gsHpbwAzInput, gsHpbwElInput,
+        gsFrequencyUnitInput, gsFreqInput, gsTxPowerUnitInput, gsTxPowerInput, gsTxGainModeInput, gsTxGainInput, gsRxGainModeInput, gsRxGainInput, gsMinLinkPowerInput,
+        gsSystemTemperatureInput, gsBandwidthInput, gsRequiredSnrInput, gsAtmosphericLossInput, gsRainLossInput, gsCableLossInput, gsConnectorLossInput,
+        gsOperationModeInput, gsPointingRmsInput, gsBoresightAzInput, gsBoresightElInput,
+        gsMechanicalAzMinInput, gsMechanicalAzMaxInput, gsMechanicalElMinInput, gsMechanicalElMaxInput,
         gsPointSizeInput, gsPointSymbolInput, gsPointColorInput, gsCoverageVisibleInput
     ].filter(Boolean).forEach((input) => {
         input.addEventListener("input", () => {
@@ -3059,6 +3384,16 @@ export function setupObjectSidebar({
             }
             closeContextMenu();
             onRequestEditManualOrbit?.(targetId);
+            return;
+        }
+        if (action === "export-station-geojson") {
+            if (!targetId || String(getLayerType?.(targetId) || "").toUpperCase() !== "GROUND_STATION") {
+                return;
+            }
+            closeContextMenu();
+            window.dispatchEvent(new CustomEvent("orbit:ground-stations-export-geojson", {
+                detail: { stationId: targetId, source: String(detail?.source || "layer") }
+            }));
             return;
         }
         if (action === "propagated-parameters") {
@@ -4024,8 +4359,36 @@ export function setupObjectSidebar({
 
     window.addEventListener("orbit:ground-station-submit", (event) => {
         const values = event.detail || {};
-        const inputs = { name: gsNameInput, latitude_deg: gsLatInput, longitude_deg: gsLonInput, altitude_m: gsAltInput, time_zone: gsTimeZoneInput, min_elevation_deg: gsMaskInput, frequency_mhz: gsFreqInput, tx_power_dbm: gsTxPowerInput, tx_gain_dbi: gsTxGainInput, rx_gain_dbi: gsRxGainInput, min_link_power_dbm: gsMinLinkPowerInput, coverage_radius_km: gsCoverageRadiusInput, point_size_px: gsPointSizeInput, point_symbol: gsPointSymbolInput, point_color: gsPointColorInput };
+        const inputs = { name: gsNameInput, latitude_deg: gsLatInput, longitude_deg: gsLonInput, altitude_m: gsAltInput, time_zone: gsTimeZoneInput, min_elevation_deg: gsMaskInput, tx_gain_dbi: gsTxGainInput, rx_gain_dbi: gsRxGainInput, min_link_power_dbm: gsMinLinkPowerInput, coverage_radius_km: gsCoverageRadiusInput, point_size_px: gsPointSizeInput, point_symbol: gsPointSymbolInput, point_color: gsPointColorInput };
         Object.entries(inputs).forEach(([key, input]) => { if (input && values[key] !== undefined) input.value = values[key]; });
+        if (gsFrequencyUnitInput) {
+            gsFrequencyUnitInput.value = values.frequency_unit === "hz" ? "hz" : "mhz";
+        }
+        if (gsFreqInput) {
+            const frequencyUnit = getFrequencyUnit();
+            const sourceMHz = Number(values.frequency_mhz);
+            const sourceHz = Number(values.frequency_hz);
+            if (frequencyUnit === "hz" && Number.isFinite(sourceHz)) {
+                gsFreqInput.value = String(sourceHz);
+            } else if (Number.isFinite(sourceMHz)) {
+                gsFreqInput.value = String(mhzToFrequency(sourceMHz, frequencyUnit));
+            }
+        }
+        if (gsTxPowerUnitInput) {
+            gsTxPowerUnitInput.value = values.tx_power_unit === "w" ? "w" : "dbm";
+        }
+        if (gsTxPowerInput) {
+            const powerUnit = getTxPowerUnit();
+            const sourceDbm = Number(values.tx_power_dbm);
+            const sourceWatts = Number(values.tx_power_w);
+            if (powerUnit === "w" && Number.isFinite(sourceWatts)) {
+                gsTxPowerInput.value = String(sourceWatts);
+            } else if (Number.isFinite(sourceDbm)) {
+                gsTxPowerInput.value = String(dbmToTxPower(sourceDbm, powerUnit));
+            }
+        }
+        syncFrequencyPresentation();
+        syncTxPowerPresentation();
         gsCoverageVisibleInput.checked = values.coverage_visible !== false;
         submitGroundStation();
     });

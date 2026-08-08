@@ -4,10 +4,43 @@
 
 | Method and route | Operation | Requirements |
 | --- | --- | --- |
-| `GET /api/aos-los` | Calculates accesses with query parameters. | `sat_id`, latitude and longitude; optional height, minimum elevation, interval and step. |
-| `POST /api/aos-los` | Calculates accesses with JSON body. | Source TLE, `station`, `start_time`, `end_time` and `step_seconds`. |
+| **GET /api/aos-los** | Calculates accesses from query parameters. | Satellite identifier, latitude and longitude; optional height, mask, interval, step, and mechanical limits. |
+| **POST /api/aos-los** | Calculates accesses from a JSON body. | TLE source, station, start/end time, and sampling step. |
 
-A station declares `lat_deg` between −90 and 90, `lon_deg` between −180 and 180,
-`height_m` between −1000 and 100000 and `min_elevation_deg` between 0 and 90. The output
-includes lift samples and AOS/LOS passes. Detection depends on the step of
-requested sampling; It is not a search for precision roots.
+## Station contract
+
+The **station** object contains geometry and operational limits:
+
+| Field | Unit | Rule |
+| --- | --- | --- |
+| **lat_deg**, **lon_deg** | degrees | Latitude from −90 to 90; longitude from −180 to 180. |
+| **height_m** | m | From −1,000 to 100,000. |
+| **min_elevation_deg** | degrees | Elevation mask from 0 to 90. |
+| **max_range_km** | km, optional | RF-envelope operational range gate supplied by the client; it is not a rendering property. |
+| **mechanical_elevation_min_deg**, **mechanical_elevation_max_deg** | degrees | From 0 to 90; minimum cannot exceed maximum. |
+| **mechanical_azimuth_min_deg**, **mechanical_azimuth_max_deg** | degrees | From −180 to 180; a range crossing north is valid. |
+| **operation_mode** | tracking, scan, or stationary | `tracking` follows the target; `scan` describes potential access within the mount; `stationary` retains a fixed beam. |
+| **boresight_azimuth_deg**, **boresight_elevation_deg** | degrees | Fixed beam direction. |
+| **beam_half_angle_deg** | degrees, optional | Compatibility value for older clients; if HPBW is absent, it supplies the reference circular half-width. |
+| **pattern_type** | gaussian or cosine | Continuous gain-falloff law for `stationary`. |
+| **hpbw_azimuth_deg**, **hpbw_elevation_deg** | degrees, optional | Full half-power widths; the API uses the compatibility value when they are absent. |
+| **side_lobe_level_db** | dB | Side-lobe loss floor for the simplified pattern. |
+
+The API does not receive the complete RF chain from the designer or a remote RF profile. The client calculates the reciprocal planning envelope from the station RF contract and supplies its boresight operational range gate as **max_range_km**, separately from any scene rendering cap. In `stationary`, the API reduces that gate using continuous pattern gain in every direction; HPBW only reports the −3 dB contour. In `tracking`, pointing gain is applied. In `scan`, the result is potential coverage: no schedule, dwell time, or scan law yet confirms acquisition.
+
+Consequently, this endpoint does not claim satellite SNR: real SNR requires effective EIRP, remote-terminal polarisation, and an entirely contained occupied signal: \(|\Delta f|+B_{\mathrm{signal}}/2\le B_{\mathrm{RX}}/2\). Those checks are performed by the client when a layer publishes a complete remote RF profile.
+
+## Relationship to GeoJSON export
+
+Ground-station
+[GeoJSON export](../../formats/ground-stations/interchange.md) does not
+serialise an <code>/api/aos-los</code> response: it starts from authored
+workspace configuration. The file therefore contains no elevation samples,
+AOS/LOS, range, SNR, or results dependent on a remote satellite. Those remain
+calculated API and client RF-model results, with physical instants in UTC.
+
+## Output and visibility criterion
+
+Each sample returns elevation and azimuth, plus `range_km`, `geometric_visible`, `rf_visible`, `operational_visible`, `pattern_loss_db`, and `directional_max_range_km`. A sample is visible when it passes the mask, mechanical limits, and submitted directional range gate. For a stationary station, `within_main_lobe` reports the HPBW −3 dB contour, but it is not a visibility wall: a direction outside that contour can retain pattern/side-lobe gain, although its operational range is smaller.
+
+The ephemeris is first computed at the requested step. When two consecutive samples change visibility, the API reevaluates the same propagator and ITRF geometry by bisection to bracket the AOS/LOS crossing to approximately 0.5 s. The step remains important: a complete pass between two samples may not be bracketed and published maximum elevation comes from profile samples. Response times are UTC; a station IANA time zone is a client presentation preference. See [Ground stations](../../user-guide/ground-stations.md) for the RF model, units, and interpretation limits.

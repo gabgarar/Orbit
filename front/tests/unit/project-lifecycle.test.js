@@ -162,6 +162,162 @@ test("project lifecycle serializes manual orbits separately and restores them wi
     }
 });
 
+test("project lifecycle persists ground-station RF data and restores it through the local layer factory", async () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const events = new EventTarget();
+    globalThis.window = events;
+    globalThis.document = { querySelectorAll: () => [] };
+    try {
+        let projectName = "RF mission";
+        const layerNames = new Map([["gst:7", "Madrid operations"]]);
+        const restoredEntries = [];
+        const restoredTrees = [];
+        const stations = new Map([["gst:7", {
+            id: "gst:7",
+            name: "Madrid",
+            latitude_deg: 40.417,
+            longitude_deg: -3.704,
+            altitude_m: 667,
+            visible: false,
+            coverage_visible: true,
+            min_elevation_deg: 8,
+            antenna_diameter_m: 2.4,
+            antenna_efficiency: 0.62,
+            frequency_mhz: 2200,
+            polarization: "RHCP",
+            tx_power_dbm: 43,
+            system_temperature_k: 180,
+            operation_mode: "tracking",
+            mechanical_elevation_min_deg: 5,
+            mechanical_elevation_max_deg: 85,
+            entity: { cesium: true },
+            coverageEntity: { cesium: true },
+            coverageVolumeEntity: { cesium: true },
+            patternPrimitive: { cesium: true }
+        }]]);
+        const tree = {
+            folders: [{ id: "folder:ops", name: "Operations", parentId: null, expanded: true }],
+            layerParents: { "gst:7": "folder:ops" }
+        };
+        const lifecycle = createProjectLifecycle({
+            getProjectName: () => projectName,
+            setProjectName: (value) => { projectName = value; },
+            getProjectFileHandle: () => null,
+            setProjectFileHandle: () => {},
+            getActiveSatelliteIds: () => [],
+            setAllSatelliteLayersActive: () => {},
+            setSatelliteLayerActive: () => {},
+            getGroundStationLayers: () => stations,
+            removeGroundStationLayer: (id) => stations.delete(id),
+            clearDuplicateLayers: () => {},
+            getLayerNameOverrides: () => layerNames,
+            clearSatelliteVisualizationConfigs: () => {},
+            getObjectSidebar: () => ({
+                getProjectTree: () => tree,
+                setProjectTree: (snapshot) => restoredTrees.push(snapshot),
+                clearProjectTree: () => {},
+                renderList: () => {}
+            }),
+            restoreGroundStations: async (entries) => {
+                restoredEntries.push(...entries);
+                entries.forEach((entry) => stations.set(entry.id, { ...entry, entity: { cesium: true } }));
+                return { restored: entries.map((entry) => entry.id), failed: [], idMap: {} };
+            },
+            getSimulationState: () => ({ mode: "realtime", startDate: new Date(), endDate: new Date() }),
+            applySimulationRange: () => {},
+            showConfirm: async () => true,
+            showAlert: () => {},
+            getAlertTitle: () => "Orbit"
+        });
+
+        const saved = lifecycle.buildDocument();
+        assert.equal(saved.groundStations.length, 1);
+        assert.deepEqual(saved.groundStations[0], {
+            id: "gst:7",
+            name: "Madrid",
+            latitude_deg: 40.417,
+            longitude_deg: -3.704,
+            altitude_m: 667,
+            visible: false,
+            coverage_visible: true,
+            min_elevation_deg: 8,
+            antenna_diameter_m: 2.4,
+            antenna_efficiency: 0.62,
+            frequency_mhz: 2200,
+            polarization: "RHCP",
+            tx_power_dbm: 43,
+            system_temperature_k: 180,
+            operation_mode: "tracking",
+            mechanical_elevation_min_deg: 5,
+            mechanical_elevation_max_deg: 85
+        });
+
+        const file = { name: "rf-mission.json", text: async () => JSON.stringify(saved) };
+        assert.equal(await lifecycle.loadFile(file), true);
+        assert.deepEqual(restoredEntries, saved.groundStations);
+        assert.equal(stations.get("gst:7")?.visible, false);
+        assert.equal(layerNames.get("gst:7"), "Madrid operations");
+        assert.deepEqual(restoredTrees, [tree]);
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+    }
+});
+
+test("project lifecycle remaps tree and names when a legacy ground-station id is replaced", async () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const events = new EventTarget();
+    globalThis.window = events;
+    globalThis.document = { querySelectorAll: () => [] };
+    try {
+        const layerNames = new Map();
+        let restoredTree = null;
+        const project = {
+            format: "orbit-project",
+            version: 1,
+            name: "Legacy station",
+            satellites: [],
+            manualOrbits: [],
+            celestialBodies: [],
+            layerNames: { "station:legacy": "Legacy antenna" },
+            layerTree: { folders: [], layerParents: { "station:legacy": null } },
+            groundStations: [{ id: "station:legacy", latitude_deg: 40, longitude_deg: -3 }],
+            simulation: {}
+        };
+        const lifecycle = createProjectLifecycle({
+            getProjectName: () => null,
+            setProjectName: () => {},
+            getProjectFileHandle: () => null,
+            setProjectFileHandle: () => {},
+            getActiveSatelliteIds: () => [],
+            setAllSatelliteLayersActive: () => {},
+            setSatelliteLayerActive: () => {},
+            getGroundStationLayers: () => new Map(),
+            removeGroundStationLayer: () => {},
+            clearDuplicateLayers: () => {},
+            getLayerNameOverrides: () => layerNames,
+            clearSatelliteVisualizationConfigs: () => {},
+            getObjectSidebar: () => ({ setProjectTree: (snapshot) => { restoredTree = snapshot; }, clearProjectTree: () => {}, renderList: () => {} }),
+            restoreGroundStations: async () => ({ restored: ["gst:4"], failed: [], idMap: { "station:legacy": "gst:4" } }),
+            getSimulationState: () => ({ mode: "realtime", startDate: new Date(), endDate: new Date() }),
+            applySimulationRange: () => {},
+            showConfirm: async () => true,
+            showAlert: () => {},
+            getAlertTitle: () => "Orbit"
+        });
+
+        const file = { name: "legacy.json", text: async () => JSON.stringify(project) };
+        assert.equal(await lifecycle.loadFile(file), true);
+        assert.equal(layerNames.get("gst:4"), "Legacy antenna");
+        assert.deepEqual(restoredTree?.layerParents, { "gst:4": null });
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+    }
+});
+
 test("project lifecycle persists native celestial body layers without persisting an ephemeris sample", async () => {
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;

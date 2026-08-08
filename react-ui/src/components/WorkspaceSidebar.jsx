@@ -21,7 +21,8 @@ const PROJECT_ACTIONS = [
     { action: "new", label: "Nuevo proyecto", description: "Crea un espacio de trabajo vacío" },
     { action: "open", label: "Importar proyecto", description: "Abre un archivo .json de Orbit" },
     { action: "save", label: "Guardar proyecto", description: "Guarda los cambios del proyecto" },
-    { action: "export", label: "Exportar proyecto", description: "Descarga una copia .json" }
+    { action: "export", label: "Exportar proyecto", description: "Descarga una copia .json" },
+    { action: "export-ground-stations", label: "Exportar estaciones", description: "Descarga las estaciones y RF en GeoJSON" }
 ];
 
 function ProjectActionsMenu({ source, left, top, onSelect }) {
@@ -294,7 +295,7 @@ export default function WorkspaceSidebar() {
         event.stopPropagation();
         const margin = 8;
         const menuWidth = 228;
-        const menuHeight = 214;
+        const menuHeight = 268;
         setProjectActionsMenu({
             source: "context",
             left: Math.max(margin, Math.min(event.clientX, window.innerWidth - menuWidth - margin)),
@@ -336,7 +337,7 @@ export default function WorkspaceSidebar() {
                         {allLayersVisible ? <EyeIcon /> : <EyeOffIcon />}
                     </button>
                     <button className="object-global-remove-btn inline-flex !size-[29px] !cursor-pointer !items-center !justify-center !rounded-[6px] !border !border-[#542637] !bg-[#1c111a] !p-0 !text-[#f1a8b6] hover:!border-[#d15c74] hover:!bg-[#371421] hover:!text-[#ffe3e8] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-[14px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id="removeAllLayersHeaderBtn" type="button" title={designMode ? "Las capas no se pueden eliminar durante el diseño orbital" : "Quitar todas las capas"} aria-label="Quitar todas las capas" disabled={designMode} hidden={!hasActiveLayers}><TrashIcon /></button>
-                    <button className="object-add-btn !inline-flex !h-[29px] !min-w-[68px] !cursor-pointer !items-center !justify-center !gap-1 !rounded-[6px] !border !border-[#4167ff] !bg-[#3d5cf4] !px-[7px] !text-[10px] !font-bold !text-white !shadow-[0_5px_11px_rgba(54,84,238,.28)] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-[13px] [&>svg]:shrink-0 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id={groundStationsOpen ? "addGroundStationLayerBtn" : "openCatalogBtn"} type="button" title={groundStationsOpen ? "Añadir estación terrestre" : designMode ? "El catálogo se bloquea durante el diseño orbital" : "Añadir capa"} aria-label={groundStationsOpen ? "Añadir estación terrestre" : "Añadir capa"} disabled={designMode} onClick={groundStationsOpen ? () => window.dispatchEvent(new Event("orbit:ground-stations-create-request")) : undefined}><PlusIcon /><span>Añadir</span></button>
+                    <button className="object-add-btn !inline-flex !h-[30px] !min-w-[68px] !cursor-pointer !items-center !justify-center !gap-1 !rounded-[6px] !border !border-[#4167ff] !bg-[#3d5cf4] !px-[7px] !text-[10px] !font-bold !text-white !shadow-[0_5px_11px_rgba(54,84,238,.28)] disabled:!cursor-not-allowed disabled:!opacity-45 [&>svg]:size-[13px] [&>svg]:shrink-0 [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" id={groundStationsOpen ? "addGroundStationLayerBtn" : "openCatalogBtn"} type="button" title={groundStationsOpen ? "Añadir estación terrestre" : designMode ? "El catálogo se bloquea durante el diseño orbital" : "Añadir capa"} aria-label={groundStationsOpen ? "Añadir estación terrestre" : "Añadir capa"} disabled={designMode} onClick={groundStationsOpen ? () => window.dispatchEvent(new Event("orbit:ground-stations-create-request")) : undefined}><PlusIcon /><span>Añadir</span></button>
                 </div>
             </div>
             <div className="mt-[8px] grid h-[38px] grid-cols-[36px_minmax(0,1fr)_42px] items-center rounded-lg border border-[#1a2a47] bg-[#0a1221] mx-[14px] mb-[12px] font-[system-ui,sans-serif] text-sm leading-none font-medium text-[#a5b2c9] [&>svg]:m-auto [&>svg]:size-[18px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-width:1.8]" role="search">
