@@ -157,7 +157,17 @@ El rango dibujado se limita para mantener la escena ágil, mientras que el rango
 
 ## Visibilidad, AOS y LOS
 
-**Ground Stations** permite seleccionar libremente una estación y una capa TLE/SGP4 de catálogo presente en Layers. No es necesaria una asociación permanente entre satélite y estación. Las capas manuales, OEM y SP3 conservan su visualización, pero todavía no tienen un proveedor general de acceso para planificar pases. La tabla calcula una ventana de 24 h desde la época activa y lista AOS, LOS y elevación máxima; se puede exportar como CSV. Los instantes de la respuesta y del CSV se conservan en UTC; la tabla y la gráfica los presentan en la zona IANA de la estación.
+**Ground Stations** permite seleccionar libremente una estación y una fuente orbital presente en Layers. Puede ser una capa TLE/SGP4 de catálogo o una órbita manual confirmada. No es necesaria una asociación permanente entre satélite y estación. Las capas OEM y SP3 conservan su visualización, pero todavía no tienen un proveedor general de acceso para planificar pases. La tabla lista AOS, LOS y elevación máxima para la ventana elegida; se puede exportar como CSV. Los instantes de la respuesta y del CSV se conservan en UTC; la tabla y la gráfica los presentan en la zona IANA de la estación.
+
+### Fuente manual para tablas de pases
+
+Una órbita manual se analiza desde su propia definición autorada: época, elementos o vector de estado, propagador seleccionado y opciones de propagación. Por ejemplo, una definición `two-body` conserva su dinámica analítica y una definición `cowell-rk4` conserva sus términos de fuerza y RK4; la tabla no la convierte en un TLE ni la propaga con SGP4.
+
+La geometría de estación sigue un único contrato. Orbit propaga primero el estado manual en su marco dinámico nativo `EME2000` y transforma **solo la posición** de cada muestra a `ITRF`; después calcula ENU, azimut, elevación y rango respecto de la estación WGS-84. Por ello la respuesta publica `reference_frame: ITRF` y `time_scale: UTC`, también cuando la fuente de origen es manual.
+
+En la interfaz, la tabla de una órbita manual usa de forma fija el intervalo UTC de diseño/propagación guardado (`startTime` a `endTime`). Así la tabla y su gráfica nunca salen de la efeméride que el operador confirmó. Para analizar otro intervalo se edita y vuelve a propagar la órbita manual. El contrato REST mantiene `start_time` y `end_time` explícitos para integraciones que necesiten solicitar otra ventana de forma deliberada.
+
+Una consulta manual no registra un satélite en el catálogo, no crea un NORAD/COSPAR y no modifica la capa manual. El nombre autorado se usa solamente como etiqueta `satellite` de la respuesta y la procedencia devuelve `source.kind: manual`, el propagador canónico y `dynamics_reference_frame: EME2000`. Las consultas manuales usan **POST**; `GET /api/aos-los` continúa reservado a un identificador de catálogo.
 
 Todas las vistas aplican la misma condición operativa:
 
@@ -211,7 +221,7 @@ El análisis abierto de **Tablas AOS/LOS** explora el perfil a 20 s y refina cad
 
 1. Cree una estación y complete geometría, antena, RF y apuntado.
 2. Revise las métricas derivadas antes de seleccionar **Añadir a Layers**.
-3. En **Ground Stations**, seleccione cualquier estación disponible y una capa TLE/SGP4 de catálogo para abrir las tablas AOS/LOS.
+3. En **Ground Stations**, seleccione cualquier estación disponible y una capa TLE/SGP4 de catálogo u órbita manual confirmada para abrir las tablas AOS/LOS. Una órbita manual usa su intervalo UTC diseñado; edítela y vuelva a propagarla antes de cambiar esa ventana.
 4. Active cobertura si desea inspeccionar la huella o el volumen de planificación.
 5. Guarde el [Proyecto](projects.md) para conservar el contrato RF completo.
 

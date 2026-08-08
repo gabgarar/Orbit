@@ -5,7 +5,62 @@
 | Method and route | Operation | Requirements |
 | --- | --- | --- |
 | **GET /api/aos-los** | Calculates accesses from query parameters. | Satellite identifier, latitude and longitude; optional height, mask, interval, step, and mechanical limits. |
-| **POST /api/aos-los** | Calculates accesses from a JSON body. | TLE source, station, start/end time, and sampling step. |
+| **POST /api/aos-los** | Calculates accesses from a JSON body. | Catalogue/TLE **or** manual definition source, station, start/end time, and sampling step. |
+
+## Orbital source
+
+`GET /api/aos-los` retains the lightweight catalogue contract and requires
+`sat_id`. `POST /api/aos-los` also accepts an explicit source in `source`:
+
+| `source.kind` | Source fields | Use |
+| --- | --- | --- |
+| `catalog` | `sat_id` **or** `line1` + `line2` | Loaded catalogue or explicit TLE, propagated through SGP4. |
+| `manual` | `manualOrbit` | Authored manual-orbit definition; it cannot include `sat_id` or TLE lines. |
+
+The recommended form for a manual orbit is:
+
+```json
+{
+  "source": {
+    "kind": "manual",
+    "manualOrbit": {
+      "name": "Test orbit",
+      "epoch": "2026-08-08T12:00:00Z",
+      "propagator": "two-body",
+      "definitionSource": "keplerian",
+      "keplerian": {
+        "referenceFrame": "EME2000",
+        "timeScale": "UTC",
+        "semiMajorAxisKm": 7000,
+        "eccentricity": 0.001,
+        "inclinationDeg": 98,
+        "raanDeg": 20,
+        "argumentOfPerigeeDeg": 30,
+        "trueAnomalyDeg": 0
+      }
+    }
+  },
+  "station": { "lat_deg": 40.4168, "lon_deg": -3.7038 },
+  "start_time": "2026-08-08T12:00:00Z",
+  "end_time": "2026-08-09T12:00:00Z",
+  "step_seconds": 20
+}
+```
+
+`manualOrbit` is the same manual-creation contract: it retains the epoch,
+representation, propagator, and force/integrator options. The AOS/LOS window
+is not automatically taken from `manualOrbit.start_time` or `end_time`: the
+top-level `start_time` and `end_time` fields are the interval analysed. A
+client that wants to repeat a design preview must deliberately send the same
+dates.
+
+The manual source first propagates in its native `EME2000` dynamics frame, and
+each position is transformed to `ITRF` for WGS-84/ENU geometry. The response
+therefore retains `reference_frame: "ITRF"` and `time_scale: "UTC"`; it adds
+`source.kind: "manual"`, the canonical propagator, and
+`source.dynamics_reference_frame: "EME2000"`. The `satellite` field is only the authored
+manual-definition name: the request neither registers an object in the
+catalogue nor creates a NORAD/COSPAR identifier.
 
 ## Station contract
 

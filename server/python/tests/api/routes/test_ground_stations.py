@@ -6,6 +6,8 @@ import pytest
 from fastapi import HTTPException
 from orbit_api.api.routes.ground_stations import create_ground_stations_router
 from orbit_api.domain.requests import AosLosRequest, StationInput
+from orbit_api.frames import FrameTransformService
+from pydantic import ValidationError
 
 WGS84_EQUATORIAL_RADIUS_M = 6_378_137.0
 START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -467,3 +469,121 @@ def test_get_aos_los_returns_422_for_an_invalid_mount_contract():
 
     assert error.value.status_code == 422
     assert error.value.detail[0]["loc"] == ["query"]
+
+
+def _manual_access_request(*, propagator: str = "two-body") -> AosLosRequest:
+    """Build the public manual-source shape sent by the design workspace."""
+
+    return AosLosRequest.model_validate({
+        "source": {
+            "type": "manual",
+            "manualOrbit": {
+                "name": "Manual access target",
+                "epochUtc": START.isoformat(),
+                "propagator": propagator,
+                "definitionSource": "keplerian",
+                "keplerian": {
+                    "semiMajorAxisKm": 7_000.0,
+                    "eccentricity": 0.01,
+                    "inclinationDeg": 45.0,
+                    "raanDeg": 15.0,
+                    "argumentOfPerigeeDeg": 30.0,
+                    "trueAnomalyDeg": 20.0,
+                },
+            },
+        },
+        "station": {"lat_deg": 0.0, "lon_deg": 0.0, "min_elevation_deg": 10.0},
+        "startTime": START.isoformat(),
+        "endTime": (START + timedelta(minutes=1)).isoformat(),
+        "stepSeconds": 30,
+    })
+
+
+def test_post_aos_los_uses_the_manual_two_body_engine_and_shared_itrf_transformer():
+    """Manual AOS/LOS must use its native engine, then renderer ITRF points."""
+
+    frame_transformer = FrameTransformService()
+    calls = []
+
+    def resolve_propagator(*_args):
+        raise AssertionError("A manual AOS/LOS request must not resolve a catalogue TLE")
+
+    def build_ephemeris(*args):
+        calls.append(args)
+        return {
+            "points": [_itrf_point(elevation_deg=45, azimuth_deg=0)],
+            "reference_frame": "ITRF",
+            "transport_time_scale": "UTC",
+        }
+
+    router = create_ground_stations_router(
+        resolve_propagator,
+        build_ephemeris,
+        lambda value: value,
+        frame_transformer,
+    )
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/aos-los" and "POST" in route.methods)
+
+    response = endpoint(_manual_access_request())
+
+    assert len(calls) == 1
+    runtime_name, propagator, *_rest = calls[0]
+    assert runtime_name.startswith("manual:two-body:")
+    assert propagator.frame_transformer is frame_transformer
+    assert calls[0][-2:] == (False, True)
+    assert response["satellite"] == "Manual access target"
+    assert response["source"] == {
+        "kind": "manual",
+        "name": "Manual access target",
+        "propagator": "two-body",
+        "definition_source": "keplerian",
+        "dynamics_reference_frame": "EME2000",
+        "ephemeris_reference_frame": "ITRF",
+    }
+    assert response["reference_frame"] == "ITRF"
+    assert response["time_scale"] == "UTC"
+    assert len(response["passes"]) == 1
+
+
+def test_post_aos_los_rejects_an_unavailable_manual_sgp4_engine():
+    """A manual state cannot silently become a synthetic TEME/TLE source."""
+
+    router = create_ground_stations_router(
+        lambda *_args: ("CATALOGUE", object()),
+        lambda *_args: {"points": []},
+        lambda value: value,
+    )
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/aos-los" and "POST" in route.methods)
+
+    with pytest.raises(HTTPException) as error:
+        endpoint(_manual_access_request(propagator="sgp4"))
+
+    assert error.value.status_code == 422
+    assert "SGP4" in str(error.value.detail)
+
+
+def test_aos_los_legacy_catalogue_fields_are_projected_to_the_explicit_source():
+    """The new source node must not break the original POST request shape."""
+
+    request = AosLosRequest(
+        sat_id="CATALOGUE-1",
+        station=StationInput(lat_deg=0, lon_deg=0),
+        start_time=START,
+        end_time=START + timedelta(minutes=1),
+    )
+
+    assert request.source is not None
+    assert request.source.kind == "catalog"
+    assert request.source.sat_id == "CATALOGUE-1"
+
+
+def test_aos_los_manual_source_requires_a_complete_manual_orbit_definition():
+    with pytest.raises(ValidationError) as error:
+        AosLosRequest.model_validate({
+            "source": {"type": "manual"},
+            "station": {"lat_deg": 0, "lon_deg": 0},
+            "startTime": START.isoformat(),
+            "endTime": (START + timedelta(minutes=1)).isoformat(),
+        })
+
+    assert "manual_orbit" in str(error.value)

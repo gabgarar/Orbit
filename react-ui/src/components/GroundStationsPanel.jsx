@@ -416,7 +416,7 @@ export default function GroundStationsPanel() {
                 <p className="my-1 text-[10px] text-[#b8d6c7]">{result.error || `${result.satellite} · ${result.referenceFrame || "ITRF"} · ${result.timeScale || "UTC"} · ${result.passes?.length || 0} pases`}</p>
                 {!result.error && result.linkContract ? <p className="mt-0 mb-2 text-[9px] leading-snug text-[#90b9a4]">Base del acceso: {result.linkContract === "actual-downlink" ? "enlace real de bajada satélite → estación" : "envolvente RF de planificación recíproca"}.</p> : null}
                 {result.analysisWindow?.startTime && !result.error ? <div className="mb-2 text-[9px] leading-snug text-[#90b9a4]">
-                    <p className="m-0">Ventana de cálculo (UTC): {utc(result.analysisWindow.startTime)} → {utc(result.analysisWindow.endTime)}{result.analysisWindow.source === "simulation-range" ? " · rango de simulación" : " · próximas 24 h"}</p>
+                    <p className="m-0">Ventana de cálculo (UTC): {utc(result.analysisWindow.startTime)} → {utc(result.analysisWindow.endTime)}{result.analysisWindow.source === "simulation-range" ? " · rango de simulación" : result.analysisWindow.source === "manual-design" ? " · ventana de diseño de la órbita manual" : " · próximas 24 h"}</p>
                     <p className="mt-0.5 mb-0">Visualización local ({stationTimeZone}): {formatStationTime(result.analysisWindow.startTime, stationTimeZone)} → {formatStationTime(result.analysisWindow.endTime, stationTimeZone)}</p>
                 </div> : null}
                 {Number.isFinite(result.rangeKm) && <div className="mb-2 grid grid-cols-2 gap-1 rounded border border-[#285143] bg-[rgba(4,22,17,.46)] p-1.5 text-[10px]">

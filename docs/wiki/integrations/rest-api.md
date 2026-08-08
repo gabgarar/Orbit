@@ -30,7 +30,7 @@ red.
 | Cuerpo | JSON salvo exportaciones de archivo. El gateway limita cuerpos JSON a 25 MB. |
 | Fechas | Enviar ISO-8601 con zona horaria, preferiblemente `Z`/UTC. Las rutas orbitales normalizan sus instantes a UTC. |
 | Identificador de satélite | `sat_id` y `:satId` se resuelven contra el nombre/identificador cargado en el catálogo. La codificación URL es responsabilidad del cliente. |
-| Fuente orbital | Las rutas de propagación aceptan un `sat_id` **o** ambas líneas `line1` y `line2` de un TLE. |
+| Fuente orbital | Las rutas de catálogo aceptan un `sat_id` **o** ambas líneas `line1` y `line2` de un TLE. `POST /api/aos-los` admite además una definición manual explícita en `source`; no la registra en el catálogo. |
 | Estados cartesianos | Cuando la respuesta incluye unidades, la representación para renderizado declara `reference_frame: "ITRF"`, posición en metros y velocidad en m/s. Las fuentes y productos de precisión mantienen contratos de marco y escala más explícitos internamente. |
 | Errores del gateway | Un JSON inválido devuelve `400`; un cuerpo excesivo, `413`; un fallo al acceder al backend Python, `502` con `{ "ok": false, "error": "…" }`. |
 | Errores de validación FastAPI | Las formas o valores inválidos devuelven normalmente `422`; una fuente no encontrada puede devolver `404`. |

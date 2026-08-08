@@ -44,6 +44,7 @@ Examples of rules:
 | Anniversary | `end_time` must be later than `start_time`; `step_seconds` is > 0 and ≤ 3600. |
 | API Orbit | `horizon_hours` is between 0.1 and 8760; `samples`, if supplied, between 2 and 7200. |
 | Station | Latitude −90…90°, longitude −180…180°, minimum elevation 0…90°. |
+| Manual AOS/LOS | `source.kind: manual` requires `manualOrbit` and cannot include `sat_id` or TLE lines; the access window still uses UTC `start_time < end_time`. |
 | Orbital parameters | 2…2000 samples; RK4 models are rejected if they exceed their internal step budget. |
 | Manual orbit | Requires Keplerian elements or state vector; Force options are normalized to the chosen engine. |
 

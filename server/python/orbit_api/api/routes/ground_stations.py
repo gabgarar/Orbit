@@ -7,7 +7,17 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import ValidationError
 
-from orbit_api.domain.requests import AosLosRequest, StationInput
+from orbit_api.application.manual_orbits import (
+    ManualOrbitError,
+    build_manual_orbit_propagator,
+    canonical_manual_orbit,
+)
+from orbit_api.domain.requests import (
+    AosLosRequest,
+    StationInput,
+    require_manual_orbit_runtime_propagator,
+)
+from orbit_api.frames import FrameTransformService
 from orbit_api.ground_stations.visibility import (
     azimuth_degrees,
     azimuth_is_defined,
@@ -21,7 +31,12 @@ from orbit_api.ground_stations.visibility import (
 from orbit_api.timekeeping import utc_now
 
 
-def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable, ensure_utc: Callable) -> APIRouter:
+def create_ground_stations_router(
+    resolve_propagator,
+    build_ephemeris: Callable,
+    ensure_utc: Callable,
+    frame_transformer: FrameTransformService | None = None,
+) -> APIRouter:
     """Build access-window routes from orbit application services."""
     router = APIRouter(tags=["ground-stations"])
 
@@ -47,20 +62,77 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
             ]
             raise HTTPException(status_code=422, detail=detail) from error
 
+    def resolve_access_source(payload: AosLosRequest) -> tuple[str, str, object, dict]:
+        """Resolve a display name, cache-safe runtime ID and propagator.
+
+        Catalogue access retains its historical TLE/SGP4 resolver. Manual
+        access reconstructs the exact native engine selected in the design
+        payload; it never turns an EME2000 state into a synthetic TLE.
+        """
+
+        source = payload.source
+        if source is None:  # Defensive narrowing; request validation rejects it.
+            raise HTTPException(status_code=422, detail="Falta la fuente orbital para AOS/LOS")
+        if source.kind != "manual":
+            name, propagator = resolve_propagator(source.sat_id, source.line1, source.line2)
+            return name, name, propagator, {
+                "kind": "catalog",
+                "sat_id": source.sat_id,
+                "propagator": str(getattr(propagator, "model_id", "sgp4")),
+                "dynamics_reference_frame": str(
+                    getattr(propagator, "dynamics_reference_frame", "TEME")
+                ),
+            }
+
+        manual = source.manual_orbit
+        if manual is None:  # Defensive narrowing; source validation rejects it.
+            raise HTTPException(status_code=422, detail="La fuente manual requiere manual_orbit")
+        try:
+            propagator_name = require_manual_orbit_runtime_propagator(manual.propagator)
+            definition_source, keplerian, state_vector = canonical_manual_orbit(manual)
+            runtime_name, propagator, propagator_metadata = build_manual_orbit_propagator(
+                propagator_name,
+                name=manual.name,
+                epoch=manual.epoch,
+                keplerian=keplerian,
+                state_vector=state_vector,
+                propagation_options=manual.propagation_options.canonical(
+                    propagator=propagator_name
+                ),
+                frame_transformer=frame_transformer,
+            )
+        except (ManualOrbitError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return manual.name, runtime_name, propagator, {
+            "kind": "manual",
+            "name": manual.name,
+            "propagator": propagator_metadata["id"],
+            "definition_source": definition_source,
+            "dynamics_reference_frame": "EME2000",
+            # Access geometry always samples the runtime renderer position,
+            # which is transformed to ITRF before the ENU calculation below.
+            "ephemeris_reference_frame": "ITRF",
+        }
+
     def calculate_access_windows(payload: AosLosRequest) -> dict:
-        name, propagator = resolve_propagator(payload.sat_id, payload.line1, payload.line2)
+        name, runtime_name, propagator, source_metadata = resolve_access_source(payload)
         # AOS/LOS consumes only ITRF positions.  Request the runtime's
         # position-only ephemeris so it does not calculate/serialize velocity
         # derivatives or duplicate native samples for every planning point.
-        ephemeris = build_ephemeris(
-            name,
-            propagator,
-            payload.start_time,
-            payload.end_time,
-            payload.step_seconds,
-            False,
-            True,
-        )
+        try:
+            ephemeris = build_ephemeris(
+                runtime_name,
+                propagator,
+                payload.start_time,
+                payload.end_time,
+                payload.step_seconds,
+                False,
+                True,
+            )
+        except HTTPException:
+            raise
+        except (ManualOrbitError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         def visibility_sample(point: dict) -> dict:
             position = point.get("position") or {}
             elevation = elevation_degrees(
@@ -197,7 +269,15 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
                 if (upper - lower).total_seconds() <= 0.5:
                     break
                 middle = lower + ((upper - lower) / 2)
-                refined = build_ephemeris(name, propagator, middle, middle, 1.0, False, True)
+                refined = build_ephemeris(
+                    runtime_name,
+                    propagator,
+                    middle,
+                    middle,
+                    1.0,
+                    False,
+                    True,
+                )
                 point = (refined.get("points") or [None])[0]
                 if not point:
                     return None
@@ -283,6 +363,7 @@ def create_ground_stations_router(resolve_propagator, build_ephemeris: Callable,
 
         return {
             "satellite": name,
+            "source": source_metadata,
             "station": payload.station.model_dump(),
             "start_time": ensure_utc(payload.start_time).isoformat(),
             "end_time": ensure_utc(payload.end_time).isoformat(),

@@ -68,6 +68,21 @@ a TEME y ajustará un modelo SGP4/TLE sobre un intervalo. El producto deberá
 declarar el intervalo, las muestras, los residuos y la procedencia. No forma
 parte de la propagación manual actual.
 
+## Tablas AOS/LOS
+
+Después de confirmar la capa, puede seleccionarla en
+[Ground Stations](ground-stations.md) para calcular sus pases contra una
+estación. La tabla usa la definición manual autorada —época, estado o
+elementos, propagador y opciones de fuerza— y el intervalo UTC de diseño que
+se guardó al propagarla. Para cambiar el intervalo hay que editar y propagar la
+órbita de nuevo; así el perfil de elevación no consulta estados fuera de la
+efeméride diseñada.
+
+La dinámica se resuelve en `EME2000` y cada posición se transforma a `ITRF`
+antes de la geometría WGS-84/ENU de la estación. La respuesta de pases declara
+`ITRF` y UTC, pero no crea una entrada de catálogo ni convierte la capa en un
+TLE: su nombre manual se utiliza únicamente para etiquetar el resultado.
+
 ## Límites importantes
 
 - Todas las órbitas manuales actuales están centradas en `EARTH`.

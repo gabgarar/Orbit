@@ -62,7 +62,12 @@ def create_app() -> FastAPI:
         ensure_utc,
         runtime.frame_transformer,
     ))
-    app.include_router(create_ground_stations_router(runtime.resolve_propagator, runtime.build_ephemeris, ensure_utc))
+    app.include_router(create_ground_stations_router(
+        runtime.resolve_propagator,
+        runtime.build_ephemeris,
+        ensure_utc,
+        runtime.frame_transformer,
+    ))
     app.include_router(create_exports_router(runtime.find_catalog_entry, runtime.resolve_propagator, runtime.build_ephemeris, ensure_utc))
     app.include_router(create_realtime_router(runtime.get_state_snapshot, runtime.get_orbits_cached, COMPRESSION_THRESHOLD))
     return app

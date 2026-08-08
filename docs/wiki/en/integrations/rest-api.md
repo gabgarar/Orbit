@@ -30,7 +30,7 @@ network.
 | Body | JSON except file exports. The gateway limits JSON bodies to 25 MB. |
 | Dates | Send ISO-8601 with time zone, preferably `Z`/UTC. Orbital routes normalize their instants to UTC. |
 | Satellite identifier | `sat_id` and `:satId` resolve against the name/id loaded into the catalog. URL encoding is the responsibility of the client. |
-| Orbital source | Propagation routes accept an `sat_id` **or** both `line1` and `line2` lines from a TLE. |
+| Orbital source | Catalogue routes accept a `sat_id` **or** both `line1` and `line2` TLE lines. `POST /api/aos-los` also accepts an explicit manual definition in `source`; it does not register it in the catalogue. |
 | Cartesian states | When the response includes units, the rendering representation declares `reference_frame: "ITRF"`, position in meters, and velocity in m/s. Precision sources and products maintain more explicit scale and framework contracts internally. |
 | Gateway errors | An invalid JSON returns `400`; an excessive body, `413`; a failure when accessing the Python backend, `502` with `{ "ok": false, "error": "…" }`. |
 | FastAPI validation errors | Invalid forms or values ​​normally return `422`; a source not found may return `404`. |

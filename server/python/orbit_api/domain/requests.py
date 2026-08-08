@@ -438,27 +438,6 @@ class EphemerisRequest(TleSourceRequest):
         return self
 
 
-class AosLosRequest(TleSourceRequest):
-    station: StationInput
-    start_time: datetime.datetime
-    end_time: datetime.datetime
-    step_seconds: float = Field(default=10.0, gt=0, le=600)
-    # Pass extraction always evaluates the full internal sample sequence.
-    # Realtime telemetry consumers can omit that potentially large sequence
-    # from the HTTP response once they only need the AOS/LOS windows.
-    include_samples: bool = True
-    # ``None`` preserves the historical full-window chart response.  A
-    # caller that only plots individual contacts can instead request the
-    # samples surrounding each refined AOS/LOS interval.
-    chart_padding_seconds: float | None = Field(default=None, ge=0, le=3_600)
-
-    @model_validator(mode="after")
-    def validate_time_range(self):
-        if self.end_time <= self.start_time:
-            raise ValueError("end_time debe ser mayor que start_time")
-        return self
-
-
 class CartesianVectorInput(BaseModel):
     """A finite three-component vector used by the manual-orbit API."""
 
@@ -1262,4 +1241,116 @@ class OrbitParametersRequest(BaseModel):
             raise ValueError(
                 f"El intervalo no puede superar {PROPAGATION_HOURS_MAX:g} horas"
             )
+        return self
+
+
+class AosLosRequest(BaseModel):
+    """A station-access request for either a catalogue or manual orbit.
+
+    The original AOS/LOS API accepted sat_id or explicit TLE lines at the
+    top level. Keep that shape readable while using the same explicit source
+    contract as the orbital-parameter inspector for manually authored
+    states. A manual source contains a complete ManualOrbitRequest; its
+    native EME2000 dynamics are transformed to ITRF before station geometry
+    is evaluated.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    source: OrbitParametersSource | None = None
+    # Legacy catalogue fields remain public so direct Python callers and old
+    # HTTP clients can keep constructing the request exactly as before. The
+    # pre-validator below projects them into source.
+    sat_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("sat_id", "satId", "satelliteId", "id"),
+    )
+    line1: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("line1", "tle_line1", "tleLine1"),
+    )
+    line2: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("line2", "tle_line2", "tleLine2"),
+    )
+    station: StationInput
+    start_time: datetime.datetime = Field(
+        validation_alias=AliasChoices("start_time", "startTime"),
+    )
+    end_time: datetime.datetime = Field(
+        validation_alias=AliasChoices("end_time", "endTime"),
+    )
+    step_seconds: float = Field(
+        default=10.0,
+        validation_alias=AliasChoices("step_seconds", "stepSeconds"),
+        gt=0,
+        le=600,
+    )
+    # Pass extraction always evaluates the full internal sample sequence.
+    # Realtime telemetry consumers can omit that potentially large sequence
+    # from the HTTP response once they only need the AOS/LOS windows.
+    include_samples: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("include_samples", "includeSamples"),
+    )
+    # None preserves the historical full-window chart response. A caller
+    # that only plots individual contacts can instead request the samples
+    # surrounding each refined AOS/LOS interval.
+    chart_padding_seconds: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("chart_padding_seconds", "chartPaddingSeconds"),
+        ge=0,
+        le=3_600,
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_catalogue_source(cls, value):
+        """Wrap the historical flat catalogue source in source.
+
+        The manual form is deliberately not inferred from arbitrary orbital
+        fields at the top level: callers must explicitly declare a manual
+        source so a state vector can never accidentally be interpreted as a
+        TLE request.
+        """
+
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        if payload.get("source") is not None:
+            return payload
+
+        manual = payload.get("manual_orbit", payload.get("manualOrbit"))
+        if manual is not None:
+            payload["source"] = {"kind": "manual", "manualOrbit": manual}
+            return payload
+
+        sat_id = payload.get("sat_id", payload.get("satId", payload.get("satelliteId")))
+        line1 = payload.get("line1", payload.get("tleLine1", payload.get("tle_line1")))
+        line2 = payload.get("line2", payload.get("tleLine2", payload.get("tle_line2")))
+        if sat_id is not None or line1 is not None or line2 is not None:
+            payload["source"] = {
+                "kind": "catalog",
+                "satId": sat_id,
+                "line1": line1,
+                "line2": line2,
+            }
+        return payload
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalize_access_utc(cls, value: datetime.datetime) -> datetime.datetime:
+        return ensure_utc(value)
+
+    @model_validator(mode="after")
+    def validate_access_source_and_range(self):
+        if self.source is None:
+            raise ValueError("Debes enviar source o sat_id o line1+line2")
+        if self.source.kind == "manual" and any(
+            value is not None and str(value).strip()
+            for value in (self.sat_id, self.line1, self.line2)
+        ):
+            raise ValueError("Una fuente manual no puede incluir sat_id ni lÃ­neas TLE")
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time debe ser mayor que start_time")
         return self

@@ -5,7 +5,62 @@
 | Método y ruta | Operación | Requisitos |
 | --- | --- | --- |
 | **GET /api/aos-los** | Calcula accesos con parámetros de consulta. | Identificador de satélite, latitud y longitud; altura, máscara, intervalo, paso y límites mecánicos opcionales. |
-| **POST /api/aos-los** | Calcula accesos con cuerpo JSON. | Fuente TLE, estación, instante inicial/final y paso de muestreo. |
+| **POST /api/aos-los** | Calcula accesos con cuerpo JSON. | Fuente de catálogo/TLE **o** definición manual, estación, instante inicial/final y paso de muestreo. |
+
+## Fuente orbital
+
+`GET /api/aos-los` mantiene el contrato ligero de catálogo y requiere `sat_id`.
+`POST /api/aos-los` admite además una fuente explícita en `source`:
+
+| `source.kind` | Campos de fuente | Uso |
+| --- | --- | --- |
+| `catalog` | `sat_id` **o** `line1` + `line2` | Catálogo cargado o TLE explícito, propagado mediante SGP4. |
+| `manual` | `manualOrbit` | Definición autorada de órbita manual; no admite `sat_id` ni líneas TLE. |
+
+La forma recomendada para una órbita manual es:
+
+```json
+{
+  "source": {
+    "kind": "manual",
+    "manualOrbit": {
+      "name": "Órbita de ensayo",
+      "epoch": "2026-08-08T12:00:00Z",
+      "propagator": "two-body",
+      "definitionSource": "keplerian",
+      "keplerian": {
+        "referenceFrame": "EME2000",
+        "timeScale": "UTC",
+        "semiMajorAxisKm": 7000,
+        "eccentricity": 0.001,
+        "inclinationDeg": 98,
+        "raanDeg": 20,
+        "argumentOfPerigeeDeg": 30,
+        "trueAnomalyDeg": 0
+      }
+    }
+  },
+  "station": { "lat_deg": 40.4168, "lon_deg": -3.7038 },
+  "start_time": "2026-08-08T12:00:00Z",
+  "end_time": "2026-08-09T12:00:00Z",
+  "step_seconds": 20
+}
+```
+
+`manualOrbit` es el mismo contrato de creación manual: conserva época,
+representación, propagador y opciones de fuerza/integrador. La ventana AOS/LOS
+no se toma automáticamente de `manualOrbit.start_time` o `end_time`: los
+campos de nivel superior `start_time` y `end_time` son el intervalo que se
+analiza. Un cliente que quiera repetir una previsualización de diseño debe
+enviar deliberadamente esas mismas fechas.
+
+La fuente manual se propaga primero en su marco dinámico nativo `EME2000` y
+cada posición se transforma a `ITRF` para la geometría WGS-84/ENU. La respuesta
+por tanto conserva `reference_frame: "ITRF"` y `time_scale: "UTC"`; añade
+`source.kind: "manual"`, el propagador canónico y
+`source.dynamics_reference_frame: "EME2000"`. El campo `satellite` es solo el nombre de
+la definición manual: la solicitud no inscribe un objeto en el catálogo ni crea
+un identificador NORAD/COSPAR.
 
 ## Contrato de estación
 

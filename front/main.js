@@ -67,6 +67,11 @@ import {
     downloadGroundStationsExport,
     parseGroundStationsDocument
 } from "./js/features/groundStations/interchange.js";
+import {
+    buildManualAosLosRequest,
+    ManualAosLosRequestError,
+    manualAosLosSignature
+} from "./js/features/groundStations/manualAosLos.js";
 import { createProjectLifecycle } from "./js/runtime/projectLifecycle.js";
 import { setupCameraActions } from "./js/runtime/camera/actions.js";
 import { createFreeCameraKeyboardControls } from "./js/runtime/camera/freeKeyboardControls.js";
@@ -1205,15 +1210,15 @@ const groundStationTelemetryService = createGroundStationTelemetryService({
     calculateSatelliteDownlink,
     calculateRfModel: calculateStationRfModel,
     getPasses: async (satelliteId, station, startDate, endDate) => {
-        const { query, linkContract } = createGroundStationPassQuery(station, satelliteId, startDate, endDate, {
+        const request = createGroundStationPassRequest(station, satelliteId, startDate, endDate, {
             stepSeconds: GROUND_STATION_BACKGROUND_PASS_STEP_SECONDS,
             includeSamples: false
         });
         // The catalogue explicitly supplied RF metadata but it cannot close
         // this station's receiver contract. Returning no operational pass is
         // more truthful than quietly switching to reciprocal planning.
-        if (!linkContract.available) return [];
-        const response = await fetch(`/api/aos-los?${query}`);
+        if (!request.linkContract.available) return [];
+        const response = await fetch(request.url, request.requestOptions);
         return response.ok ? (await response.json()).passes : [];
     }
 });
@@ -1543,35 +1548,58 @@ function satelliteRfProfileSignature(satelliteId) {
     ].join("|");
 }
 
+function createGroundStationPassStationInput(station, linkContract) {
+    const rf = getGroundStationRfModel(station);
+    return {
+        lat_deg: Number(station.latitude_deg),
+        lon_deg: Number(station.longitude_deg),
+        height_m: Number(station.altitude_m),
+        min_elevation_deg: Number(station.min_elevation_deg),
+        // The backend applies the identical directional range law. For an
+        // actual remote profile this is the downlink's boresight envelope;
+        // otherwise it remains explicitly the reciprocal planning envelope.
+        max_range_km: Number(linkContract.maxRangeKm),
+        mechanical_elevation_min_deg: Number(rf.mechanical_elevation_min_deg),
+        mechanical_elevation_max_deg: Number(rf.mechanical_elevation_max_deg),
+        mechanical_azimuth_min_deg: Number(rf.mechanical_azimuth_min_deg),
+        mechanical_azimuth_max_deg: Number(rf.mechanical_azimuth_max_deg),
+        operation_mode: String(rf.operation_mode),
+        boresight_azimuth_deg: Number(rf.boresight_azimuth_deg),
+        boresight_elevation_deg: Number(rf.boresight_elevation_deg),
+        beam_half_angle_deg: Number(Math.max(rf.hpbw_azimuth_deg, rf.hpbw_elevation_deg) / 2),
+        pattern_type: String(rf.pattern_type),
+        hpbw_azimuth_deg: Number(rf.hpbw_azimuth_deg),
+        hpbw_elevation_deg: Number(rf.hpbw_elevation_deg),
+        side_lobe_level_db: Number(rf.side_lobe_level_db)
+    };
+}
+
 function createGroundStationPassQuery(station, satelliteId, startDate, endDate, {
     stepSeconds = GROUND_STATION_ANALYSIS_STEP_SECONDS,
     includeSamples = true,
     chartPaddingSeconds = null
 } = {}) {
-    const rf = getGroundStationRfModel(station);
     const linkContract = getGroundStationPassLinkContract(station, satelliteId);
+    const stationInput = createGroundStationPassStationInput(station, linkContract);
     const query = new URLSearchParams({
         sat_id: satelliteId,
-        station_lat_deg: String(station.latitude_deg),
-        station_lon_deg: String(station.longitude_deg),
-        station_height_m: String(station.altitude_m),
-        min_elevation_deg: String(station.min_elevation_deg),
-        // The backend applies the identical directional range law. For an
-        // actual remote profile this is the downlink's boresight envelope;
-        // otherwise it remains explicitly the reciprocal planning envelope.
-        max_range_km: String(linkContract.maxRangeKm),
-        mechanical_elevation_min_deg: String(rf.mechanical_elevation_min_deg),
-        mechanical_elevation_max_deg: String(rf.mechanical_elevation_max_deg),
-        mechanical_azimuth_min_deg: String(rf.mechanical_azimuth_min_deg),
-        mechanical_azimuth_max_deg: String(rf.mechanical_azimuth_max_deg),
-        operation_mode: String(rf.operation_mode),
-        boresight_azimuth_deg: String(rf.boresight_azimuth_deg),
-        boresight_elevation_deg: String(rf.boresight_elevation_deg),
-        beam_half_angle_deg: String(Math.max(rf.hpbw_azimuth_deg, rf.hpbw_elevation_deg) / 2),
-        pattern_type: String(rf.pattern_type),
-        hpbw_azimuth_deg: String(rf.hpbw_azimuth_deg),
-        hpbw_elevation_deg: String(rf.hpbw_elevation_deg),
-        side_lobe_level_db: String(rf.side_lobe_level_db),
+        station_lat_deg: String(stationInput.lat_deg),
+        station_lon_deg: String(stationInput.lon_deg),
+        station_height_m: String(stationInput.height_m),
+        min_elevation_deg: String(stationInput.min_elevation_deg),
+        max_range_km: String(stationInput.max_range_km),
+        mechanical_elevation_min_deg: String(stationInput.mechanical_elevation_min_deg),
+        mechanical_elevation_max_deg: String(stationInput.mechanical_elevation_max_deg),
+        mechanical_azimuth_min_deg: String(stationInput.mechanical_azimuth_min_deg),
+        mechanical_azimuth_max_deg: String(stationInput.mechanical_azimuth_max_deg),
+        operation_mode: stationInput.operation_mode,
+        boresight_azimuth_deg: String(stationInput.boresight_azimuth_deg),
+        boresight_elevation_deg: String(stationInput.boresight_elevation_deg),
+        beam_half_angle_deg: String(stationInput.beam_half_angle_deg),
+        pattern_type: stationInput.pattern_type,
+        hpbw_azimuth_deg: String(stationInput.hpbw_azimuth_deg),
+        hpbw_elevation_deg: String(stationInput.hpbw_elevation_deg),
+        side_lobe_level_db: String(stationInput.side_lobe_level_db),
         start_time: startDate.toISOString(),
         end_time: endDate.toISOString(),
         step_seconds: String(stepSeconds),
@@ -1584,7 +1612,53 @@ function createGroundStationPassQuery(station, satelliteId, startDate, endDate, 
             ? { chart_padding_seconds: String(chartPaddingSeconds) }
             : {})
     });
-    return { query, linkContract };
+    return { query, linkContract, stationInput };
+}
+
+/**
+ * Catalogue objects have a runtime `sat_id` and retain the inexpensive GET
+ * route. A workspace manual orbit has no catalogue propagator, so it must
+ * post its complete authored definition to the same AOS/LOS endpoint.
+ */
+function createGroundStationPassRequest(station, satelliteId, startDate, endDate, options = {}) {
+    const { query, linkContract, stationInput } = createGroundStationPassQuery(
+        station,
+        satelliteId,
+        startDate,
+        endDate,
+        options
+    );
+    const manualOrbit = getManualOrbitProjectEntry(satelliteId);
+    if (!manualOrbit) {
+        return {
+            linkContract,
+            method: "GET",
+            url: `/api/aos-los?${query}`,
+            requestOptions: {},
+            analysisWindow: null,
+            manualOrbitSignature: ""
+        };
+    }
+
+    const manualRequest = buildManualAosLosRequest({
+        manualOrbit,
+        station: stationInput,
+        stepSeconds: options.stepSeconds,
+        includeSamples: options.includeSamples,
+        chartPaddingSeconds: options.chartPaddingSeconds
+    });
+    return {
+        linkContract,
+        method: "POST",
+        url: "/api/aos-los",
+        requestOptions: {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(manualRequest.body)
+        },
+        analysisWindow: manualRequest.window,
+        manualOrbitSignature: manualAosLosSignature(manualOrbit)
+    };
 }
 
 function evaluateGroundStationTarget(station, stationPosition, satellitePosition, satelliteRfProfile = null) {
@@ -2956,12 +3030,23 @@ function groundStationAnalysisSignature(station) {
     ].join("|");
 }
 
-function isCurrentGroundStationPassAnalysis({ requestId, stationId, station, stationSignature, satelliteLayerId, satelliteId, satelliteRfSignature, analysisWindow }) {
+function isCurrentGroundStationPassAnalysis({ requestId, stationId, station, stationSignature, satelliteLayerId, satelliteId, satelliteRfSignature, manualOrbitSignature = "", analysisWindow }) {
     if (requestId !== groundStationAnalysisRequestSequence) return false;
     if (groundStationLayers.get(stationId) !== station) return false;
     if (groundStationAnalysisSignature(station) !== stationSignature) return false;
     if (getSatelliteSourceIdFromLayerId(satelliteLayerId) !== satelliteId) return false;
     if (satelliteRfProfileSignature(satelliteId) !== satelliteRfSignature) return false;
+
+    // A manual layer owns a fixed design interval. It is intentionally not
+    // invalidated when an operator changes the global simulation clock, but
+    // must be discarded if the authored orbit itself is edited or removed.
+    if (manualOrbitSignature) {
+        try {
+            return manualAosLosSignature(getManualOrbitProjectEntry(satelliteId)) === manualOrbitSignature;
+        } catch {
+            return false;
+        }
+    }
 
     const currentWindow = getGroundStationAnalysisWindow();
     if (currentWindow.source !== analysisWindow.source) return false;
@@ -2971,6 +3056,40 @@ function isCurrentGroundStationPassAnalysis({ requestId, stationId, station, sta
     if (analysisWindow.source !== "simulation-range") return true;
     return currentWindow.startDate.getTime() === analysisWindow.startDate.getTime()
         && currentWindow.endDate.getTime() === analysisWindow.endDate.getTime();
+}
+
+async function groundStationPassResponseError(response) {
+    let detail = null;
+    try {
+        const payload = await response.json();
+        detail = payload?.detail ?? payload?.message ?? payload?.error ?? null;
+    } catch {
+        // A proxy or an unexpected upstream failure may not return JSON.
+        try {
+            detail = (await response.text()).trim() || null;
+        } catch {
+            detail = null;
+        }
+    }
+
+    const describeDetail = (value) => {
+        if (Array.isArray(value)) {
+            return value.map((item) => {
+                if (typeof item === "string") return item;
+                if (!item || typeof item !== "object") return "";
+                const location = Array.isArray(item.loc) ? item.loc.filter((part) => part !== "body").join(".") : "";
+                const message = String(item.msg || item.message || "").trim();
+                return location && message ? `${location}: ${message}` : message;
+            }).filter(Boolean).join("; ");
+        }
+        if (value && typeof value === "object") {
+            return String(value.message || value.error || JSON.stringify(value)).trim();
+        }
+        return typeof value === "string" ? value.trim() : "";
+    };
+
+    const reason = describeDetail(detail);
+    return new Error(`El servicio AOS/LOS rechazó la solicitud (HTTP ${response.status})${reason ? `: ${reason}` : "."}`);
 }
 
 async function analyzeGroundStationPasses(detail = {}) {
@@ -2992,25 +3111,29 @@ async function analyzeGroundStationPasses(detail = {}) {
     const requestId = ++groundStationAnalysisRequestSequence;
     const abortController = new AbortController();
     groundStationAnalysisAbortController = abortController;
-    const analysisWindow = getGroundStationAnalysisWindow();
-    const { startDate, endDate } = analysisWindow;
     const stationSignature = groundStationAnalysisSignature(station);
-    const requestContext = {
-        requestId,
-        stationId,
-        station,
-        stationSignature,
-        satelliteLayerId,
-        satelliteId,
-        satelliteRfSignature: satelliteRfProfileSignature(satelliteId),
-        analysisWindow
-    };
+    let requestContext = null;
     try {
-        const { query, linkContract } = createGroundStationPassQuery(station, satelliteId, startDate, endDate, {
+        const fallbackWindow = getGroundStationAnalysisWindow();
+        const request = createGroundStationPassRequest(station, satelliteId, fallbackWindow.startDate, fallbackWindow.endDate, {
             stepSeconds: GROUND_STATION_ANALYSIS_STEP_SECONDS,
             includeSamples: true,
             chartPaddingSeconds: GROUND_STATION_CHART_PADDING_SECONDS
         });
+        const analysisWindow = request.analysisWindow || fallbackWindow;
+        const { startDate, endDate } = analysisWindow;
+        requestContext = {
+            requestId,
+            stationId,
+            station,
+            stationSignature,
+            satelliteLayerId,
+            satelliteId,
+            satelliteRfSignature: satelliteRfProfileSignature(satelliteId),
+            manualOrbitSignature: request.manualOrbitSignature,
+            analysisWindow
+        };
+        const { linkContract } = request;
         if (!linkContract.available) {
             if (isCurrentGroundStationPassAnalysis(requestContext)) {
                 clearGroundStationAnalysisVisuals();
@@ -3035,8 +3158,8 @@ async function analyzeGroundStationPasses(detail = {}) {
             }
             return;
         }
-        const response = await fetch(`/api/aos-los?${query}`, { signal: abortController.signal });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const response = await fetch(request.url, { ...request.requestOptions, signal: abortController.signal });
+        if (!response.ok) throw await groundStationPassResponseError(response);
         const result = await response.json();
         if (!isCurrentGroundStationPassAnalysis(requestContext)) return;
         showGroundStationAnalysisVisuals(station, satelliteLayerId, minElevationDeg);
@@ -3089,9 +3212,21 @@ async function analyzeGroundStationPasses(detail = {}) {
             }
         }));
     } catch (error) {
-        if (error?.name === "AbortError" || !isCurrentGroundStationPassAnalysis(requestContext)) return;
+        if (error?.name === "AbortError") return;
+        if (requestContext && !isCurrentGroundStationPassAnalysis(requestContext)) return;
         logger.warn("No se pudo calcular la visibilidad de la estación:", error);
-        window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", { detail: { error: "No se pudieron calcular los pases.", passes: [] } }));
+        const reason = error instanceof ManualAosLosRequestError || error instanceof Error
+            ? error.message
+            : String(error || "");
+        window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+            detail: {
+                error: reason || "No se pudieron calcular los pases.",
+                passes: [],
+                samples: [],
+                analysisSelection: { stationId, satelliteLayerId },
+                visibleNow: false
+            }
+        }));
     } finally {
         if (requestId === groundStationAnalysisRequestSequence && groundStationAnalysisAbortController === abortController) {
             groundStationAnalysisAbortController = null;
@@ -4894,10 +5029,6 @@ function normalizePersistedManualOrbitRecord(record) {
         manualOrbitRecordValue(record, "previewReferenceFrame", "preview_reference_frame"),
         "eme2000"
     );
-    if (Array.isArray(patch.monitor_satellite_ids)) {
-        station.monitor_satellite_ids = patch.monitor_satellite_ids.map((id) => String(id || "").trim()).filter(Boolean);
-    }
-
     return {
         id,
         state,

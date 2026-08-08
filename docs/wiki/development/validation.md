@@ -44,6 +44,7 @@ Ejemplos de reglas:
 | Efeméride | `end_time` debe ser posterior a `start_time`; `step_seconds` es > 0 y ≤ 3600. |
 | Órbita de API | `horizon_hours` está entre 0.1 y 8760; `samples`, si se suministra, entre 2 y 7200. |
 | Estación | Latitud −90…90°, longitud −180…180°, elevación mínima 0…90°. |
+| AOS/LOS manual | `source.kind: manual` requiere `manualOrbit` y no admite `sat_id` ni líneas TLE; la ventana de acceso sigue usando `start_time < end_time` en UTC. |
 | Parámetros orbitales | 2…2000 muestras; los modelos RK4 se rechazan si exceden su presupuesto interno de pasos. |
 | Órbita manual | Requiere elementos keplerianos o vector de estado; las opciones de fuerzas se normalizan al motor elegido. |
 

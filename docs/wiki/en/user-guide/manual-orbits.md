@@ -64,6 +64,21 @@ TEME, and fit an SGP4/TLE model over an interval. The product will need to
 declare the interval, samples, residuals, and provenance. This is not part of
 current manual propagation.
 
+## AOS/LOS tables
+
+After confirming the layer, you can select it in
+[Ground Stations](ground-stations.md) to calculate its passes against a
+station. The table uses the authored manual definition —epoch, state or
+elements, propagator, and force options— and the UTC design interval saved
+when it was propagated. To change the interval, edit and propagate the orbit
+again; this prevents the elevation profile from querying states outside the
+designed ephemeris.
+
+Dynamics are solved in `EME2000`, and each position is transformed to `ITRF`
+before the station's WGS-84/ENU geometry. The pass response declares `ITRF`
+and UTC, but it neither creates a catalogue entry nor converts the layer into
+a TLE: the manual name only labels the result.
+
 ## Important limits
 
 - All current manual orbits are centred on `EARTH`.

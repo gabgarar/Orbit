@@ -157,7 +157,17 @@ Drawn range is capped to keep the scene responsive, while calculated physical ra
 
 ## Visibility, AOS, and LOS
 
-**Ground Stations** lets you freely select a station and a catalogue TLE/SGP4 layer already present in Layers. A permanent satellite-to-station association is not required. Manual, OEM, and SP3 layers retain their visualisation, but do not yet have a general access provider for pass planning. The table calculates a 24-hour window from the active epoch and lists AOS, LOS, and maximum elevation; it can be exported as CSV. Response and CSV timestamps remain UTC; the table and chart render them in the station IANA time zone.
+**Ground Stations** lets you freely select a station and an orbital source already present in Layers. It can be a catalogue TLE/SGP4 layer or a confirmed manual orbit. A permanent satellite-to-station association is not required. OEM and SP3 layers retain their visualisation, but do not yet have a general access provider for pass planning. The table lists AOS, LOS, and maximum elevation for the selected window; it can be exported as CSV. Response and CSV timestamps remain UTC; the table and chart render them in the station IANA time zone.
+
+### Manual source for pass tables
+
+A manual orbit is analysed from its own authored definition: epoch, elements or state vector, selected propagator, and propagation options. For example, a `two-body` definition retains its analytical dynamics and a `cowell-rk4` definition retains its force terms and RK4; the table neither converts it into a TLE nor propagates it with SGP4.
+
+Station geometry follows one contract. Orbit first propagates the manual state in its native `EME2000` dynamics frame and transforms **only the position** of every sample to `ITRF`; it then calculates ENU, azimuth, elevation, and range relative to the WGS-84 station. The response therefore publishes `reference_frame: ITRF` and `time_scale: UTC`, even when the original source is manual.
+
+In the interface, a manual orbit's table uses the stored UTC design/propagation interval (`startTime` through `endTime`) as a fixed range. This ensures that the table and chart never leave the ephemeris confirmed by the operator. To analyse another interval, edit and propagate the manual orbit again. The REST contract retains explicit `start_time` and `end_time` for integrations that deliberately need to request another window.
+
+A manual query does not register a satellite in the catalogue, create a NORAD/COSPAR identifier, or modify the manual layer. Its authored name is used only as the response `satellite` label, and provenance returns `source.kind: manual`, the canonical propagator, and `dynamics_reference_frame: EME2000`. Manual queries use **POST**; `GET /api/aos-los` remains reserved for a catalogue identifier.
 
 Every view applies the same operational condition:
 
@@ -211,7 +221,7 @@ The expanded **AOS/LOS tables** analysis scans the profile at 20 s and refines e
 
 1. Create a station and complete geometry, antenna, RF, and pointing data.
 2. Review derived metrics before selecting **Add to Layers**.
-3. In **Ground Stations**, select any available station and a catalogue TLE/SGP4 layer to open AOS/LOS tables.
+3. In **Ground Stations**, select any available station and a catalogue TLE/SGP4 layer or a confirmed manual orbit to open AOS/LOS tables. A manual orbit uses its designed UTC interval; edit and propagate it again before changing that window.
 4. Enable coverage when you want to inspect the planning footprint or volume.
 5. Save the [Project](projects.md) to retain the complete RF contract.
 
