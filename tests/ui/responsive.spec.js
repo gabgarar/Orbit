@@ -397,6 +397,61 @@ async function expectPanelInsideViewport(page, selector) {
 }
 
 /**
+ * Read the visual contract shared by docked right-hand panels.  This is kept
+ * geometry-based on purpose: right panels can be authored in React or in the
+ * legacy workspace runtime, but they must still align with Layers and make
+ * room for the simulation rail when it is visible.
+ */
+async function readDockedRightPanelLayout(page, panelSelector) {
+    const layout = await page.evaluate((selector) => {
+        const rect = (element) => {
+            if (!(element instanceof HTMLElement)) return null;
+            const styles = getComputedStyle(element);
+            if (styles.display === "none" || styles.visibility === "hidden") return null;
+            const bounds = element.getBoundingClientRect();
+            if (bounds.width <= 0 || bounds.height <= 0) return null;
+            return {
+                left: bounds.left,
+                right: bounds.right,
+                top: bounds.top,
+                bottom: bounds.bottom,
+                width: bounds.width,
+                height: bounds.height
+            };
+        };
+
+        return {
+            panel: rect(document.querySelector(selector)),
+            layers: rect(document.querySelector("#leftSatellitesPanel")),
+            simulationDock: rect(document.querySelector(".react-simulation-dock")),
+            viewport: { width: window.innerWidth, height: window.innerHeight }
+        };
+    }, panelSelector);
+
+    expect(layout.panel, `${panelSelector} must be measurable`).not.toBeNull();
+    expect(layout.layers, "Layers must be measurable while a docked panel is open").not.toBeNull();
+    return layout;
+}
+
+function expectRightPanelToMatchLayers(layout, label, { minimumWidth = 0 } = {}) {
+    const { panel, layers, viewport } = layout;
+    expect(panel.left, `${label} must stay inside the viewport`).toBeGreaterThanOrEqual(-1);
+    expect(panel.right, `${label} must stay inside the viewport`).toBeLessThanOrEqual(viewport.width + 1);
+    expect(Math.abs(panel.top - layers.top), `${label} must share Layers' upper baseline`).toBeLessThanOrEqual(1);
+    expect(Math.abs(panel.bottom - layers.bottom), `${label} must share Layers' lower baseline when the timeline is absent`).toBeLessThanOrEqual(1);
+    if (minimumWidth > 0) {
+        expect(panel.width, `${label} must retain the wider right-panel working width`).toBeGreaterThanOrEqual(minimumWidth);
+    }
+}
+
+function expectRightPanelToClearSimulationDock(layout, label) {
+    const { panel, simulationDock } = layout;
+    expect(simulationDock, "Simulation dock must be measurable in simulated mode").not.toBeNull();
+    expect(Math.abs(panel.top - layout.layers.top), `${label} must keep its upper baseline when the timeline opens`).toBeLessThanOrEqual(1);
+    expect(panel.bottom, `${label} must end above the visible simulation dock`).toBeLessThanOrEqual(simulationDock.top - 8);
+}
+
+/**
  * A panel can be translucent either through its solid background colour or
  * through the stops in a gradient. Inspect the computed form of both so this
  * contract does not force a particular CSS implementation.
@@ -602,8 +657,21 @@ test("Los paneles principales mantienen controles accesibles", async ({ page }) 
     await expectPanelSurfaceTransparency(page, "#configPanel");
     await expectPanelInsideViewport(page, "#configPanel");
     await expectVisibleControlsInsideViewport(page, ["#configPanel"]);
+    const configLayout = await readDockedRightPanelLayout(page, "#configPanel");
+    expectRightPanelToMatchLayers(configLayout, "Settings panel", { minimumWidth: 400 });
     await page.locator("#configPanel").getByRole("button", { name: "Cerrar", exact: true }).click();
     await expect(page.locator("#configModal")).toHaveCount(0);
+
+    // This is a separate React implementation from the station editor, but
+    // its non-floating operational view must follow the same dock contract.
+    await page.evaluate(() => window.dispatchEvent(new Event("orbit:ground-stations-open")));
+    const groundOperations = page.getByLabel("Operaciones de estaciones terrestres", { exact: true });
+    await expect(groundOperations).toBeVisible();
+    await expectPanelSurfaceTransparency(page, '[aria-label="Operaciones de estaciones terrestres"]');
+    const groundOperationsLayout = await readDockedRightPanelLayout(page, '[aria-label="Operaciones de estaciones terrestres"]');
+    expectRightPanelToMatchLayers(groundOperationsLayout, "Ground stations operations panel", { minimumWidth: 400 });
+    await page.evaluate(() => window.dispatchEvent(new Event("orbit:ground-stations-close")));
+    await expect(groundOperations).toBeHidden();
 
     await page.evaluate(() => window.dispatchEvent(new CustomEvent("orbit:selected-object", {
         detail: {
@@ -619,6 +687,8 @@ test("Los paneles principales mantienen controles accesibles", async ({ page }) 
     const objectDetails = page.locator(".object-details-panel");
     await expect(objectDetails).toBeVisible();
     await expectPanelSurfaceTransparency(page, ".object-details-panel");
+    const objectDetailsLayout = await readDockedRightPanelLayout(page, ".object-details-panel");
+    expectRightPanelToMatchLayers(objectDetailsLayout, "Object details panel", { minimumWidth: 400 });
 
     const projectTimeFooter = page.locator("#projectTimeFooter");
     const simulationDock = page.locator(".react-simulation-dock");
@@ -742,6 +812,14 @@ test("Los paneles principales mantienen controles accesibles", async ({ page }) 
     await expect(page.getByRole("slider", { name: "Linea temporal de simulacion" })).toBeVisible();
     await expectVisibleControlsInsideViewport(page, [".react-simulation-dock"]);
     await expect(simulationDock.getByRole("button", { name: "Grabar sesion", exact: true })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => {
+        const panel = document.querySelector(".object-details-panel");
+        const dock = document.querySelector(".react-simulation-dock");
+        if (!(panel instanceof HTMLElement) || !(dock instanceof HTMLElement)) return false;
+        return panel.getBoundingClientRect().bottom <= dock.getBoundingClientRect().top - 8;
+    }), { message: "Object details must make room for the simulation rail" }).toBe(true);
+    const simulatedObjectDetailsLayout = await readDockedRightPanelLayout(page, ".object-details-panel");
+    expectRightPanelToClearSimulationDock(simulatedObjectDetailsLayout, "Object details panel");
 
     const readTimeLayout = () => page.evaluate(() => {
         const rect = (element) => {
@@ -797,6 +875,14 @@ test("Los paneles principales mantienen controles accesibles", async ({ page }) 
     await hideSimulationDock.click();
     const showSimulationDock = page.getByRole("button", { name: "Mostrar control de simulacion", exact: true });
     await expect(showSimulationDock).toBeVisible();
+    await expect.poll(() => page.evaluate(() => {
+        const panel = document.querySelector(".object-details-panel");
+        const layers = document.querySelector("#leftSatellitesPanel");
+        if (!(panel instanceof HTMLElement) || !(layers instanceof HTMLElement)) return false;
+        return Math.abs(panel.getBoundingClientRect().bottom - layers.getBoundingClientRect().bottom) <= 1;
+    }), { message: "Object details must reclaim the lower workspace edge when the timeline is collapsed" }).toBe(true);
+    const collapsedObjectDetailsLayout = await readDockedRightPanelLayout(page, ".object-details-panel");
+    expectRightPanelToMatchLayers(collapsedObjectDetailsLayout, "Object details panel after collapsing the simulation rail", { minimumWidth: 400 });
     const readCollapsedTogglePosition = () => page.evaluate(() => {
         const toggle = document.querySelector('button[aria-label="Mostrar control de simulacion"]');
         const bounds = toggle?.getBoundingClientRect();
@@ -812,6 +898,12 @@ test("Los paneles principales mantienen controles accesibles", async ({ page }) 
     expect(Math.abs(collapsedTogglePosition.bottom - timeLayout.dock.bottom), "Collapsed simulation toggle must retain the dock's lower alignment").toBeLessThanOrEqual(1);
     await showSimulationDock.click();
     await expect(hideSimulationDock).toBeVisible();
+    await expect.poll(() => page.evaluate(() => {
+        const panel = document.querySelector(".object-details-panel");
+        const dock = document.querySelector(".react-simulation-dock");
+        if (!(panel instanceof HTMLElement) || !(dock instanceof HTMLElement)) return false;
+        return panel.getBoundingClientRect().bottom <= dock.getBoundingClientRect().top - 8;
+    }), { message: "Object details must reserve the simulation rail again when it is restored" }).toBe(true);
 
     const simulationControlPresentation = await simulationDock.evaluate((dock) => {
         const parseColor = (value) => {
@@ -873,6 +965,14 @@ test("Los paneles principales mantienen controles accesibles", async ({ page }) 
 
     await chooseMode("Simulated", "Real time");
     await expect(simulationDock).toBeHidden();
+    await expect.poll(() => page.evaluate(() => {
+        const panel = document.querySelector(".object-details-panel");
+        const layers = document.querySelector("#leftSatellitesPanel");
+        if (!(panel instanceof HTMLElement) || !(layers instanceof HTMLElement)) return false;
+        return Math.abs(panel.getBoundingClientRect().bottom - layers.getBoundingClientRect().bottom) <= 1;
+    }), { message: "Object details must restore its full height after leaving simulated time" }).toBe(true);
+    const restoredObjectDetailsLayout = await readDockedRightPanelLayout(page, ".object-details-panel");
+    expectRightPanelToMatchLayers(restoredObjectDetailsLayout, "Object details panel in real time", { minimumWidth: 400 });
 
     const recordButton = page.locator("#leftRecordBtn");
     const cameraButton = page.locator("#leftCameraControlsBtn");
@@ -956,6 +1056,13 @@ test("El editor de estaciones de tierra mantiene sus formularios accesibles", as
     await expect(groundStationPanel.getByRole("button", { name: "Cerrar creador de estación terrestre", exact: true })).toBeVisible();
     await expect(page.locator("#leftSatellitesPanel")).toBeVisible();
     await expectPanelInsideViewport(page, "#groundStationModal .ground-station-panel");
+    await expectPanelSurfaceTransparency(page, "#groundStationModal .ground-station-panel");
+
+    // The station designer is a docked right-hand workspace, not a smaller
+    // floating form. In the normal timeline modes it must use the same full
+    // vertical working area as Layers.
+    const initialStationLayout = await readDockedRightPanelLayout(page, "#groundStationModal .ground-station-panel");
+    expectRightPanelToMatchLayers(initialStationLayout, "Ground station designer", { minimumWidth: 400 });
 
     const hasHorizontalOverflow = async () => groundStationPanel.evaluate((panel) => panel.scrollWidth > panel.clientWidth + 1);
     expect(await hasHorizontalOverflow(), "Ground station form must not create horizontal scrolling").toBeFalsy();
@@ -995,6 +1102,48 @@ test("El editor de estaciones de tierra mantiene sus formularios accesibles", as
     expect(coverageToggleSize.height, "Coverage visibility toggle must be easy to activate").toBeGreaterThanOrEqual(22);
     await expect(groundStationPanel.getByRole("button", { name: "Heat map", exact: true })).toHaveCount(0);
     await expect(page.locator("#groundStationHeatLegend")).toHaveCount(0);
+
+    // A visible simulation rail consumes the lower workspace edge. The
+    // designer must shrink above it, then reclaim the Layer height when the
+    // rail is collapsed or when the timeline returns to real time.
+    const timeModeButton = page.locator("#projectTimeModeBtn");
+    await timeModeButton.click();
+    await page.getByRole("menuitemradio", { name: "Simulated", exact: true }).click();
+    const simulationDock = page.locator(".react-simulation-dock");
+    await expect(simulationDock).toBeVisible();
+    await expect.poll(() => page.evaluate(() => {
+        const panel = document.querySelector("#groundStationModal .ground-station-panel");
+        const dock = document.querySelector(".react-simulation-dock");
+        if (!(panel instanceof HTMLElement) || !(dock instanceof HTMLElement)) return false;
+        return panel.getBoundingClientRect().bottom <= dock.getBoundingClientRect().top - 8;
+    }), { message: "Ground station designer must make room for the simulation rail" }).toBe(true);
+    const simulatedStationLayout = await readDockedRightPanelLayout(page, "#groundStationModal .ground-station-panel");
+    expectRightPanelToClearSimulationDock(simulatedStationLayout, "Ground station designer");
+    expect(simulatedStationLayout.panel.height, "Ground station designer must become shorter while the simulation rail is open").toBeLessThan(initialStationLayout.panel.height - 20);
+
+    const hideSimulationDock = page.getByRole("button", { name: "Ocultar control de simulacion", exact: true });
+    await hideSimulationDock.click();
+    await expect(page.getByRole("button", { name: "Mostrar control de simulacion", exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => {
+        const panel = document.querySelector("#groundStationModal .ground-station-panel");
+        const layers = document.querySelector("#leftSatellitesPanel");
+        if (!(panel instanceof HTMLElement) || !(layers instanceof HTMLElement)) return false;
+        return Math.abs(panel.getBoundingClientRect().bottom - layers.getBoundingClientRect().bottom) <= 1;
+    }), { message: "Ground station designer must reclaim its full height when the simulation rail is collapsed" }).toBe(true);
+    const collapsedStationLayout = await readDockedRightPanelLayout(page, "#groundStationModal .ground-station-panel");
+    expectRightPanelToMatchLayers(collapsedStationLayout, "Ground station designer after collapsing the simulation rail", { minimumWidth: 400 });
+
+    await timeModeButton.click();
+    await page.getByRole("menuitemradio", { name: "Real time", exact: true }).click();
+    await expect(simulationDock).toBeHidden();
+    await expect.poll(() => page.evaluate(() => {
+        const panel = document.querySelector("#groundStationModal .ground-station-panel");
+        const layers = document.querySelector("#leftSatellitesPanel");
+        if (!(panel instanceof HTMLElement) || !(layers instanceof HTMLElement)) return false;
+        return Math.abs(panel.getBoundingClientRect().bottom - layers.getBoundingClientRect().bottom) <= 1;
+    }), { message: "Ground station designer must restore its normal height in real time" }).toBe(true);
+    const restoredStationLayout = await readDockedRightPanelLayout(page, "#groundStationModal .ground-station-panel");
+    expectRightPanelToMatchLayers(restoredStationLayout, "Ground station designer in real time", { minimumWidth: 400 });
 });
 
 test("La bienvenida crea un proyecto y entrega el control al visor", async ({ page }) => {
@@ -1032,6 +1181,10 @@ test("La bienvenida queda centrada y Generate orbit abre el diseñador con sus v
 
     await openWorkspace(page);
     await ensureLayersPanelOpen(page);
+    const layerWorkspaceBaseline = await page.locator("#leftSatellitesPanel").evaluate((panel) => {
+        const rect = panel.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom };
+    });
     await expect.poll(
         () => page.evaluate(() => {
             const control = document.querySelector("#leftSatellitesPanel #openCatalogBtn");
@@ -1055,6 +1208,14 @@ test("La bienvenida queda centrada y Generate orbit abre el diseñador con sus v
     const designer = page.locator("#manualOrbitPanel");
     await expect(designer).toBeVisible();
     await expectPanelSurfaceTransparency(page, "#manualOrbitPanel");
+    const manualOrbitGeometry = await designer.evaluate((panel) => {
+        const rect = panel.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, width: rect.width, right: rect.right, viewportWidth: window.innerWidth };
+    });
+    expect(Math.abs(manualOrbitGeometry.top - layerWorkspaceBaseline.top), "Manual orbit must share the Layers upper baseline").toBeLessThanOrEqual(1);
+    expect(Math.abs(manualOrbitGeometry.bottom - layerWorkspaceBaseline.bottom), "Manual orbit must share the Layers lower baseline").toBeLessThanOrEqual(1);
+    expect(manualOrbitGeometry.width, "Manual orbit must retain the shared wide right-panel width").toBeGreaterThanOrEqual(400);
+    expect(manualOrbitGeometry.right, "Manual orbit must remain inside the viewport").toBeLessThanOrEqual(manualOrbitGeometry.viewportWidth + 1);
     // The designer owns an isolated Earth-centred scene. Layers must be
     // genuinely hidden (not merely translated off-screen) while it is open,
     // then restored to its prior expanded state when the draft is closed.

@@ -388,7 +388,7 @@ export default function ObjectDetailsPanel() {
     const rows = isGroundStation ? stationRows(detail) : details.rows;
     const stationRfModel = isGroundStation ? getStationRfModel(detail) : null;
 
-    return <aside className="object-details-panel pointer-events-auto fixed top-[86px] right-[14px] bottom-[132px] z-[10124] flex min-h-[300px] w-[min(300px,calc(100vw-28px))] flex-col overflow-auto rounded-[10px] border border-[rgba(65,99,147,.58)] bg-[linear-gradient(145deg,rgba(12,25,42,.97),rgba(5,14,25,.97))] p-4 font-[system-ui] text-[#dbe7fa] shadow-[0_22px_60px_rgba(0,0,0,.46),inset_0_1px_rgba(255,255,255,.045)] max-[760px]:top-20 max-[760px]:right-2.5 max-[760px]:bottom-[74px] max-[760px]:w-[min(330px,calc(100vw-20px))]" aria-label="Detalles del objeto seleccionado">
+    return <aside className="object-details-panel orbit-right-panel pointer-events-auto fixed z-[10124] flex min-h-[300px] flex-col overflow-auto border p-4 font-[system-ui] text-[#dbe7fa]" aria-label="Detalles del objeto seleccionado">
         <PanelCloseButton className="absolute top-[14px] right-[15px]" label="Cerrar detalles" onClick={() => setDismissedId(detail.id)} />
         <h2 className="mb-[9px] max-w-[calc(100%_-_30px)] overflow-hidden text-ellipsis whitespace-nowrap text-[17px] leading-[1.2] font-medium text-[#f1f6ff]">{details.title}</h2>
         <div className="flex items-center gap-2.5 border-b border-[#1c2c43] pb-[17px] text-[11px] leading-none font-semibold tracking-[.03em] text-[#8fa1ba]">

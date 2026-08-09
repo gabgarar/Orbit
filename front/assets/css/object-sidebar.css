@@ -383,7 +383,7 @@ body.with-toolbars #objectSidebar.collapsed {
     display: none;
     align-items: flex-start;
     justify-content: flex-end;
-    padding: 86px 14px 14px;
+    padding: var(--orbit-workspace-panel-top, 86px) var(--orbit-right-panel-right, 14px) var(--orbit-right-panel-bottom, 6px);
     box-sizing: border-box;
     pointer-events: none;
 }
@@ -393,8 +393,8 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .ground-station-panel {
-    width: min(380px, calc(100vw - 28px));
-    height: calc(100dvh - 100px);
+    width: var(--orbit-right-panel-width, min(420px, calc(100vw - 28px)));
+    height: calc(100dvh - var(--orbit-workspace-panel-top, 86px) - var(--orbit-right-panel-bottom, 6px));
     max-height: none;
     min-height: 0;
     overflow: hidden;
@@ -406,8 +406,10 @@ body.with-toolbars #objectSidebar.collapsed {
     pointer-events: auto;
     border: 1px solid rgba(65, 99, 147, .66);
     border-radius: 10px;
-    background: linear-gradient(145deg, rgba(12, 25, 42, .98), rgba(5, 14, 25, .98));
-    box-shadow: 0 22px 60px rgba(0, 0, 0, .5), inset 0 1px rgba(255, 255, 255, .045);
+    background: linear-gradient(145deg, rgba(12, 25, 42, .78), rgba(5, 14, 25, .70));
+    box-shadow: 0 22px 60px rgba(0, 0, 0, .46), inset 0 1px rgba(255, 255, 255, .045);
+    -webkit-backdrop-filter: blur(14px) saturate(112%);
+    backdrop-filter: blur(14px) saturate(112%);
 }
 
 .ground-station-grid {
@@ -495,12 +497,12 @@ body.with-toolbars #objectSidebar.collapsed {
     }
 
     #groundStationModal {
-        padding: 80px 10px 10px;
+        padding: var(--orbit-workspace-panel-top, 64px) var(--orbit-right-panel-right, 10px) var(--orbit-right-panel-bottom, 6px);
     }
 
     .ground-station-panel {
-        width: min(360px, calc(100vw - 20px));
-        height: calc(100dvh - 90px);
+        width: var(--orbit-right-panel-width, min(360px, calc(100vw - 20px)));
+        height: calc(100dvh - var(--orbit-workspace-panel-top, 64px) - var(--orbit-right-panel-bottom, 6px));
     }
 }
 

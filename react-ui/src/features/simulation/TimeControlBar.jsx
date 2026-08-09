@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { CalendarIcon, ChevronDownIcon } from "../../components/icons.jsx";
 import { getPassTimelineMarker, getTimelinePosition } from "../../../../front/js/features/groundStations/passTimeline.js";
 
@@ -100,6 +100,23 @@ export default function TimeControlBar() {
 
     const isSimulated = simulation.mode === "range";
     useEffect(() => { if (!isSimulated) setCollapsed(false); }, [isSimulated]);
+
+    // All fixed right-side panels share this lower inset.  Leave them flush
+    // with Layers normally, then reserve the real measured dock height plus a
+    // small visual gap only while the full simulated timeline is visible.
+    const timelineDockVisible = isSimulated && !designMode && !collapsed;
+    const rightPanelBottom = timelineDockVisible
+        ? `calc(${dockHeight || "65px"} + ${dockBottom || "6px"} + 14px)`
+        : "var(--orbit-right-panel-base-bottom)";
+    useLayoutEffect(() => {
+        const root = document.documentElement;
+        root.style.setProperty("--orbit-right-panel-bottom", rightPanelBottom);
+        root.dataset.orbitTimelineDock = timelineDockVisible ? "visible" : "hidden";
+        return () => {
+            root.style.removeProperty("--orbit-right-panel-bottom");
+            delete root.dataset.orbitTimelineDock;
+        };
+    }, [rightPanelBottom, timelineDockVisible]);
 
     const marks = buildTimelineMarks(simulation.startDate, simulation.endDate);
     const analysisRangeMatchesTimeline = (() => {

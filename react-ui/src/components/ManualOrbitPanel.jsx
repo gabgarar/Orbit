@@ -992,7 +992,7 @@ export default function ManualOrbitPanel() {
     // The time dock and project-time footer are intentionally hidden while
     // this design panel is open. Keep header/body/footer in independent grid
     // rows so only the body scrolls and the actions never move or shrink.
-    return <aside id="manualOrbitPanel" className="pointer-events-auto fixed top-[86px] right-[14px] bottom-[14px] z-[10126] grid min-h-0 w-[min(380px,calc(100vw-28px))] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden box-border rounded-[10px] border border-[rgba(65,99,147,.66)] bg-[linear-gradient(145deg,rgba(12,25,42,.98),rgba(5,14,25,.98))] font-[system-ui,sans-serif] text-[#dbe7fa] shadow-[0_22px_60px_rgba(0,0,0,.5),inset_0_1px_rgba(255,255,255,.045)] max-[760px]:top-20 max-[760px]:right-2.5 max-[760px]:bottom-2.5 max-[760px]:w-[min(360px,calc(100vw-20px))]" role="dialog" aria-modal="false" aria-labelledby="manualOrbitTitle">
+    return <aside id="manualOrbitPanel" className="orbit-right-panel pointer-events-auto fixed z-[10126] grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden box-border border font-[system-ui,sans-serif] text-[#dbe7fa]" role="dialog" aria-modal="false" aria-labelledby="manualOrbitTitle">
         <header className="flex shrink-0 items-center justify-between border-b border-[#1e3049] px-4 pt-3.5 pb-3">
             <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">

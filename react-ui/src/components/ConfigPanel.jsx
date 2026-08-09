@@ -43,7 +43,7 @@ export default function ConfigPanel() {
     return <div id="configModal" className="open pointer-events-none fixed inset-0 z-[10160]">
         <aside
             id="configPanel"
-            className="pointer-events-auto fixed top-[86px] right-[14px] bottom-[132px] z-[1] flex min-h-[300px] w-[min(344px,calc(100vw-28px))] flex-col overflow-hidden rounded-[10px] border border-[rgba(65,99,147,.58)] bg-[linear-gradient(145deg,rgba(12,25,42,.985),rgba(5,14,25,.985))] font-[system-ui] text-[#dbe7fa] shadow-[0_22px_60px_rgba(0,0,0,.46),inset_0_1px_rgba(255,255,255,.045)] max-[760px]:top-20 max-[760px]:right-2.5 max-[760px]:bottom-[74px] max-[760px]:w-[min(350px,calc(100vw-20px))]"
+            className="orbit-right-panel pointer-events-auto fixed z-[1] flex min-h-[300px] flex-col overflow-hidden border font-[system-ui] text-[#dbe7fa]"
             aria-label="Ajustes de la aplicación"
         >
             <header id="configPanelHeader" className="relative shrink-0 border-b border-[#1c2c43] px-4 pt-4">
