@@ -1388,20 +1388,22 @@ export function setupObjectSidebar({
     const groundStationModal = document.createElement("div");
     groundStationModal.id = "groundStationModal";
     groundStationModal.innerHTML = `
-        <div class="catalog-filter-panel ground-station-panel" role="dialog" aria-modal="true" aria-label="Nueva estacion terrestre" id="groundStationPanel">
-            <div class="catalog-filter-header ground-station-design-header">
+        <div class="catalog-filter-panel ground-station-panel" role="dialog" aria-modal="false" aria-label="Nueva estación terrestre" id="groundStationPanel">
+            <header class="catalog-filter-header ground-station-design-header">
                 <div><h3 id="groundStationTitle">Nueva estación terrestre</h3><p>Previsualiza la cobertura antes de crear la capa.</p></div>
                 <span class="ground-station-design-badge">DISEÑO DE ESTACIÓN</span>
-                <button class="catalog-close-btn" id="groundStationCloseBtn" type="button" aria-label="Cerrar">×</button>
-            </div>
-            <div class="ground-station-tabs" id="groundStationTabs">
-                <button type="button" class="ground-station-tab-btn active" data-gs-tab="general">General</button>
-                <button type="button" class="ground-station-tab-btn" data-gs-tab="antenna">Antena</button>
-                <button type="button" class="ground-station-tab-btn" data-gs-tab="radio">Radio</button>
-                <button type="button" class="ground-station-tab-btn" data-gs-tab="pointing">Apuntado</button>
-                <button type="button" class="ground-station-tab-btn" data-gs-tab="visual">Visual</button>
-            </div>
-            <div class="ground-station-tab-panel active" data-gs-tab-panel="general">
+                <button class="catalog-close-btn" id="groundStationCloseBtn" type="button" aria-label="Cerrar creador de estación terrestre" title="Cerrar creador de estación terrestre">×</button>
+            </header>
+            <div class="ground-station-editor-body">
+                <nav class="ground-station-tabs" id="groundStationTabs" aria-label="Secciones de la estación terrestre" role="tablist">
+                    <button type="button" class="ground-station-tab-btn active" data-gs-tab="general" role="tab" aria-selected="true" aria-controls="ground-station-general">GENERAL</button>
+                    <button type="button" class="ground-station-tab-btn" data-gs-tab="antenna" role="tab" aria-selected="false" aria-controls="ground-station-antenna">ANTENA</button>
+                    <button type="button" class="ground-station-tab-btn" data-gs-tab="radio" role="tab" aria-selected="false" aria-controls="ground-station-radio">RADIO</button>
+                    <button type="button" class="ground-station-tab-btn" data-gs-tab="pointing" role="tab" aria-selected="false" aria-controls="ground-station-pointing">APUNTADO</button>
+                    <button type="button" class="ground-station-tab-btn" data-gs-tab="visual" role="tab" aria-selected="false" aria-controls="ground-station-visual">VISUAL</button>
+                </nav>
+                <div class="ground-station-tab-panels">
+            <div id="ground-station-general" class="ground-station-tab-panel active" data-gs-tab-panel="general" role="tabpanel">
                 <div class="catalog-filter-grid ground-station-grid">
                     <label class="catalog-filter-field">
                         <span>Nombre de capa</span>
@@ -1445,7 +1447,7 @@ export function setupObjectSidebar({
                     <div class="catalog-filter-field ground-station-rf-summary" id="gsRfSummary" aria-live="polite"></div>
                 </div>
             </div>
-            <div class="ground-station-tab-panel" data-gs-tab-panel="antenna">
+            <div id="ground-station-antenna" class="ground-station-tab-panel" data-gs-tab-panel="antenna" role="tabpanel">
                 <div class="catalog-filter-grid ground-station-grid">
                     <label class="catalog-filter-field"><span>Diámetro de plato (m)</span><input id="gsDishDiameterInput" type="number" min="0.01" step="0.01" value="1.2" /></label>
                     <label class="catalog-filter-field"><span>Eficiencia de plato (0–1)</span><input id="gsDishEfficiencyInput" type="number" min="0.01" max="1" step="0.01" value="0.60" /></label>
@@ -1461,7 +1463,7 @@ export function setupObjectSidebar({
                     <label class="catalog-filter-field"><span>Override G RX (dBi)</span><input id="gsRxGainInput" type="number" step="0.1" placeholder="Sólo si se fuerza" /></label>
                 </div>
             </div>
-            <div class="ground-station-tab-panel" data-gs-tab-panel="radio">
+            <div id="ground-station-radio" class="ground-station-tab-panel" data-gs-tab-panel="radio" role="tabpanel">
                 <div class="catalog-filter-grid ground-station-grid">
                     <label class="catalog-filter-field">
                         <span>Unidad de frecuencia</span>
@@ -1492,7 +1494,7 @@ export function setupObjectSidebar({
                     <label class="catalog-filter-field"><span>Conectores (dB)</span><input id="gsConnectorLossInput" type="number" min="0" step="0.1" value="0.5" /></label>
                 </div>
             </div>
-            <div class="ground-station-tab-panel" data-gs-tab-panel="pointing">
+            <div id="ground-station-pointing" class="ground-station-tab-panel" data-gs-tab-panel="pointing" role="tabpanel">
                 <div class="catalog-filter-grid ground-station-grid">
                     <label class="catalog-filter-field"><span>Modo de operación</span><select id="gsOperationModeInput"><option value="tracking">Seguimiento</option><option value="scan">Barrido</option><option value="stationary">Estacionario</option></select></label>
                     <label class="catalog-filter-field"><span>Error RMS de apuntado (milideg)</span><input id="gsPointingRmsInput" type="number" min="0" step="1" value="50" /></label>
@@ -1505,7 +1507,7 @@ export function setupObjectSidebar({
                 </div>
                 <p class="ground-station-pointing-note">Seguimiento orienta el haz al objetivo; barrido muestra la envolvente mecánica sin inventar un calendario de scan; estacionario mantiene el boresight indicado.</p>
             </div>
-            <div class="ground-station-tab-panel" data-gs-tab-panel="visual">
+            <div id="ground-station-visual" class="ground-station-tab-panel" data-gs-tab-panel="visual" role="tabpanel">
                 <div class="catalog-filter-grid ground-station-grid">
                     <label class="catalog-filter-field">
                         <span>Tamano simbolo (px)</span>
@@ -1531,15 +1533,17 @@ export function setupObjectSidebar({
                     </label>
                 </div>
             </div>
-            <div class="catalog-filter-actions ground-station-actions">
+                </div>
+            </div>
+            <footer class="catalog-filter-actions ground-station-actions">
                 <button class="catalog-secondary-btn" id="groundStationCancelBtn" type="button">Cancelar</button>
                 <button class="catalog-action-btn" id="groundStationCreateBtn" type="button">Añadir a Layers</button>
-            </div>
+            </footer>
         </div>
     `;
-    // The station editor remains a legacy floating dialog until its complete
-    // form migrates to React. Attach it before wiring controls: otherwise the
-    // Layers > Add layer action toggles a detached node and appears inert.
+    // Keep this legacy form docked like the manual-orbit designer. It still
+    // owns the live Cesium preview, so it must be attached before its controls
+    // are wired or the Layers action would target a detached node.
     document.body.appendChild(groundStationModal);
 
     const exportModal = document.createElement("div");
@@ -1871,10 +1875,14 @@ export function setupObjectSidebar({
     const setGroundStationTab = (tabId) => {
         const safeTab = String(tabId || "general").toLowerCase();
         gsTabButtons.forEach((btn) => {
-            btn.classList.toggle("active", btn.dataset.gsTab === safeTab);
+            const isActive = btn.dataset.gsTab === safeTab;
+            btn.classList.toggle("active", isActive);
+            btn.setAttribute("aria-selected", String(isActive));
         });
         gsTabPanels.forEach((panel) => {
-            panel.classList.toggle("active", panel.dataset.gsTabPanel === safeTab);
+            const isActive = panel.dataset.gsTabPanel === safeTab;
+            panel.classList.toggle("active", isActive);
+            panel.hidden = !isActive;
         });
     };
 
@@ -1938,65 +1946,6 @@ export function setupObjectSidebar({
     });
 
     renderNotifications();
-
-    function makeMovablePanel(modalRoot, panelNode, dragHandleNode) {
-        let dragging = false;
-        let startX = 0;
-        let startY = 0;
-        let offsetX = 0;
-        let offsetY = 0;
-
-        const applyTransform = () => {
-            panelNode.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
-        };
-
-        const onPointerMove = (event) => {
-            if (!dragging) {
-                return;
-            }
-            const clientX = Number(event.clientX);
-            const clientY = Number(event.clientY);
-            if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
-                return;
-            }
-            offsetX += clientX - startX;
-            offsetY += clientY - startY;
-            startX = clientX;
-            startY = clientY;
-            applyTransform();
-        };
-
-        const stop = () => {
-            dragging = false;
-            window.removeEventListener("pointermove", onPointerMove);
-            window.removeEventListener("pointerup", stop);
-        };
-
-        dragHandleNode.addEventListener("pointerdown", (event) => {
-            if (event.button !== 0) {
-                return;
-            }
-            if (event.target.closest("button")) {
-                return;
-            }
-            dragging = true;
-            startX = event.clientX;
-            startY = event.clientY;
-            window.addEventListener("pointermove", onPointerMove);
-            window.addEventListener("pointerup", stop);
-            event.preventDefault();
-        });
-
-        modalRoot.addEventListener("transitionend", () => {
-            if (!modalRoot.classList.contains("open")) {
-                panelNode.style.transform = "translate(0px, 0px)";
-                offsetX = 0;
-                offsetY = 0;
-            }
-        });
-    }
-
-    makeMovablePanel(groundStationModal, groundStationPanel, groundStationPanel.querySelector(".catalog-filter-header"));
 
     function askConfirmation({ title, message, confirmText, cancelText }) {
         return new Promise((resolve) => {
@@ -2272,7 +2221,7 @@ export function setupObjectSidebar({
         editingGroundStationId = layerId ? String(layerId) : null;
 
         const isEditing = Boolean(editingGroundStationId);
-        groundStationTitle.textContent = isEditing ? "Update parameters" : "Nueva estacion terrestre";
+        groundStationTitle.textContent = isEditing ? "Editar estación terrestre" : "Nueva estación terrestre";
         groundStationCreateBtn.textContent = isEditing ? "Guardar cambios" : "Añadir a Layers";
 
         if (isEditing && typeof getGroundStationParams === "function") {

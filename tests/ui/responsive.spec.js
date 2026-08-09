@@ -950,16 +950,30 @@ test("El editor de estaciones de tierra mantiene sus formularios accesibles", as
     await expect(page.locator("#groundStationModal")).toHaveCount(1);
     await expect(page.locator("#groundStationModal")).toHaveClass(/open/);
     const groundStationPanel = page.locator("#groundStationModal .ground-station-panel");
+    await expect(groundStationPanel).toHaveAttribute("role", "dialog");
+    await expect(groundStationPanel.getByRole("heading", { name: "Nueva estación terrestre", exact: true })).toBeVisible();
+    await expect(groundStationPanel.getByText("DISEÑO DE ESTACIÓN", { exact: true })).toBeVisible();
+    await expect(groundStationPanel.getByRole("button", { name: "Cerrar creador de estación terrestre", exact: true })).toBeVisible();
+    await expect(page.locator("#leftSatellitesPanel")).toBeVisible();
     await expectPanelInsideViewport(page, "#groundStationModal .ground-station-panel");
 
     const hasHorizontalOverflow = async () => groundStationPanel.evaluate((panel) => panel.scrollWidth > panel.clientWidth + 1);
     expect(await hasHorizontalOverflow(), "Ground station form must not create horizontal scrolling").toBeFalsy();
 
-    for (const [tab, fieldSelector] of [["Antena", 'input[type="number"]'], ["Radio", 'input[type="number"]'], ["Apuntado", 'select'], ["Visual", 'input[type="color"]']]) {
-        const tabButton = groundStationPanel.getByRole("button", { name: tab, exact: true });
+    const tabs = groundStationPanel.getByRole("tab");
+    await expect(tabs).toHaveCount(5);
+    await expect(groundStationPanel.getByRole("tab", { name: "GENERAL", exact: true })).toHaveAttribute("aria-selected", "true");
+
+    for (const [tab, fieldSelector] of [["ANTENA", 'input[type="number"]'], ["RADIO", 'input[type="number"]'], ["APUNTADO", "select"], ["VISUAL", 'input[type="color"]']]) {
+        const tabButton = groundStationPanel.getByRole("tab", { name: tab, exact: true });
         await tabButton.click();
         await expect(tabButton).toHaveClass(/active/);
-        const activeTabPanel = groundStationPanel.locator(".ground-station-tab-panel.active");
+        await expect(tabButton).toHaveAttribute("aria-selected", "true");
+        const panelId = await tabButton.getAttribute("aria-controls");
+        expect(panelId, `${tab} must control a tab panel`).toBeTruthy();
+        const activeTabPanel = groundStationPanel.locator(`#${panelId}`);
+        await expect(activeTabPanel).toHaveAttribute("role", "tabpanel");
+        await expect(activeTabPanel).toBeVisible();
         const firstControl = activeTabPanel.locator(fieldSelector).first();
         const lastControl = activeTabPanel.locator("input, select").last();
         await firstControl.scrollIntoViewIfNeeded();

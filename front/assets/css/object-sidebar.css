@@ -378,12 +378,12 @@ body.with-toolbars #objectSidebar.collapsed {
 #groundStationModal {
     position: fixed;
     inset: 0;
-    z-index: 10145;
+    z-index: 10126;
     background: transparent;
     display: none;
     align-items: flex-start;
     justify-content: flex-end;
-    padding: 76px 12px 12px;
+    padding: 86px 14px 14px;
     box-sizing: border-box;
     pointer-events: none;
 }
@@ -393,16 +393,21 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .ground-station-panel {
-    width: min(430px, calc(100vw - 24px));
-    max-height: calc(100dvh - 88px);
+    width: min(380px, calc(100vw - 28px));
+    height: calc(100dvh - 100px);
+    max-height: none;
     min-height: 0;
     overflow: hidden;
-    padding: 16px;
-    gap: 14px;
+    padding: 0;
+    gap: 0;
     box-sizing: border-box;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     container-type: inline-size;
     pointer-events: auto;
+    border: 1px solid rgba(65, 99, 147, .66);
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(12, 25, 42, .98), rgba(5, 14, 25, .98));
+    box-shadow: 0 22px 60px rgba(0, 0, 0, .5), inset 0 1px rgba(255, 255, 255, .045);
 }
 
 .ground-station-grid {
@@ -412,11 +417,40 @@ body.with-toolbars #objectSidebar.collapsed {
     width: 100%;
 }
 
+.ground-station-editor-body {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
+    padding: 0 16px;
+}
+
+.ground-station-tab-panels {
+    min-height: 0;
+    overflow: hidden;
+    padding: 12px 0 10px;
+}
+
 .ground-station-panel .ground-station-tab-panel.active {
+    display: block;
+    height: 100%;
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
-    padding: 2px 5px 2px 2px;
+    overscroll-behavior: contain;
+    padding: 2px 8px 4px 1px;
+    scrollbar-color: #355179 transparent;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+}
+
+.ground-station-panel .ground-station-tab-panel.active::-webkit-scrollbar {
+    width: 8px;
+}
+
+.ground-station-panel .ground-station-tab-panel.active::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: #355179;
 }
 
 .ground-station-panel .catalog-filter-field {
@@ -445,7 +479,8 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .ground-station-panel .catalog-filter-actions {
-    padding-top: 2px;
+    padding: 10px 16px 14px;
+    border-top: 1px solid #1e3049;
 }
 
 @container (max-width: 520px) {
@@ -457,6 +492,15 @@ body.with-toolbars #objectSidebar.collapsed {
 @media (max-width: 780px) {
     .ground-station-grid {
         grid-template-columns: 1fr;
+    }
+
+    #groundStationModal {
+        padding: 80px 10px 10px;
+    }
+
+    .ground-station-panel {
+        width: min(360px, calc(100vw - 20px));
+        height: calc(100dvh - 90px);
     }
 }
 
@@ -689,9 +733,10 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .ground-station-design-header {
-    align-items: flex-start;
+    align-items: center;
+    gap: 10px;
     border-bottom: 1px solid #203956;
-    padding-bottom: 12px;
+    padding: 14px 16px 12px;
 }
 
 .ground-station-design-header h3 {
@@ -708,8 +753,8 @@ body.with-toolbars #objectSidebar.collapsed {
 
 .ground-station-design-badge {
     margin-left: auto;
-    margin-top: 2px;
-    margin-right: 2px;
+    margin-top: 0;
+    margin-right: 0;
     border: 1px solid #365786;
     border-radius: 999px;
     padding: 3px 6px;
@@ -733,21 +778,42 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .ground-station-actions {
-    display: flex;
-    justify-content: flex-end;
+    display: grid;
+    grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr);
     gap: 9px;
 }
 
 .ground-station-actions .catalog-secondary-btn {
-    min-height: 34px;
-    padding: 0 14px;
-    border: 1px solid var(--orbit-border-secondary);
+    width: 100%;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid #2d4770;
     border-radius: 6px;
-    background: rgba(11, 24, 41, .82);
-    color: var(--orbit-text-secondary);
-    font-size: 11px;
+    background: #0b1728;
+    color: #b9c8df;
+    font-size: 10px;
     font-weight: 700;
     cursor: pointer;
+}
+
+.ground-station-actions .catalog-action-btn {
+    width: 100%;
+    min-height: 36px;
+    border-color: #4167ff;
+    background: #3d5cf4;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    box-shadow: 0 5px 14px rgba(51, 85, 220, .22);
+}
+
+.ground-station-actions .catalog-secondary-btn:hover {
+    border-color: #5273a7;
+    color: #eaf2ff;
+}
+
+.ground-station-actions .catalog-action-btn:hover {
+    background: #4c6eff;
 }
 
 .tle-info-content::-webkit-scrollbar { width: 10px; }
@@ -1682,31 +1748,44 @@ body.with-toolbars #objectSidebar.collapsed {
     font: 600 12px/1.4 sans-serif;
 }
 
-.ground-station-panel .catalog-filter-header {
-    cursor: move;
-}
-
 .ground-station-tabs {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 6px;
-    margin: 10px 0 12px;
+    gap: 0;
+    margin: 0;
+    border-bottom: 1px solid #1c2c43;
 }
 
 .ground-station-tab-btn {
-    border: 1px solid var(--orbit-border-primary);
-    border-radius: 8px;
-    background: var(--orbit-bg-input);
-    color: var(--orbit-text-secondary);
-    font: 700 10px/1 sans-serif;
-    padding: 8px 4px;
+    position: relative;
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #8d9bb1;
+    font: 700 9px/1 system-ui, sans-serif;
+    letter-spacing: .01em;
+    padding: 11px 2px 12px;
     cursor: pointer;
+    transition: color .16s ease;
 }
 
+.ground-station-tab-btn:hover { color: #cbd8ec; }
+
 .ground-station-tab-btn.active {
-    border-color: var(--orbit-border-focus);
-    color: var(--orbit-text-primary);
-    background: var(--orbit-bg-tertiary);
+    color: #eaf1ff;
+    background: transparent;
+}
+
+.ground-station-tab-btn.active::after {
+    position: absolute;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    height: 2px;
+    background: #4476ff;
+    box-shadow: 0 0 8px #4476ff;
+    content: "";
 }
 
 .ground-station-tab-panel {
@@ -1715,6 +1794,10 @@ body.with-toolbars #objectSidebar.collapsed {
 
 .ground-station-tab-panel.active {
     display: block;
+}
+
+.ground-station-tab-panel[hidden] {
+    display: none !important;
 }
 
 .ground-station-rf-summary {
