@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
 import { openGroundStationExportMenu } from "./GroundStationExportMenu.jsx";
+import { ActionMenuItem, ActionMenuSurface } from "./ActionMenuSurface.jsx";
+import { EarthIcon, GroundStationIcon, OrbitalSatelliteIcon } from "./icons.jsx";
 
-const baseButtonClass = "!h-8 !rounded-lg !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-tertiary)] !px-3 !text-left !font-sans !text-xs !leading-none !font-bold !text-[var(--orbit-text-primary)] !cursor-pointer hover:!bg-[var(--orbit-bg-hover)] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[var(--orbit-border-focus)]";
+function displayLayerName(menu) {
+    return String(menu?.name || menu?.title || menu?.id || "Objeto").trim() || "Objeto";
+}
 
 export default function SatelliteContextMenu() {
     const [menu, setMenu] = useState(null);
 
     useEffect(() => {
-        const open = (event) => setMenu(event.detail);
+        const open = (event) => setMenu(event.detail || null);
         const close = () => setMenu(null);
         window.addEventListener("orbit:satellite-context-open", open);
         window.addEventListener("orbit:satellite-context-close", close);
@@ -17,7 +21,30 @@ export default function SatelliteContextMenu() {
         };
     }, []);
 
+    useEffect(() => {
+        if (!menu) return undefined;
+        const close = () => setMenu(null);
+        const closeOnEscape = (event) => {
+            if (event.key === "Escape") close();
+        };
+        document.addEventListener("pointerdown", close);
+        document.addEventListener("keydown", closeOnEscape);
+        return () => {
+            document.removeEventListener("pointerdown", close);
+            document.removeEventListener("keydown", closeOnEscape);
+        };
+    }, [menu]);
+
     if (!menu) return null;
+
+    const name = displayLayerName(menu);
+    const layerType = String(menu.layerType || "").toUpperCase();
+    const isCelestialBody = ["CELESTIAL_BODY", "EARTH"].includes(layerType)
+        || String(menu.id || "").toLowerCase() === "body:earth";
+    const isGroundStation = layerType === "GROUND_STATION";
+    const icon = isGroundStation
+        ? <GroundStationIcon />
+        : (isCelestialBody ? <EarthIcon /> : <OrbitalSatelliteIcon />);
 
     const selectAction = (type) => {
         window.dispatchEvent(new CustomEvent("orbit:satellite-context-action", {
@@ -26,65 +53,54 @@ export default function SatelliteContextMenu() {
         setMenu(null);
     };
 
-    const isCelestialBody = ["CELESTIAL_BODY", "EARTH"].includes(String(menu.layerType || "").toUpperCase())
-        || String(menu.id || "").toLowerCase() === "body:earth";
-    const isGroundStation = String(menu.layerType || "").toUpperCase() === "GROUND_STATION";
-
-    return <div
+    return <ActionMenuSurface
         id="satelliteContextMenu"
-        className="open !fixed !z-[10050] !grid !min-w-[214px] !gap-1 !rounded-[10px] !border !border-[var(--orbit-border-primary)] !bg-[var(--orbit-bg-secondary)] !p-1.5 !shadow-[0_10px_26px_rgba(0,0,0,.45)]"
-        style={{ left: menu.left, top: menu.top }}
+        className="open"
+        title={name}
+        icon={icon}
+        left={menu.left}
+        top={menu.top}
+        ariaLabel={`Opciones de ${name}`}
     >
-        <button
-            className={baseButtonClass}
-            type="button"
+        <ActionMenuItem
+            title="Centrar vista"
+            description="Mueve la cámara al objeto seleccionado."
             onClick={() => selectAction("center-view")}
-        >
-            Centrar vista
-        </button>
-        {isGroundStation && <button
-            className={baseButtonClass}
-            type="button"
+        />
+        {isGroundStation && <ActionMenuItem
+            title="Actualizar parámetros"
+            description="Edita ubicación, máscara y configuración RF."
             onClick={() => selectAction("station")}
-        >
-            Actualizar parámetros
-        </button>}
-        {isGroundStation && <button
-            className={baseButtonClass}
-            type="button"
+        />}
+        {isGroundStation && <ActionMenuItem
+            title="Exportar…"
+            description="Elige GeoJSON, Orbit JSON o CSV."
             data-ground-station-export-control="true"
             onClick={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect();
                 openGroundStationExportMenu({
                     stationId: menu.id,
+                    stationName: name,
                     source: "satellite-context",
                     anchor: { left: rect.left, top: rect.bottom + 6 }
                 });
                 setMenu(null);
             }}
-        >
-            Exportar…
-        </button>}
-        {!isCelestialBody && !isGroundStation && <button
-            className={baseButtonClass}
-            type="button"
+        />}
+        {!isCelestialBody && !isGroundStation && <ActionMenuItem
+            title="Opciones de visualización"
+            description="Ajusta trayectoria, etiquetas y proyecciones."
             onClick={() => selectAction("visualization")}
-        >
-            Opciones de visualización
-        </button>}
-        {!isCelestialBody && !isGroundStation && <button
-            className="!h-8 !rounded-lg !border !border-[#365a89] !bg-[#10233d] !px-3 !text-left !font-sans !text-xs !leading-none !font-bold !text-[#c5dcff] !cursor-pointer hover:!border-[#6091d1] hover:!bg-[#173455] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[#80a7ff]"
-            type="button"
+        />}
+        {!isCelestialBody && !isGroundStation && <ActionMenuItem
+            title="Efemérides"
+            description="Consulta el estado propagado y sus elementos."
             onClick={() => selectAction("propagated-parameters")}
-        >
-            Efemérides
-        </button>}
-        {!isCelestialBody && !isGroundStation && menu.canEditManualOrbit === true && <button
-            className="!h-8 !rounded-lg !border !border-[#3e68b0] !bg-[#162b4d] !px-3 !text-left !font-sans !text-xs !leading-none !font-bold !text-[#d7e7ff] !cursor-pointer hover:!border-[#6091e8] hover:!bg-[#203d68] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[#80a7ff]"
-            type="button"
+        />}
+        {!isCelestialBody && !isGroundStation && menu.canEditManualOrbit === true && <ActionMenuItem
+            title="Editar órbita manual"
+            description="Vuelve al diseño de esta órbita."
             onClick={() => selectAction("edit-manual")}
-        >
-            Editar órbita manual
-        </button>}
-    </div>;
+        />}
+    </ActionMenuSurface>;
 }

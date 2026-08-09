@@ -3795,8 +3795,11 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
     const canEditManualOrbit = Boolean(getManualOrbitProjectEntry(sourceId));
 
     const viewportPadding = 10;
-    const estimatedWidth = 230;
-    const estimatedHeight = isCelestialBody ? 54 : (isGroundStation ? 126 : (canEditManualOrbit ? 198 : 160));
+    // Context menus now include an object header and concise explanations for
+    // each action. Clamp against their real visual footprint so the final
+    // option never falls behind the timeline or viewport edge.
+    const estimatedWidth = 286;
+    const estimatedHeight = isCelestialBody ? 98 : (isGroundStation ? 178 : (canEditManualOrbit ? 270 : 222));
     const maxLeft = Math.max(viewportPadding, window.innerWidth - estimatedWidth - viewportPadding);
     const maxTop = Math.max(viewportPadding, window.innerHeight - estimatedHeight - viewportPadding);
     const safeLeft = Math.min(Math.max(viewportPadding, x), maxLeft);
@@ -3806,6 +3809,7 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
         detail: {
             id: satelliteId,
             sourceId,
+            name: getLayerDisplayName(satelliteId),
             layerType,
             canEditManualOrbit,
             left: safeLeft,

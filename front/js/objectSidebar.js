@@ -1210,6 +1210,14 @@ export function setupObjectSidebar({
     }
 
     let folderContextTarget = null;
+    // The old DOM menu stays mounted as a fallback for non-React embeddings.
+    // Once the React tree surface announces itself, this adapter sends it the
+    // semantic node and keeps the existing folder logic as the action owner.
+    let reactTreeContextMenuReady = window.__orbitTreeContextMenuReady === true;
+    const onTreeContextMenuReady = (event) => {
+        reactTreeContextMenuReady = event.detail?.ready === true;
+    };
+    window.addEventListener("orbit:tree-context-menu-ready", onTreeContextMenuReady);
     let pendingFolderAssignment = null;
     let pendingFolderImportAssignment = null;
 
@@ -1263,9 +1271,27 @@ export function setupObjectSidebar({
 
     function showFolderContextMenu(x, y, markup, target, menuWidth = 260, menuHeight = 230) {
         folderContextTarget = target;
+        const useReactTreeContextMenu = reactTreeContextMenuReady || window.__orbitTreeContextMenuReady === true;
+        const resolvedMenuWidth = useReactTreeContextMenu ? 286 : menuWidth;
+        const resolvedMenuHeight = useReactTreeContextMenu
+            ? (target?.type === "bodies" ? 150 : 352)
+            : menuHeight;
+        const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - resolvedMenuWidth - 8));
+        const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - resolvedMenuHeight - 8));
+        if (useReactTreeContextMenu) {
+            folderContextMenu.classList.remove("open");
+            window.dispatchEvent(new CustomEvent("orbit:tree-context-menu", {
+                detail: {
+                    kind: target?.type === "bodies" ? "bodies" : "folder",
+                    folderId: target?.type === "folder" ? target.folder?.id || null : null,
+                    title: target?.type === "folder" ? target.folder?.name || "Carpeta" : "Bodies",
+                    left,
+                    top
+                }
+            }));
+            return;
+        }
         folderContextMenu.innerHTML = markup;
-        const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
-        const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
         folderContextMenu.style.left = `${left}px`;
         folderContextMenu.style.top = `${top}px`;
         folderContextMenu.classList.add("open");
@@ -1280,12 +1306,8 @@ export function setupObjectSidebar({
         showFolderContextMenu(x, y, bodiesContextMenuMarkup, { type: "bodies" }, 230, 100);
     }
 
-    folderContextMenu.addEventListener("click", async (event) => {
-        const action = event.target.closest("[data-folder-action]")?.dataset.folderAction;
-        const target = folderContextTarget;
+    async function executeFolderContextAction(action, target) {
         const folder = target?.type === "folder" ? target.folder : null;
-        folderContextMenu.classList.remove("open");
-        folderContextTarget = null;
         if (!action || !target) return;
         if (target.type === "bodies") {
             if (action === "bodies-show") setBodiesVisibility(true);
@@ -1338,17 +1360,52 @@ export function setupObjectSidebar({
         }
         if (action !== "delete") return;
         await removeFolderAndRehome(folder);
+    }
+
+    folderContextMenu.addEventListener("click", async (event) => {
+        const action = event.target.closest("[data-folder-action]")?.dataset.folderAction;
+        const target = folderContextTarget;
+        folderContextMenu.classList.remove("open");
+        folderContextTarget = null;
+        await executeFolderContextAction(action, target);
     });
+
+    const onTreeContextMenuAction = (event) => {
+        const detail = event.detail || {};
+        const action = String(detail.action || "").trim();
+        const kind = String(detail.kind || "").trim();
+        let target = null;
+        if (kind === "bodies") {
+            target = { type: "bodies" };
+        } else if (kind === "folder") {
+            const folderId = String(detail.folderId || "").trim();
+            const folder = layerTree.snapshot(getRenderableLayerIds()).folders
+                .find((item) => item.id === folderId);
+            if (folder) target = { type: "folder", folder };
+        }
+        folderContextMenu.classList.remove("open");
+        folderContextTarget = null;
+        if (!target || !action) return;
+        void executeFolderContextAction(action, target);
+    };
+    const onTreeContextMenuDismiss = () => {
+        folderContextMenu.classList.remove("open");
+        folderContextTarget = null;
+    };
+    window.addEventListener("orbit:tree-context-menu-action", onTreeContextMenuAction);
+    window.addEventListener("orbit:tree-context-menu-dismiss", onTreeContextMenuDismiss);
 
     document.addEventListener("pointerdown", (event) => {
         if (!contextMenu.contains(event.target) && !event.target.closest?.("#catalogContextMenu")) closeContextMenu();
-        if (!folderContextMenu.contains(event.target)) {
+        const treeContextControl = event.target.closest?.(".orbit-tree-context-menu");
+        if (!folderContextMenu.contains(event.target) && !treeContextControl) {
             folderContextMenu.classList.remove("open");
             folderContextTarget = null;
+            window.dispatchEvent(new Event("orbit:tree-context-menu-close"));
         }
         const detailsPanel = document.querySelector(".object-details-panel");
         const projectControl = event.target.closest?.("[data-project-actions-control='true'], [data-project-actions-menu='true'], [data-layer-tree-project-root='true']");
-        if (!listRoot.contains(event.target) && !contextMenu.contains(event.target) && !folderContextMenu.contains(event.target) && !detailsPanel?.contains(event.target) && !projectControl && selectedId) {
+        if (!listRoot.contains(event.target) && !contextMenu.contains(event.target) && !folderContextMenu.contains(event.target) && !treeContextControl && !detailsPanel?.contains(event.target) && !projectControl && selectedId) {
             selectedId = null;
             renderList();
             renderInfo();
@@ -1359,6 +1416,7 @@ export function setupObjectSidebar({
         closeContextMenu();
         folderContextMenu.classList.remove("open");
         folderContextTarget = null;
+        window.dispatchEvent(new Event("orbit:tree-context-menu-close"));
     });
 
     const addMenu = document.createElement("div");
@@ -2755,7 +2813,7 @@ export function setupObjectSidebar({
 
     function openContextMenu(satelliteId, x, y) {
         contextTargetId = satelliteId;
-        const menuWidth = 300;
+        const menuWidth = 286;
         const layerType = typeof getLayerType === "function"
             ? String(getLayerType(satelliteId) || "SATELLITE").toUpperCase()
             : "SATELLITE";
@@ -2766,7 +2824,7 @@ export function setupObjectSidebar({
         // Keep the orbital-analysis and optional manual-edit actions inside
         // the viewport instead of letting the last entry slip under the
         // simulation dock.
-        const menuHeight = isEarth ? 158 : (isCelestialBody ? 166 : (isGroundStation ? 198 : (isManualOrbit ? 394 : 356)));
+        const menuHeight = isEarth ? 170 : (isCelestialBody ? 225 : (isGroundStation ? 260 : (isManualOrbit ? 480 : 435)));
         const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - menuWidth - 8));
         const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - menuHeight - 8));
 
@@ -2791,6 +2849,7 @@ export function setupObjectSidebar({
                 earth: isEarth,
                 visible: getObjectVisibility(satelliteId) !== false,
                 groundTrackVisible: getGroundTrackVisible?.(satelliteId) === true,
+                name: getLayerDisplayName?.(satelliteId) || satelliteId,
                 // Only local authored manual orbits get an edit action. The
                 // callback is supplied by the runtime and resolves duplicate
                 // layer ids back to their canonical source before checking.
@@ -4891,6 +4950,9 @@ export function setupObjectSidebar({
             document.removeEventListener("drop", onGlobalFileDrop, true);
             window.removeEventListener("orbit:selected-object-action", onSelectedObjectAction);
             window.removeEventListener(OBJECT_STATE_CHANGED_EVENT, onObjectStateChanged);
+            window.removeEventListener("orbit:tree-context-menu-ready", onTreeContextMenuReady);
+            window.removeEventListener("orbit:tree-context-menu-action", onTreeContextMenuAction);
+            window.removeEventListener("orbit:tree-context-menu-dismiss", onTreeContextMenuDismiss);
             sidebar.remove();
             catalogModal.remove();
             contextMenu.remove();

@@ -4,6 +4,7 @@ import CameraControls from "../features/camera/CameraControls.jsx";
 import { getLayerActionsState, LAYER_ACTIONS_STATE_EVENT } from "../../../front/js/runtime/layerActionsState.js";
 import { emitPropagatedParametersClose, emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
 import { openGroundStationExportMenu } from "./GroundStationExportMenu.jsx";
+import { ActionMenuItem, ActionMenuSeparator, ActionMenuSurface } from "./ActionMenuSurface.jsx";
 
 function publishLayersPanelState(open) {
     window.dispatchEvent(new CustomEvent("orbit:layers-panel-state", { detail: { open } }));
@@ -27,37 +28,28 @@ const PROJECT_ACTIONS = [
     { action: "export-ground-stations", label: "Exportar estaciones", description: "Elige GeoJSON, Orbit JSON o CSV" }
 ];
 
-function ProjectActionsMenu({ source, left, top, onSelect }) {
-    const isContextMenu = source === "context";
-    return <div
+function ProjectActionsMenu({ source, left, top, onSelect, projectName }) {
+    return <ActionMenuSurface
         id="projectActionsMenu"
         data-project-actions-menu="true"
         data-project-actions-source={source}
-        className={`${isContextMenu ? "fixed" : "absolute right-0 top-[calc(100%+7px)]"} z-[10260] grid w-[228px] gap-[3px] rounded-[9px] border border-[#35557e] bg-[linear-gradient(145deg,rgba(13,26,45,.98),rgba(7,15,28,.98))] p-[5px] font-[system-ui,sans-serif] shadow-[0_16px_32px_rgba(0,0,0,.46)] backdrop-blur-md`}
-        style={isContextMenu ? { left: `${left}px`, top: `${top}px` } : undefined}
-        role="menu"
-        aria-label="Acciones de proyecto"
-        onPointerDown={(event) => event.stopPropagation()}
+        placement={source === "context" ? "context" : "toolbar"}
+        left={left}
+        top={top}
+        title={projectName || "Proyecto"}
+        icon={<FolderIcon />}
+        ariaLabel={`Acciones de ${projectName || "proyecto"}`}
     >
-        <div className="flex items-center gap-[7px] border-b border-[#233b5b] px-[7px] py-[6px] text-[#a9bfdd]">
-            <span className="grid size-[17px] place-items-center text-[#83a6ff] [&>svg]:size-[15px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.8]" aria-hidden="true"><FolderIcon /></span>
-            <span className="text-[9px] leading-none font-bold tracking-[.14em]">PROYECTO</span>
-        </div>
-        {PROJECT_ACTIONS.map(({ action, label, description }) => <button
-            className={`grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_14px] items-center gap-2 rounded-[6px] border-0 bg-transparent px-[8px] py-[7px] text-left font-[system-ui,sans-serif] transition-colors hover:bg-[#173157] focus-visible:bg-[#173157] focus-visible:outline-none${action === "export" ? " mt-[2px] border-t border-[#233b5b] pt-[9px]" : ""}`}
-            data-project-action={action}
-            type="button"
-            role="menuitem"
-            key={action}
-            onClick={(event) => onSelect(action, event)}
-        >
-            <span className="grid min-w-0 gap-[3px]">
-                <span className="text-[11px] leading-none font-semibold text-[#e0eafe]">{label}</span>
-                <span className="truncate text-[9px] leading-none font-medium text-[#8fa7c8]">{description}</span>
-            </span>
-            <span className="text-right text-[14px] leading-none text-[#7295c9]" aria-hidden="true">&#8250;</span>
-        </button>)}
-    </div>;
+        {PROJECT_ACTIONS.map(({ action, label, description }) => <span key={action}>
+            {action === "export" && <ActionMenuSeparator />}
+            <ActionMenuItem
+                data-project-action={action}
+                title={label}
+                description={description}
+                onClick={(event) => onSelect(action, event)}
+            />
+        </span>)}
+    </ActionMenuSurface>;
 }
 
 function ProjectTimeFooter() {
@@ -370,8 +362,8 @@ export default function WorkspaceSidebar() {
         event.preventDefault();
         event.stopPropagation();
         const margin = 8;
-        const menuWidth = 228;
-        const menuHeight = 326;
+        const menuWidth = 286;
+        const menuHeight = 318;
         setProjectActionsMenu({
             source: "context",
             left: Math.max(margin, Math.min(event.clientX, window.innerWidth - menuWidth - margin)),
@@ -406,7 +398,7 @@ export default function WorkspaceSidebar() {
                 <div className="orbit-layers-heading">Layers</div>
                 <div className="relative shrink-0">
                     <button id="projectActionsBtn" className={`orbit-layers-project-menu${projectActionsMenu?.source === "toolbar" ? " is-open" : ""}`} data-project-actions-control="true" type="button" title="Acciones de proyecto" aria-label="Acciones de proyecto" aria-haspopup="menu" aria-expanded={projectActionsMenu?.source === "toolbar"} aria-controls="projectActionsMenu" onClick={toggleProjectActionsMenu}><FolderIcon /></button>
-                    {projectActionsMenu?.source === "toolbar" && <ProjectActionsMenu source="toolbar" onSelect={selectProjectAction} />}
+                    {projectActionsMenu?.source === "toolbar" && <ProjectActionsMenu source="toolbar" projectName={projectName} onSelect={selectProjectAction} />}
                 </div>
             </div>
             <div className="orbit-project-header orbit-project-module">
@@ -440,7 +432,7 @@ export default function WorkspaceSidebar() {
             <ProjectTimeFooter />
             <div className="sidebar-panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Redimensionar panel de capas" />
         </aside>
-        {projectActionsMenu?.source === "context" && <ProjectActionsMenu source="context" left={projectActionsMenu.left} top={projectActionsMenu.top} onSelect={selectProjectAction} />}
+        {projectActionsMenu?.source === "context" && <ProjectActionsMenu source="context" left={projectActionsMenu.left} top={projectActionsMenu.top} projectName={projectName} onSelect={selectProjectAction} />}
         <div id="legacyHiddenInfo" hidden />
     </>;
 }

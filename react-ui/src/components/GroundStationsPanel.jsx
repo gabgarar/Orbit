@@ -392,7 +392,7 @@ export default function GroundStationsPanel() {
                     <p className="mb-0 text-[10px] text-[#8ea4c4]">Máscara aplicada: {station.min_elevation_deg}° · ITRF/WGS‑84</p>
                     {!floating && <div className="mt-2 flex flex-wrap gap-2">
                         <button type="button" onClick={() => { setFloatingRect((current) => clampFloatingRect(current)); setFloating(true); }} className="rounded border border-[#3f785e] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a8ebc5]">Tablas AOS / LOS</button>
-                        <button type="button" data-ground-station-export-control="true" onClick={(event) => openGroundStationExportMenu({ stationId, source: "ground-stations-panel", anchor: exportMenuAnchor(event) })} className="rounded border border-[#31506f] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a9c7ed]">Exportar</button>
+                        <button type="button" data-ground-station-export-control="true" onClick={(event) => openGroundStationExportMenu({ stationId, stationName: station.name, source: "ground-stations-panel", anchor: exportMenuAnchor(event) })} className="rounded border border-[#31506f] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a9c7ed]">Exportar</button>
                         {state.stations.length > 1 && <button type="button" data-ground-station-export-control="true" onClick={(event) => openGroundStationExportMenu({ source: "ground-stations-panel", anchor: exportMenuAnchor(event) })} className="rounded border border-[#31506f] bg-transparent px-2 py-1 text-[10px] font-bold text-[#a9c7ed]">Exportar todas</button>}
                     </div>}
                 </>}

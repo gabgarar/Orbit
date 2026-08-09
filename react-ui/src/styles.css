@@ -75,6 +75,206 @@ html, body, #root { background: #000; overflow: hidden; }
     background: #081526;
 }
 
+/* Shared context-menu language.  Every action menu deliberately uses the
+   same compact header, metadata row and restrained blue hover state whether
+   it was opened from the project tree, a layer, or the Cesium scene. */
+.orbit-action-menu {
+    position: fixed;
+    z-index: 10320;
+    display: grid;
+    width: min(286px, calc(100vw - 16px));
+    gap: 4px;
+    box-sizing: border-box;
+    padding: 6px;
+    overflow: hidden;
+    border: 1px solid #35557e;
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(13, 26, 45, .985), rgba(7, 15, 28, .985));
+    box-shadow: 0 16px 34px rgba(0, 0, 0, .46), inset 0 1px rgba(231, 242, 255, .05);
+    color: #e5efff;
+    font-family: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-backdrop-filter: blur(14px) saturate(114%);
+    backdrop-filter: blur(14px) saturate(114%);
+}
+
+.orbit-action-menu--toolbar {
+    position: absolute;
+    top: calc(100% + 7px);
+    right: 0;
+}
+
+/* Legacy ids remain during the UI migration; make the shared React surface
+   authoritative over their former modal rules. */
+#catalogContextMenu.orbit-action-menu,
+#satelliteContextMenu.orbit-action-menu {
+    display: grid;
+    min-width: 0;
+    padding: 6px;
+    border-color: #35557e;
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(13, 26, 45, .985), rgba(7, 15, 28, .985));
+}
+
+.orbit-action-menu__header {
+    display: flex;
+    min-width: 0;
+    min-height: 28px;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 7px 7px;
+    border-bottom: 1px solid #233b5b;
+    color: #a9bfdd;
+}
+
+.orbit-action-menu__icon {
+    display: grid;
+    width: 17px;
+    height: 17px;
+    flex: 0 0 17px;
+    place-items: center;
+    color: #83a6ff;
+}
+
+.orbit-action-menu__icon svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8;
+}
+
+.orbit-action-menu__title {
+    min-width: 0;
+    overflow: hidden;
+    color: #a9bfdd;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: .14em;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.orbit-action-menu__items {
+    display: grid;
+    gap: 3px;
+}
+
+.orbit-action-menu__item {
+    display: grid;
+    width: 100%;
+    min-height: 42px;
+    grid-template-columns: minmax(0, 1fr) 14px;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #e0eafe;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    transition: background-color .14s ease, color .14s ease;
+}
+
+.orbit-action-menu__item:hover,
+.orbit-action-menu__item:focus-visible {
+    background: #173157;
+    color: #f3f7ff;
+    outline: none;
+}
+
+.orbit-action-menu__copy {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+}
+
+.orbit-action-menu__item-title {
+    overflow: hidden;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.05;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.orbit-action-menu__item-description {
+    overflow: hidden;
+    color: #8fa7c8;
+    font-size: 9px;
+    font-weight: 500;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.orbit-action-menu__chevron {
+    color: #7295c9;
+    font-size: 15px;
+    line-height: 1;
+    text-align: right;
+}
+
+.orbit-action-menu__separator {
+    height: 1px;
+    margin: 2px 5px;
+    background: #233b5b;
+}
+
+.orbit-action-menu__item.is-danger { color: #ffb1bd; }
+.orbit-action-menu__item.is-danger .orbit-action-menu__item-description { color: #d892a0; }
+.orbit-action-menu__item.is-danger:hover,
+.orbit-action-menu__item.is-danger:focus-visible { background: rgba(139, 40, 62, .32); color: #ffe3e8; }
+
+.orbit-action-menu__item.is-danger:hover .orbit-action-menu__item-description,
+.orbit-action-menu__item.is-danger:focus-visible .orbit-action-menu__item-description { color: #f2b8c2; }
+
+.orbit-action-menu__extension {
+    flex: 0 0 auto;
+    border: 1px solid #284566;
+    border-radius: 4px;
+    background: #0b192c;
+    color: #a9c7ed;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 8px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 3px 5px;
+}
+
+.orbit-action-menu__basemap-options {
+    display: grid;
+    gap: 3px;
+}
+
+.orbit-action-menu__selected {
+    color: #8ec6ff;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.orbit-action-menu__item.is-unavailable,
+.orbit-action-menu__item.is-unavailable:hover,
+.orbit-action-menu__item.is-unavailable:focus-visible {
+    background: transparent;
+    color: #71819a;
+    cursor: not-allowed;
+    opacity: .72;
+}
+
+.orbit-action-menu__loading {
+    padding: 8px;
+    color: #91a1b8;
+    font-size: 10px;
+    font-weight: 500;
+}
+
 /* `#leftSatellitesPanel` is a flex container in the legacy theme, whose
    selector wins over the browser's default `[hidden] { display: none }` rule.
    Honour the semantic hidden state explicitly so the Layers workspace cannot

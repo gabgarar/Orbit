@@ -149,12 +149,13 @@ test("the ground-station pattern tab distinguishes directivity from an available
     await expect(panel.getByText(/Muestra angular del enlace de bajada hacia RF-SAT/)).toBeVisible();
 });
 
-test("a ground-station context menu exposes a focused GeoJSON export action", async ({ page }) => {
+test("a ground-station context menu opens the shared station export format picker", async ({ page }) => {
     await openWorkspace(page);
     await page.evaluate(() => {
         window.dispatchEvent(new CustomEvent("orbit:layer-context-menu", {
             detail: {
                 id: "ground-station:madrid",
+                name: "Est. Madrid",
                 left: 40,
                 top: 40,
                 layerType: "GROUND_STATION",
@@ -168,24 +169,27 @@ test("a ground-station context menu exposes a focused GeoJSON export action", as
             event.stopImmediatePropagation();
         };
         window.__orbitGroundStationExportProbe = { events, listener };
-        window.addEventListener("orbit:layer-context-action", listener, true);
+        window.addEventListener("orbit:ground-stations-export-request", listener, true);
     });
 
     try {
         const menu = page.locator("#catalogContextMenu");
         await expect(menu).toBeVisible();
-        await expect(menu.getByRole("button", { name: "Exportar GeoJSON", exact: true })).toBeVisible();
-        await menu.getByRole("button", { name: "Exportar GeoJSON", exact: true }).click();
+        await expect(menu.getByRole("menuitem", { name: /Exportar/ })).toBeVisible();
+        await menu.getByRole("menuitem", { name: /Exportar/ }).click();
         await expect(menu).toBeHidden();
+        const formats = page.locator("#groundStationExportMenu");
+        await expect(formats).toBeVisible();
+        await formats.getByRole("menuitem", { name: "GeoJSON" }).click();
         expect(await page.evaluate(() => window.__orbitGroundStationExportProbe.events)).toEqual([{
-            action: "export-station-geojson",
-            id: "ground-station:madrid",
-            source: "layer"
+            stationId: "ground-station:madrid",
+            format: "geojson",
+            source: "layer-context"
         }]);
     } finally {
         await page.evaluate(() => {
             const probe = window.__orbitGroundStationExportProbe;
-            if (probe) window.removeEventListener("orbit:layer-context-action", probe.listener, true);
+            if (probe) window.removeEventListener("orbit:ground-stations-export-request", probe.listener, true);
             delete window.__orbitGroundStationExportProbe;
         });
     }

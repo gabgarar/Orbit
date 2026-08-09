@@ -20,6 +20,20 @@ export function SatelliteIcon() {
     </svg>;
 }
 
+/** Compact line icons for headers and menus.  Keep these separate from the
+ * filled Layers rail glyph so contextual surfaces remain monochrome. */
+export function OrbitalSatelliteIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="8" width="6" height="8" rx="1.1" /><path d="M9 10H4.5v4H9m6-4h4.5v4H15M11 8V5m2 0v3m-2 8v3m2-3v3" /><path d="m10.4 5 1.6-2 1.6 2M10.4 19l1.6 2 1.6-2" /></svg>;
+}
+
+export function EarthIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2" /><path d="M3.9 12h16.2M12 3.8c2.1 2.2 3.2 5 3.2 8.2S14.1 18 12 20.2C9.9 18 8.8 15.2 8.8 12S9.9 6 12 3.8" /><path d="M5.7 7.5c1.9.9 4 1.3 6.3 1.3s4.4-.4 6.3-1.3M5.7 16.5c1.9-.9 4-1.3 6.3-1.3s4.4.4 6.3 1.3" /></svg>;
+}
+
+export function BodiesIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.4" /><path d="M3 12c2.4-3.1 5.5-4.7 9-4.7 3.5 0 6.6 1.6 9 4.7-2.4 3.1-5.5 4.7-9 4.7-3.5 0-6.6-1.6-9-4.7Z" /><circle cx="18.5" cy="6.2" r="1.35" /><path d="M5.1 18.1h4.4" /></svg>;
+}
+
 export function ControlPanelIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3" /><path d="M7 9h10M7 15h10M10 7v4M15 13v4" /></svg>;
 }
