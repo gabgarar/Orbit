@@ -1,6 +1,6 @@
-# Orbital events
+# Passes and visibility
 
-[Analysis](index.md){ .md-button } [Ground Stations](../user-guide/ground-stations.md){ .md-button }
+[Ground Segment](../ground-segment/index.md){ .md-button } [Ground Stations](../user-guide/ground-stations.md){ .md-button }
 
 Orbit does not include a generic orbital event detection engine. The
 event-related available capacity is the AOS/LOS calculation for
@@ -11,15 +11,21 @@ visibility over a temporal window.
 
 | Term | Operational definition |
 | --- | --- |
-| OSA | First sample of a window in which the object meets the configured elevation mask. |
-| THE | First subsequent sample in which that mask is no longer fulfilled. |
-| Sampling step | Temporal resolution that limits the temporal precision of the result. |
+| AOS | Refined instant at which an object starts meeting the configured elevation mask and link criterion. |
+| LOS | Later refined instant at which it no longer meets either criterion. |
+| Sampling step | Discovery cadence used to locate candidate pass intervals. |
 
 !!! warning "Event precision"
 
-    The current calculation does not refine the crossover by root search. AOS or
-    LOS must be interpreted with an uncertainty linked to the configured step
-    and the trajectory model used.
+    Orbit first scans the time window at the configured step. When two
+    consecutive samples bracket a visibility change, it refines that interval
+    by bisection to approximately 0.5 s. An AOS or LOS is therefore not
+    limited to the exact coarse-sample time, but its accuracy still depends on
+    the trajectory, EOP, mask and RF model.
+
+    This is not a generic root-finding engine: a pass that both begins and
+    ends between two discovery samples is not bracketed and can be missed.
+    Reduce the step for very short windows or restrictive masks/envelopes.
 
 ## Status
 

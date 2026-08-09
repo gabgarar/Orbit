@@ -55,6 +55,80 @@
   border-top: 1px solid rgba(133, 197, 255, 0.16);
 }
 
+/* Two-level navigation keeps the first row stable as the documentation grows.
+ * The second row is contextual: it contains the areas of the selected domain,
+ * not a second copy of the complete documentation tree. */
+.orbit-context-tabs {
+  background-color: rgba(7, 19, 38, 0.96);
+  border-top-color: rgba(133, 197, 255, 0.22);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.orbit-context-tabs__inner {
+  align-items: center;
+  display: flex;
+  gap: 0.55rem;
+  min-height: 2.05rem;
+  overflow: hidden;
+}
+
+.orbit-context-tabs__scope {
+  color: #9acbff;
+  flex: 0 0 auto;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.orbit-context-tabs__list {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-color: rgba(126, 184, 255, 0.42) transparent;
+  scrollbar-width: thin;
+}
+
+.orbit-context-tabs .md-tabs__item {
+  padding-inline: 0.45rem;
+}
+
+.orbit-context-tabs .md-tabs__link {
+  color: rgba(223, 237, 255, 0.78);
+  font-size: 0.64rem;
+  font-weight: 600;
+  margin-top: 0;
+}
+
+.orbit-context-tabs .md-tabs__link:hover,
+.orbit-context-tabs .md-tabs__item--active .md-tabs__link {
+  color: #ffffff;
+}
+
+.orbit-context-tabs .md-tabs__item--active .md-tabs__link::after {
+  background-color: #6bbcff;
+  height: 0.11rem;
+}
+
+[data-md-color-scheme="default"] .orbit-context-tabs {
+  background-color: rgba(232, 240, 251, 0.98);
+  border-top-color: rgba(21, 74, 127, 0.16);
+}
+
+[data-md-color-scheme="default"] .orbit-context-tabs__scope {
+  color: #1767a5;
+}
+
+[data-md-color-scheme="default"] .orbit-context-tabs .md-tabs__link {
+  color: #40566f;
+}
+
+[data-md-color-scheme="default"] .orbit-context-tabs .md-tabs__link:hover,
+[data-md-color-scheme="default"] .orbit-context-tabs .md-tabs__item--active .md-tabs__link {
+  color: #102d4b;
+}
+
 .md-header__button.md-logo img,
 .md-header__button.md-logo svg {
   filter: drop-shadow(0 1px 5px rgba(86, 192, 255, 0.45));
@@ -153,6 +227,23 @@
     font-size: 0.67rem;
     letter-spacing: 0;
   }
+
+  /* Material accounts for one sticky tabs row by default. Orbit renders a
+   * contextual row as well, so sidebars and heading anchors must clear both. */
+  .md-header--lifted ~ .md-container .md-sidebar {
+    top: 7.2rem;
+  }
+
+  .md-header--lifted ~ .md-container .md-typeset :target {
+    --md-scroll-margin: 8.4rem;
+  }
+}
+
+@media screen and (max-width: 76.234em) {
+  /* The drawer already exposes the same hierarchy on narrower screens. */
+  .orbit-context-tabs {
+    display: none;
+  }
 }
 
 /*
@@ -178,7 +269,6 @@
 .md-sidebar--primary .md-nav__link[href*="attitude"]:not(.md-nav__link--active),
 .md-sidebar--primary .md-nav__link[href*="resonances"]:not(.md-nav__link--active),
 .md-sidebar--primary .md-nav__link[href*="local-terrain"]:not(.md-nav__link--active),
-.md-sidebar--primary .md-nav__link[href*="interchange"]:not(.md-nav__link--active),
 .md-sidebar--primary .md-nav__link[href*="rinex"]:not(.md-nav__link--active),
 .md-sidebar--primary .md-nav__link[href*="bulletins"]:not(.md-nav__link--active),
 .md-sidebar--primary .md-nav__link[href*="opm"]:not(.md-nav__link--active),

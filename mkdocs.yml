@@ -7,6 +7,7 @@ exclude_docs: |
 
 theme:
   name: material
+  custom_dir: docs/wiki/overrides
   language: es
   logo: assets/images/orbit-mark.svg
   favicon: assets/images/orbit-mark.svg
@@ -62,130 +63,141 @@ plugins:
                     - Installation: getting-started/installation.md
                     - Requirements: getting-started/requirements.md
                     - Quick start: getting-started/quick-start.md
-                - User guide:
-                    - Overview: user-guide/index.md
-                    - Projects: user-guide/projects.md
-                    - Workspace: user-guide/workspace.md
-                    - Workspace concepts: workspace.md
-                    - Layers: user-guide/layers.md
+            - Satellite:
+                - Overview: satellite/index.md
+                - Space formats:
+                    - Overview: formats/index.md
+                    - Availability matrix: formats/overview.md
+                    - Orbital formats:
+                        - Overview: formats/orbital/index.md
+                        - TLE: formats/tle.md
+                        - OMM: formats/omm.md
+                        - OEM: formats/oem.md
+                        - OPM: formats/opm.md
+                        - SP3: formats/sp3.md
+                    - Unsupported formats: formats/unsupported-formats.md
+                - Orbit design and catalogue:
                     - Manual orbits: user-guide/manual-orbits.md
-                    - Visualisation: user-guide/visualization.md
-                    - 3D view: user-guide/three-d-view.md
-                    - Timeline: user-guide/timeline.md
-                    - Ground stations: user-guide/ground-stations.md
-                    - Import: user-guide/import.md
-                    - Export: user-guide/export.md
-            - Engineering:
-                - Overview: engineering/index.md
-                - Cartesian states: engineering/cartesian-states.md
-                - Keplerian elements: engineering/keplerian-elements.md
-                - Equinoctial elements: engineering/equinoctial-elements.md
-                - Orbit representations: engineering/orbit-representations.md
-                - Reference frames: engineering/reference-frames.md
-                - Time, EOP and ITRF: time.md
-                - Time systems: engineering/time-systems.md
-                - Coordinate systems: engineering/coordinate-systems.md
-                - Earth models: engineering/earth-models.md
-                - Gravity models: engineering/gravity-models.md
-                - Atmospheric models: engineering/atmospheric-models.md
-            - Space formats:
-                - Overview: formats/index.md
-                - Availability matrix: formats/overview.md
-                - Orbital formats:
-                    - Overview: formats/orbital/index.md
                     - Ephemerides and interpolation: orbit-service.md
-                    - TLE: formats/tle.md
-                    - OMM: formats/omm.md
-                    - OEM: formats/oem.md
-                    - OPM: formats/opm.md
-                    - SP3: formats/sp3.md
-                    - CPF: formats/cpf.md
-                - Terrain formats:
+                    - Catalogue and sources: integrations/rest-api/system-and-catalog.md
+                    - Orbit operations: integrations/rest-api/orbit-operations.md
+                - Propagation:
+                    - Overview: propagation/index.md
+                    - Propagators:
+                        - Overview: propagation/overview.md
+                        - SGP4:
+                            - Overview: propagation/sgp4.md
+                            - TLE and state contract: propagation/sgp4/tle-and-contract.md
+                            - Time and frames: propagation/sgp4/time-and-frames.md
+                            - Recommended use and limits: propagation/sgp4/validity-and-use.md
+                        - Two body:
+                            - Overview: propagation/two-body.md
+                            - Keplerian elements and motion: propagation/two-body/keplerian-motion.md
+                            - Time and frames: propagation/two-body/time-and-frames.md
+                            - Output and frames: propagation/two-body/frames-output.md
+                            - Recommended use and limits: propagation/two-body/recommended-use.md
+                        - Cowell:
+                            - Overview: propagation/cowell.md
+                            - Input and forces: propagation/cowell/input-and-forces.md
+                            - Integration and cache: propagation/cowell/integration.md
+                            - Time and frames: propagation/cowell/time-and-frames.md
+                            - Output and provenance: propagation/cowell/output.md
+                            - Recommended use: propagation/cowell/recommended-use.md
+                            - Failures and limits: propagation/cowell/limits.md
+                    - Numerical integrators:
+                        - Overview: propagation/numerical-integrators.md
+                        - RK4: propagation/rk4.md
+                    - Force models:
+                        - Overview: propagation/force-models.md
+                        - Gravitational:
+                            - Kepler / central gravity: propagation/point-mass.md
+                            - Geopotential:
+                                - J2: propagation/j2.md
+                                - J3: propagation/j3.md
+                                - J4: propagation/j4.md
+                                - Full geopotential: propagation/full-geopotential.md
+                            - Lunisolar perturbations: propagation/third-bodies.md
+                            - Tides: propagation/tides.md
+                        - Non-gravitational:
+                            - Atmospheric drag: propagation/atmospheric-drag.md
+                            - Solar radiation pressure: propagation/solar-radiation-pressure.md
+                            - Albedo: propagation/albedo.md
+                            - Relativity and other effects: propagation/relativity.md
+                    - Future dynamics:
+                        - Attitude: propagation/attitude.md
+                        - Resonances: propagation/resonances.md
+                - Analysis:
+                    - Overview: analysis/index.md
+                    - Analysis scope: analysis/overview.md
+                    - Propagator comparison: analysis/comparison-tools.md
+                    - Plots: analysis/plots.md
+                    - Statistics: analysis/statistics.md
+                - Engineering foundations:
+                    - Overview: engineering/index.md
+                    - Cartesian states: engineering/cartesian-states.md
+                    - Keplerian elements: engineering/keplerian-elements.md
+                    - Equinoctial elements: engineering/equinoctial-elements.md
+                    - Orbit representations: engineering/orbit-representations.md
+                    - Reference frames: engineering/reference-frames.md
+                    - Time, EOP and ITRF: time.md
+                    - Time systems: engineering/time-systems.md
+                    - Coordinate systems: engineering/coordinate-systems.md
+                    - Earth models: engineering/earth-models.md
+                    - Gravity models: engineering/gravity-models.md
+                    - Atmospheric models: engineering/atmospheric-models.md
+                    - Time formats:
+                        - Overview: formats/time/index.md
+                        - IERS EOP C04: formats/time/iers-c04.md
+                        - Leap-second table: formats/time/leap-seconds.md
+                        - IERS Bulletins A and B: formats/time/bulletins.md
+            - Ground Segment:
+                - Overview: ground-segment/index.md
+                - Stations and RF:
+                    - Ground stations: user-guide/ground-stations.md
+                - Passes and visibility:
+                    - AOS/LOS access: analysis/events.md
+                - Ground-station formats:
+                    - Overview: formats/ground-stations/index.md
+                    - External interchange: formats/ground-stations/interchange.md
+                    - Project persistence: formats/ground-stations/project-json.md
+                    - Observation and prediction:
+                        - RINEX — not available: formats/rinex.md
+                        - CPF — not available: formats/cpf.md
+                - Terrain and site:
                     - Overview: formats/terrain/index.md
                     - Cesium World Terrain: formats/terrain/world-terrain.md
                     - Local terrain files: formats/terrain/local-terrain.md
-                - Ground-station formats:
-                    - Overview: formats/ground-stations/index.md
-                    - Project JSON: formats/ground-stations/project-json.md
-                    - External interchange: formats/ground-stations/interchange.md
-                    - RINEX: formats/rinex.md
-                - Time formats:
-                    - Overview: formats/time/index.md
-                    - IERS EOP C04: formats/time/iers-c04.md
-                    - Leap-second table: formats/time/leap-seconds.md
-                    - IERS Bulletins A and B: formats/time/bulletins.md
-                - Unsupported formats: formats/unsupported-formats.md
-            - Propagation:
-                - Overview: propagation/index.md
-                - Propagators:
-                    - Overview: propagation/overview.md
-                    - SGP4:
-                        - Overview: propagation/sgp4.md
-                        - TLE and state contract: propagation/sgp4/tle-and-contract.md
-                        - Time and frames: propagation/sgp4/time-and-frames.md
-                        - Recommended use and limits: propagation/sgp4/validity-and-use.md
-                    - Two body:
-                        - Overview: propagation/two-body.md
-                        - Keplerian elements and motion: propagation/two-body/keplerian-motion.md
-                        - Time and frames: propagation/two-body/time-and-frames.md
-                        - Output and frames: propagation/two-body/frames-output.md
-                        - Recommended use and limits: propagation/two-body/recommended-use.md
-                    - Cowell:
-                        - Overview: propagation/cowell.md
-                        - Input and forces: propagation/cowell/input-and-forces.md
-                        - Integration and cache: propagation/cowell/integration.md
-                        - Time and frames: propagation/cowell/time-and-frames.md
-                        - Output and provenance: propagation/cowell/output.md
-                        - Recommended use: propagation/cowell/recommended-use.md
-                        - Failures and limits: propagation/cowell/limits.md
-                - Numerical integrators:
-                    - Overview: propagation/numerical-integrators.md
-                    - RK4: propagation/rk4.md
-                - Force models:
-                    - Overview: propagation/force-models.md
-                    - Gravitational:
-                        - Kepler / central gravity: propagation/point-mass.md
-                        - Geopotential:
-                            - J2: propagation/j2.md
-                            - J3: propagation/j3.md
-                            - J4: propagation/j4.md
-                            - Full geopotential: propagation/full-geopotential.md
-                        - Lunisolar perturbations: propagation/third-bodies.md
-                        - Tides: propagation/tides.md
-                    - Non-gravitational:
-                        - Atmospheric drag: propagation/atmospheric-drag.md
-                        - Solar radiation pressure: propagation/solar-radiation-pressure.md
-                        - Albedo: propagation/albedo.md
-                        - Relativity and other effects: propagation/relativity.md
-                - Future dynamics:
-                    - Attitude: propagation/attitude.md
-                    - Resonances: propagation/resonances.md
-            - Analysis:
-                - Overview: analysis/index.md
-                - Analysis scope: analysis/overview.md
-                - Propagator comparison: analysis/comparison-tools.md
-                - Plots: analysis/plots.md
-                - Statistics: analysis/statistics.md
-                - Events: analysis/events.md
-                - Measurements: analysis/measurements.md
-                - Tracking: analysis/tracking.md
-                - Orbit determination: analysis/orbit-determination.md
-            - Integrations:
+                - Tracking and orbit determination:
+                    - Measurements — future: analysis/measurements.md
+                    - Tracking — future: analysis/tracking.md
+                    - Orbit determination — future: analysis/orbit-determination.md
+                - Ground-station API:
+                    - AOS/LOS REST API: integrations/rest-api/ground-stations.md
+            - Workspace:
+                - Overview: user-guide/index.md
+                - Projects: user-guide/projects.md
+                - Workspace: user-guide/workspace.md
+                - Workspace concepts: workspace.md
+                - Layers: user-guide/layers.md
+                - Visualisation: user-guide/visualization.md
+                - 3D view: user-guide/three-d-view.md
+                - Timeline: user-guide/timeline.md
+                - Import: user-guide/import.md
+                - Export: user-guide/export.md
+            - Platform:
                 - Overview: integrations/index.md
-                - REST API:
-                    - Overview: integrations/rest-api.md
-                    - System, configuration and catalogue: integrations/rest-api/system-and-catalog.md
-                    - Propagation and ephemerides: integrations/rest-api/orbit-operations.md
-                    - Ground stations: integrations/rest-api/ground-stations.md
-                    - Export: integrations/rest-api/exports.md
+                - Service and interfaces:
+                    - REST API: integrations/rest-api.md
+                    - Export API: integrations/rest-api/exports.md
                     - Backend boundary: integrations/rest-api/backend-boundary.md
-                - Gateway concepts: gateway.md
-                - API concepts: api.md
-                - WebSocket: integrations/websocket.md
-                - OpenAPI: integrations/openapi.md
-                - Python SDK: integrations/python-sdk.md
-                - CLI: integrations/cli.md
-                - Plugins: integrations/plugins.md
+                    - Gateway concepts: gateway.md
+                    - API concepts: api.md
+                    - WebSocket: integrations/websocket.md
+                    - OpenAPI: integrations/openapi.md
+                - SDK and tools:
+                    - Python SDK: integrations/python-sdk.md
+                    - CLI: integrations/cli.md
+                    - Plugins: integrations/plugins.md
             - Operations:
                 - Overview: operations/index.md
                 - Configuration: operations/configuration.md
@@ -198,7 +210,7 @@ plugins:
                 - Performance: operations/performance.md
                 - Validation: operations/validation.md
                 - Frequently asked questions: operations/faq.md
-            - Development guide:
+            - Development:
                 - Overview: development/index.md
                 - Architecture: development/architecture.md
                 - Tests: development/testing.md
@@ -257,130 +269,141 @@ nav:
           - Instalación: getting-started/installation.md
           - Requisitos: getting-started/requirements.md
           - Inicio rápido: getting-started/quick-start.md
-      - Guía de usuario:
-          - Visión general: user-guide/index.md
-          - Proyectos: user-guide/projects.md
-          - Espacio de trabajo: user-guide/workspace.md
-          - Conceptos de espacio de trabajo: workspace.md
-          - Capas: user-guide/layers.md
+  - Satélite:
+      - Visión general: satellite/index.md
+      - Formatos espaciales:
+          - Visión general: formats/index.md
+          - Matriz de disponibilidad: formats/overview.md
+          - Formatos orbitales:
+              - Visión general: formats/orbital/index.md
+              - TLE: formats/tle.md
+              - OMM: formats/omm.md
+              - OEM: formats/oem.md
+              - OPM: formats/opm.md
+              - SP3: formats/sp3.md
+          - Formatos no soportados: formats/unsupported-formats.md
+      - Diseño y catálogo:
           - Órbitas manuales: user-guide/manual-orbits.md
-          - Visualización: user-guide/visualization.md
-          - Vista 3D: user-guide/three-d-view.md
-          - Línea temporal: user-guide/timeline.md
-          - Estaciones de tierra: user-guide/ground-stations.md
-          - Importación: user-guide/import.md
-          - Exportación: user-guide/export.md
-  - Ingeniería:
-      - Visión general: engineering/index.md
-      - Estados cartesianos: engineering/cartesian-states.md
-      - Elementos keplerianos: engineering/keplerian-elements.md
-      - Elementos equinocciales: engineering/equinoctial-elements.md
-      - Representaciones orbitales: engineering/orbit-representations.md
-      - Marcos de referencia: engineering/reference-frames.md
-      - Tiempo, EOP e ITRF: time.md
-      - Sistemas temporales: engineering/time-systems.md
-      - Sistemas de coordenadas: engineering/coordinate-systems.md
-      - Modelos de la Tierra: engineering/earth-models.md
-      - Modelos de gravedad: engineering/gravity-models.md
-      - Modelos atmosféricos: engineering/atmospheric-models.md
-  - Formatos espaciales:
-      - Visión general: formats/index.md
-      - Matriz de disponibilidad: formats/overview.md
-      - Formatos orbitales:
-          - Visión general: formats/orbital/index.md
           - Efemérides e interpolación: orbit-service.md
-          - TLE: formats/tle.md
-          - OMM: formats/omm.md
-          - OEM: formats/oem.md
-          - OPM: formats/opm.md
-          - SP3: formats/sp3.md
-          - CPF: formats/cpf.md
-      - Formatos de terreno:
+          - Catálogo y fuentes: integrations/rest-api/system-and-catalog.md
+          - Operaciones orbitales: integrations/rest-api/orbit-operations.md
+      - Propagación:
+          - Visión general: propagation/index.md
+          - Propagadores:
+              - Visión general: propagation/overview.md
+              - SGP4:
+                  - Visión general: propagation/sgp4.md
+                  - TLE y contrato de estado: propagation/sgp4/tle-and-contract.md
+                  - Tiempo y marcos: propagation/sgp4/time-and-frames.md
+                  - Uso recomendado y límites: propagation/sgp4/validity-and-use.md
+              - Dos cuerpos:
+                  - Visión general: propagation/two-body.md
+                  - Elementos y movimiento kepleriano: propagation/two-body/keplerian-motion.md
+                  - Tiempo y marcos: propagation/two-body/time-and-frames.md
+                  - Salida y marcos: propagation/two-body/frames-output.md
+                  - Uso recomendado y límites: propagation/two-body/recommended-use.md
+              - Cowell:
+                  - Visión general: propagation/cowell.md
+                  - Entrada y fuerzas: propagation/cowell/input-and-forces.md
+                  - Integración y caché: propagation/cowell/integration.md
+                  - Tiempo y marcos: propagation/cowell/time-and-frames.md
+                  - Salida y procedencia: propagation/cowell/output.md
+                  - Uso recomendado: propagation/cowell/recommended-use.md
+                  - Fallos y límites: propagation/cowell/limits.md
+          - Integradores numéricos:
+              - Visión general: propagation/numerical-integrators.md
+              - RK4: propagation/rk4.md
+          - Modelos de fuerzas:
+              - Visión general: propagation/force-models.md
+              - Gravitacionales:
+                  - Kepler / gravedad central: propagation/point-mass.md
+                  - Geopotencial:
+                      - J2: propagation/j2.md
+                      - J3: propagation/j3.md
+                      - J4: propagation/j4.md
+                      - Geopotencial completo: propagation/full-geopotential.md
+                  - Perturbaciones lunisolares: propagation/third-bodies.md
+                  - Mareas: propagation/tides.md
+              - No gravitacionales:
+                  - Arrastre atmosférico: propagation/atmospheric-drag.md
+                  - Presión de radiación solar: propagation/solar-radiation-pressure.md
+                  - Albedo: propagation/albedo.md
+                  - Relatividad y otros efectos: propagation/relativity.md
+          - Dinámica futura:
+              - Actitud: propagation/attitude.md
+              - Resonancias: propagation/resonances.md
+      - Análisis:
+          - Visión general: analysis/index.md
+          - Alcance del análisis: analysis/overview.md
+          - Comparación de propagadores: analysis/comparison-tools.md
+          - Gráficas: analysis/plots.md
+          - Estadísticas: analysis/statistics.md
+      - Fundamentos de ingeniería:
+          - Visión general: engineering/index.md
+          - Estados cartesianos: engineering/cartesian-states.md
+          - Elementos keplerianos: engineering/keplerian-elements.md
+          - Elementos equinocciales: engineering/equinoctial-elements.md
+          - Representaciones orbitales: engineering/orbit-representations.md
+          - Marcos de referencia: engineering/reference-frames.md
+          - Tiempo, EOP e ITRF: time.md
+          - Sistemas temporales: engineering/time-systems.md
+          - Sistemas de coordenadas: engineering/coordinate-systems.md
+          - Modelos de la Tierra: engineering/earth-models.md
+          - Modelos de gravedad: engineering/gravity-models.md
+          - Modelos atmosféricos: engineering/atmospheric-models.md
+          - Formatos de tiempo:
+              - Visión general: formats/time/index.md
+              - IERS EOP C04: formats/time/iers-c04.md
+              - Tabla de segundos intercalares: formats/time/leap-seconds.md
+              - Boletines IERS A y B: formats/time/bulletins.md
+  - Segmento terrestre:
+      - Visión general: ground-segment/index.md
+      - Estaciones y RF:
+          - Estaciones de tierra: user-guide/ground-stations.md
+      - Pases y visibilidad:
+          - Acceso AOS/LOS: analysis/events.md
+      - Formatos de estaciones:
+          - Visión general: formats/ground-stations/index.md
+          - Intercambio externo: formats/ground-stations/interchange.md
+          - Persistencia en proyecto: formats/ground-stations/project-json.md
+          - Observación y predicción:
+              - RINEX — no disponible: formats/rinex.md
+              - CPF — no disponible: formats/cpf.md
+      - Terreno y emplazamiento:
           - Visión general: formats/terrain/index.md
           - Cesium World Terrain: formats/terrain/world-terrain.md
           - Archivos locales de terreno: formats/terrain/local-terrain.md
-      - Formatos de estaciones de tierra:
-          - Visión general: formats/ground-stations/index.md
-          - JSON de proyecto: formats/ground-stations/project-json.md
-          - Intercambio externo: formats/ground-stations/interchange.md
-          - RINEX: formats/rinex.md
-      - Formatos de tiempo:
-          - Visión general: formats/time/index.md
-          - IERS EOP C04: formats/time/iers-c04.md
-          - Tabla de segundos intercalares: formats/time/leap-seconds.md
-          - Boletines IERS A y B: formats/time/bulletins.md
-      - Formatos no soportados: formats/unsupported-formats.md
-  - Propagación:
-      - Visión general: propagation/index.md
-      - Propagadores:
-          - Visión general: propagation/overview.md
-          - SGP4:
-              - Visión general: propagation/sgp4.md
-              - TLE y contrato de estado: propagation/sgp4/tle-and-contract.md
-              - Tiempo y marcos: propagation/sgp4/time-and-frames.md
-              - Uso recomendado y límites: propagation/sgp4/validity-and-use.md
-          - Dos cuerpos:
-              - Visión general: propagation/two-body.md
-              - Elementos y movimiento kepleriano: propagation/two-body/keplerian-motion.md
-              - Tiempo y marcos: propagation/two-body/time-and-frames.md
-              - Salida y marcos: propagation/two-body/frames-output.md
-              - Uso recomendado y límites: propagation/two-body/recommended-use.md
-          - Cowell:
-              - Visión general: propagation/cowell.md
-              - Entrada y fuerzas: propagation/cowell/input-and-forces.md
-              - Integración y caché: propagation/cowell/integration.md
-              - Tiempo y marcos: propagation/cowell/time-and-frames.md
-              - Salida y procedencia: propagation/cowell/output.md
-              - Uso recomendado: propagation/cowell/recommended-use.md
-              - Fallos y límites: propagation/cowell/limits.md
-      - Integradores numéricos:
-          - Visión general: propagation/numerical-integrators.md
-          - RK4: propagation/rk4.md
-      - Modelos de fuerzas:
-          - Visión general: propagation/force-models.md
-          - Gravitacionales:
-              - Kepler / gravedad central: propagation/point-mass.md
-              - Geopotencial:
-                  - J2: propagation/j2.md
-                  - J3: propagation/j3.md
-                  - J4: propagation/j4.md
-                  - Geopotencial completo: propagation/full-geopotential.md
-              - Perturbaciones lunisolares: propagation/third-bodies.md
-              - Mareas: propagation/tides.md
-          - No gravitacionales:
-              - Arrastre atmosférico: propagation/atmospheric-drag.md
-              - Presión de radiación solar: propagation/solar-radiation-pressure.md
-              - Albedo: propagation/albedo.md
-              - Relatividad y otros efectos: propagation/relativity.md
-      - Dinámica futura:
-          - Actitud: propagation/attitude.md
-          - Resonancias: propagation/resonances.md
-  - Análisis:
-      - Visión general: analysis/index.md
-      - Alcance del análisis: analysis/overview.md
-      - Comparación de propagadores: analysis/comparison-tools.md
-      - Gráficas: analysis/plots.md
-      - Estadísticas: analysis/statistics.md
-      - Eventos: analysis/events.md
-      - Medidas: analysis/measurements.md
-      - Tracking: analysis/tracking.md
-      - Determinación de órbita: analysis/orbit-determination.md
-  - Integraciones:
+      - Tracking y determinación:
+          - Medidas — futuro: analysis/measurements.md
+          - Tracking — futuro: analysis/tracking.md
+          - Determinación de órbita — futuro: analysis/orbit-determination.md
+      - API de estaciones:
+          - REST API AOS/LOS: integrations/rest-api/ground-stations.md
+  - Espacio de trabajo:
+      - Visión general: user-guide/index.md
+      - Proyectos: user-guide/projects.md
+      - Espacio de trabajo: user-guide/workspace.md
+      - Conceptos de espacio de trabajo: workspace.md
+      - Capas: user-guide/layers.md
+      - Visualización: user-guide/visualization.md
+      - Vista 3D: user-guide/three-d-view.md
+      - Línea temporal: user-guide/timeline.md
+      - Importación: user-guide/import.md
+      - Exportación: user-guide/export.md
+  - Plataforma:
       - Visión general: integrations/index.md
-      - REST API:
-          - Visión general: integrations/rest-api.md
-          - Estado, configuración y catálogo: integrations/rest-api/system-and-catalog.md
-          - Propagación y efemérides: integrations/rest-api/orbit-operations.md
-          - Estaciones de tierra: integrations/rest-api/ground-stations.md
-          - Exportación: integrations/rest-api/exports.md
+      - Servicio e interfaces:
+          - REST API: integrations/rest-api.md
+          - API de exportación: integrations/rest-api/exports.md
           - Frontera del backend: integrations/rest-api/backend-boundary.md
-      - Conceptos de gateway: gateway.md
-      - Conceptos de API: api.md
-      - WebSocket: integrations/websocket.md
-      - OpenAPI: integrations/openapi.md
-      - SDK Python: integrations/python-sdk.md
-      - CLI: integrations/cli.md
-      - Plugins: integrations/plugins.md
+          - Conceptos de gateway: gateway.md
+          - Conceptos de API: api.md
+          - WebSocket: integrations/websocket.md
+          - OpenAPI: integrations/openapi.md
+      - SDK y herramientas:
+          - SDK Python: integrations/python-sdk.md
+          - CLI: integrations/cli.md
+          - Plugins: integrations/plugins.md
   - Operación:
       - Visión general: operations/index.md
       - Configuración: operations/configuration.md
@@ -393,7 +416,7 @@ nav:
       - Rendimiento: operations/performance.md
       - Validación: operations/validation.md
       - Preguntas frecuentes: operations/faq.md
-  - Guía de desarrollo:
+  - Desarrollo:
       - Visión general: development/index.md
       - Arquitectura: development/architecture.md
       - Pruebas: development/testing.md

@@ -1,6 +1,6 @@
 # Spatial formats
 
-[Home](../index.md) · [Engineering](../engineering/index.md) · [Propagation](../propagation/index.md)
+[Satellite](../satellite/index.md) · [Propagation](../propagation/index.md) · [Engineering foundations](../engineering/index.md)
 
 The formats are documented by their effective product route. A Python reader
 it is not equivalent to a function exposed by the interface, gateway, or public API.
@@ -14,10 +14,7 @@ it is not equivalent to a function exposed by the interface, gateway, or public 
 | [WMO](omm.md) | JSON/XML catalog limited to embedded TLE elements. |
 | [OEM](oem.md) | Segmented Python Reader; catalog import only if it contains TLE. |
 | [SP3](sp3.md) | Native Python position/velocity reader. |
-| [Ground-station formats](ground-stations/index.md) | Local GeoJSON, Orbit JSON, and CSV import and export. |
 | [OPM](opm.md) | Not available. |
-| [CPF](cpf.md) | Not available. |
-| [RINEX](rinex.md) | Not available. |
 | [Unsupported formats](unsupported-formats.md) | Product limits and alternatives. |
 
 !!! warning "Mandatory provenance"
@@ -25,3 +22,10 @@ it is not equivalent to a function exposed by the interface, gateway, or public 
     The OEM and SP3 ephemeris preserve the `REF_FRAME`/coordinate system,
     the realization and `TIME_SYSTEM` declared. Orbit does not relabel them as
     ITRF or UTC when reading them.
+
+## Ground-segment formats
+
+Station, terrain, observation and prediction contracts have their canonical
+area in [Ground Segment](../ground-segment/index.md). See
+[GeoJSON, Orbit JSON and CSV](ground-stations/index.md), as well as the
+current RINEX and CPF status there.

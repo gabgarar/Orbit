@@ -15,21 +15,24 @@ orbit that Orbit does not implement.
 | Scope and limits of the analysis | Available derived capacities and product limits. | [Overview](overview.md) |
 | Propagated orbital parameters and associated graphs | Available for TLE flows and manual orbits. | [Charts](plots.md) |
 | Comparison of propagators | No dedicated comparison tool. | [Comparison](comparison-tools.md) |
-| Events | AOS/LOS of stations available by sampling; there is no generic event engine. | [Events](events.md) |
 | Fleet statistics | Not available. | [Statistics](statistics.md) |
-| Measurements and tracking | Not available as an observation string. | [Measurements](measurements.md) and [tracking](tracking.md) |
-| Orbit determination | Not available. | [Orbit determination](orbit-determination.md) |
 
 ## Interpretation principle
 
-A display result, graph, or AOS/LOS step represents the
-configured model, data and sampling resolution. They do not constitute a
-estimation of uncertainty, a validation against measurements or a solution of
-navigation.
+A display result or graph represents the configured model, data and sampling
+resolution. They do not constitute an uncertainty estimate, a validation
+against measurements or a navigation solution.
+
+## Ground operations
+
+AOS/LOS passes, measurements, tracking and future orbit determination are
+organised under [Ground Segment](../ground-segment/index.md). This avoids
+mixing trajectory analysis with the operation of a station and its observation
+chain.
 
 ## Related references
 
 - [Spread](../propagation/overview.md)
-- [Ground Stations](../user-guide/ground-stations.md)
+- [Passes and visibility](events.md)
 - [Export](../user-guide/export.md)
 - [Validation](../operations/validation.md)

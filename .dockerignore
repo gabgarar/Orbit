@@ -16,6 +16,16 @@ server.pid
 server.log
 **/__pycache__
 *.py[cod]
+# Test and lint caches are local-only. Besides adding no runtime value, some
+# Windows-created cache directories can be unreadable to Docker while it packs
+# the build context.
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.hypothesis/
+.coverage
+**/.coverage
+htmlcov/
 dist
 build
 # The React bundle is produced inside the image. Excluding the host output

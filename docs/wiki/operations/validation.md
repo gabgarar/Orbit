@@ -78,8 +78,10 @@ configuración de hashes y cobertura.
 - No existe una certificación de precisión de misión, validación de
   determinación de órbita ni comparación automática contra una verdad de
   referencia externa.
-- La detección AOS/LOS de estaciones se basa en muestreo, no en búsqueda de
-  raíces de alta precisión.
+- La detección AOS/LOS explora por muestreo. Refina por bisección los cambios
+  de visibilidad ya encerrados hasta aproximadamente 0,5 s, pero no es un
+  solver general de raíces ni garantiza detectar un pase entero entre dos
+  muestras de exploración.
 - El modo visual sin snapshots locales EOP sigue siendo aproximado aunque el
   servicio pase el healthcheck.
 - No existe CI hospedada ni un informe de conformidad de estándar expuesto

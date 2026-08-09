@@ -78,8 +78,10 @@ hash configuration and coverage.
 - There is no certification of mission accuracy, validation of
   orbit determination or automatic comparison against a truth of
   external reference.
-- AOS/LOS detection of stations is based on sampling, not searching.
-  High precision roots.
+- AOS/LOS station detection scans by sampling. It bisects already bracketed
+  visibility changes to approximately 0.5 s, but it is not a general
+  root solver and does not guarantee finding a full pass between two
+  discovery samples.
 - Visual mode without local EOP snapshots is still approximate although the
   service pass the healthcheck.
 - There is no hosted CI or exposed standard compliance report

@@ -1,6 +1,6 @@
-# Eventos orbitales
+# Pases y visibilidad
 
-[Análisis](index.md){ .md-button } [Estaciones de tierra](../user-guide/ground-stations.md){ .md-button }
+[Segmento terrestre](../ground-segment/index.md){ .md-button } [Estaciones de tierra](../user-guide/ground-stations.md){ .md-button }
 
 Orbit no incluye un motor genérico de detección de eventos orbitales. La
 capacidad disponible relacionada con eventos es el cálculo de AOS/LOS para
@@ -11,15 +11,22 @@ visibilidad sobre una ventana temporal.
 
 | Término | Definición operacional |
 | --- | --- |
-| AOS | Primera muestra de una ventana en la que el objeto cumple la máscara de elevación configurada. |
-| LOS | Primera muestra posterior en la que deja de cumplirse esa máscara. |
-| Paso de muestreo | Resolución temporal que limita la precisión temporal del resultado. |
+| AOS | Instante refinado en que un objeto pasa a cumplir la máscara de elevación y el criterio de enlace configurados. |
+| LOS | Instante refinado posterior en que deja de cumplirse alguno de esos criterios. |
+| Paso de muestreo | Cadencia de exploración que localiza los intervalos candidatos de un pase. |
 
 !!! warning "Precisión de evento"
 
-    El cálculo actual no refina el cruce mediante búsqueda de raíces. Un AOS o
-    LOS debe interpretarse con una incertidumbre vinculada al paso configurado
-    y al modelo de trayectoria utilizado.
+    Orbit explora primero la ventana temporal con el paso configurado. Cuando
+    dos muestras consecutivas encierran un cambio de visibilidad, refina ese
+    intervalo por bisección hasta aproximadamente 0,5 s. Por tanto, un AOS o
+    LOS no queda limitado a la hora exacta de la muestra gruesa, pero su
+    exactitud sigue dependiendo de la trayectoria, EOP, máscara y modelo RF.
+
+    No es un motor genérico de búsqueda de raíces: un pase que aparezca y
+    desaparezca por completo entre dos muestras de exploración no queda
+    encerrado y puede no detectarse. Reduzca el paso para ventanas muy cortas
+    o máscaras/envolventes restrictivas.
 
 ## Estado
 

@@ -1,0 +1,40 @@
+{#-
+  Orbit renders navigation in two complementary levels:
+  - the primary tabs select a documentation domain;
+  - the contextual tabs expose that domain's areas.
+
+  Both rows use MkDocs' navigation object.  This keeps the active state,
+  translated titles and URLs correct for every locale without client-side
+  routing or duplicated navigation data.
+-#}
+{% import "partials/tabs-item.html" as item with context %}
+
+{% set active_root = namespace(item=none) %}
+{% for nav_item in nav.items %}
+  {% if nav_item.active %}
+    {% set active_root.item = nav_item %}
+  {% endif %}
+{% endfor %}
+
+<nav class="md-tabs orbit-primary-tabs" aria-label="{{ lang.t('tabs') }}" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      {% for nav_item in nav.items %}
+        {{ item.render(nav_item) }}
+      {% endfor %}
+    </ul>
+  </div>
+</nav>
+
+{% if active_root.item and active_root.item.children %}
+  <nav class="md-tabs orbit-context-tabs" aria-label="{{ active_root.item.title }}">
+    <div class="md-grid orbit-context-tabs__inner">
+      <span class="orbit-context-tabs__scope">{{ active_root.item.title }}</span>
+      <ul class="md-tabs__list orbit-context-tabs__list">
+        {% for nav_item in active_root.item.children %}
+          {{ item.render(nav_item) }}
+        {% endfor %}
+      </ul>
+    </div>
+  </nav>
+{% endif %}

@@ -15,21 +15,24 @@ separa esas capacidades de los productos de navegación y determinación de
 | Alcance y límites del análisis | Capacidades derivadas disponibles y límites de producto. | [Visión general](overview.md) |
 | Parámetros orbitales propagados y gráficas asociadas | Disponible para flujos TLE y órbitas manuales. | [Gráficas](plots.md) |
 | Comparación de propagadores | Sin herramienta comparativa dedicada. | [Comparación](comparison-tools.md) |
-| Eventos | AOS/LOS de estaciones disponible por muestreo; no hay motor de eventos genérico. | [Eventos](events.md) |
 | Estadísticas de flota | No disponible. | [Estadísticas](statistics.md) |
-| Medidas y tracking | No disponible como cadena de observación. | [Medidas](measurements.md) y [tracking](tracking.md) |
-| Determinación de órbita | No disponible. | [Determinación de órbita](orbit-determination.md) |
 
 ## Principio de interpretación
 
-Un resultado de visualización, una gráfica o un paso AOS/LOS representan el
-modelo, los datos y la resolución de muestreo configurados. No constituyen una
-estimación de incertidumbre, una validación contra medidas ni una solución de
-navegación.
+Un resultado de visualización o una gráfica representan el modelo, los datos y
+la resolución de muestreo configurados. No constituyen una estimación de
+incertidumbre, una validación contra medidas ni una solución de navegación.
+
+## Operación terrestre
+
+Los pases AOS/LOS, las medidas, el tracking y la futura determinación de
+órbita se organizan bajo [Segmento terrestre](../ground-segment/index.md).
+Esto evita confundir el análisis de una trayectoria con la operación de una
+estación y su cadena de observación.
 
 ## Referencias relacionadas
 
 - [Propagación](../propagation/overview.md)
-- [Estaciones de tierra](../user-guide/ground-stations.md)
+- [Pases y visibilidad](events.md)
 - [Exportación](../user-guide/export.md)
 - [Validación](../operations/validation.md)
