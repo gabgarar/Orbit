@@ -68,7 +68,7 @@
   align-items: center;
   display: flex;
   gap: 0.55rem;
-  min-height: 2.05rem;
+  min-height: 2.4rem;
   overflow: hidden;
 }
 
@@ -83,6 +83,7 @@
 }
 
 .orbit-context-tabs__list {
+  align-items: stretch;
   flex: 1 1 auto;
   min-width: 0;
   overflow-x: auto;
@@ -91,13 +92,19 @@
 }
 
 .orbit-context-tabs .md-tabs__item {
+  align-items: center;
+  display: flex;
+  height: 2.4rem;
   padding-inline: 0.45rem;
 }
 
 .orbit-context-tabs .md-tabs__link {
+  align-items: center;
   color: rgba(223, 237, 255, 0.78);
   font-size: 0.64rem;
   font-weight: 600;
+  height: 100%;
+  line-height: 1;
   margin-top: 0;
 }
 
