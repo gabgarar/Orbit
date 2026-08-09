@@ -77,7 +77,7 @@ export default function SatelliteContextMenu() {
             type="button"
             onClick={() => selectAction("propagated-parameters")}
         >
-            Parámetros propagados
+            Efemérides
         </button>}
         {!isCelestialBody && !isGroundStation && menu.canEditManualOrbit === true && <button
             className="!h-8 !rounded-lg !border !border-[#3e68b0] !bg-[#162b4d] !px-3 !text-left !font-sans !text-xs !leading-none !font-bold !text-[#d7e7ff] !cursor-pointer hover:!border-[#6091e8] hover:!bg-[#203d68] focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-[#80a7ff]"

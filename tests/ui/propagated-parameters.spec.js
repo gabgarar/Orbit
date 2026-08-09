@@ -118,7 +118,22 @@ test("a saved manual layer keeps ITRF as the inspector display frame", async ({ 
     // flow. This is deliberately different from the design-session contract
     // above: after confirmation the inspector must recover the display frame
     // from the saved local layer, rather than falling back to catalogue TEME.
-    await page.locator("#leftManualOrbitBtn").click();
+    const manualOrbitButton = page.locator("#leftManualOrbitBtn");
+    await manualOrbitButton.click();
+    const confirmation = page.locator("#sidebarConfirmModal");
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toContainText("Layers");
+    await expect(confirmation).toContainText(/segundo plano/i);
+
+    // Cancelling the scene transition must leave Layers exactly where it was.
+    await confirmation.getByRole("button", { name: "Cancelar", exact: true }).click();
+    await expect(confirmation).toBeHidden();
+    await expect(page.locator("#leftSatellitesPanel")).toHaveClass(/open/);
+    await expect(page.locator("#manualOrbitPanel")).toBeHidden();
+
+    await manualOrbitButton.click();
+    await expect(confirmation).toBeVisible();
+    await confirmation.getByRole("button", { name: "Continuar", exact: true }).click();
     const designer = page.locator("#manualOrbitPanel");
     await expect(designer).toBeVisible();
     await designer.getByRole("tab", { name: "PROPAGATION", exact: true }).click();

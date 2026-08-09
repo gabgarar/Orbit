@@ -880,6 +880,7 @@ export function setupObjectSidebar({
     let catalogWaitInterval = null;
     let contextTargetId = null;
     let editingGroundStationId = null;
+    let groundStationDesignConfirmationPending = false;
     let exportSourceFormat = "TLE";
     let lastRenderedCatalogIds = [];
     let catalogServerTotal = 0;
@@ -1311,8 +1312,14 @@ export function setupObjectSidebar({
             return;
         }
         if (action === "station") {
-            pendingFolderAssignment = { folderId: folder.id, knownIds: new Set(getRenderableLayerIds()) };
-            openGroundStationModal();
+            // Do not reserve a folder until the user actually enters the
+            // designer.  Otherwise cancelling the transition would leave a
+            // stale assignment that could be applied to an unrelated layer.
+            void requestNewGroundStationDesign({
+                onConfirmed: () => {
+                    pendingFolderAssignment = { folderId: folder.id, knownIds: new Set(getRenderableLayerIds()) };
+                }
+            });
             return;
         }
         if (action === "create") {
@@ -2211,6 +2218,31 @@ export function setupObjectSidebar({
         }
     }
 
+    async function requestNewGroundStationDesign({ onConfirmed } = {}) {
+        // A rail double-click or two concurrent entry points must not replace
+        // one pending decision (or an active draft) with another station
+        // editor.  The manual-orbit entry follows the same one-dialog rule.
+        if (groundStationDesignConfirmationPending || groundStationModal.classList.contains("open")) {
+            return false;
+        }
+        groundStationDesignConfirmationPending = true;
+        closeAddMenu();
+        try {
+            const confirmed = await askConfirmation({
+                title: "Crear estaci\u00f3n terrestre manual",
+                message: "La vista de Layers y el visor operativo se ocultar\u00e1n temporalmente y continuar\u00e1n en segundo plano. Se abrir\u00e1 una vista exclusiva para dise\u00f1ar una estaci\u00f3n terrestre de forma manual. Al confirmar sus datos, la estaci\u00f3n se a\u00f1adir\u00e1 a las dem\u00e1s Layers.",
+                confirmText: "Continuar al dise\u00f1o",
+                cancelText: "Cancelar"
+            });
+            if (!confirmed) return false;
+            onConfirmed?.();
+            openGroundStationModal();
+            return true;
+        } finally {
+            groundStationDesignConfirmationPending = false;
+        }
+    }
+
     function openGroundStationModal(layerId = null) {
         closeAddMenu();
         // Station design owns the right-hand workspace in the same way as the
@@ -2889,7 +2921,7 @@ export function setupObjectSidebar({
     addSunBtn?.addEventListener("click", () => requestCelestialBody("sun"));
 
     addGroundStationBtn?.addEventListener("click", () => {
-        openGroundStationModal();
+        void requestNewGroundStationDesign();
     });
 
     groundStationCloseBtn?.addEventListener("click", () => { void requestCloseGroundStationModal(); });
@@ -4828,8 +4860,16 @@ export function setupObjectSidebar({
             renderList();
         },
         openGroundStationEditor(layerId) {
-            openGroundStationModal(layerId || null);
+            const targetId = String(layerId || "").trim();
+            // Editing a confirmed station stays direct: it does not replace
+            // the workspace with an uncommitted creation session.
+            if (targetId) {
+                openGroundStationModal(targetId);
+                return Promise.resolve(true);
+            }
+            return requestNewGroundStationDesign();
         },
+        requestNewGroundStationDesign,
         openPanel,
         destroy() {
             clearInterval(listInterval);

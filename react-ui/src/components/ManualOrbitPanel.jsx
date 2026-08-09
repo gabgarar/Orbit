@@ -1199,7 +1199,7 @@ export default function ManualOrbitPanel() {
                 </div>}
             </section>
 
-            <button className="mt-3 inline-flex min-h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#294d7b] bg-[#0d1d33] px-3 py-2 text-[10px] leading-none font-bold text-[#b7d4ff] hover:border-[#5787c9] hover:bg-[#142a49] hover:text-[#edf5ff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before inspecting propagated parameters." : "Inspect the orbital elements over this design window."} disabled={!epochRangeValid || selectedPropagator.unavailable} onClick={openPropagatedParameters}>Ver parámetros propagados</button>
+            <button className="mt-3 inline-flex min-h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#294d7b] bg-[#0d1d33] px-3 py-2 text-[10px] leading-none font-bold text-[#b7d4ff] hover:border-[#5787c9] hover:bg-[#142a49] hover:text-[#edf5ff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before inspecting ephemerides." : "Inspect the ephemerides over this design window."} disabled={!epochRangeValid || selectedPropagator.unavailable} onClick={openPropagatedParameters}>Ver efemérides</button>
             </>}
             <button className="mt-3 w-full cursor-pointer rounded-lg border border-[#39445a] bg-[#111a29] px-3 py-2 text-[10px] leading-none font-bold text-[#b7c5da] hover:border-[#637c9f] hover:bg-[#17253a] hover:text-[#ecf3ff]" type="button" onClick={reset}>Reset values</button>
         </div>

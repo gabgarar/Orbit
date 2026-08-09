@@ -307,7 +307,7 @@ function EmptyState({ hasTarget, status, error, compact = false }) {
         : error
             ? error
             : loading
-                ? "Los parámetros propagados aparecerán al terminar el cálculo."
+                ? "Las efemérides aparecerán al terminar el cálculo."
                 : "Actualiza el análisis para calcular la serie orbital.";
     return <div className={"flex flex-1 flex-col items-center justify-center px-8 text-center " + (compact ? "min-h-[180px] py-6" : "min-h-[250px] py-10")}>
         <div className={"mb-3 grid size-10 place-items-center rounded-xl border " + (!hasTarget ? "border-[#31445f] bg-[#122035] text-[#92acd0]" : error ? "border-[rgba(216,81,96,.45)] bg-[rgba(178,50,70,.14)] text-[#ffacb6]" : "border-[#355281] bg-[#142947] text-[#95baff]")}>
@@ -351,7 +351,7 @@ function VirtualizedSamplesTable({ samples, referenceFrame }) {
 
     const frameLabel = referenceFrame ? formatReferenceFrame(referenceFrame) : "";
 
-    return <div ref={viewportRef} className="orbit-scrollbar min-h-0 flex-1 overflow-auto rounded-[8px] border border-[#1e3451] bg-[rgba(4,12,23,.56)]" aria-label={frameLabel ? `Tabla de valores propagados calculados en ${frameLabel}` : "Tabla de valores propagados"} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+    return <div ref={viewportRef} className="orbit-scrollbar min-h-0 flex-1 overflow-auto rounded-[8px] border border-[#1e3451] bg-[rgba(4,12,23,.56)]" aria-label={frameLabel ? `Tabla de efemérides calculadas en ${frameLabel}` : "Tabla de efemérides"} onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
         <table className="min-w-[1150px] w-full border-separate border-spacing-0 text-left font-[system-ui,sans-serif] text-[10px] tabular-nums">
             <thead className="sticky top-0 z-[2] bg-[#101e33] text-[#aec2df] shadow-[0_1px_0_#294362]">
                 <tr>{TABLE_COLUMNS.map(([label]) => <th className="h-[34px] whitespace-nowrap border-b border-[#294362] px-2.5 text-[9px] font-bold tracking-[.025em]" key={label}>{label}</th>)}</tr>
@@ -853,7 +853,7 @@ function ValuesTab({ samples, hasTarget, status, error, referenceFrame, onExport
         <div className="flex shrink-0 items-center justify-between gap-3">
             <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <h3 className="m-0 text-[11px] font-semibold text-[#e4eefc]">Valores propagados</h3>
+                    <h3 className="m-0 text-[11px] font-semibold text-[#e4eefc]">Valores de efemérides</h3>
                     {frameLabel && <span className="rounded-[4px] border border-[#365d91] bg-[rgba(34,65,111,.38)] px-1.5 py-0.5 text-[8px] font-bold tracking-[.055em] text-[#bad7ff]" title="Marco del estado nativo desde el que se calculan los elementos osculantes">MARCO DE CÁLCULO · {frameLabel}</span>}
                 </div>
                 <p className="mt-1 mb-0 text-[10px] text-[#879bb8]">Tabla completa de elementos osculantes y estado propagado{frameLabel ? ` calculados en ${frameLabel}` : ""}.</p>
@@ -1115,16 +1115,16 @@ export default function PropagatedOrbitParametersPanel() {
     };
     const tabs = [["info", "Información"], ["chart", "Gráfica"], ["values", "Valores"]];
     const panelTitle = targetLabel
-        ? `Parámetros orbitales propagados de ${targetLabel}`
-        : "Parámetros orbitales propagados";
+        ? `Efemérides de ${targetLabel}`
+        : "Efemérides";
 
-    return <aside ref={panelRef} className="propagated-orbit-parameters-panel pointer-events-auto fixed z-[10126] flex min-h-[300px] min-w-[280px] flex-col overflow-hidden rounded-[11px] border border-[rgba(65,99,147,.7)] bg-[linear-gradient(145deg,rgba(12,26,45,.985),rgba(5,14,26,.985))] font-[system-ui,sans-serif] text-[#dbe7fa] shadow-[0_22px_60px_rgba(0,0,0,.48),inset_0_1px_rgba(255,255,255,.055)]" style={panelStyle} aria-label="Parámetros orbitales propagados">
+    return <aside ref={panelRef} className="propagated-orbit-parameters-panel pointer-events-auto fixed z-[10126] flex min-h-[300px] min-w-[280px] flex-col overflow-hidden rounded-[11px] border border-[rgba(65,99,147,.7)] bg-[linear-gradient(145deg,rgba(12,26,45,.985),rgba(5,14,26,.985))] font-[system-ui,sans-serif] text-[#dbe7fa] shadow-[0_22px_60px_rgba(0,0,0,.48),inset_0_1px_rgba(255,255,255,.055)]" style={panelStyle} aria-label="Efemérides">
         <header className="flex shrink-0 cursor-move select-none items-start gap-3 border-b border-[#213550] px-4 py-3.5" onPointerDown={beginDrag}>
             <div className="min-w-0 flex-1">
                 <h2 className="truncate text-[16px] leading-tight font-semibold text-[#f0f5ff]" title={panelTitle}>{panelTitle}</h2>
                 <p className="mt-1 text-[10px] leading-[1.35] text-[#8ea1bd]">Elementos osculantes y estado propagado a lo largo del tiempo.</p>
             </div>
-            <PanelCloseButton label="Cerrar parámetros propagados" onPointerDown={(event) => event.stopPropagation()} onClick={close} />
+            <PanelCloseButton label="Cerrar efemérides" onPointerDown={(event) => event.stopPropagation()} onClick={close} />
         </header>
 
         <nav className="grid shrink-0 grid-cols-3 border-b border-[#203550] px-3" role="tablist" aria-label="Secciones del inspector">

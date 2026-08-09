@@ -5830,7 +5830,7 @@ async function requestPropagatedParameters(context) {
             target,
             range: null,
             result: null,
-            error: extractManualOrbitError(error, "No se pudieron preparar los parámetros propagados.")
+            error: extractManualOrbitError(error, "No se pudieron preparar las efemérides.")
         });
         return;
     }
@@ -5890,7 +5890,7 @@ async function requestPropagatedParameters(context) {
             target,
             range,
             result: null,
-            error: extractManualOrbitError(error, "No se pudieron propagar los parámetros orbitales.")
+            error: extractManualOrbitError(error, "No se pudieron calcular las efemérides.")
         });
     } finally {
         if (propagatedParametersAbortController === controller) {
@@ -6399,8 +6399,10 @@ function setupPropagatedParametersInspector() {
         }
     });
     window.addEventListener("orbit:ground-stations-create-request", () => {
-        openLeftSatellitesPanel();
-        objectSidebar?.openGroundStationEditor?.();
+        // Entering the station designer replaces the operational workspace
+        // with an isolated preview. Ask first so cancelling leaves the
+        // current Layers view completely untouched.
+        void objectSidebar?.requestNewGroundStationDesign?.();
     });
     window.addEventListener("orbit:ground-stations-analyze", (event) => {
         void analyzeGroundStationPasses(event.detail || {});

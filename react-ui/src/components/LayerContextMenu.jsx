@@ -80,7 +80,7 @@ export default function LayerContextMenu() {
             visibilityAction,
             ["rename", "Renombrar capa"],
             ...(menu.manualOrbit === true ? [["edit-manual", "Editar órbita manual"]] : []),
-            ["propagated-parameters", "Parámetros orbitales propagados"],
+            ["propagated-parameters", "Efemérides"],
             ["explain", "Explicar parámetros orbitales"],
             ["viz", "Opciones de visualización"],
             ["ground", menu.groundTrackVisible ? "Ground Track Hide" : "Ground Track Show"],

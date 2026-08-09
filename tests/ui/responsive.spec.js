@@ -263,8 +263,8 @@ async function expectApplicationShellLayout(page) {
     expect(layerPanelControls.resizeHandle.right, "Resize handle must reach the right panel edge").toBeGreaterThanOrEqual(layerPanelControls.panel.right - 1);
     expect(layerPanelControls.addLayer, "Visible React add-layer control must exist").not.toBeNull();
     expect(layerPanelControls.addLayer.visible, "Add-layer control must be visible").toBeTruthy();
-    expect(layerPanelControls.addLayer.height, "Add-layer control must remain a clear call to action").toBeGreaterThanOrEqual(30);
-    expect(layerPanelControls.addLayer.height, "Add-layer control must remain compact").toBeLessThanOrEqual(38);
+    expect(layerPanelControls.addLayer.height, "Add-layer control must remain a clear call to action").toBeGreaterThanOrEqual(28);
+    expect(layerPanelControls.addLayer.height, "Add-layer control must retain the compact Layers height").toBeLessThanOrEqual(30);
     expect(layerPanelControls.addLayer.fontSize, "Layer names must match catalog density").toBeLessThanOrEqual(12);
     expect(layerPanelControls.addLayer.label, "Add-layer control must explain its action").toContain("Añadir");
 }
@@ -394,6 +394,211 @@ async function expectPanelInsideViewport(page, selector) {
     expect(bounds.right, `${selector} must stay inside the viewport`).toBeLessThanOrEqual(bounds.width + 1);
     expect(bounds.top, `${selector} must stay inside the viewport`).toBeGreaterThanOrEqual(-1);
     expect(bounds.bottom, `${selector} must stay inside the viewport`).toBeLessThanOrEqual(bounds.height + 1);
+}
+
+/**
+ * The left rail is intentionally a compact visual navigation system rather
+ * than a collection of anonymous icon targets.  Keep its measurements here
+ * as a rendered contract: the implementation may use Tailwind or the legacy
+ * theme stylesheet, but users must see the same centred icon/label blocks.
+ */
+async function readSidebarNavigationBlocks(page) {
+    return page.evaluate(() => {
+        const isVisible = (element) => {
+            if (!(element instanceof HTMLElement)) return false;
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== "none"
+                && style.visibility !== "hidden"
+                && Number(style.opacity) > 0
+                && rect.width > 0
+                && rect.height > 0;
+        };
+        const color = (element) => {
+            const value = getComputedStyle(element).color;
+            const channels = value.match(/[\d.]+/g)?.map(Number) || [];
+            return {
+                value,
+                red: channels[0] ?? 0,
+                green: channels[1] ?? 0,
+                blue: channels[2] ?? 0,
+                alpha: channels[3] ?? 1,
+                opacity: Number(getComputedStyle(element).opacity || 1)
+            };
+        };
+        const snapshot = (element) => {
+            if (!(element instanceof Element)) return null;
+            const rect = element.getBoundingClientRect();
+            return {
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                bottom: rect.bottom,
+                width: rect.width,
+                height: rect.height,
+                centerX: rect.left + (rect.width / 2)
+            };
+        };
+        const rail = document.querySelector("#leftSidebar");
+        if (!(rail instanceof HTMLElement)) return null;
+        const railStyles = getComputedStyle(rail);
+        return {
+            rail: snapshot(rail),
+            rowGap: Number.parseFloat(railStyles.rowGap || railStyles.gap),
+            blocks: [...rail.querySelectorAll(".sidebar-btn")]
+                .filter(isVisible)
+                .map((button) => {
+                    const icon = button.querySelector(".sidebar-btn-icon, svg");
+                    const label = button.querySelector(".sidebar-btn-label");
+                    const separatorStyles = getComputedStyle(button, "::after");
+                    return {
+                        id: button.id,
+                        active: button.classList.contains("active"),
+                        disabled: button.matches(":disabled"),
+                        button: snapshot(button),
+                        icon: snapshot(icon),
+                        label: snapshot(label),
+                        iconColor: icon ? color(icon) : null,
+                        labelColor: label ? color(label) : null,
+                        labelText: label?.textContent?.trim() || "",
+                        labelTextTransform: label ? getComputedStyle(label).textTransform : "",
+                        separator: {
+                            content: separatorStyles.content,
+                            display: separatorStyles.display,
+                            height: Number.parseFloat(separatorStyles.height),
+                            bottom: Number.parseFloat(separatorStyles.bottom),
+                            backgroundImage: separatorStyles.backgroundImage
+                        }
+                    };
+                })
+        };
+    });
+}
+
+function expectOrbitSidebarColor(actual, expected, label) {
+    expect(actual, `${label} colour must be measurable`).not.toBeNull();
+    expect(actual.red, `${label} red channel`).toBeCloseTo(expected.red, 0);
+    expect(actual.green, `${label} green channel`).toBeCloseTo(expected.green, 0);
+    expect(actual.blue, `${label} blue channel`).toBeCloseTo(expected.blue, 0);
+}
+
+/**
+ * Rendered visual contract for the Layers explorer.  The tree itself is
+ * still supplied by the legacy runtime, while the shell comes from React, so
+ * use real computed styles instead of asserting either implementation's
+ * class list.  This catches an accidental fallback to browser/default
+ * controls as well as visual regressions in the compact explorer hierarchy.
+ */
+async function readLayersExplorerPresentation(page) {
+    return page.evaluate(() => {
+        const snapshot = (element) => {
+            if (!(element instanceof Element)) return null;
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return {
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                bottom: rect.bottom,
+                width: rect.width,
+                height: rect.height,
+                backgroundColor: style.backgroundColor,
+                backgroundImage: style.backgroundImage,
+                borderTopColor: style.borderTopColor,
+                borderBottomColor: style.borderBottomColor,
+                borderBottomStyle: style.borderBottomStyle,
+                borderBottomWidth: Number.parseFloat(style.borderBottomWidth),
+                borderRadius: Number.parseFloat(style.borderTopLeftRadius),
+                boxShadow: style.boxShadow,
+                color: style.color,
+                fontFamily: style.fontFamily,
+                fontSize: Number.parseFloat(style.fontSize),
+                fontWeight: Number.parseFloat(style.fontWeight)
+            };
+        };
+        const panel = document.querySelector("#leftSatellitesPanel");
+        const header = panel?.querySelector(".orbit-layers-panel-header");
+        const heading = panel?.querySelector(".orbit-layers-heading");
+        const add = panel?.querySelector("#openCatalogBtn");
+        const addIcon = add?.querySelector("svg");
+        const addLabel = add?.querySelector("span");
+        const projectHeader = panel?.querySelector(".orbit-project-header");
+        const projectRoot = panel?.querySelector("[data-layer-tree-project-root]");
+        const projectTitle = panel?.querySelector("[data-project-title]");
+        const projectChevron = projectRoot?.querySelector(".layer-tree-chevron");
+        const projectDivider = panel?.querySelector(".orbit-project-divider");
+        const actions = [
+            panel?.querySelector("#toggleAllVisibilityBtn"),
+            panel?.querySelector("#removeAllLayersHeaderBtn")
+        ];
+        const bodies = panel?.querySelector("[data-layer-tree-bodies]");
+        const bodiesHeader = bodies?.querySelector(".layer-tree-body-section-header");
+        const earthRow = bodies?.querySelector("[data-layer-id='body:earth']");
+        const earthItem = earthRow?.querySelector(".object-list-item");
+        const earthIcon = earthRow?.querySelector(".layer-type-icon");
+
+        // A fresh workspace only has the permanent Earth body, so it does not
+        // naturally contain an input-format badge.  Mount one briefly using
+        // the actual tree class so its typography remains covered without
+        // making this visual test depend on a remote catalogue response.
+        const badge = document.createElement("span");
+        badge.className = "catalog-format-badge";
+        badge.dataset.layersStyleProbe = "true";
+        badge.textContent = "TLE";
+        const badgeHost = earthRow?.querySelector(".object-list-item") || panel;
+        badgeHost?.appendChild(badge);
+        const badgePresentation = snapshot(badge);
+        badge.remove();
+
+        return {
+            header: snapshot(header),
+            heading: snapshot(heading),
+            add: snapshot(add),
+            addIcon: snapshot(addIcon),
+            addLabel: snapshot(addLabel),
+            projectHeader: snapshot(projectHeader),
+            projectRoot: snapshot(projectRoot),
+            projectTitle: snapshot(projectTitle),
+            projectTitleText: projectTitle?.textContent?.trim() || "",
+            projectChevron: snapshot(projectChevron),
+            projectDivider: snapshot(projectDivider),
+            projectActions: actions.map(snapshot),
+            bodiesHeader: snapshot(bodiesHeader),
+            earthRow: snapshot(earthRow),
+            earthItem: snapshot(earthItem),
+            earthIcon: snapshot(earthIcon),
+            badge: badgePresentation
+        };
+    });
+}
+
+function readRgbChannels(value) {
+    const channels = String(value || "").match(/[\d.]+/g)?.map(Number) || [];
+    return {
+        red: channels[0] ?? 0,
+        green: channels[1] ?? 0,
+        blue: channels[2] ?? 0,
+        alpha: channels[3] ?? 1
+    };
+}
+
+function expectOrbitBlue(actual, label) {
+    const color = readRgbChannels(actual);
+    // #3a6ea8 is the supplied design token. Keep a small tolerance for an
+    // rgba implementation while preserving the same quiet blue family.
+    expect(color.red, `${label} must keep Orbit blue red channel`).toBeGreaterThanOrEqual(45);
+    expect(color.red, `${label} must keep Orbit blue red channel`).toBeLessThanOrEqual(75);
+    expect(color.green, `${label} must keep Orbit blue green channel`).toBeGreaterThanOrEqual(90);
+    expect(color.green, `${label} must keep Orbit blue green channel`).toBeLessThanOrEqual(130);
+    expect(color.blue, `${label} must keep Orbit blue blue channel`).toBeGreaterThanOrEqual(145);
+    expect(color.blue, `${label} must keep Orbit blue blue channel`).toBeLessThanOrEqual(190);
+}
+
+function expectOrbitBlueHighlight(actual, label) {
+    const color = readRgbChannels(actual);
+    expect(color.red, `${label} must brighten the Orbit blue red channel`).toBeGreaterThanOrEqual(90);
+    expect(color.green, `${label} must brighten the Orbit blue green channel`).toBeGreaterThanOrEqual(135);
+    expect(color.blue, `${label} must brighten the Orbit blue blue channel`).toBeGreaterThanOrEqual(190);
 }
 
 /**
@@ -1010,6 +1215,185 @@ test("Los paneles principales mantienen controles accesibles", async ({ page }) 
 
 });
 
+test("La barra lateral presenta iconos y etiquetas como bloques de navegación", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await openWorkspace(page);
+    // The rail dimensions are specified in CSS pixels. Pin the configurable
+    // UI scale so a browser/device scale cannot hide a regression in the
+    // 26 / 10 / 6 / 52 composition itself.
+    await page.evaluate(() => document.documentElement.style.setProperty("--orbit-ui-scale", "1"));
+
+    const initial = await readSidebarNavigationBlocks(page);
+    expect(initial, "The workspace navigation rail must exist").not.toBeNull();
+    expect(initial.blocks.length, "The rail must expose navigable blocks").toBeGreaterThanOrEqual(4);
+    expect(initial.blocks.filter((block) => !block.active).length, "The fresh rail must expose neutral navigation entries").toBeGreaterThanOrEqual(3);
+    expect(initial.rowGap, "Labelled rail blocks need a deliberate breathing band").toBeGreaterThanOrEqual(10);
+
+    for (const block of initial.blocks) {
+        expect(block.button, `${block.id} must keep a measurable navigation block`).not.toBeNull();
+        expect(block.icon, `${block.id} must expose a visible icon`).not.toBeNull();
+        expect(block.label, `${block.id} must expose its visible label`).not.toBeNull();
+        expect(block.labelText, `${block.id} label must not be empty`).not.toBe("");
+        expect(block.labelTextTransform, `${block.id} label must retain its authored title case`).toBe("none");
+        expect(block.labelText, `${block.id} label must start with an uppercase letter`).toMatch(/^\p{Lu}/u);
+        expect(block.labelText, `${block.id} label must not be forced to all caps`).not.toBe(block.labelText.toUpperCase());
+
+        expect(block.button.height, `${block.id} must use the 52px rail block`).toBeCloseTo(52, 0);
+        expect(block.icon.width, `${block.id} icon must use the 26px visual size`).toBeCloseTo(26, 0);
+        expect(block.icon.height, `${block.id} icon must use the 26px visual size`).toBeCloseTo(26, 0);
+        expect(block.label.height, `${block.id} label must remain compact`).toBeGreaterThanOrEqual(9);
+        expect(block.label.height, `${block.id} label must remain compact`).toBeLessThanOrEqual(12);
+
+        const iconToLabelGap = block.label.top - block.icon.bottom;
+        expect(iconToLabelGap, `${block.id} must leave a 6px icon/label gap`).toBeCloseTo(6, 0);
+        expect(Math.abs(block.icon.centerX - block.button.centerX), `${block.id} icon must be centred in its block`).toBeLessThanOrEqual(1);
+        expect(Math.abs(block.label.centerX - block.button.centerX), `${block.id} label must be centred in its block`).toBeLessThanOrEqual(1);
+
+        // The active route intentionally retains its navigation accent. The
+        // neutral rail entries are the ones that define the resting text
+        // token requested for this redesign.
+        if (!block.active && !block.disabled) {
+            expectOrbitSidebarColor(block.labelColor, { red: 185, green: 201, blue: 223 }, `${block.id} resting label`);
+            const effectiveLabelAlpha = block.labelColor.alpha * block.labelColor.opacity;
+            expect(effectiveLabelAlpha, `${block.id} resting label must keep its 75% visual opacity`).toBeCloseTo(0.75, 2);
+        }
+    }
+
+    const layersBlock = initial.blocks.find((block) => block.id === "leftSatellitesBtn");
+    const manualOrbitBlock = initial.blocks.find((block) => block.id === "leftManualOrbitBtn");
+    expect(layersBlock, "The Layers rail block must be present").toBeDefined();
+    expect(manualOrbitBlock, "The manual-orbit rail block must be present").toBeDefined();
+    expect(layersBlock.labelText, "The Layers rail label must use title case").toBe("Layers");
+    expect(layersBlock.separator.content, "Layers must expose its separator rule").not.toBe("none");
+    expect(layersBlock.separator.display, "Layers separator must remain visible").not.toBe("none");
+    expect(layersBlock.separator.height, "Layers separator must stay thin").toBeGreaterThan(0);
+    expect(layersBlock.separator.backgroundImage, "Layers separator must use the subtle rail gradient").toMatch(/gradient/i);
+    expect(layersBlock.separator.bottom, "Layers separator must sit in the breathing band below its label").toBeLessThan(0);
+    expect(manualOrbitBlock.button.top - layersBlock.button.bottom, "The separator must have air on both sides").toBeGreaterThanOrEqual(10);
+
+    // Layers starts active in a fresh workspace, so exercise an inactive
+    // sibling. Hover must brighten both parts of the navigation item, not
+    // only the icon or its background.
+    const hoverTarget = page.locator("#leftManualOrbitBtn");
+    await expect(hoverTarget).toBeVisible();
+    await hoverTarget.hover();
+    const hovered = await readSidebarNavigationBlocks(page);
+    const hoveredBlock = hovered.blocks.find((block) => block.id === "leftManualOrbitBtn");
+    expect(hoveredBlock, "The manual-orbit rail block must still be present after hover").toBeDefined();
+    expectOrbitSidebarColor(hoveredBlock.iconColor, { red: 237, green: 244, blue: 255 }, "Hovered icon");
+    expectOrbitSidebarColor(hoveredBlock.labelColor, { red: 237, green: 244, blue: 255 }, "Hovered label");
+    expect(hoveredBlock.labelColor.alpha * hoveredBlock.labelColor.opacity, "Hovered label must become fully legible").toBeGreaterThanOrEqual(0.99);
+});
+
+test("Layers mantiene un explorador técnico compacto y jerárquico", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await openWorkspace(page);
+    await ensureLayersPanelOpen(page);
+    await page.evaluate(() => document.documentElement.style.setProperty("--orbit-ui-scale", "1"));
+
+    // A new workspace only creates the permanent Earth body, so the real
+    // mission actions are correctly hidden. Reveal their existing controls
+    // only for this visual measurement; their show/hide state is covered by
+    // the project-action tests and must not depend on a remote TLE catalogue.
+    // A CSS probe survives the regular React clock re-render that would reset
+    // a temporary `hidden = false` DOM mutation.
+    await page.addStyleTag({ content: "#leftSatellitesPanel #toggleAllVisibilityBtn[hidden], #leftSatellitesPanel #removeAllLayersHeaderBtn[hidden] { display: grid !important; }" });
+    const eyeAction = page.locator("#toggleAllVisibilityBtn");
+    const removeAction = page.locator("#removeAllLayersHeaderBtn");
+    await expect(eyeAction).toBeVisible();
+    await expect(removeAction).toBeVisible();
+    await expect(eyeAction).toHaveClass(/orbit-project-action/);
+    await expect(removeAction).toHaveClass(/orbit-project-action/);
+    await expect(page.locator("#openCatalogBtn")).toHaveClass(/orbit-layers-add-button/);
+
+    const earth = page.locator("#leftSatellitesPanel [data-layer-id='body:earth']");
+    await expect(page.locator("#leftSatellitesPanel [data-layer-tree-bodies]")).toBeVisible();
+    await expect(earth).toBeVisible();
+
+    const resting = await readLayersExplorerPresentation(page);
+    expect(resting.header, "Layers header must be rendered").not.toBeNull();
+    expect(resting.heading, "Layers heading must be rendered").not.toBeNull();
+    expect(await page.locator("#leftSatellitesPanel .orbit-layers-heading").textContent(), "Layers panel heading must use title case").toBe("Layers");
+    expect(resting.add, "Layers add action must be rendered").not.toBeNull();
+    expect(resting.addIcon, "Layers add action must expose a plus icon").not.toBeNull();
+    expect(resting.addLabel, "Layers add action must expose its label").not.toBeNull();
+    expect(resting.projectHeader, "Project module header must be rendered").not.toBeNull();
+    expect(resting.projectRoot, "Project root control must be rendered").not.toBeNull();
+    expect(resting.projectTitle, "Project title must be rendered").not.toBeNull();
+    expect(resting.projectChevron, "Project root must retain its collapse chevron").not.toBeNull();
+    expect(resting.projectDivider, "Project module must expose its own separator").not.toBeNull();
+    expect(resting.bodiesHeader, "Bodies module header must be rendered").not.toBeNull();
+    expect(resting.earthRow, "Earth must be rendered inside Bodies").not.toBeNull();
+    expect(resting.earthIcon, "Earth must retain a visible type icon").not.toBeNull();
+    expect(resting.badge, "Input-format badges must retain a style contract").not.toBeNull();
+
+    // Header typography and the slim divider make the explorer read as a
+    // stable module rather than a generic browser sidebar.
+    expect(resting.heading.fontFamily, "Layers title must use Inter").toMatch(/inter/i);
+    expect(resting.heading.fontSize, "Layers title must use the 14–15px hierarchy").toBeGreaterThanOrEqual(14);
+    expect(resting.heading.fontSize, "Layers title must use the 14–15px hierarchy").toBeLessThanOrEqual(15);
+    expect(resting.heading.fontWeight, "Layers title must be semibold or stronger").toBeGreaterThanOrEqual(600);
+    expect(resting.header.borderBottomStyle, "Layers header must have a separator").not.toBe("none");
+    expect(resting.header.borderBottomWidth, "Layers separator must stay visually thin").toBeCloseTo(1, 0);
+
+    // The call to action intentionally remains an outlined tool, not a large
+    // saturated button that competes with the explorer content.
+    expect(resting.add.height, "Añadir must use its compact 28–30px height").toBeGreaterThanOrEqual(28);
+    expect(resting.add.height, "Añadir must use its compact 28–30px height").toBeLessThanOrEqual(30);
+    expect(readRgbChannels(resting.add.backgroundColor).alpha, "Añadir must retain a transparent resting surface").toBeLessThanOrEqual(0.12);
+    expect(resting.add.backgroundImage, "Añadir must not use a saturated gradient").toBe("none");
+    expectOrbitBlue(resting.add.borderTopColor, "Añadir outline");
+    expect(resting.addIcon.width, "The plus icon must lead the compact label").toBeGreaterThanOrEqual(resting.addLabel.fontSize + 2);
+    expect(resting.add.fontFamily, "Añadir must use the shared Inter UI font").toMatch(/inter/i);
+
+    expect(resting.projectTitle.fontFamily, "Project module title must use Inter").toMatch(/inter/i);
+    expect(resting.projectTitleText, "Project title must retain the technical uppercase treatment").toBe(resting.projectTitleText.toUpperCase());
+    // A project is the workspace identity, not a folder in the layer tree.
+    // It keeps only the chevron required to collapse its contents: no folder
+    // glyph may be inserted between the control and its title.
+    await expect(page.locator("[data-layer-tree-project-root] .layer-tree-icon")).toHaveCount(0);
+    await expect(page.locator("[data-layer-tree-project-root] .layer-tree-chevron svg")).toHaveCount(1);
+    expect(resting.projectDivider.height, "Project separator must read as a marked module boundary").toBeGreaterThanOrEqual(2);
+    expect(resting.projectDivider.width, "Project separator must span the project module").toBeGreaterThanOrEqual(resting.projectHeader.width - 2);
+    expect(resting.projectDivider.top, "Project separator must sit below the project title").toBeGreaterThan(resting.projectRoot.bottom);
+    const projectActions = resting.projectActions.filter(Boolean);
+    expect(projectActions, "Project eye and delete actions must be measurable").toHaveLength(2);
+    for (const action of projectActions) {
+        expect(action.width, "Project actions must use 24px circular targets").toBeCloseTo(24, 0);
+        expect(action.height, "Project actions must use 24px circular targets").toBeCloseTo(24, 0);
+        expect(action.borderRadius, "Project actions must be circular").toBeGreaterThanOrEqual(11);
+        expect(action.right, "Project actions must stay inside their module header").toBeLessThanOrEqual(resting.projectHeader.right + 1);
+    }
+    expect(projectActions[0].left, "Project actions must sit to the right of the project module").toBeGreaterThan(resting.projectHeader.left + (resting.projectHeader.width * 0.45));
+
+    // Bodies is a distinct child branch. Earth must visibly step in from its
+    // section header and preserve a type-specific icon instead of becoming a
+    // flat list item.
+    expect(resting.earthRow.left, "Earth must be indented beneath Bodies").toBeGreaterThanOrEqual(resting.bodiesHeader.left + 12);
+    expect(resting.earthIcon.width, "Earth type icon must remain visible").toBeGreaterThanOrEqual(12);
+    expect(resting.earthIcon.height, "Earth type icon must remain visible").toBeGreaterThanOrEqual(12);
+    expect(resting.badge.fontFamily, "Layer tags must use Inter").toMatch(/inter/i);
+    expect(resting.badge.fontSize, "Layer tags must use the compact 9px density").toBeCloseTo(9, 0);
+
+    const addButton = page.locator("#openCatalogBtn");
+    await addButton.hover();
+    const addHovered = await readLayersExplorerPresentation(page);
+    expect(addHovered.add.boxShadow, "Añadir hover must provide a restrained blue glow").not.toBe("none");
+    expectOrbitBlueHighlight(addHovered.add.borderTopColor, "Añadir hover outline");
+
+    await earth.hover();
+    const earthHovered = await readLayersExplorerPresentation(page);
+    const rowHoverChanged = earthHovered.earthRow.backgroundColor !== resting.earthRow.backgroundColor
+        || earthHovered.earthRow.backgroundImage !== resting.earthRow.backgroundImage
+        || earthHovered.earthRow.borderTopColor !== resting.earthRow.borderTopColor
+        || earthHovered.earthRow.boxShadow !== resting.earthRow.boxShadow
+        || earthHovered.earthItem?.backgroundColor !== resting.earthItem?.backgroundColor
+        || earthHovered.earthItem?.backgroundImage !== resting.earthItem?.backgroundImage
+        || earthHovered.earthItem?.borderTopColor !== resting.earthItem?.borderTopColor
+        || earthHovered.earthItem?.boxShadow !== resting.earthItem?.boxShadow;
+    expect(rowHoverChanged, "Layer rows must expose a subtle hover state").toBeTruthy();
+});
+
 test("El panel de capas se redimensiona y se pliega al alcanzar el mínimo", async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 768 });
     await openWorkspace(page);
@@ -1041,11 +1425,48 @@ test("El panel de capas se redimensiona y se pliega al alcanzar el mínimo", asy
     await expect(page.locator("#leftSatellitesBtn")).not.toHaveClass(/active/);
 });
 
+test("Crear una estaci\u00f3n desde Layers confirma la transici\u00f3n al dise\u00f1ador", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await openWorkspace(page);
+    await ensureLayersPanelOpen(page);
+
+    await chooseLayerKind(page, "station");
+    const confirmation = page.locator("#sidebarConfirmModal");
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation.getByRole("heading", { name: "Crear estaci\u00f3n terrestre manual", exact: true })).toBeVisible();
+    await expect(confirmation.getByText(/continuar\u00e1n en segundo plano/i)).toBeVisible();
+    await expect(page.locator("#groundStationModal")).not.toHaveClass(/open/);
+
+    await confirmation.getByRole("button", { name: "Cancelar", exact: true }).click();
+    await expect(confirmation).toBeHidden();
+    await expect(page.locator("#groundStationModal")).not.toHaveClass(/open/);
+    await expect(page.locator("#leftSatellitesPanel")).toHaveClass(/open/);
+
+    await chooseLayerKind(page, "station");
+    await expect(confirmation).toBeVisible();
+    await confirmation.getByRole("button", { name: "Continuar al dise\u00f1o", exact: true }).click();
+    await expect(page.locator("#groundStationModal")).toHaveClass(/open/);
+    await expect(page.locator("#leftSatellitesPanel")).not.toHaveClass(/open/);
+    await expect(page.locator("#leftSatellitesPanel")).toHaveAttribute("aria-hidden", "true");
+    await expect(page.locator("#leftSatellitesBtn")).not.toHaveClass(/active/);
+    await expect(page.locator("#leftSatellitesBtn")).toHaveAttribute("aria-expanded", "false");
+
+    await page.locator("#groundStationCloseBtn").click();
+    await expect(confirmation).toBeVisible();
+    await confirmation.locator("button").last().click();
+    await expect(page.locator("#groundStationModal")).not.toHaveClass(/open/);
+    await expect(page.locator("#leftSatellitesPanel")).toHaveClass(/open/);
+    await expect(page.locator("#leftSatellitesPanel")).toHaveAttribute("aria-hidden", "false");
+});
+
 test("El editor de estaciones de tierra mantiene sus formularios accesibles", async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 768 });
     await openWorkspace(page);
     await ensureLayersPanelOpen(page);
     await chooseLayerKind(page, "station");
+    const confirmation = page.locator("#sidebarConfirmModal");
+    await expect(confirmation).toBeVisible();
+    await confirmation.getByRole("button", { name: "Continuar al dise\u00f1o", exact: true }).click();
 
     await expect(page.locator("#groundStationModal")).toHaveCount(1);
     await expect(page.locator("#groundStationModal")).toHaveClass(/open/);

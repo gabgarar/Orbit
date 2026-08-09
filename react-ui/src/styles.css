@@ -1,3 +1,6 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&display=swap");
+
 /* Tailwind v4 utilities are enabled without Preflight so Cesium and legacy DOM
    keep their established baseline styles during the incremental migration. */
 @import "tailwindcss/theme" layer(theme);
@@ -11,6 +14,11 @@ html, body, #root { background: #000; overflow: hidden; }
    range is visible, so right-side work panels never sit on top of it. */
 :root {
     --orbit-workspace-panel-top: max(72px, calc(76px * var(--orbit-ui-scale, 1)));
+    --orbit-sidebar-left: 8px;
+    --orbit-sidebar-width: 76px;
+    --orbit-sidebar-button-width: 64px;
+    --orbit-sidebar-button-height: 52px;
+    --orbit-sidebar-panel-gap: 12px;
     --orbit-right-panel-right: 14px;
     --orbit-right-panel-base-bottom: 6px;
     --orbit-right-panel-bottom: var(--orbit-right-panel-base-bottom);
@@ -102,7 +110,7 @@ body.with-toolbars #cesiumContainer {
     /* Leave only a narrow reveal of the globe around the two left panels. */
     top: var(--orbit-workspace-panel-top) !important;
     bottom: 6px;
-    left: max(62px, calc(68px * var(--orbit-ui-scale))) !important;
+    left: calc(var(--orbit-sidebar-left) + var(--orbit-sidebar-width) + var(--orbit-sidebar-panel-gap)) !important;
     border: 1px solid rgba(87, 120, 169, 0.42);
     border-radius: 10px;
     background: linear-gradient(145deg, rgba(11, 20, 34, 0.78), rgba(6, 13, 24, 0.70));
@@ -117,7 +125,7 @@ body.with-toolbars #cesiumContainer {
 #leftInfoPanel {
     top: var(--orbit-workspace-panel-top) !important;
     bottom: 6px;
-    left: max(62px, calc(68px * var(--orbit-ui-scale))) !important;
+    left: calc(var(--orbit-sidebar-left) + var(--orbit-sidebar-width) + var(--orbit-sidebar-panel-gap)) !important;
     border: 1px solid rgba(87, 120, 169, 0.42);
     border-radius: 10px;
     background: linear-gradient(145deg, rgba(11, 20, 34, 0.78), rgba(6, 13, 24, 0.70));
@@ -135,24 +143,69 @@ body.with-toolbars #cesiumContainer {
 }
 
 #leftSidebar {
-    top: max(72px, calc(76px * var(--orbit-ui-scale))) !important;
+    --orbit-sidebar-rail-gap: 12px;
+    top: var(--orbit-workspace-panel-top) !important;
     bottom: 6px;
-    left: 8px;
-    width: 44px;
-    padding: 4px 0;
+    left: var(--orbit-sidebar-left);
+    width: var(--orbit-sidebar-width);
+    padding: 8px 4px;
+    gap: var(--orbit-sidebar-rail-gap);
     border: 1px solid rgba(87, 120, 169, 0.36);
-    border-radius: 9px;
+    border-radius: 11px;
     background: linear-gradient(180deg, rgba(11, 20, 34, 0.76), rgba(6, 15, 26, 0.68));
     box-shadow: 0 14px 32px rgba(0, 0, 0, 0.30), inset 0 1px rgba(231, 242, 255, 0.03);
     -webkit-backdrop-filter: blur(14px) saturate(110%);
     backdrop-filter: blur(14px) saturate(110%);
     z-index: 10130 !important;
     pointer-events: auto;
+    font-family: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-#leftSidebar .sidebar-btn { width: 38px; height: 38px; border-radius: 7px; color: #aebed7; pointer-events: auto; }
+#leftSidebar .sidebar-btn {
+    width: var(--orbit-sidebar-button-width);
+    height: var(--orbit-sidebar-button-height);
+    min-height: var(--orbit-sidebar-button-height);
+    padding: 5px 2px;
+    gap: 6px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    color: #b9c9df;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font: 600 10px/10px "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+#leftSidebar .sidebar-btn svg,
+#leftSidebar .sidebar-btn .sidebar-btn-icon {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 26px;
+}
+#leftSidebar .sidebar-btn .sidebar-btn-icon {
+    display: grid;
+    place-items: center;
+}
+#leftSidebar .sidebar-btn-label {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    color: rgba(185, 201, 223, .75);
+    font: 600 10px/10px "Inter", ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .025em;
+    text-align: center;
+    text-overflow: ellipsis;
+    text-transform: none;
+    white-space: nowrap;
+    transition: color .15s ease;
+}
+#leftSidebar .sidebar-btn:hover,
+#leftSidebar .sidebar-btn:focus-visible { color: #edf4ff; }
+#leftSidebar .sidebar-btn:hover .sidebar-btn-label,
+#leftSidebar .sidebar-btn:focus-visible .sidebar-btn-label { color: #edf4ff; }
 #leftSidebar .sidebar-btn.active { background: #13294b; color: #75a4ff; }
-#leftSidebar .sidebar-btn svg { width: 15px; height: 15px; }
-#leftSidebar #leftSatellitesBtn svg { width: 21px; height: 21px; stroke-width: 1.65; }
+#leftSidebar .sidebar-btn.active .sidebar-btn-label { color: #9ab7ff; }
+#leftSidebar .sidebar-btn:disabled .sidebar-btn-label { opacity: .55; }
 #leftSidebar #leftSatellitesBtn.active { box-shadow: inset 0 0 0 1px rgba(104, 150, 255, 0.14), 0 4px 14px rgba(25, 74, 157, 0.2); }
 
 /* The time controls use a shared, deliberately light glass treatment. The
@@ -488,6 +541,397 @@ body.with-toolbars #cesiumContainer {
 #leftSatellitesPanel .layer-tree-body-section-rows > .object-list-row { position: relative; }
 #leftSatellitesPanel .layer-tree-body-section-rows > .object-list-row::before { content: ""; position: absolute; z-index: 1; top: 50%; left: -17px; width: 17px; height: 1px; background: #2d4562; }
 
+/* Layers explorer: a compact technical surface built around the existing
+   tree runtime.  The content below is intentionally visual-only; drag/drop,
+   context actions and layer visibility continue to be owned by objectSidebar. */
+#leftSatellitesPanel,
+#leftSatellitesPanel button,
+#leftSatellitesPanel input {
+    font-family: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+#leftSatellitesPanel {
+    background: linear-gradient(148deg, rgba(15, 22, 36, .94), rgba(8, 14, 25, .90));
+    border-color: rgba(58, 110, 168, .52);
+}
+
+#leftSatellitesPanel .orbit-layers-panel-header {
+    position: relative;
+    z-index: 2;
+    display: flex !important;
+    min-height: 52px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    overflow: visible;
+    border-bottom-color: rgba(58, 110, 168, .58);
+    background: linear-gradient(105deg, rgba(31, 42, 58, .74), rgba(15, 22, 36, .48));
+}
+
+#leftSatellitesPanel .orbit-layers-heading {
+    color: #d9e2f2;
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .075em;
+}
+
+#leftSatellitesPanel .orbit-layers-project-menu {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid rgba(58, 110, 168, .68);
+    border-radius: 50%;
+    background: rgba(15, 22, 36, .70);
+    color: #b9c9df;
+    cursor: pointer;
+    transition: border-color .15s ease, background-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+
+#leftSatellitesPanel .orbit-layers-project-menu svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8;
+}
+
+#leftSatellitesPanel .orbit-layers-project-menu:hover,
+#leftSatellitesPanel .orbit-layers-project-menu.is-open,
+#leftSatellitesPanel .orbit-layers-project-menu:focus-visible {
+    border-color: #6d9ed4;
+    background: rgba(58, 110, 168, .23);
+    color: #edf4ff;
+    box-shadow: 0 0 12px rgba(58, 110, 168, .22);
+    outline: none;
+}
+
+#leftSatellitesPanel > .orbit-layers-search {
+    order: 1;
+    display: grid;
+    height: 38px;
+    min-height: 38px;
+    grid-template-columns: 36px minmax(0, 1fr) 40px;
+    align-items: center;
+    margin: 12px 14px 0;
+    border: 1px solid rgba(58, 110, 168, .42);
+    border-radius: 7px;
+    background: rgba(9, 15, 27, .72);
+    color: #aebfd7;
+}
+
+#leftSatellitesPanel .orbit-layers-search > svg {
+    width: 16px;
+    height: 16px;
+    margin: auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-width: 1.8;
+}
+
+#leftSatellitesPanel .orbit-layers-search-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: #d9e2f2;
+    font: 500 12px/1 "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+#leftSatellitesPanel .orbit-layers-search-input::placeholder { color: #7f91aa; }
+#leftSatellitesPanel .orbit-layers-search-input:disabled { cursor: not-allowed; opacity: .5; }
+
+#leftSatellitesPanel .orbit-layers-search-options {
+    display: grid;
+    width: 100%;
+    height: 100%;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-left: 1px solid rgba(58, 110, 168, .34);
+    border-radius: 0 6px 6px 0;
+    background: transparent;
+    color: #aebfd7;
+    cursor: pointer;
+}
+
+#leftSatellitesPanel .orbit-layers-search-options svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8;
+}
+
+#leftSatellitesPanel .orbit-layers-search-options:hover,
+#leftSatellitesPanel .orbit-layers-search-options.is-open,
+#leftSatellitesPanel .orbit-layers-search-options:focus-visible {
+    background: rgba(58, 110, 168, .20);
+    color: #edf4ff;
+    outline: none;
+}
+
+#leftSatellitesPanel > .orbit-project-module {
+    order: 2;
+    display: grid;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 32px 2px;
+    column-gap: 8px;
+    row-gap: 10px;
+    align-items: center;
+    margin: 10px 14px 8px;
+    padding: 4px 0 8px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+#leftSatellitesPanel .orbit-project-actions {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    min-width: 0;
+}
+
+#leftSatellitesPanel .orbit-project-root-toggle {
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    min-width: 0;
+    min-height: 32px;
+    align-items: center;
+    gap: 5px;
+    padding: 0 3px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: #d9e2f2;
+    cursor: pointer;
+    text-align: left;
+}
+
+#leftSatellitesPanel .orbit-project-root-toggle:hover,
+#leftSatellitesPanel .orbit-project-root-toggle:focus-visible {
+    background: rgba(58, 110, 168, .13);
+    outline: 1px solid rgba(96, 148, 210, .48);
+    outline-offset: -1px;
+}
+
+#leftSatellitesPanel .orbit-project-title {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    color: #d9e2f2;
+    font: 600 11px/1 "Inter", ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .095em;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+#leftSatellitesPanel .orbit-project-layer-count {
+    color: #91a7c3;
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* The project is the root of the workspace, not another folder.  A wide,
+   softly lit divider separates that identity header from the actual layer
+   hierarchy without extending the tree guide down into the time footer. */
+#leftSatellitesPanel .orbit-project-divider {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, rgba(58, 110, 168, .12), rgba(104, 151, 215, .72) 18%, rgba(104, 151, 215, .46) 82%, rgba(58, 110, 168, .12));
+    box-shadow: 0 1px 8px rgba(58, 110, 168, .16);
+}
+
+#leftSatellitesPanel .orbit-project-action {
+    display: grid;
+    width: 24px !important;
+    height: 24px !important;
+    min-width: 24px;
+    min-height: 24px;
+    place-items: center;
+    padding: 0 !important;
+    border: 1px solid rgba(58, 110, 168, .52) !important;
+    border-radius: 50% !important;
+    background: rgba(15, 22, 36, .66) !important;
+    color: #b9c9df !important;
+    cursor: pointer;
+    transition: border-color .15s ease, background-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+
+#leftSatellitesPanel .orbit-project-action svg {
+    width: 13px;
+    height: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8;
+}
+
+#leftSatellitesPanel .orbit-project-action:hover,
+#leftSatellitesPanel .orbit-project-action:focus-visible {
+    border-color: #6d9ed4 !important;
+    background: rgba(58, 110, 168, .24) !important;
+    color: #edf4ff !important;
+    box-shadow: 0 0 10px rgba(58, 110, 168, .16);
+    outline: none;
+}
+
+#leftSatellitesPanel .orbit-project-action.is-danger {
+    border-color: rgba(155, 89, 101, .60) !important;
+    color: #dcb7bd !important;
+}
+
+#leftSatellitesPanel .orbit-project-action.is-danger:hover,
+#leftSatellitesPanel .orbit-project-action.is-danger:focus-visible {
+    border-color: #d18191 !important;
+    background: rgba(127, 48, 63, .22) !important;
+    color: #ffe5e9 !important;
+    box-shadow: 0 0 10px rgba(181, 75, 95, .13);
+}
+
+#leftSatellitesPanel .orbit-layers-add-button {
+    display: inline-flex;
+    width: auto;
+    min-width: 82px;
+    height: 28px;
+    min-height: 28px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 9px;
+    border: 1px solid #3a6ea8;
+    border-radius: 6px;
+    background: transparent;
+    color: #c6d8ef;
+    cursor: pointer;
+    font: 600 10px/1 "Inter", ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .02em;
+    transition: border-color .15s ease, background-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+
+#leftSatellitesPanel .orbit-layers-add-button svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2;
+}
+
+#leftSatellitesPanel .orbit-layers-add-button:hover,
+#leftSatellitesPanel .orbit-layers-add-button:focus-visible {
+    border-color: #6d9ed4;
+    background: rgba(58, 110, 168, .13);
+    color: #edf4ff;
+    box-shadow: 0 0 14px rgba(58, 110, 168, .30), inset 0 0 0 1px rgba(142, 187, 239, .08);
+    outline: none;
+}
+
+#leftSatellitesPanel .orbit-layers-add-button:disabled {
+    cursor: not-allowed;
+    opacity: .45;
+}
+
+#leftSatellitesPanel #leftSatellitesPanelContent {
+    margin-top: 2px;
+    padding-right: 11px;
+}
+
+#leftSatellitesPanel .object-sidebar-body-compact #objectList {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+#leftSatellitesPanel .layer-tree-folder-header,
+#leftSatellitesPanel .layer-tree-body-section-header {
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+#leftSatellitesPanel .object-sidebar-body-compact .object-list-row {
+    min-height: 32px;
+    border-radius: 6px;
+}
+
+#leftSatellitesPanel .object-sidebar-body-compact .object-list-item {
+    padding: 6px 7px;
+    color: #d9e2f2;
+    font: 500 11px/1.2 "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+#leftSatellitesPanel #objectList .object-list-row:hover .object-list-item,
+#leftSatellitesPanel #objectList .object-list-row:focus-within .object-list-item {
+    background: rgba(58, 110, 168, .14) !important;
+    color: #edf4ff;
+}
+
+#leftSatellitesPanel .object-sidebar-body-compact .layer-type-icon {
+    width: 16px;
+    height: 16px;
+    border-color: rgba(113, 151, 196, .34);
+    background: rgba(58, 110, 168, .09);
+}
+
+#leftSatellitesPanel .object-sidebar-body-compact .catalog-format-badge {
+    min-width: 0;
+    padding: 2px 5px;
+    border-color: rgba(82, 126, 183, .56);
+    border-radius: 4px;
+    background: rgba(58, 110, 168, .18);
+    color: #c0d4ed;
+    font: 600 9px/1 "Inter", ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .055em;
+}
+
+#leftSatellitesPanel .layer-tree-folder-body,
+#leftSatellitesPanel .layer-tree-body-section-rows {
+    border-left-color: rgba(58, 110, 168, .48);
+}
+
+#leftSatellitesPanel .layer-tree-folder-body > .object-list-row::before,
+#leftSatellitesPanel .layer-tree-folder-body > .layer-tree-folder::before,
+#leftSatellitesPanel .layer-tree-body-section-rows > .object-list-row::before {
+    background: rgba(58, 110, 168, .50);
+}
+
+/* Keep a deliberate breathing band between labelled navigation blocks: the
+   thin rule sits in that band instead of crowding either the preceding label
+   or the following icon. */
+#leftSidebar .sidebar-btn { position: relative; }
+#leftSidebar .sidebar-btn::after {
+    content: "";
+    position: absolute;
+    right: 14px;
+    bottom: -7px;
+    left: 14px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(119, 152, 193, .34), transparent);
+    pointer-events: none;
+}
+#leftSidebar #leftCameraControlsBtn::after { display: none; }
+
 /* Settings deliberately shares the right-side object-details composition.
    The legacy stylesheet still supplies IDs for an old centred modal, therefore
    these ID rules are kept here (after that stylesheet) to make the React
@@ -632,9 +1076,20 @@ body.with-toolbars #cesiumContainer {
     /* Layers uses an 8 px safe inset at this breakpoint; keep every docked
        right panel on the same baseline whenever the simulation dock is not
        reserving space above itself. */
-    :root { --orbit-right-panel-base-bottom: 8px; }
+    :root {
+        --orbit-right-panel-base-bottom: 8px;
+        --orbit-sidebar-left: 4px;
+        --orbit-sidebar-width: 54px;
+        --orbit-sidebar-button-width: 46px;
+        --orbit-sidebar-button-height: 46px;
+        --orbit-sidebar-panel-gap: 10px;
+    }
 
     #leftSatellitesPanel { top: var(--orbit-workspace-panel-top) !important; left: 8px; bottom: 8px; border-radius: 12px; }
     #leftInfoPanel { top: var(--orbit-workspace-panel-top) !important; left: 8px; bottom: 8px; border-radius: 12px; }
-    #leftSidebar { top: var(--orbit-workspace-panel-top) !important; bottom: 8px; left: 4px; }
+    #leftSidebar { --orbit-sidebar-rail-gap: 4px; top: var(--orbit-workspace-panel-top) !important; bottom: 8px; left: var(--orbit-sidebar-left); padding: 4px; gap: var(--orbit-sidebar-rail-gap); }
+    #leftSidebar .sidebar-btn { gap: 0; padding: 4px 2px; }
+    #leftSidebar .sidebar-btn svg,
+    #leftSidebar .sidebar-btn .sidebar-btn-icon { width: 22px; height: 22px; flex-basis: 22px; }
+    #leftSidebar .sidebar-btn-label { display: none; }
 }
