@@ -27,5 +27,5 @@ it is not equivalent to a function exposed by the interface, gateway, or public 
 
 Station, terrain, observation and prediction contracts have their canonical
 area in [Ground Segment](../ground-segment/index.md). See
-[GeoJSON, Orbit JSON and CSV](ground-stations/index.md), as well as the
+[GeoJSON, KML/KMZ, GeoPackage, WKT/WKB, Orbit JSON and CSV](ground-stations/index.md), as well as the
 current RINEX and CPF status there.

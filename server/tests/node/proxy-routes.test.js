@@ -110,6 +110,34 @@ test("proxy exposes the transient manual-orbits endpoint", async () => {
     assert.equal(calls[0].options.body, JSON.stringify(payload));
 });
 
+test("proxy exposes the manual ephemeris export POST route without losing its format query", async () => {
+    const calls = [];
+    const app = createProxyApp(async (path, options) => {
+        calls.push({ path, options });
+        return new Response("time,x,y,z\n", { headers: { "content-type": "text/csv" } });
+    });
+    const payload = { name: "Manual orbit", epoch: "2026-07-20T12:00:00Z", propagator: "two-body" };
+
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/export/manual-ephemeris?format=geojson`, {
+            method: "POST",
+            headers: { "content-type": "application/json", accept: "application/geo+json" },
+            body: JSON.stringify(payload)
+        });
+        assert.equal(response.status, 200);
+    });
+
+    assert.deepEqual(calls, [{
+        path: "/export/manual-ephemeris?format=geojson",
+        options: {
+            method: "POST",
+            headers: { Accept: "application/geo+json", "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            timeoutMs: PYTHON_PROXY_TIMEOUT_MS
+        }
+    }]);
+});
+
 test("proxy exposes the propagated orbit-parameters endpoint", async () => {
     const calls = [];
     const app = createProxyApp(async (path, options) => {
@@ -138,6 +166,44 @@ test("proxy exposes the propagated orbit-parameters endpoint", async () => {
     assert.equal(calls[0].options.body, JSON.stringify(payload));
 });
 
+test("proxy exposes the binary ground-station GeoPackage export endpoint", async () => {
+    const calls = [];
+    const app = createProxyApp(async (path, options) => {
+        calls.push({ path, options });
+        return new Response(new Uint8Array([0x53, 0x51, 0x4c]), {
+            headers: {
+                "content-type": "application/geopackage+sqlite3",
+                "content-disposition": "attachment; filename=orbit-ground-stations.gpkg"
+            }
+        });
+    });
+    const payload = {
+        format: "gpkg",
+        stations: [{ name: "Madrid", latitude_deg: 40.4, longitude_deg: -3.7 }]
+    };
+
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/ground-stations/export`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get("content-disposition"), "attachment; filename=orbit-ground-stations.gpkg");
+        assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [0x53, 0x51, 0x4c]);
+    });
+
+    assert.deepEqual(calls, [{
+        path: "/ground-stations/export",
+        options: {
+            method: "POST",
+            headers: { Accept: "*/*", "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            timeoutMs: PYTHON_PROXY_TIMEOUT_MS
+        }
+    }]);
+});
+
 test("proxy preserves upstream status and content type", async () => {
     const app = createProxyApp(async () => new Response("<html>docs</html>", {
         status: 207,
@@ -149,6 +215,25 @@ test("proxy preserves upstream status and content type", async () => {
         assert.equal(response.status, 207);
         assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
         assert.equal(await response.text(), "<html>docs</html>");
+    });
+});
+
+test("proxy preserves binary spatial exports and their download filename", async () => {
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0x80]);
+    const app = createProxyApp(async () => new Response(bytes, {
+        status: 200,
+        headers: {
+            "content-type": "application/vnd.google-earth.kmz",
+            "content-disposition": "attachment; filename=orbit.kmz"
+        }
+    }));
+
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/ephemeris`);
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get("content-type"), "application/vnd.google-earth.kmz");
+        assert.equal(response.headers.get("content-disposition"), "attachment; filename=orbit.kmz");
+        assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [...bytes]);
     });
 });
 

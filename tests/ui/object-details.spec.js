@@ -149,7 +149,7 @@ test("the ground-station pattern tab distinguishes directivity from an available
     await expect(panel.getByText(/Muestra angular del enlace de bajada hacia RF-SAT/)).toBeVisible();
 });
 
-test("a ground-station context menu opens the shared station export format picker", async ({ page }) => {
+test("a ground-station context menu opens the station export dialog with contextual formats", async ({ page }) => {
     await openWorkspace(page);
     await page.evaluate(() => {
         window.dispatchEvent(new CustomEvent("orbit:layer-context-menu", {
@@ -180,10 +180,20 @@ test("a ground-station context menu opens the shared station export format picke
         await expect(menu).toBeHidden();
         const formats = page.locator("#groundStationExportMenu");
         await expect(formats).toBeVisible();
-        await formats.getByRole("menuitem", { name: "GeoJSON" }).click();
+        await expect(formats.getByRole("dialog")).toBeVisible();
+        const formatSelect = formats.getByLabel("Formato");
+        await expect(formatSelect).toBeVisible();
+        await expect(formatSelect.locator("option")).toHaveCount(8);
+        await expect(formatSelect.locator("option", { hasText: "TLE" })).toHaveCount(0);
+        await expect(formatSelect.locator("option", { hasText: "OEM" })).toHaveCount(0);
+        await expect(formats.getByText("Intercambio GIS recomendado", { exact: true })).toBeVisible();
+        await formatSelect.selectOption("gpkg");
+        await expect(formats.getByText("GIS profesional", { exact: true })).toBeVisible();
+        await expect(formats.getByText(/no representa una estación como una órbita/i)).toBeVisible();
+        await formats.getByRole("button", { name: "Exportar GeoPackage", exact: true }).click();
         expect(await page.evaluate(() => window.__orbitGroundStationExportProbe.events)).toEqual([{
             stationId: "ground-station:madrid",
-            format: "geojson",
+            format: "gpkg",
             source: "layer-context"
         }]);
     } finally {

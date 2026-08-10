@@ -1,16 +1,23 @@
 """Ground-station visibility and AOS/LOS HTTP endpoints."""
 
 import datetime
+import json
+import math
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import ValidationError
+from fastapi import APIRouter, HTTPException, Query, Response
+from pydantic import BaseModel, ValidationError
 
 from orbit_api.application.manual_orbits import (
     ManualOrbitError,
     build_manual_orbit_propagator,
     canonical_manual_orbit,
+)
+from orbit_api.application.geospatial_exports import (
+    GeospatialExportError,
+    geospatial_content_type,
+    geospatial_export_bytes,
 )
 from orbit_api.domain.requests import (
     AosLosRequest,
@@ -31,6 +38,115 @@ from orbit_api.ground_stations.visibility import (
 from orbit_api.timekeeping import utc_now
 
 
+class GroundStationExportRequest(BaseModel):
+    """Browser-owned station records requested as a spatial product."""
+
+    format: str
+    stations: list[dict[str, object]]
+
+
+_GROUND_STATION_EXPORT_FIELDS = frozenset({
+    "station_schema_version",
+    "time_zone",
+    "min_elevation_deg",
+    "frequency_unit",
+    "frequency_hz",
+    "frequency_mhz",
+    "polarization",
+    "polarization_tilt_deg",
+    "tx_power_unit",
+    "tx_power_dbm",
+    "tx_power_w",
+    "tx_gain_mode",
+    "rx_gain_mode",
+    "tx_gain_override_dbi",
+    "rx_gain_override_dbi",
+    "tx_gain_dbi",
+    "rx_gain_dbi",
+    "min_link_power_dbm",
+    "antenna_diameter_m",
+    "antenna_efficiency",
+    "hpbw_azimuth_deg",
+    "hpbw_elevation_deg",
+    "pattern_type",
+    "side_lobe_level_db",
+    "system_temperature_k",
+    "atmospheric_loss_db",
+    "rain_loss_db",
+    "cable_loss_db",
+    "connector_loss_db",
+    "pointing_rms_mdeg",
+    "receiver_bandwidth_hz",
+    "required_snr_db",
+    "operation_mode",
+    "boresight_azimuth_deg",
+    "boresight_elevation_deg",
+    "mechanical_elevation_min_deg",
+    "mechanical_elevation_max_deg",
+    "mechanical_azimuth_min_deg",
+    "mechanical_azimuth_max_deg",
+    "reference_rx_gain_dbi",
+    "reference_rx_threshold_dbm",
+    "point_size_px",
+    "point_symbol",
+    "point_color",
+    "coverage_visible",
+    "visible",
+})
+
+
+def _finite_station_coordinate(value: object, label: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise GeospatialExportError(f"La estacion requiere {label} numerica.") from exc
+    if not math.isfinite(number):
+        raise GeospatialExportError(f"La estacion requiere {label} finita.")
+    return number
+
+
+def ground_station_geospatial_features(stations: list[dict[str, object]]) -> list[dict]:
+    """Convert authored station records to Point features without runtime data.
+
+    The browser layer holds Cesium entities, RF caches and coverage meshes next
+    to the authored record.  This explicit allow-list exports neither those
+    handles nor an invented orbital state.  It keeps the payload auditable
+    while still making the normal station/RF fields available in GeoPackage's
+    ``properties`` column.
+    """
+
+    features: list[dict] = []
+    for index, station in enumerate(stations):
+        if not isinstance(station, dict):
+            raise GeospatialExportError(f"La estacion {index + 1} no es un objeto valido.")
+        latitude = _finite_station_coordinate(station.get("latitude_deg"), "latitud")
+        longitude = _finite_station_coordinate(station.get("longitude_deg"), "longitud")
+        altitude = _finite_station_coordinate(station.get("altitude_m", 0.0), "altitud")
+        if not -90.0 <= latitude <= 90.0 or not -180.0 <= longitude <= 180.0:
+            raise GeospatialExportError("Las coordenadas de estacion deben estar en WGS-84.")
+
+        station_id = str(station.get("id") or f"ground-station-{index + 1}").strip() or f"ground-station-{index + 1}"
+        name = str(station.get("name") or station_id).strip() or station_id
+        properties: dict[str, object] = {"station_id": station_id, "feature_kind": "ground_station"}
+        for field in _GROUND_STATION_EXPORT_FIELDS:
+            value = station.get(field)
+            if value is None or isinstance(value, (str, int, float, bool)):
+                if field in station:
+                    properties[field] = value
+        monitor_ids = station.get("monitor_satellite_ids")
+        if isinstance(monitor_ids, list):
+            properties["monitor_satellite_ids"] = json.dumps([str(item) for item in monitor_ids], ensure_ascii=False)
+        features.append({
+            "name": name,
+            "geometry_type": "Point",
+            "coordinates": [longitude, latitude, altitude],
+            "properties": properties,
+        })
+    if not features:
+        raise GeospatialExportError("No hay estaciones para exportar.")
+    return features
+
+
 def create_ground_stations_router(
     resolve_propagator,
     build_ephemeris: Callable,
@@ -39,6 +155,29 @@ def create_ground_stations_router(
 ) -> APIRouter:
     """Build access-window routes from orbit application services."""
     router = APIRouter(tags=["ground-stations"])
+
+    @router.post("/ground-stations/export")
+    def export_ground_stations(payload: GroundStationExportRequest) -> Response:
+        """Return a real GeoPackage point layer for authored stations.
+
+        The browser is intentionally responsible for its text exports because
+        GeoJSON and Orbit JSON preserve their client-side interchange
+        contracts. GeoPackage is SQLite binary, so it is produced here with
+        the same dependency-free serializer as the orbital spatial exports.
+        """
+
+        format_name = str(payload.format or "").strip().lower()
+        if format_name != "gpkg":
+            raise HTTPException(status_code=422, detail="La ruta de estaciones solo genera GeoPackage.")
+        try:
+            product = geospatial_export_bytes(format_name, ground_station_geospatial_features(payload.stations))
+        except GeospatialExportError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return Response(
+            product,
+            media_type=geospatial_content_type(format_name),
+            headers={"Content-Disposition": "attachment; filename=orbit-ground-stations.gpkg"},
+        )
 
     def station_from_query(**values: object) -> StationInput:
         """Turn GET query fields into the same station contract as POST.

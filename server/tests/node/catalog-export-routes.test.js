@@ -40,3 +40,15 @@ test("catalog export route rejects a request for an incompatible source format",
         assert.equal((await response.json()).ok, false);
     });
 });
+
+test("catalog TLE export rejects malformed original lines instead of fabricating a download", async () => {
+    const app = express();
+    registerCatalogExportRoutes(app, {
+        catalog: { get: async () => ({ entries: [{ name: "Broken", line1: "not a TLE", line2: "2 25544", sourceFormat: "TLE" }] }) }
+    });
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/export/tle/broken`);
+        assert.equal(response.status, 422);
+        assert.match((await response.json()).error, /lineas validas/i);
+    });
+});

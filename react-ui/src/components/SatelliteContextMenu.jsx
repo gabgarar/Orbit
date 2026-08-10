@@ -74,7 +74,7 @@ export default function SatelliteContextMenu() {
         />}
         {isGroundStation && <ActionMenuItem
             title="Exportar…"
-            description="Elige GeoJSON, Orbit JSON o CSV."
+            description="Elige GeoJSON, KML/KMZ, GeoPackage, WKT/WKB, Orbit JSON o CSV."
             data-ground-station-export-control="true"
             onClick={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect();

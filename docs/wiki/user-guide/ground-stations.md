@@ -227,6 +227,14 @@ El análisis abierto de **Tablas AOS/LOS** explora el perfil a 20 s y refina cad
 
 ## Importar y exportar estaciones
 
+El dialogo **Exportar** permite elegir GeoJSON, KML, KMZ, GeoPackage, WKT,
+WKB, Orbit JSON o CSV. KML/KMZ son adecuados para Google Earth; GeoPackage
+produce una capa Point real para GIS; WKT/WKB llevan solo geometria Point Z.
+Estos formatos espaciales adicionales son solo de exportacion. La
+reimportacion sigue disponible con GeoJSON, Orbit JSON y CSV. Una estacion es
+un punto WGS-84 fijo, por lo que nunca se exporta como TLE, OEM, efemeride,
+ground track o malla de cobertura.
+
 Pulse **Importar** para añadir un archivo GeoJSON, Orbit JSON o CSV al proyecto
 abierto. La importación valida cada registro, añade los válidos y comunica los
 que se omiten. No restaura una simulación ni sustituye el proyecto actual.
@@ -237,7 +245,7 @@ las estaciones. GeoJSON es la opción recomendada para QGIS y otros flujos GIS.
 Orbit JSON es la copia nativa de estaciones para reimportarlas en Orbit. CSV
 sirve para edición tabular y no contiene resultados calculados.
 
-Los tres formatos conservan posición y configuración autorada, pero no el
+Los tres formatos reimportables conservan posición y configuración autorada, pero no el
 rango, malla, AOS/LOS, SNR, resultados de pases ni entidades del visor. Use el
 [JSON de proyecto](projects.md) si necesita restaurar el espacio de trabajo
 completo. Consulte [Intercambio de estaciones terrestres](../formats/ground-stations/interchange.md)

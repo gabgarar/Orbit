@@ -36,7 +36,7 @@ function actionDetails({ isEarth, isCelestialBody, groundStation, manualOrbit, v
             { action: "center-view", label: "Centrar vista", description: "Mueve la cámara a la estación." },
             visibility,
             { action: "station", label: "Actualizar parámetros", description: "Edita ubicación, máscara y configuración RF." },
-            { action: "export-station", label: "Exportar…", description: "Elige GeoJSON, Orbit JSON o CSV." },
+            { action: "export-station", label: "Exportar…", description: "Elige GeoJSON, KML/KMZ, GeoPackage, WKT/WKB, Orbit JSON o CSV." },
             { action: "remove", label: "Eliminar capa", description: "La quita de este proyecto.", danger: true, separator: true }
         ];
     }

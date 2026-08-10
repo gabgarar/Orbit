@@ -21,6 +21,8 @@ def test_every_domain_route_factory_has_its_public_paths():
     assert {"/propagate", "/orbits", "/ephemeris"} <= _paths(create_orbits_router(resolver, lambda *_args, **_kwargs: {}, lambda *_: 2, ephemeris))
     assert _paths(create_manual_orbits_router(ephemeris, lambda value: value)) == {"/manual-orbits"}
     assert _paths(create_orbit_parameters_router(resolver, lambda value: value)) == {"/orbit-parameters"}
-    assert "/aos-los" in _paths(create_ground_stations_router(resolver, ephemeris, lambda x: x))
-    assert "/export/tle/{sat_id}" in _paths(create_exports_router(lambda _: None, resolver, ephemeris, lambda x: x))
+    ground_station_paths = _paths(create_ground_stations_router(resolver, ephemeris, lambda x: x))
+    assert {"/aos-los", "/ground-stations/export"} <= ground_station_paths
+    export_paths = _paths(create_exports_router(lambda _: None, resolver, ephemeris, lambda x: x))
+    assert {"/export/tle/{sat_id}", "/export/manual-ephemeris"} <= export_paths
     assert _paths(create_realtime_router(lambda: ([], {}, {}), lambda *_: [], 100)) == {"/ws"}

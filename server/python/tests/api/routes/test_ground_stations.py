@@ -4,7 +4,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
-from orbit_api.api.routes.ground_stations import create_ground_stations_router
+from orbit_api.api.routes.ground_stations import (
+    GroundStationExportRequest,
+    create_ground_stations_router,
+    ground_station_geospatial_features,
+)
 from orbit_api.domain.requests import AosLosRequest, StationInput
 from orbit_api.frames import FrameTransformService
 from pydantic import ValidationError
@@ -587,3 +591,65 @@ def test_aos_los_manual_source_requires_a_complete_manual_orbit_definition():
         })
 
     assert "manual_orbit" in str(error.value)
+
+
+def test_ground_station_geospatial_export_uses_authored_point_fields_only():
+    features = ground_station_geospatial_features([{
+        "id": "ground:madrid",
+        "name": "Madrid",
+        "latitude_deg": 40.4168,
+        "longitude_deg": -3.7038,
+        "altitude_m": 667.0,
+        "time_zone": "Europe/Madrid",
+        "min_elevation_deg": 10.0,
+        "frequency_mhz": 2200.0,
+        "antenna_diameter_m": 2.4,
+        "reference_rx_gain_dbi": 3.0,
+        "reference_rx_threshold_dbm": -105.0,
+        "coverage_visible": True,
+        "monitor_satellite_ids": ["25544"],
+        "entity": {"cesium": "must-not-export"},
+        "coverageEntity": {"mesh": "must-not-export"},
+        "radio_range_km": 768.4,
+    }])
+
+    assert features == [{
+        "name": "Madrid",
+        "geometry_type": "Point",
+        "coordinates": [-3.7038, 40.4168, 667.0],
+        "properties": {
+            "station_id": "ground:madrid",
+            "feature_kind": "ground_station",
+            "time_zone": "Europe/Madrid",
+            "min_elevation_deg": 10.0,
+            "frequency_mhz": 2200.0,
+            "antenna_diameter_m": 2.4,
+            "reference_rx_gain_dbi": 3.0,
+            "reference_rx_threshold_dbm": -105.0,
+            "coverage_visible": True,
+            "monitor_satellite_ids": '["25544"]',
+        },
+    }]
+
+
+def test_ground_station_geopackage_route_returns_a_binary_point_layer():
+    router = create_ground_stations_router(
+        lambda *_args: ("TEST", object()),
+        lambda *_args: {"points": []},
+        lambda value: value,
+    )
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/ground-stations/export")
+    response = endpoint(GroundStationExportRequest(
+        format="gpkg",
+        stations=[{
+            "id": "ground:madrid",
+            "name": "Madrid",
+            "latitude_deg": 40.4168,
+            "longitude_deg": -3.7038,
+            "altitude_m": 667.0,
+        }],
+    ))
+
+    assert response.media_type == "application/geopackage+sqlite3"
+    assert response.headers["content-disposition"] == "attachment; filename=orbit-ground-stations.gpkg"
+    assert response.body.startswith(b"SQLite format 3\x00")

@@ -1542,7 +1542,7 @@ test("Rail, Layers y reloj comparten una carcasa lateral integrada", async ({ pa
     expect(collapsedShellFrame.width, "Collapsed rail edge must match the 1 px outer frame").toBeCloseTo(1, 0);
 });
 
-test("El chrome principal normaliza bordes, tipografÃ­a y esquinas", async ({ page }) => {
+test("El chrome principal normaliza bordes, tipografia y esquinas", async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 768 });
     await openWorkspace(page);
     await ensureLayersPanelOpen(page);
@@ -1874,8 +1874,25 @@ test("El editor de estaciones de tierra mantiene sus formularios accesibles", as
         const rect = input.getBoundingClientRect();
         return { width: rect.width, height: rect.height };
     });
-    expect(coverageToggleSize.width, "Coverage visibility toggle must be easy to activate").toBeGreaterThanOrEqual(22);
-    expect(coverageToggleSize.height, "Coverage visibility toggle must be easy to activate").toBeGreaterThanOrEqual(22);
+    expect(coverageToggleSize.width, "Coverage visibility checkbox must use the compact station-designer scale").toBe(18);
+    expect(coverageToggleSize.height, "Coverage visibility checkbox must use the compact station-designer scale").toBe(18);
+    const stationDesignBadgeStyle = await groundStationPanel.locator(".ground-station-design-badge").evaluate((badge) => {
+        const style = window.getComputedStyle(badge);
+        return {
+            backgroundColor: style.backgroundColor,
+            borderColor: style.borderColor,
+            borderRadius: style.borderRadius,
+            color: style.color,
+            fontSize: style.fontSize,
+            letterSpacing: style.letterSpacing,
+        };
+    });
+    expect(stationDesignBadgeStyle.backgroundColor, "Station design badge must share the Manual Orbit mode background").toBe("rgb(16, 39, 71)");
+    expect(stationDesignBadgeStyle.borderColor, "Station design badge must share the Manual Orbit mode border").toBe("rgb(53, 109, 194)");
+    expect(stationDesignBadgeStyle.color, "Station design badge must share the Manual Orbit mode text color").toBe("rgb(183, 212, 255)");
+    expect(stationDesignBadgeStyle.fontSize, "Station design badge must share the Manual Orbit mode type scale").toBe("8px");
+    expect(stationDesignBadgeStyle.letterSpacing, "Station design badge must share the Manual Orbit mode tracking").toBe("0.72px");
+    expect(stationDesignBadgeStyle.borderRadius, "Station design badge must keep the Manual Orbit pill silhouette").toBe("999px");
     await expect(groundStationPanel.getByRole("button", { name: "Heat map", exact: true })).toHaveCount(0);
     await expect(page.locator("#groundStationHeatLegend")).toHaveCount(0);
 

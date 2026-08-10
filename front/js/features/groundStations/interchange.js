@@ -14,7 +14,12 @@ export const GROUND_STATION_INTERCHANGE_VERSION = 1;
 export const GROUND_STATION_EXPORT_FORMATS = Object.freeze({
     GEOJSON: "geojson",
     ORBIT_JSON: "orbit-json",
-    CSV: "csv"
+    CSV: "csv",
+    KML: "kml",
+    KMZ: "kmz",
+    GPKG: "gpkg",
+    WKT: "wkt",
+    WKB: "wkb"
 });
 
 const RF_FIELDS = Object.freeze([
@@ -280,8 +285,13 @@ function groundStationFeatureToRecord(feature) {
 function normalizeFormat(value) {
     const candidate = String(value || "").trim().toLowerCase();
     if (["geojson", "geo+json", ".geojson", ".json.geojson"].includes(candidate)) return GROUND_STATION_EXPORT_FORMATS.GEOJSON;
-    if (["orbit-json", "orbit", "orbit-ground-stations", ".orbit.json", ".orbit-ground-stations.json"].includes(candidate)) return GROUND_STATION_EXPORT_FORMATS.ORBIT_JSON;
+    if (["orbit-json", "orbit", "orbit-ground-stations", "json", ".json", ".orbit.json", ".orbit-ground-stations.json"].includes(candidate)) return GROUND_STATION_EXPORT_FORMATS.ORBIT_JSON;
     if (["csv", ".csv", "text/csv"].includes(candidate)) return GROUND_STATION_EXPORT_FORMATS.CSV;
+    if (["kml", ".kml"].includes(candidate)) return GROUND_STATION_EXPORT_FORMATS.KML;
+    if (["kmz", ".kmz"].includes(candidate)) return GROUND_STATION_EXPORT_FORMATS.KMZ;
+    if (["gpkg", "geopackage", ".gpkg"].includes(candidate)) return GROUND_STATION_EXPORT_FORMATS.GPKG;
+    if (["wkt", ".wkt"].includes(candidate)) return GROUND_STATION_EXPORT_FORMATS.WKT;
+    if (["wkb", ".wkb", "application/vnd.ogc.wkb"].includes(candidate)) return GROUND_STATION_EXPORT_FORMATS.WKB;
     return null;
 }
 
@@ -290,6 +300,11 @@ function formatFromFileName(fileName) {
     if (name.endsWith(".geojson") || name.endsWith(".geo.json")) return GROUND_STATION_EXPORT_FORMATS.GEOJSON;
     if (name.endsWith(".csv")) return GROUND_STATION_EXPORT_FORMATS.CSV;
     if (name.endsWith(".orbit-ground-stations.json") || name.endsWith(".orbit.json")) return GROUND_STATION_EXPORT_FORMATS.ORBIT_JSON;
+    if (name.endsWith(".kml")) return GROUND_STATION_EXPORT_FORMATS.KML;
+    if (name.endsWith(".kmz")) return GROUND_STATION_EXPORT_FORMATS.KMZ;
+    if (name.endsWith(".gpkg")) return GROUND_STATION_EXPORT_FORMATS.GPKG;
+    if (name.endsWith(".wkt")) return GROUND_STATION_EXPORT_FORMATS.WKT;
+    if (name.endsWith(".wkb")) return GROUND_STATION_EXPORT_FORMATS.WKB;
     return null;
 }
 
@@ -396,6 +411,15 @@ export function parseGroundStationsDocument(text, { format = null, fileName = ""
         throw new GroundStationInterchangeError("El archivo de estaciones está vacío.", { code: "empty-document" });
     }
     let resolvedFormat = normalizeFormat(format) || formatFromFileName(fileName);
+    if ([
+        GROUND_STATION_EXPORT_FORMATS.KML,
+        GROUND_STATION_EXPORT_FORMATS.KMZ,
+        GROUND_STATION_EXPORT_FORMATS.GPKG,
+        GROUND_STATION_EXPORT_FORMATS.WKT,
+        GROUND_STATION_EXPORT_FORMATS.WKB
+    ].includes(resolvedFormat)) {
+        throw new GroundStationInterchangeError("Este formato de estaciones solo esta disponible para exportacion; importa GeoJSON, Orbit JSON o CSV.", { code: "unsupported-import-format" });
+    }
     if (resolvedFormat === GROUND_STATION_EXPORT_FORMATS.CSV) {
         return recordsResult(resolvedFormat, parseCsvDocument(text));
     }
@@ -455,6 +479,167 @@ export function buildGroundStationsCsv(stations) {
     return `${lines.join("\r\n")}\r\n`;
 }
 
+function normalizedExportStations(stations) {
+    return (Array.isArray(stations) ? stations : [])
+        .map((station) => extractStationInput(station))
+        .filter(Boolean);
+}
+
+/**
+ * Return the authored station contract suitable for an API request. This is
+ * intentionally separate from the live layer object: Cesium entities, mesh
+ * handles, cached RF values and other runtime data must never be serialized.
+ */
+export function normalizeGroundStationExportRecords(stations) {
+    return normalizedExportStations(stations);
+}
+
+function xmlEscape(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&apos;");
+}
+
+function kmlData(name, value) {
+    if (value === null || value === undefined || value === "") return "";
+    return `<Data name="${xmlEscape(name)}"><value>${xmlEscape(value)}</value></Data>`;
+}
+
+/**
+ * KML is a visual spatial interchange, not Orbit's lossless station
+ * contract. Keep a short, useful metadata profile in ExtendedData and leave
+ * renderer handles, RF caches, and other runtime state behind.
+ */
+export function buildGroundStationsKml(stations) {
+    const placemarks = normalizedExportStations(stations).map((station) => {
+        const frequencyMhz = finiteNumber(station.frequency_mhz)
+            ?? (finiteNumber(station.frequency_hz) === null ? null : finiteNumber(station.frequency_hz) / 1e6);
+        const fields = [
+            ["station_id", station.id],
+            ["time_zone", station.time_zone],
+            ["min_elevation_deg", station.min_elevation_deg],
+            ["frequency_mhz", frequencyMhz],
+            ["polarization", station.polarization],
+            ["operation_mode", station.operation_mode]
+        ].map(([name, value]) => kmlData(name, value)).filter(Boolean).join("");
+        return `<Placemark><name>${xmlEscape(station.name)}</name><ExtendedData>${fields}</ExtendedData><Point><altitudeMode>absolute</altitudeMode><coordinates>${station.longitude_deg},${station.latitude_deg},${station.altitude_m}</coordinates></Point></Placemark>`;
+    }).join("");
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Orbit ground stations</name>${placemarks}</Document></kml>\n`;
+}
+
+function coordinateText(station) {
+    return `${station.longitude_deg} ${station.latitude_deg} ${station.altitude_m}`;
+}
+
+/** Export station geometry only in OGC Well-Known Text. */
+export function buildGroundStationsWkt(stations) {
+    const normalized = normalizedExportStations(stations);
+    if (!normalized.length) return "MULTIPOINT Z EMPTY\n";
+    if (normalized.length === 1) return `POINT Z (${coordinateText(normalized[0])})\n`;
+    return `MULTIPOINT Z (${normalized.map((station) => `(${coordinateText(station)})`).join(", ")})\n`;
+}
+
+function writeWkbPoint(view, offset, station) {
+    view.setUint8(offset, 1); // little-endian byte order
+    view.setUint32(offset + 1, 1001, true); // ISO WKB Point Z
+    view.setFloat64(offset + 5, station.longitude_deg, true);
+    view.setFloat64(offset + 13, station.latitude_deg, true);
+    view.setFloat64(offset + 21, station.altitude_m, true);
+    return offset + 29;
+}
+
+/** Export station geometry only in ISO WKB little-endian form. */
+export function buildGroundStationsWkb(stations) {
+    const normalized = normalizedExportStations(stations);
+    if (normalized.length === 1) {
+        const buffer = new ArrayBuffer(29);
+        writeWkbPoint(new DataView(buffer), 0, normalized[0]);
+        return new Uint8Array(buffer);
+    }
+    const buffer = new ArrayBuffer(9 + (29 * normalized.length));
+    const view = new DataView(buffer);
+    view.setUint8(0, 1); // little-endian byte order
+    view.setUint32(1, 1004, true); // ISO WKB MultiPoint Z
+    view.setUint32(5, normalized.length, true);
+    let offset = 9;
+    for (const station of normalized) offset = writeWkbPoint(view, offset, station);
+    return new Uint8Array(buffer);
+}
+
+function crc32(bytes) {
+    let value = 0xffffffff;
+    for (const byte of bytes) {
+        value ^= byte;
+        for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+    }
+    return (value ^ 0xffffffff) >>> 0;
+}
+
+function concatBytes(...chunks) {
+    const size = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const result = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+    }
+    return result;
+}
+
+/**
+ * Create a small standards-compliant, uncompressed KMZ archive. A station
+ * export only needs doc.kml, so a dependency-heavy ZIP library would add no
+ * value to the browser bundle.
+ */
+export function buildGroundStationsKmz(stations) {
+    const encoder = new TextEncoder();
+    const name = encoder.encode("doc.kml");
+    const contents = encoder.encode(buildGroundStationsKml(stations));
+    const crc = crc32(contents);
+    const local = new Uint8Array(30 + name.length);
+    const localView = new DataView(local.buffer);
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(4, 20, true);
+    localView.setUint16(8, 0, true); // store, never compress
+    localView.setUint32(14, crc, true);
+    localView.setUint32(18, contents.length, true);
+    localView.setUint32(22, contents.length, true);
+    localView.setUint16(26, name.length, true);
+    local.set(name, 30);
+
+    const central = new Uint8Array(46 + name.length);
+    const centralView = new DataView(central.buffer);
+    centralView.setUint32(0, 0x02014b50, true);
+    centralView.setUint16(4, 20, true);
+    centralView.setUint16(6, 20, true);
+    centralView.setUint16(10, 0, true); // store
+    centralView.setUint32(16, crc, true);
+    centralView.setUint32(20, contents.length, true);
+    centralView.setUint32(24, contents.length, true);
+    centralView.setUint16(28, name.length, true);
+    central.set(name, 46);
+
+    const end = new Uint8Array(22);
+    const endView = new DataView(end.buffer);
+    endView.setUint32(0, 0x06054b50, true);
+    endView.setUint16(8, 1, true);
+    endView.setUint16(10, 1, true);
+    endView.setUint32(12, central.length, true);
+    endView.setUint32(16, local.length + contents.length, true);
+    return concatBytes(local, contents, central, end);
+}
+
+/**
+ * GeoPackage is binary SQLite and deliberately runs through the local Python
+ * service. The browser retains the other formats for offline export.
+ */
+export function requiresGroundStationExportService(format) {
+    return normalizeFormat(format) === GROUND_STATION_EXPORT_FORMATS.GPKG;
+}
+
 /**
  * Serialize a station set for a browser, API, or filesystem adapter. The
  * returned value is intentionally data-only; callers choose how to download
@@ -462,6 +647,10 @@ export function buildGroundStationsCsv(stations) {
  */
 export function serializeGroundStationsExport(stations, format = GROUND_STATION_EXPORT_FORMATS.GEOJSON) {
     const resolvedFormat = normalizeFormat(format);
+    const requiresService = resolvedFormat === GROUND_STATION_EXPORT_FORMATS.GPKG;
+    if (requiresService) {
+        throw new GroundStationInterchangeError("GeoPackage requiere el servicio local de exportacion.", { code: "server-export-required" });
+    }
     if (!resolvedFormat) {
         throw new GroundStationInterchangeError("Formato de exportación no soportado.", { code: "unsupported-format" });
     }
@@ -473,6 +662,44 @@ export function serializeGroundStationsExport(stations, format = GROUND_STATION_
             mimeType: "application/geo+json",
             document,
             text: `${JSON.stringify(document, null, 2)}\n`
+        };
+    }
+    if (resolvedFormat === GROUND_STATION_EXPORT_FORMATS.KML) {
+        return {
+            format: resolvedFormat,
+            extension: ".kml",
+            mimeType: "application/vnd.google-earth.kml+xml;charset=utf-8",
+            document: null,
+            text: buildGroundStationsKml(stations)
+        };
+    }
+    if (resolvedFormat === GROUND_STATION_EXPORT_FORMATS.KMZ) {
+        return {
+            format: resolvedFormat,
+            extension: ".kmz",
+            mimeType: "application/vnd.google-earth.kmz",
+            document: null,
+            text: null,
+            bytes: buildGroundStationsKmz(stations)
+        };
+    }
+    if (resolvedFormat === GROUND_STATION_EXPORT_FORMATS.WKT) {
+        return {
+            format: resolvedFormat,
+            extension: ".wkt",
+            mimeType: "text/plain;charset=utf-8",
+            document: null,
+            text: buildGroundStationsWkt(stations)
+        };
+    }
+    if (resolvedFormat === GROUND_STATION_EXPORT_FORMATS.WKB) {
+        return {
+            format: resolvedFormat,
+            extension: ".wkb",
+            mimeType: "application/vnd.ogc.wkb",
+            document: null,
+            text: null,
+            bytes: buildGroundStationsWkb(stations)
         };
     }
     if (resolvedFormat === GROUND_STATION_EXPORT_FORMATS.ORBIT_JSON) {
@@ -509,7 +736,8 @@ export function downloadGroundStationsExport(stations, format, {
     if (!documentRef?.createElement || !urlApi?.createObjectURL || !urlApi?.revokeObjectURL || typeof Blob !== "function") {
         return serialized;
     }
-    const blob = new Blob([serialized.text], { type: serialized.mimeType });
+    const payload = serialized.bytes || serialized.text || "";
+    const blob = new Blob([payload], { type: serialized.mimeType });
     const url = urlApi.createObjectURL(blob);
     const anchor = Object.assign(documentRef.createElement("a"), {
         href: url,

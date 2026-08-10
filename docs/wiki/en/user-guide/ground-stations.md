@@ -231,13 +231,17 @@ Select **Import** to add a GeoJSON, Orbit JSON, or CSV file to the open
 project. Import validates each record, adds valid ones, and reports skipped
 ones. It does not restore a simulation or replace the current project.
 
-Select **Export** in a station action to choose GeoJSON, Orbit JSON, or CSV;
-project actions can do the same for every station. GeoJSON is recommended for
-QGIS and other GIS workflows. Orbit JSON is the native station copy for
-importing back into Orbit. CSV supports tabular editing and contains no
-calculated results.
+Select **Export** in a station action to choose GeoJSON, KML, KMZ,
+GeoPackage, WKT, WKB, Orbit JSON, or CSV; project actions can do the same for
+every station. GeoJSON is recommended for QGIS and other GIS workflows, while
+Orbit JSON is the native station copy for importing back into Orbit. CSV
+supports tabular editing and contains no calculated results.
 
-All three formats retain position and authored configuration, but not range,
+KML/KMZ, GeoPackage, WKT, and WKB are export-only spatial products. A station
+remains a static WGS-84 Point and is never exported as a TLE, OEM, ephemeris,
+ground track, or coverage mesh.
+
+The three re-importable formats retain position and authored configuration, but not range,
 mesh, AOS/LOS, SNR, pass results, or viewer entities. Use [Project JSON](projects.md)
 when you need to restore the complete workspace. See [Ground-station interchange](../formats/ground-stations/interchange.md)
 for the schema, RF fields, QGIS workflow, and interoperability limits.

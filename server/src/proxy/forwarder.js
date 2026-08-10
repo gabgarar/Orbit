@@ -32,7 +32,10 @@ function buildPythonRequestOptions(request, timeoutMs = PYTHON_PROXY_TIMEOUT_MS)
 
 function sendUpstreamResponse(response, upstreamResponse, body) {
     const contentType = upstreamResponse.headers.get("content-type") || "application/json";
-    response.status(upstreamResponse.status).set("Content-Type", contentType).send(body);
+    response.status(upstreamResponse.status).set("Content-Type", contentType);
+    const disposition = upstreamResponse.headers.get("content-disposition");
+    if (disposition) response.set("Content-Disposition", disposition);
+    response.send(body);
 }
 
 function sendProxyFailure(response, error) {
@@ -49,7 +52,12 @@ export function createPythonForwarder(client, { timeoutMs = PYTHON_PROXY_TIMEOUT
                 buildPythonPath(pythonPath, request.query),
                 buildPythonRequestOptions(request, timeoutMs)
             );
-            sendUpstreamResponse(response, upstreamResponse, await upstreamResponse.text());
+            // Python can return JSON, text, KMZ, WKB, or a GeoPackage.  Moving
+            // every response through `.text()` corrupts binary products;
+            // Buffer is lossless for all of them and Express still applies the
+            // declared upstream content type for normal JSON/text callers.
+            const body = Buffer.from(await upstreamResponse.arrayBuffer());
+            sendUpstreamResponse(response, upstreamResponse, body);
         } catch (error) {
             sendProxyFailure(response, error);
         }

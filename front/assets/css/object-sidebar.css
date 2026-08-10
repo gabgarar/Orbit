@@ -469,12 +469,19 @@ body.with-toolbars #objectSidebar.collapsed {
     box-sizing: border-box;
 }
 
-/* A checkbox is a primary control, not a text field. */
+/* Keep the coverage control compact, while its whole labelled row remains
+   the activation target.  This matches the denser control scale used by the
+   manual-orbit designer without making the checkbox itself look oversized. */
+.ground-station-panel .catalog-filter-field.checkbox {
+    min-height: 28px;
+    cursor: pointer;
+}
+
 .ground-station-panel .catalog-filter-field.checkbox input[type="checkbox"] {
-    width: 24px;
-    min-width: 24px;
-    height: 24px;
-    min-height: 24px;
+    width: 18px;
+    min-width: 18px;
+    height: 18px;
+    min-height: 18px;
     padding: 0;
     accent-color: var(--orbit-text-accent);
     cursor: pointer;
@@ -754,16 +761,22 @@ body.with-toolbars #objectSidebar.collapsed {
 }
 
 .ground-station-design-badge {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
     margin-left: auto;
     margin-top: 0;
     margin-right: 0;
-    border: 1px solid #365786;
+    box-sizing: border-box;
+    border: 1px solid #356dc2;
     border-radius: 999px;
-    padding: 3px 6px;
-    color: #9ebcf0;
-    font-size: 8px;
-    font-weight: 800;
-    letter-spacing: .05em;
+    background: #102747;
+    padding: 4px 6px;
+    color: #b7d4ff;
+    font: 700 8px/1 var(--orbit-font-ui, Inter, system-ui, sans-serif);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    white-space: nowrap;
 }
 
 .ground-station-panel .catalog-filter-field input[readonly] {

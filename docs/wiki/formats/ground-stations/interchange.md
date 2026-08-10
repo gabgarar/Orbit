@@ -14,6 +14,11 @@ ni geometría derivada de la escena.
 | **GeoJSON** | `.geojson` | GIS, QGIS, PostGIS y APIs cartográficas. | Sí. |
 | **Orbit JSON** | `.json` | Copia nativa y versionada de estaciones para volver a abrirlas en Orbit. | Sí. |
 | **CSV** | `.csv` | Revisión o edición tabular en una hoja de cálculo. | Sí. |
+| **KML** | `.kml` | Puntos de estación para Google Earth y visores KML. | Solo exportar. |
+| **KMZ** | `.kmz` | KML comprimido para compartir con Google Earth. | Solo exportar. |
+| **GeoPackage** | `.gpkg` | Capa Point profesional para QGIS, ArcGIS y GIS técnico. | Solo exportar. |
+| **WKT** | `.wkt` | Geometría Point Z/MultiPoint Z para SQL y PostGIS. | Solo exportar. |
+| **WKB** | `.wkb` | Geometría binaria Point Z/MultiPoint Z para APIs espaciales. | Solo exportar. |
 
 GeoJSON es la opción recomendada para interoperabilidad geográfica. Orbit JSON
 es la ruta nativa para conservar el contrato de estación admitido por Orbit.
@@ -26,7 +31,9 @@ Para incorporar un archivo, pulse **Importar** en el panel **Ground Stations**
 o **Importar estaciones** en las acciones del proyecto. Para descargar una
 estación concreta, abra su acción **Exportar**; desde las acciones del proyecto
 puede exportar todas las estaciones del espacio de trabajo. El selector muestra
-los tres formatos disponibles antes de iniciar la descarga.
+GeoJSON, KML, KMZ, GeoPackage, WKT, WKB, Orbit JSON y CSV antes de iniciar la
+descarga. La tarjeta amarilla del diálogo explica el destino y los límites del
+formato seleccionado.
 
 La importación añade capas al proyecto abierto; no reemplaza el proyecto ni
 elimina las estaciones existentes. Si un identificador del archivo no puede
@@ -155,6 +162,31 @@ defecto de la estación; las celdas numéricas o booleanas vacías del perfil
 exportado representan valores opcionales nulos. Mantenga el separador coma y
 la codificación UTF-8 si va a reimportar el archivo.
 
+## Exportaciones espaciales adicionales
+
+El dialogo **Exportar estaciones** muestra una tarjeta amarilla al cambiar el
+formato. La tarjeta explica el destino y que informacion se conserva antes de
+iniciar la descarga. Las estaciones se representan siempre como puntos WGS-84:
+no son orbitas, ground tracks, TLE, OEM ni efemerides.
+
+| Formato | Geometria | Atributos | Uso y limite |
+| --- | --- | --- | --- |
+| KML / KMZ | `Point` con altitud autorada. | KML mantiene un resumen legible de la estacion. | Abrir en Google Earth. KMZ contiene el mismo KML comprimido. |
+| GeoPackage | `Point Z` EPSG:4979. | Nombre, tipo y JSON de propiedades autoradas. | Archivo SQLite/GPKG real generado por el servicio local para GIS profesional. |
+| WKT / WKB | `Point Z` para una estacion, `MultiPoint Z` para varias. | Ninguno: solo geometria. | Insertar en SQL, PostGIS o una API espacial; use GeoJSON u Orbit JSON para RF completo. |
+
+KML, KMZ, GeoPackage, WKT y WKB son productos de exportacion y no se pueden
+importar de vuelta por ahora. La reimportacion conserva el contrato de Orbit
+solo mediante **GeoJSON**, **Orbit JSON** o **CSV**. GeoJSON y Orbit JSON son
+las opciones preferidas cuando se necesiten parametros RF, mascara, limites
+mecanicos o preferencias visuales.
+
+!!! warning "No se fabrican datos orbitales"
+
+    Una estacion terrestre es un punto fijo en WGS-84. Orbit no ofrece TLE u
+    OEM para estaciones, ni agrega una trayectoria, una cobertura derivada,
+    una malla Cesium, resultados AOS/LOS o datos de enlace a estos archivos.
+
 ## Datos que Orbit recalcula
 
 Ninguno de los formatos exporta o acepta como fuente de verdad:
@@ -171,7 +203,7 @@ seleccionados.
 
 ## Compatibilidad
 
-Los tres formatos representan estaciones puntuales WGS-84. Si un sistema
+Todos los formatos de intercambio representan estaciones puntuales WGS-84. Si un sistema
 externo utiliza otro datum, altura ortométrica, época geodésica o unidades
 distintas, convierta y documente esos datos antes de importarlos. Orbit no
 deduce el datum vertical, la zona horaria ni la semántica RF a partir del

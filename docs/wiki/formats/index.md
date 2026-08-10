@@ -27,5 +27,5 @@ no equivale a una función expuesta por la interfaz, el gateway o la API públic
 
 Los contratos de estación, terreno, observación y predicción tienen su área
 canónica en [Segmento terrestre](../ground-segment/index.md). Consulte allí
-[GeoJSON, Orbit JSON y CSV](ground-stations/index.md), así como el estado de
+[GeoJSON, KML/KMZ, GeoPackage, WKT/WKB, Orbit JSON y CSV](ground-stations/index.md), así como el estado de
 RINEX y CPF.

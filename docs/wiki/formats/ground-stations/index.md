@@ -11,5 +11,5 @@ forma independiente sin convertirla en un objeto de catálogo.
 | Ruta | Estado | Uso |
 | --- | --- | --- |
 | [JSON de proyecto](project-json.md) | Disponible. | Persistencia del espacio de trabajo completo. |
-| [Intercambio de estaciones](interchange.md) | Importación y exportación disponibles. | GeoJSON, Orbit JSON y CSV para estaciones independientes. |
+| [Intercambio de estaciones](interchange.md) | GeoJSON, Orbit JSON y CSV importan/exportan; KML/KMZ, GeoPackage, WKT/WKB exportan. | Puntos de estación WGS-84 independientes. |
 | [RINEX](../rinex.md) | No disponible. | No crea estaciones ni observaciones GNSS. |

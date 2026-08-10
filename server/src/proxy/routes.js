@@ -18,6 +18,8 @@ function satellitePath(route, request) {
 export function registerPythonProxyRoutes(app, client) {
     const forward = createPythonForwarder(client);
 
+    registerForwardingRoute(app, "post", "/api/export/manual-ephemeris", () => "/export/manual-ephemeris", forward);
+    registerForwardingRoute(app, "post", "/api/ground-stations/export", () => "/ground-stations/export", forward);
     registerForwardingRoute(app, "get", "/api/export/ephemeris/:satId", (request) => (
         `/export/ephemeris/${encodeURIComponent(request.params.satId)}`
     ), forward);

@@ -23,6 +23,11 @@ function findEntry(entries, satelliteId) {
     return entries.find((entry) => normalizeText(entry.name) === normalizeText(satelliteId));
 }
 
+function hasExportableTleLines(entry) {
+    return String(entry?.line1 || "").trim().startsWith("1 ")
+        && String(entry?.line2 || "").trim().startsWith("2 ");
+}
+
 function sendCatalogExport(response, definition, entry, query) {
     const xml = definition.kind === "omm" && String(query.format).toLowerCase() === "xml";
     const extension = xml ? "omm.xml" : definition.extension;
@@ -41,6 +46,12 @@ export function registerCatalogExportRoutes(app, { catalog }) {
                 if (!entry) return response.status(404).json({ ok: false, error: "Satelite no encontrado." });
                 if (definition.sourceFormat && !isEntrySourceFormat(entry, definition.sourceFormat)) {
                     return response.status(400).json({ ok: false, error: `Este satelite no tiene origen ${definition.sourceFormat}. Exporta en su formato de origen.` });
+                }
+                if (definition.kind === "tle" && !hasExportableTleLines(entry)) {
+                    return response.status(422).json({
+                        ok: false,
+                        error: "La entrada TLE no conserva lineas validas de tipo 1 y 2. Corrige la importacion antes de exportarla."
+                    });
                 }
                 sendCatalogExport(response, definition, entry, request.query);
             } catch (error) {

@@ -25,7 +25,7 @@ const PROJECT_ACTIONS = [
     { action: "import-ground-stations", label: "Importar estaciones", description: "Añade GeoJSON, Orbit JSON o CSV" },
     { action: "save", label: "Guardar proyecto", description: "Guarda los cambios del proyecto" },
     { action: "export", label: "Exportar proyecto", description: "Descarga una copia .json" },
-    { action: "export-ground-stations", label: "Exportar estaciones", description: "Elige GeoJSON, Orbit JSON o CSV" }
+    { action: "export-ground-stations", label: "Exportar estaciones", description: "Elige GeoJSON, KML/KMZ, GeoPackage, WKT/WKB, Orbit JSON o CSV" }
 ];
 
 function ProjectActionsMenu({ source, left, top, onSelect, projectName }) {

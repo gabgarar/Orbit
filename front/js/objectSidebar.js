@@ -5,6 +5,7 @@ import { deriveLayerActionsState, emitLayerActionsState } from "./runtime/layerA
 import { deriveTleOrbitalMetrics } from "./features/objectDetails/tleMetrics.js";
 import { tleEpochAgeMs, tleEpochToDate } from "./features/objectDetails/tleEpoch.js";
 import { getCatalogRefreshRetryAt } from "./features/catalog/refreshStatus.js";
+import { toManualOrbitApiPayload } from "./features/manualOrbit/editorState.js";
 
 function visibilityIconMarkup(isVisible) {
     return isVisible
@@ -882,6 +883,7 @@ export function setupObjectSidebar({
     let editingGroundStationId = null;
     let groundStationDesignConfirmationPending = false;
     let exportSourceFormat = "TLE";
+    let exportTargetId = "";
     let lastRenderedCatalogIds = [];
     let catalogServerTotal = 0;
     let catalogCurrentPage = 1;
@@ -1611,65 +1613,6 @@ export function setupObjectSidebar({
     // are wired or the Layers action would target a detached node.
     document.body.appendChild(groundStationModal);
 
-    const exportModal = document.createElement("div");
-    exportModal.id = "catalogExportModal";
-    exportModal.innerHTML = `
-        <div class="catalog-export-panel" role="dialog" aria-modal="true" aria-label="Exportar satelite">
-            <div class="catalog-export-header">
-                <h3>Exportar satelite</h3>
-                <button class="catalog-close-btn" id="catalogExportCloseBtn" type="button" aria-label="Cerrar exportacion" title="Cerrar">×</button>
-            </div>
-            <div class="catalog-export-target" id="catalogExportTarget">-</div>
-            <div class="catalog-export-source" id="catalogExportSource">Source: -</div>
-
-            <section class="catalog-export-section">
-                <h4>Exportar fichero de origen</h4>
-                <div class="catalog-export-buttons">
-                    <button class="catalog-header-btn" id="exportTleBtn" type="button">Exportar TLE</button>
-                    <button class="catalog-header-btn" id="exportOmmJsonBtn" type="button">Exportar OMM (JSON)</button>
-                    <button class="catalog-header-btn" id="exportOmmXmlBtn" type="button">Exportar OMM (XML)</button>
-                    <button class="catalog-header-btn" id="exportOemBtn" type="button">Exportar OEM</button>
-                </div>
-            </section>
-
-            <section class="catalog-export-section">
-                <h4>Exportar efemerides entre dos fechas</h4>
-                <div class="catalog-export-grid">
-                    <label class="catalog-filter-field">
-                        <span>Fecha inicio</span>
-                        <input id="exportEphemStart" type="datetime-local" />
-                    </label>
-                    <label class="catalog-filter-field">
-                        <span>Fecha fin</span>
-                        <input id="exportEphemEnd" type="datetime-local" />
-                    </label>
-                    <label class="catalog-filter-field">
-                        <span>Intervalo (s)</span>
-                        <input id="exportEphemStep" type="number" min="1" max="3600" step="1" value="10" />
-                    </label>
-                    <label class="catalog-filter-field">
-                        <span>Formato</span>
-                        <select id="exportEphemFormat">
-                            <option value="csv">CSV</option>
-                            <option value="json">JSON</option>
-                            <option value="oem">OEM</option>
-                        </select>
-                    </label>
-                    <label class="catalog-filter-field">
-                        <span>Propagador</span>
-                        <select id="exportEphemPropagator">
-                            <option value="sgp4">SGP4</option>
-                        </select>
-                    </label>
-                </div>
-                <div class="catalog-export-actions">
-                    <button class="catalog-action-btn" id="exportEphemerisBtn" type="button">Exportar efemerides</button>
-                </div>
-            </section>
-        </div>
-    `;
-    // React renders the visible export dialog.
-
     const header = sidebar.querySelector("#objectSidebarHeader");
     const removeAllLayersHeaderBtn = sidebar.querySelector("#removeAllLayersHeaderBtn") || document.getElementById("removeAllLayersHeaderBtn");
     const toggleAllVisibilityBtn = sidebar.querySelector("#toggleAllVisibilityBtn") || document.getElementById("toggleAllVisibilityBtn");
@@ -1954,20 +1897,6 @@ export function setupObjectSidebar({
     gsTabButtons.forEach((btn) => {
         btn.addEventListener("click", () => setGroundStationTab(btn.dataset.gsTab));
     });
-
-    const catalogExportCloseBtn = exportModal.querySelector("#catalogExportCloseBtn");
-    const catalogExportTarget = exportModal.querySelector("#catalogExportTarget");
-    const catalogExportSource = exportModal.querySelector("#catalogExportSource");
-    const exportTleBtn = exportModal.querySelector("#exportTleBtn");
-    const exportOmmJsonBtn = exportModal.querySelector("#exportOmmJsonBtn");
-    const exportOmmXmlBtn = exportModal.querySelector("#exportOmmXmlBtn");
-    const exportOemBtn = exportModal.querySelector("#exportOemBtn");
-    const exportEphemStartInput = exportModal.querySelector("#exportEphemStart");
-    const exportEphemEndInput = exportModal.querySelector("#exportEphemEnd");
-    const exportEphemStepInput = exportModal.querySelector("#exportEphemStep");
-    const exportEphemFormatSelect = exportModal.querySelector("#exportEphemFormat");
-    const exportEphemPropagatorSelect = exportModal.querySelector("#exportEphemPropagator");
-    const exportEphemerisBtn = exportModal.querySelector("#exportEphemerisBtn");
 
     const notificationState = {
         sequence: 1,
@@ -2574,45 +2503,30 @@ export function setupObjectSidebar({
         window.dispatchEvent(new CustomEvent("orbit:catalog-drop-overlay", { detail: visible === true }));
     }
 
-    function toDatetimeLocalValue(date) {
-        const d = new Date(date);
-        const pad = (n) => String(n).padStart(2, "0");
-        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    }
-
     function openExportModal(id) {
         if (!id) {
             return;
         }
         const entryMeta = getCatalogEntryMeta?.(id) || null;
         const sourceFormat = String(entryMeta?.sourceFormat || "TLE").trim().toUpperCase();
-        exportSourceFormat = sourceFormat === "OMM" || sourceFormat === "OEM" ? sourceFormat : "TLE";
+        exportTargetId = String(id).trim();
+        exportSourceFormat = sourceFormat || "TLE";
 
-        catalogExportTarget.textContent = id;
-        catalogExportSource.textContent = `Source: ${exportSourceFormat}`;
-        exportTleBtn.hidden = exportSourceFormat !== "TLE";
-        exportOmmJsonBtn.hidden = exportSourceFormat !== "OMM";
-        exportOmmXmlBtn.hidden = exportSourceFormat !== "OMM";
-        exportOemBtn.hidden = exportSourceFormat !== "OEM";
-
-        const now = new Date();
-        const tomorrow = new Date(now.getTime() + (24 * 3600 * 1000));
-        exportEphemStartInput.value = toDatetimeLocalValue(now);
-        exportEphemEndInput.value = toDatetimeLocalValue(tomorrow);
-        exportEphemStepInput.value = "10";
-        exportEphemFormatSelect.value = "oem";
-        exportEphemPropagatorSelect.value = "sgp4";
-        exportModal.classList.add("open");
-        window.dispatchEvent(new CustomEvent("orbit:export-open", { detail: { id, sourceFormat: exportSourceFormat } }));
+        window.dispatchEvent(new CustomEvent("orbit:export-open", {
+            detail: {
+                id: exportTargetId,
+                sourceFormat: exportSourceFormat,
+                manual: exportSourceFormat === "MANUAL"
+            }
+        }));
     }
 
     function closeExportModal() {
-        exportModal.classList.remove("open");
         window.dispatchEvent(new Event("orbit:export-close"));
     }
 
-    async function downloadFromUrl(url, fallbackFileName) {
-        const response = await fetch(url, { cache: "no-cache" });
+    async function downloadFromUrl(url, fallbackFileName, requestOptions = {}) {
+        const response = await fetch(url, { cache: "no-cache", ...requestOptions });
         if (!response.ok) {
             let detail = "";
             try {
@@ -3510,101 +3424,114 @@ export function setupObjectSidebar({
     };
     window.addEventListener(OBJECT_STATE_CHANGED_EVENT, onObjectStateChanged);
 
-    catalogExportCloseBtn.addEventListener("click", closeExportModal);
-
-    exportModal.addEventListener("click", (event) => {
-        if (event.target === exportModal) {
-            closeExportModal();
-        }
+    const exportExtensions = Object.freeze({
+        csv: "csv",
+        json: "json",
+        oem: "oem",
+        geojson: "geojson",
+        kml: "kml",
+        kmz: "kmz",
+        gpkg: "gpkg",
+        wkt: "wkt",
+        wkb: "wkb"
     });
 
-    window.addEventListener("orbit:export-action", (event) => {
-        const buttons = { tle: exportTleBtn, "omm-json": exportOmmJsonBtn, "omm-xml": exportOmmXmlBtn, oem: exportOemBtn, ephemeris: exportEphemerisBtn };
-        if (event.detail?.type === "close") { closeExportModal(); return; }
-        if (event.detail?.type === "ephemeris") {
-            exportEphemStartInput.value = event.detail.start || exportEphemStartInput.value;
-            exportEphemEndInput.value = event.detail.end || exportEphemEndInput.value;
-            exportEphemStepInput.value = event.detail.step || exportEphemStepInput.value;
-            exportEphemFormatSelect.value = event.detail.format || exportEphemFormatSelect.value;
+    function exportDateRange(detail = {}) {
+        const startRaw = String(detail.start || "").trim();
+        const endRaw = String(detail.end || "").trim();
+        const stepSeconds = Number(detail.step || 10);
+        const start = new Date(startRaw);
+        const end = new Date(endRaw);
+        if (!startRaw || !endRaw || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start || !Number.isFinite(stepSeconds) || stepSeconds <= 0) {
+            throw new Error("Revisa fechas e intervalo para exportar efemerides.");
         }
-        buttons[event.detail?.type]?.click();
-    });
+        return { start, end, stepSeconds };
+    }
 
-    exportTleBtn.addEventListener("click", async () => {
-        const id = String(catalogExportTarget.textContent || "").trim();
+    function manualExportPayload(id, detail, range) {
+        const entryMeta = getCatalogEntryMeta?.(id) || null;
+        const manualOrbit = entryMeta?.manualOrbit;
+        if (!manualOrbit || typeof manualOrbit !== "object") {
+            throw new Error("La definicion de la orbita manual ya no esta disponible.");
+        }
+        const source = String(manualOrbit.definitionSource || manualOrbit.definition_source || "keplerian")
+            .trim()
+            .toLowerCase()
+            .replace(/[-\s]+/g, "_");
+        return toManualOrbitApiPayload({
+            ...manualOrbit,
+            name: String(entryMeta?.name || id).trim() || "Manual Orbit"
+        }, {
+            source: source === "statevector" ? "state_vector" : source,
+            startTime: range.start,
+            endTime: range.end,
+            stepSeconds: range.stepSeconds,
+            includeVelocity: true
+        });
+    }
+
+    async function exportOrbitProduct(detail = {}) {
+        const id = String(detail.id || exportTargetId || "").trim();
+        const format = String(detail.format || "csv").trim().toLowerCase();
+        const source = String(detail.sourceFormat || exportSourceFormat || "TLE").trim().toUpperCase();
         if (!id) return;
-        try {
-            await downloadFromUrl(`/api/export/tle/${encodeURIComponent(id)}`, `${id}.tle`);
-            showInfoPopup("Exportacion TLE completada.");
-        } catch (error) {
-            showErrorPopup(`No se pudo exportar TLE: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    });
-
-    exportOmmJsonBtn.addEventListener("click", async () => {
-        const id = String(catalogExportTarget.textContent || "").trim();
-        if (!id) return;
-        try {
-            await downloadFromUrl(`/api/export/omm/${encodeURIComponent(id)}?format=json`, `${id}.omm.json`);
-            showInfoPopup("Exportacion OMM (JSON) completada.");
-        } catch (error) {
-            showErrorPopup(`No se pudo exportar OMM (JSON): ${error instanceof Error ? error.message : String(error)}`);
-        }
-    });
-
-    exportOmmXmlBtn.addEventListener("click", async () => {
-        const id = String(catalogExportTarget.textContent || "").trim();
-        if (!id) return;
-        try {
-            await downloadFromUrl(`/api/export/omm/${encodeURIComponent(id)}?format=xml`, `${id}.omm.xml`);
-            showInfoPopup("Exportacion OMM (XML) completada.");
-        } catch (error) {
-            showErrorPopup(`No se pudo exportar OMM (XML): ${error instanceof Error ? error.message : String(error)}`);
-        }
-    });
-
-    exportOemBtn.addEventListener("click", async () => {
-        const id = String(catalogExportTarget.textContent || "").trim();
-        if (!id) return;
-        try {
-            await downloadFromUrl(`/api/export/oem/${encodeURIComponent(id)}`, `${id}.oem`);
-            showInfoPopup("Exportacion OEM completada.");
-        } catch (error) {
-            showErrorPopup(`No se pudo exportar OEM: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    });
-
-    exportEphemerisBtn.addEventListener("click", async () => {
-        const id = String(catalogExportTarget.textContent || "").trim();
-        if (!id) return;
-
-        const t0Raw = String(exportEphemStartInput.value || "").trim();
-        const t1Raw = String(exportEphemEndInput.value || "").trim();
-        const dt = Number(exportEphemStepInput.value || 10);
-        const format = String(exportEphemFormatSelect.value || "csv").trim().toLowerCase();
-        const propagator = String(exportEphemPropagatorSelect.value || "sgp4").trim().toLowerCase();
-
-        if (!t0Raw || !t1Raw || !Number.isFinite(dt) || dt <= 0) {
-            showErrorPopup("Revisa fechas e intervalo para exportar efemerides.");
+        if (format === "tle-synthetic") {
+            showErrorPopup("El ajuste SGP4 para exportar un TLE sintetico aun no esta implementado.");
             return;
         }
-
-        const t0Iso = new Date(t0Raw).toISOString();
-        const t1Iso = new Date(t1Raw).toISOString();
-        const params = new URLSearchParams({
-            t0: t0Iso,
-            t1: t1Iso,
-            dt: String(dt),
-            format,
-            propagator,
-            sourceFormat: exportSourceFormat
-        });
-
         try {
-            await downloadFromUrl(`/api/export/ephemeris/${encodeURIComponent(id)}?${params.toString()}`, `${id}-ephemeris.${format}`);
-            showInfoPopup("Exportacion de efemerides completada.");
+            if (format === "tle") {
+                if (source !== "TLE") throw new Error("Solo una entrada TLE real puede exportarse como TLE.");
+                await downloadFromUrl(`/api/export/tle/${encodeURIComponent(id)}`, `${id}.tle`);
+            } else if (format === "omm-json") {
+                if (source !== "OMM") throw new Error("Esta capa no tiene una entrada OMM de origen.");
+                await downloadFromUrl(`/api/export/omm/${encodeURIComponent(id)}?format=json`, `${id}.omm.json`);
+            } else if (format === "omm-xml") {
+                if (source !== "OMM") throw new Error("Esta capa no tiene una entrada OMM de origen.");
+                await downloadFromUrl(`/api/export/omm/${encodeURIComponent(id)}?format=xml`, `${id}.omm.xml`);
+            } else if (format === "source-oem") {
+                if (source !== "OEM") throw new Error("Esta capa no tiene una entrada OEM de origen.");
+                await downloadFromUrl(`/api/export/oem/${encodeURIComponent(id)}`, `${id}.oem`);
+            } else {
+                const extension = exportExtensions[format];
+                if (!extension) throw new Error(`Formato de exportacion no admitido: ${format}`);
+                const range = exportDateRange(detail);
+                if (source === "MANUAL") {
+                    const payload = manualExportPayload(id, detail, range);
+                    await downloadFromUrl(
+                        `/api/export/manual-ephemeris?format=${encodeURIComponent(format)}`,
+                        `${id}-ephemeris.${extension}`,
+                        {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json", Accept: "application/octet-stream" },
+                            body: JSON.stringify(payload)
+                        }
+                    );
+                } else {
+                    const params = new URLSearchParams({
+                        t0: range.start.toISOString(),
+                        t1: range.end.toISOString(),
+                        dt: String(range.stepSeconds),
+                        format,
+                        propagator: "sgp4"
+                    });
+                    await downloadFromUrl(`/api/export/ephemeris/${encodeURIComponent(id)}?${params.toString()}`, `${id}-ephemeris.${extension}`);
+                }
+            }
+            showInfoPopup("Exportacion completada.");
         } catch (error) {
-            showErrorPopup(`No se pudo exportar efemerides: ${error instanceof Error ? error.message : String(error)}`);
+            showErrorPopup(`No se pudo exportar: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    window.addEventListener("orbit:export-action", (event) => {
+        const detail = event.detail || {};
+        if (detail.type === "close") {
+            closeExportModal();
+            return;
+        }
+        if (detail.type === "export") {
+            void exportOrbitProduct(detail);
         }
     });
 
@@ -4958,7 +4885,6 @@ export function setupObjectSidebar({
             contextMenu.remove();
             addMenu.remove();
             groundStationModal.remove();
-            exportModal.remove();
         }
     };
 }

@@ -4,10 +4,16 @@ import test from "node:test";
 import {
     GROUND_STATION_EXPORT_FORMATS,
     GroundStationInterchangeError,
+    buildGroundStationsKml,
+    buildGroundStationsKmz,
+    buildGroundStationsWkb,
+    buildGroundStationsWkt,
     buildGroundStationsCsv,
     buildGroundStationsOrbitJson,
     downloadGroundStationsExport,
+    normalizeGroundStationExportRecords,
     parseGroundStationsDocument,
+    requiresGroundStationExportService,
     serializeGroundStationsExport
 } from "../../js/features/groundStations/interchange.js";
 import { buildGroundStationsGeoJson } from "../../js/features/groundStations/geojson.js";
@@ -187,6 +193,46 @@ test("download adapter derives a filename extension from the requested format", 
         urlApi: { createObjectURL: () => "blob:orbit-json", revokeObjectURL() {} }
     });
     assert.equal(anchor.download, "orbit-ground-stations.json");
+});
+
+test("spatial station exports use WGS-84 points and never serialize runtime handles", () => {
+    const records = normalizeGroundStationExportRecords([STATION]);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].id, "gst:madrid");
+    assert.equal(records[0].frequency_hz, 2_200_000_000);
+    assert.equal(records[0].reference_rx_gain_dbi, 3);
+    assert.equal(records[0].reference_rx_threshold_dbm, -105);
+    assert.deepEqual(records[0].monitor_satellite_ids, ["25544", "43013"]);
+    assert.equal(records[0].point_color, "#3cc4ff");
+    assert.equal(records[0].coverage_visible, true);
+    assert.equal("entity" in records[0], false);
+    assert.equal("radio_range_km" in records[0], false);
+
+    const kml = buildGroundStationsKml(records);
+    assert.match(kml, /<Point>/);
+    assert.match(kml, /-3\.7038,40\.4168,667\.1/);
+    const kmz = buildGroundStationsKmz(records);
+    assert.deepEqual([...kmz.slice(0, 4)], [0x50, 0x4b, 0x03, 0x04]);
+    const wkt = buildGroundStationsWkt(records);
+    assert.equal(wkt, "POINT Z (-3.7038 40.4168 667.1)\n");
+    const wkb = buildGroundStationsWkb(records);
+    assert.equal(wkb[0], 1);
+    assert.equal(new DataView(wkb.buffer, wkb.byteOffset, wkb.byteLength).getUint32(1, true), 1001);
+
+    const serializedKml = serializeGroundStationsExport(records, "kml");
+    assert.equal(serializedKml.extension, ".kml");
+    const serializedKmz = serializeGroundStationsExport(records, "kmz");
+    assert.equal(serializedKmz.extension, ".kmz");
+    assert.ok(serializedKmz.bytes instanceof Uint8Array);
+    assert.equal(requiresGroundStationExportService("gpkg"), true);
+    assert.throws(
+        () => serializeGroundStationsExport(records, "gpkg"),
+        (error) => error instanceof GroundStationInterchangeError && error.code === "server-export-required"
+    );
+    assert.throws(
+        () => parseGroundStationsDocument("POINT (1 2)", { fileName: "stations.wkt" }),
+        (error) => error instanceof GroundStationInterchangeError && error.code === "unsupported-import-format"
+    );
 });
 
 test("invalid documents fail clearly while an empty supported collection remains safe", () => {
