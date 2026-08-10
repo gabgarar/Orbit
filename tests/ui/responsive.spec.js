@@ -250,7 +250,8 @@ async function expectApplicationShellLayout(page) {
                     ? {
                         ...addLayerRect.toJSON(),
                         fontSize: Number.parseFloat(getComputedStyle(addLayer).fontSize),
-                        label: addLayer.textContent?.trim(),
+                        accessibleName: addLayer.getAttribute("aria-label") || addLayer.getAttribute("title") || "",
+                        hasIcon: Boolean(addLayer.querySelector("svg")),
                         visible: getComputedStyle(addLayer).visibility !== "hidden" && addLayerRect.width > 0 && addLayerRect.height > 0
                     }
                     : null
@@ -263,10 +264,11 @@ async function expectApplicationShellLayout(page) {
     expect(layerPanelControls.resizeHandle.right, "Resize handle must reach the right panel edge").toBeGreaterThanOrEqual(layerPanelControls.panel.right - 1);
     expect(layerPanelControls.addLayer, "Visible React add-layer control must exist").not.toBeNull();
     expect(layerPanelControls.addLayer.visible, "Add-layer control must be visible").toBeTruthy();
-    expect(layerPanelControls.addLayer.height, "Add-layer control must remain a clear call to action").toBeGreaterThanOrEqual(28);
-    expect(layerPanelControls.addLayer.height, "Add-layer control must retain the compact Layers height").toBeLessThanOrEqual(30);
-    expect(layerPanelControls.addLayer.fontSize, "Layer names must match catalog density").toBeLessThanOrEqual(12);
-    expect(layerPanelControls.addLayer.label, "Add-layer control must explain its action").toContain("Añadir");
+    expect(layerPanelControls.addLayer.height, "Add-layer control must remain a clear header action").toBeGreaterThanOrEqual(24);
+    expect(layerPanelControls.addLayer.height, "Add-layer control must retain a compact header target").toBeLessThanOrEqual(36);
+    expect(layerPanelControls.addLayer.fontSize, "Add-layer control must match compact catalog density").toBeLessThanOrEqual(12);
+    expect(layerPanelControls.addLayer.hasIcon, "Add-layer control must expose a visible plus icon").toBeTruthy();
+    expect(layerPanelControls.addLayer.accessibleName, "Icon-only add-layer control must retain an accessible label").toContain("Añadir");
 }
 
 async function expectCatalogLayout(page, zoom = 1) {
@@ -475,6 +477,187 @@ async function readSidebarNavigationBlocks(page) {
     });
 }
 
+/**
+ * The Layers navigator is composed from a React rail and a legacy-backed
+ * content pane.  Both live in one workspace shell: the rail occupies the
+ * left column, the content starts after its divider, and the project clock
+ * belongs to that same column.
+ *
+ * Keep this geometry based so the implementation can use a border, a pseudo
+ * element or a backdrop layer for the divider without changing the contract.
+ */
+async function readIntegratedLayersShell(page) {
+    return page.evaluate(() => {
+        const snapshot = (element) => {
+            if (!(element instanceof HTMLElement)) return null;
+            const style = getComputedStyle(element);
+            if (style.display === "none" || style.visibility === "hidden") return null;
+            const rect = element.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return null;
+            return {
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                bottom: rect.bottom,
+                width: rect.width,
+                height: rect.height,
+                backgroundColor: style.backgroundColor,
+                backgroundImage: style.backgroundImage,
+                borderTopWidth: Number.parseFloat(style.borderTopWidth),
+                borderRightWidth: Number.parseFloat(style.borderRightWidth),
+                borderBottomWidth: Number.parseFloat(style.borderBottomWidth),
+                borderLeftWidth: Number.parseFloat(style.borderLeftWidth),
+                borderTopColor: style.borderTopColor,
+                borderRightColor: style.borderRightColor,
+                borderBottomColor: style.borderBottomColor,
+                borderLeftColor: style.borderLeftColor,
+                zIndex: style.zIndex
+            };
+        };
+        const pseudo = (element, name) => {
+            if (!(element instanceof HTMLElement)) return null;
+            const style = getComputedStyle(element, name);
+            return {
+                content: style.content,
+                display: style.display,
+                width: Number.parseFloat(style.width),
+                height: Number.parseFloat(style.height),
+                top: style.top,
+                right: style.right,
+                bottom: style.bottom,
+                left: style.left,
+                backgroundColor: style.backgroundColor,
+                backgroundImage: style.backgroundImage,
+                borderLeftWidth: Number.parseFloat(style.borderLeftWidth),
+                borderRightWidth: Number.parseFloat(style.borderRightWidth),
+                borderLeftColor: style.borderLeftColor,
+                borderRightColor: style.borderRightColor
+            };
+        };
+        const shell = document.querySelector("#leftWorkspaceShell");
+        const rail = document.querySelector("#leftSidebar");
+        const panel = document.querySelector("#leftSatellitesPanel");
+        const header = panel?.querySelector(".orbit-layers-panel-header");
+        const heading = panel?.querySelector(".orbit-layers-heading");
+        const search = panel?.querySelector(".orbit-layers-search");
+        const project = panel?.querySelector(".orbit-project-module");
+        const tree = panel?.querySelector("#leftSatellitesPanelContent");
+        const footer = panel?.querySelector("#projectTimeFooter");
+        const footerContent = footer?.querySelector(".project-time-footer__calendar");
+        const footerMode = footer?.querySelector("#projectTimeModeBtn");
+        const projectMenu = panel?.querySelector("#projectActionsBtn");
+
+        return {
+            shell: snapshot(shell),
+            rail: snapshot(rail),
+            panel: snapshot(panel),
+            header: snapshot(header),
+            heading: snapshot(heading),
+            search: snapshot(search),
+            project: snapshot(project),
+            tree: snapshot(tree),
+            footer: snapshot(footer),
+            footerContent: snapshot(footerContent),
+            footerMode: snapshot(footerMode),
+            projectMenu: snapshot(projectMenu),
+            shellAfter: pseudo(shell, "::after"),
+            shellBefore: pseudo(shell, "::before"),
+            railAfter: pseudo(rail, "::after"),
+            railBefore: pseudo(rail, "::before"),
+            panelAfter: pseudo(panel, "::after"),
+            panelBefore: pseudo(panel, "::before")
+        };
+    });
+}
+
+/**
+ * Read only the stable, outer chrome of a primary application surface.  The
+ * individual panels may contain legacy and React controls, but their frame
+ * must speak one visual language: one technical rule, one UI font and clean
+ * whole-pixel corners.  `frameEdge` lets the full-width toolbar participate
+ * through its only visible structural edge (the lower rule).
+ */
+async function readPrimaryChromeSurface(page, selector, frameEdge) {
+    return page.locator(selector).evaluate((element, edge) => {
+        const style = getComputedStyle(element);
+        const edgeName = `${edge.charAt(0).toUpperCase()}${edge.slice(1)}`;
+        const radiusProperties = [
+            "borderTopLeftRadius",
+            "borderTopRightRadius",
+            "borderBottomRightRadius",
+            "borderBottomLeftRadius"
+        ];
+        return {
+            selector: element.id ? `#${element.id}` : `.${String(element.className || "").split(/\s+/)[0]}`,
+            frameEdge: edge,
+            borderWidth: Number.parseFloat(style[`border${edgeName}Width`]),
+            borderColor: style[`border${edgeName}Color`],
+            fontFamily: style.fontFamily,
+            radii: radiusProperties.map((property) => Number.parseFloat(style[property]))
+        };
+    }, frameEdge);
+}
+
+function expectSharedPrimaryChrome(reference, candidate, label) {
+    expect(candidate.borderWidth, `${label} must retain the shared 1 px technical frame`).toBeCloseTo(reference.borderWidth, 3);
+
+    const referenceColor = readRgbChannels(reference.borderColor);
+    const candidateColor = readRgbChannels(candidate.borderColor);
+    for (const channel of ["red", "green", "blue", "alpha"]) {
+        expect(
+            candidateColor[channel],
+            `${label} must use the same computed ${channel} channel as the shared technical frame`
+        ).toBeCloseTo(referenceColor[channel], 3);
+    }
+
+    expect(candidate.fontFamily, `${label} must inherit the common application UI font`).toBe(reference.fontFamily);
+    for (const radius of candidate.radii) {
+        expect(Number.isFinite(radius), `${label} corner radius must be measurable`).toBeTruthy();
+        expect(radius, `${label} corner radius must use an integer CSS pixel value`).toBeCloseTo(Math.round(radius), 5);
+    }
+    expect(
+        new Set(candidate.radii).size,
+        `${label} must use a uniform radius on all four outer corners`
+    ).toBe(1);
+}
+
+function hasVisibleVerticalDivider(candidate, minHeight) {
+    if (!candidate || candidate.content === "none" || candidate.display === "none") return false;
+    const width = Math.max(candidate.width || 0, candidate.borderLeftWidth || 0, candidate.borderRightWidth || 0);
+    const top = Number.parseFloat(candidate.top);
+    const bottom = Number.parseFloat(candidate.bottom);
+    const spansContainer = Number.isFinite(top)
+        && Number.isFinite(bottom)
+        && Math.abs(top) <= 1
+        && Math.abs(bottom) <= 1;
+    const decorated = candidate.backgroundImage !== "none"
+        || readRgbChannels(candidate.backgroundColor).alpha > 0
+        || readRgbChannels(candidate.borderLeftColor).alpha > 0
+        || readRgbChannels(candidate.borderRightColor).alpha > 0;
+    return width >= 1 && ((candidate.height || 0) >= minHeight || spansContainer) && decorated;
+}
+
+function isVisibleTechnicalFrameEdge(width, color) {
+    const serialized = String(color || "").trim().toLowerCase();
+    const channels = readRgbChannels(color);
+    // A technical frame is deliberately cool grey-blue: it must be visible,
+    // but should not turn into a saturated navigation accent. Treat the CSS
+    // keyword `transparent` explicitly because its numeric fallback is 0.
+    return width >= 1
+        && serialized !== "transparent"
+        && channels.alpha > .2
+        && channels.green >= channels.red + 8
+        && channels.blue >= channels.green + 12;
+}
+
+function rectanglesOverlap(first, second) {
+    if (!first || !second) return false;
+    return first.left < second.right - 0.5
+        && first.right > second.left + 0.5
+        && first.top < second.bottom - 0.5
+        && first.bottom > second.top + 0.5;
+}
+
 function expectOrbitSidebarColor(actual, expected, label) {
     expect(actual, `${label} colour must be measurable`).not.toBeNull();
     expect(actual.red, `${label} red channel`).toBeCloseTo(expected.red, 0);
@@ -521,7 +704,7 @@ async function readLayersExplorerPresentation(page) {
         const heading = panel?.querySelector(".orbit-layers-heading");
         const add = panel?.querySelector("#openCatalogBtn");
         const addIcon = add?.querySelector("svg");
-        const addLabel = add?.querySelector("span");
+        const addAccessibleName = add?.getAttribute("aria-label") || add?.getAttribute("title") || "";
         const projectHeader = panel?.querySelector(".orbit-project-header");
         const projectRoot = panel?.querySelector("[data-layer-tree-project-root]");
         const projectTitle = panel?.querySelector("[data-project-title]");
@@ -555,7 +738,7 @@ async function readLayersExplorerPresentation(page) {
             heading: snapshot(heading),
             add: snapshot(add),
             addIcon: snapshot(addIcon),
-            addLabel: snapshot(addLabel),
+            addAccessibleName,
             projectHeader: snapshot(projectHeader),
             projectRoot: snapshot(projectRoot),
             projectTitle: snapshot(projectTitle),
@@ -592,13 +775,6 @@ function expectOrbitBlue(actual, label) {
     expect(color.green, `${label} must keep Orbit blue green channel`).toBeLessThanOrEqual(130);
     expect(color.blue, `${label} must keep Orbit blue blue channel`).toBeGreaterThanOrEqual(145);
     expect(color.blue, `${label} must keep Orbit blue blue channel`).toBeLessThanOrEqual(190);
-}
-
-function expectOrbitBlueHighlight(actual, label) {
-    const color = readRgbChannels(actual);
-    expect(color.red, `${label} must brighten the Orbit blue red channel`).toBeGreaterThanOrEqual(90);
-    expect(color.green, `${label} must brighten the Orbit blue green channel`).toBeGreaterThanOrEqual(135);
-    expect(color.blue, `${label} must brighten the Orbit blue blue channel`).toBeGreaterThanOrEqual(190);
 }
 
 /**
@@ -1215,6 +1391,193 @@ test("Los paneles principales mantienen controles accesibles", async ({ page }) 
 
 });
 
+test("Rail, Layers y reloj comparten una carcasa lateral integrada", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await openWorkspace(page);
+    await ensureLayersPanelOpen(page);
+    await page.evaluate(() => document.documentElement.style.setProperty("--orbit-ui-scale", "1"));
+
+    await expect.poll(
+        async () => {
+            const layout = await readIntegratedLayersShell(page);
+            return Boolean(
+                layout.shell
+                && layout.rail
+                && layout.panel
+                && layout.header
+                && layout.heading
+                && layout.search
+                && layout.project
+                && layout.tree
+                && layout.footer
+                && layout.footerContent
+                && layout.footerMode
+            );
+        },
+        { message: "The integrated Layers shell must settle before measuring its columns" }
+    ).toBe(true);
+
+    const shell = await readIntegratedLayersShell(page);
+    const { shell: workspaceShell, rail, panel, header, heading, search, project, tree, footer, footerContent, footerMode, projectMenu } = shell;
+
+    expect(workspaceShell, "The integrated workspace shell must be measurable").not.toBeNull();
+    expect(rail, "The navigation rail must be measurable").not.toBeNull();
+    expect(panel, "The Layers outer shell must be measurable").not.toBeNull();
+    expect(header, "The Layers header must be measurable").not.toBeNull();
+    expect(heading, "The Layers heading must be measurable").not.toBeNull();
+    expect(search, "The Layers search row must be measurable").not.toBeNull();
+    expect(project, "The project module must be measurable").not.toBeNull();
+    expect(tree, "The Layers tree column must be measurable").not.toBeNull();
+    expect(footer, "The project clock must be measurable").not.toBeNull();
+    expect(footerContent, "The project clock's leading content must be measurable").not.toBeNull();
+    expect(footerMode, "The project clock's trailing control must be measurable").not.toBeNull();
+
+    // The wrapper owns the visual shell. The rail is its left column rather
+    // than a separate floating card with a gap of globe before Layers.
+    expect(Math.abs(workspaceShell.left - rail.left), "Rail must share the workspace shell's left edge").toBeLessThanOrEqual(1);
+    expect(workspaceShell.left, "The workspace shell must retain the shared safe inset instead of clipping its rounded frame").toBeGreaterThanOrEqual(4);
+    expect(Math.abs(workspaceShell.top - rail.top), "Rail must share the workspace shell's upper edge").toBeLessThanOrEqual(1);
+    expect(Math.abs(workspaceShell.bottom - rail.bottom), "Rail must share the workspace shell's lower edge").toBeLessThanOrEqual(1);
+    expect(Math.abs(workspaceShell.top - panel.top), "Layers must share the workspace shell's upper edge").toBeLessThanOrEqual(1);
+    expect(Math.abs(workspaceShell.bottom - panel.bottom), "Layers must share the workspace shell's lower edge").toBeLessThanOrEqual(1);
+    expect(Math.abs(workspaceShell.right - panel.right), "Layers must share the workspace shell's right edge").toBeLessThanOrEqual(1);
+    expect(rail.right, "The rail must reserve a visible column inside the workspace shell").toBeGreaterThan(workspaceShell.left + 40);
+    expect(rail.right, "The rail must end before the Layers content edge").toBeLessThan(workspaceShell.right - 120);
+
+    // The rail and explorer can remain joined at their structural seam, but
+    // they must still render distinct surfaces. The inner Layers gutter is
+    // asserted below, rather than prescribing whether it comes from the
+    // pane's own padding or a gap in the shared shell grid.
+    const hasDistinctSurfaces = panel.backgroundImage !== rail.backgroundImage
+        || panel.backgroundColor !== rail.backgroundColor;
+    expect(hasDistinctSurfaces, "Rail and Layers must retain their own dark surfaces on either side of the divider").toBeTruthy();
+
+    // The unified shell is the outer frame of both rail and Layers. Its cool
+    // grey-blue technical line must be continuous around all four edges, not
+    // only at the vertical divider. This makes every docked workspace panel
+    // read as one intentional Orbit window.
+    const outerFrameEdges = [
+        { side: "top", width: workspaceShell.borderTopWidth, color: workspaceShell.borderTopColor },
+        { side: "right", width: workspaceShell.borderRightWidth, color: workspaceShell.borderRightColor },
+        { side: "bottom", width: workspaceShell.borderBottomWidth, color: workspaceShell.borderBottomColor },
+        { side: "left", width: workspaceShell.borderLeftWidth, color: workspaceShell.borderLeftColor }
+    ];
+    for (const edge of outerFrameEdges) {
+        expect(
+            isVisibleTechnicalFrameEdge(edge.width, edge.color),
+            `Integrated Layers shell must keep a visible cool grey-blue ${edge.side} frame edge`
+        ).toBeTruthy();
+    }
+    const outerFrameWidths = outerFrameEdges.map((edge) => edge.width);
+    expect(
+        Math.max(...outerFrameWidths) - Math.min(...outerFrameWidths),
+        "Technical frame thickness must remain consistent around the whole Layers window"
+    ).toBeLessThanOrEqual(1);
+
+    // A real divider is needed at the rail/content seam. It may be authored
+    // as the rail's border or as a pseudo-element on either surface.
+    const railDividerColor = readRgbChannels(rail.borderRightColor);
+    const panelDividerColor = readRgbChannels(panel.borderLeftColor);
+    const railBorderDivider = rail.borderRightWidth >= 1 && railDividerColor.alpha > .25;
+    const panelBorderDivider = panel.borderLeftWidth >= 1 && panelDividerColor.alpha > .25;
+    const pseudoDivider = [shell.shellAfter, shell.shellBefore, shell.railAfter, shell.railBefore, shell.panelAfter, shell.panelBefore]
+        .some((candidate) => hasVisibleVerticalDivider(candidate, Math.max(rail.height, panel.height, workspaceShell.height) - 6));
+    expect(railBorderDivider || panelBorderDivider || pseudoDivider, "Rail and Layers must expose a continuous vertical divider").toBeTruthy();
+    if (railBorderDivider) {
+        expect(railDividerColor.red, "Rail divider must use a neutral grey rather than an accent blue").toBeGreaterThanOrEqual(90);
+        expect(railDividerColor.green, "Rail divider must use a neutral grey rather than an accent blue").toBeGreaterThanOrEqual(90);
+    }
+
+    // The Layers content itself needs a deliberate gutter beyond the rail
+    // divider. This protects the title, controls and tree from visually
+    // collapsing into the navigation rail while still keeping one joined
+    // workspace shell.
+    const contentItems = [heading, search, project, tree, footerContent];
+    for (const item of contentItems) {
+        expect(item.left, "Each Layers content region must start after a clear rail-to-content gutter").toBeGreaterThanOrEqual(rail.right + 6);
+        expect(item.right, "Each Layers content region must stay inside the outer shell").toBeLessThanOrEqual(panel.right + 1);
+    }
+    expect(projectMenu, "Project header action must be measurable").not.toBeNull();
+    expect(projectMenu.left, "Header controls must stay in the content column").toBeGreaterThanOrEqual(rail.right + 6);
+
+    // The header's text and the footer use the same content gutter. A small
+    // internal padding difference is permitted, but no second offset/card is.
+    const contentLeft = Math.min(heading.left, search.left, project.left, footerContent.left);
+    const contentRight = Math.max(search.right, project.right, footerMode.right);
+    expect(Math.abs(search.left - footerContent.left), "Search and project clock content must share the left edge").toBeLessThanOrEqual(2);
+    expect(Math.abs(search.right - footerMode.right), "Search and project clock content must share the right edge").toBeLessThanOrEqual(2);
+    expect(heading.left, "Header title must not be placed under the rail").toBeGreaterThanOrEqual(contentLeft - 1);
+    expect(heading.left - contentLeft, "Header title must use the same content gutter").toBeLessThanOrEqual(24);
+    expect(contentRight, "Content column must retain a practical width").toBeGreaterThan(contentLeft + 180);
+
+    // The integrated footer stays below the explorer flow. It cannot cover
+    // the header/search/project controls or allow the tree to pass through it.
+    expect(footer.top, "Footer must start below the Layers header").toBeGreaterThanOrEqual(header.bottom - 1);
+    expect(footer.top, "Footer must start below the search row").toBeGreaterThanOrEqual(search.bottom - 1);
+    expect(footer.top, "Footer must start below the project root").toBeGreaterThanOrEqual(project.bottom - 1);
+    expect(tree.bottom, "Tree must stop before the integrated footer").toBeLessThanOrEqual(footer.top + 1);
+    expect(rectanglesOverlap(footer, search), "Footer and search must not overlap").toBeFalsy();
+    expect(rectanglesOverlap(footer, project), "Footer and project module must not overlap").toBeFalsy();
+    expect(rectanglesOverlap(footer, tree), "Footer and Layers tree must not overlap").toBeFalsy();
+
+    // Collapsing Layers must not remove the compact navigator's right-hand
+    // frame. In this state the outer shell owns that edge, so it remains the
+    // same quiet 1 px line as the top, left and bottom edges.
+    await page.locator("#leftSatellitesBtn").click();
+    await expect(page.locator("#leftWorkspaceShell")).toHaveClass(/is-layers-closed/);
+    const collapsedShellFrame = await page.evaluate(() => {
+        const shell = document.querySelector("#leftWorkspaceShell");
+        if (!(shell instanceof HTMLElement)) return null;
+        const style = getComputedStyle(shell);
+        return {
+            width: Number.parseFloat(style.borderRightWidth),
+            color: style.borderRightColor
+        };
+    });
+    expect(collapsedShellFrame, "Collapsed shell must keep a measurable right frame").not.toBeNull();
+    expect(
+        isVisibleTechnicalFrameEdge(collapsedShellFrame.width, collapsedShellFrame.color),
+        "Collapsed rail must keep the same visible cool grey-blue outer edge"
+    ).toBeTruthy();
+    expect(collapsedShellFrame.width, "Collapsed rail edge must match the 1 px outer frame").toBeCloseTo(1, 0);
+});
+
+test("El chrome principal normaliza bordes, tipografÃ­a y esquinas", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await openWorkspace(page);
+    await ensureLayersPanelOpen(page);
+    await page.evaluate(() => document.documentElement.style.setProperty("--orbit-ui-scale", "1"));
+
+    const layersShell = await readPrimaryChromeSurface(page, "#leftWorkspaceShell", "top");
+    const toolbar = await readPrimaryChromeSurface(page, "#topToolbar", "bottom");
+
+    // Settings is the canonical right-side dock. Capture it while it is open
+    // so this contract covers a panel that does not share the Layers DOM.
+    await page.locator("#topSettingsBtn").click();
+    await expect(page.locator("#configPanel")).toBeVisible();
+    const settings = await readPrimaryChromeSurface(page, "#configPanel", "top");
+    await page.locator("#configPanel").getByRole("button", { name: "Cerrar", exact: true }).click();
+    await expect(page.locator("#configPanel")).toHaveCount(0);
+
+    // The simulation rail is the persistent lower dock. It must not regress
+    // to a second visual language when the simulated timeline is enabled.
+    await page.locator("#projectTimeModeBtn").click();
+    await page.getByRole("menuitemradio", { name: "Simulated", exact: true }).click();
+    await expect(page.locator(".react-simulation-dock")).toBeVisible();
+    const timeline = await readPrimaryChromeSurface(page, ".react-simulation-dock", "top");
+
+    expect(layersShell.borderWidth, "The Layers workspace must expose a tangible technical frame").toBeCloseTo(1, 3);
+    expect(layersShell.fontFamily, "The primary application chrome must use Inter").toMatch(/inter/i);
+
+    // The full-width toolbar has one structural edge, whereas the docks have
+    // complete frames. All of those visible edges must resolve to the same
+    // token rather than slightly different legacy greys or blue tints.
+    expectSharedPrimaryChrome(layersShell, layersShell, "Layers workspace");
+    expectSharedPrimaryChrome(layersShell, toolbar, "Top toolbar");
+    expectSharedPrimaryChrome(layersShell, settings, "Settings dock");
+    expectSharedPrimaryChrome(layersShell, timeline, "Simulation dock");
+});
+
 test("La barra lateral presenta iconos y etiquetas como bloques de navegación", async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 768 });
     await openWorkspace(page);
@@ -1304,7 +1667,7 @@ test("Layers mantiene un explorador técnico compacto y jerárquico", async ({ p
     await expect(removeAction).toBeVisible();
     await expect(eyeAction).toHaveClass(/orbit-project-action/);
     await expect(removeAction).toHaveClass(/orbit-project-action/);
-    await expect(page.locator("#openCatalogBtn")).toHaveClass(/orbit-layers-add-button/);
+    await expect(page.locator("#openCatalogBtn")).toHaveClass(/orbit-layers-header-add/);
 
     const earth = page.locator("#leftSatellitesPanel [data-layer-id='body:earth']");
     await expect(page.locator("#leftSatellitesPanel [data-layer-tree-bodies]")).toBeVisible();
@@ -1316,7 +1679,7 @@ test("Layers mantiene un explorador técnico compacto y jerárquico", async ({ p
     expect(await page.locator("#leftSatellitesPanel .orbit-layers-heading").textContent(), "Layers panel heading must use title case").toBe("Layers");
     expect(resting.add, "Layers add action must be rendered").not.toBeNull();
     expect(resting.addIcon, "Layers add action must expose a plus icon").not.toBeNull();
-    expect(resting.addLabel, "Layers add action must expose its label").not.toBeNull();
+    expect(resting.addAccessibleName, "Icon-only Layers add action must expose its accessible name").toContain("Añadir");
     expect(resting.projectHeader, "Project module header must be rendered").not.toBeNull();
     expect(resting.projectRoot, "Project root control must be rendered").not.toBeNull();
     expect(resting.projectTitle, "Project title must be rendered").not.toBeNull();
@@ -1336,15 +1699,13 @@ test("Layers mantiene un explorador técnico compacto y jerárquico", async ({ p
     expect(resting.header.borderBottomStyle, "Layers header must have a separator").not.toBe("none");
     expect(resting.header.borderBottomWidth, "Layers separator must stay visually thin").toBeCloseTo(1, 0);
 
-    // The call to action intentionally remains an outlined tool, not a large
-    // saturated button that competes with the explorer content.
-    expect(resting.add.height, "Añadir must use its compact 28–30px height").toBeGreaterThanOrEqual(28);
-    expect(resting.add.height, "Añadir must use its compact 28–30px height").toBeLessThanOrEqual(30);
-    expect(readRgbChannels(resting.add.backgroundColor).alpha, "Añadir must retain a transparent resting surface").toBeLessThanOrEqual(0.12);
-    expect(resting.add.backgroundImage, "Añadir must not use a saturated gradient").toBe("none");
-    expectOrbitBlue(resting.add.borderTopColor, "Añadir outline");
-    expect(resting.addIcon.width, "The plus icon must lead the compact label").toBeGreaterThanOrEqual(resting.addLabel.fontSize + 2);
-    expect(resting.add.fontFamily, "Añadir must use the shared Inter UI font").toMatch(/inter/i);
+    // The add action lives in the header as an icon-only tool: compact and
+    // fully labelled for assistive technologies.
+    expect(resting.add.height, "Add-layer tool must use a compact header target").toBeGreaterThanOrEqual(24);
+    expect(resting.add.height, "Add-layer tool must use a compact header target").toBeLessThanOrEqual(36);
+    expect(resting.addIcon.width, "The plus icon must remain visually legible").toBeGreaterThanOrEqual(12);
+    expect(resting.addIcon.height, "The plus icon must remain visually legible").toBeGreaterThanOrEqual(12);
+    expect(resting.add.fontFamily, "Add-layer tool must use the shared Inter UI font").toMatch(/inter/i);
 
     expect(resting.projectTitle.fontFamily, "Project module title must use Inter").toMatch(/inter/i);
     expect(resting.projectTitleText, "Project title must retain the technical uppercase treatment").toBe(resting.projectTitleText.toUpperCase());
@@ -1374,12 +1735,6 @@ test("Layers mantiene un explorador técnico compacto y jerárquico", async ({ p
     expect(resting.earthIcon.height, "Earth type icon must remain visible").toBeGreaterThanOrEqual(12);
     expect(resting.badge.fontFamily, "Layer tags must use Inter").toMatch(/inter/i);
     expect(resting.badge.fontSize, "Layer tags must use the compact 9px density").toBeCloseTo(9, 0);
-
-    const addButton = page.locator("#openCatalogBtn");
-    await addButton.hover();
-    const addHovered = await readLayersExplorerPresentation(page);
-    expect(addHovered.add.boxShadow, "Añadir hover must provide a restrained blue glow").not.toBe("none");
-    expectOrbitBlueHighlight(addHovered.add.borderTopColor, "Añadir hover outline");
 
     await earth.hover();
     const earthHovered = await readLayersExplorerPresentation(page);

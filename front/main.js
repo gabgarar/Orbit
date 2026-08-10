@@ -3571,14 +3571,26 @@ function bindReactLayersPanelResize() {
     }
 
     panel.dataset.orbitResizeBound = "true";
+    const syncWorkspaceShellWidth = () => {
+        const shell = document.getElementById("leftWorkspaceShell");
+        if (!shell) return;
+        const width = panel.style.getPropertyValue("--orbit-layers-panel-width").trim();
+        if (width) {
+            shell.style.setProperty("--orbit-left-panel-width", width);
+            return;
+        }
+        shell.style.removeProperty("--orbit-left-panel-width");
+    };
     setupResizableSidePanel({
         panel,
         triggerButton,
         storageKey: "orbit.layersPanel.width",
         cssVariable: "--orbit-layers-panel-width",
         maximumWidth: () => Math.min(640, window.innerWidth * 0.72),
+        onLayoutChange: syncWorkspaceShellWidth,
         onCollapse: () => window.dispatchEvent(new Event("orbit:layers-panel-collapse"))
     });
+    syncWorkspaceShellWidth();
 }
 
 function ensureLeftSidebar() {

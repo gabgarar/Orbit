@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CalendarIcon, ChevronDownIcon, EyeIcon, EyeOffIcon, FolderIcon, GroundStationIcon, ManualOrbitIcon, PassTableIcon, PlusIcon, PropagatedParametersIcon, SatelliteIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons.jsx";
+import { CalendarIcon, ChevronDownIcon, EyeIcon, EyeOffIcon, FolderIcon, GroundStationIcon, ManualOrbitIcon, MoreHorizontalIcon, PassTableIcon, PlusIcon, PropagatedParametersIcon, SatelliteIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons.jsx";
 import CameraControls from "../features/camera/CameraControls.jsx";
 import { getLayerActionsState, LAYER_ACTIONS_STATE_EVENT } from "../../../front/js/runtime/layerActionsState.js";
 import { emitPropagatedParametersClose, emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
@@ -89,7 +89,7 @@ function ProjectTimeFooter() {
     // clock visible here would make the isolated scene look like realtime is
     // still active, and it consumes useful space in the Layers panel.
     if (designMode) return null;
-    return <footer id="projectTimeFooter" className="project-time-footer relative flex min-h-[48px] items-center gap-[10px] border-t border-[#294467] px-[12px] py-[7px] mx-[14px] mb-0 font-[system-ui,sans-serif] text-[#dbe6f8]">
+    return <footer id="projectTimeFooter" className="project-time-footer orbit-workspace-time-footer relative flex min-h-[48px] items-center gap-[10px] border-t border-[#294467] px-[12px] py-[7px] font-[system-ui,sans-serif] text-[#dbe6f8]">
         <span className="project-time-footer__calendar grid size-[21px] shrink-0 place-items-center text-[#c5d6ef] [&>svg]:size-[15px] [&>svg]:fill-none [&>svg]:stroke-current [&>svg]:[stroke-linecap:round] [&>svg]:[stroke-linejoin:round] [&>svg]:[stroke-width:1.7]" aria-hidden="true"><CalendarIcon /></span>
         <div className="project-time-footer__clock grid min-w-0 gap-[3px]">
             <small className="truncate text-[10px] leading-none font-semibold uppercase tracking-[.035em] text-[#9eafc8]">{context.date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}</small>
@@ -382,7 +382,12 @@ export default function WorkspaceSidebar() {
         }
         window.dispatchEvent(new CustomEvent("orbit:project-action", { detail: action }));
     };
+    const layersOpen = openPanel && !designMode && !groundStationDesignMode;
+    const addLayerTitle = groundStationsOpen ? "A\u00f1adir estaci\u00f3n terrestre" : "A\u00f1adir capa";
+    const addLayerId = groundStationsOpen ? "addGroundStationLayerBtn" : "openCatalogBtn";
+
     return <>
+        <section id="leftWorkspaceShell" className={layersOpen ? "is-layers-open" : "is-layers-closed"} aria-label="Espacio de trabajo de capas">
         <aside id="leftSidebar" aria-label="Paneles del visor">
             <button id="leftSatellitesBtn" className={`sidebar-btn${openPanel && !designMode && !groundStationDesignMode ? " active" : ""}`} type="button" title={designMode || groundStationDesignMode ? "Capas (no disponibles durante el diseño)" : "Capas y satelites"} aria-label="Capas y satelites" aria-expanded={openPanel && !designMode && !groundStationDesignMode} onClick={togglePanel}><SatelliteIcon /><span className="sidebar-btn-label" aria-hidden="true">Layers</span></button>
             {!groundStationsOpen && <button id="leftManualOrbitBtn" className={`sidebar-btn${manualOrbitOpen ? " active" : ""}`} type="button" title={"Crear \u00f3rbita manual"} aria-label={"Crear \u00f3rbita manual"} aria-expanded={manualOrbitOpen} onClick={requestManualOrbitDesign}><ManualOrbitIcon /><span className="sidebar-btn-label" aria-hidden="true">Orbit</span></button>}
@@ -393,11 +398,13 @@ export default function WorkspaceSidebar() {
             <SessionRecordButton />
             <CameraControls />
         </aside>
-        <aside id="leftSatellitesPanel" className={`sidebar-panel${openPanel && !designMode && !groundStationDesignMode ? " open" : ""}`} aria-hidden={designMode || groundStationDesignMode} hidden={designMode}>
+        <div id="leftWorkspaceMain" aria-hidden={!layersOpen}>
+        <aside id="leftSatellitesPanel" className={`sidebar-panel${layersOpen ? " open" : ""}`} aria-hidden={designMode || groundStationDesignMode} hidden={designMode}>
             <div className="sidebar-panel-header orbit-layers-panel-header">
                 <div className="orbit-layers-heading">Layers</div>
-                <div className="relative shrink-0">
-                    <button id="projectActionsBtn" className={`orbit-layers-project-menu${projectActionsMenu?.source === "toolbar" ? " is-open" : ""}`} data-project-actions-control="true" type="button" title="Acciones de proyecto" aria-label="Acciones de proyecto" aria-haspopup="menu" aria-expanded={projectActionsMenu?.source === "toolbar"} aria-controls="projectActionsMenu" onClick={toggleProjectActionsMenu}><FolderIcon /></button>
+                <div className="orbit-layers-header-actions relative shrink-0">
+                    <button className="orbit-layers-header-add" id={addLayerId} type="button" title={addLayerTitle} aria-label={addLayerTitle} disabled={designMode} onClick={groundStationsOpen ? () => window.dispatchEvent(new Event("orbit:ground-stations-create-request")) : undefined}><PlusIcon /></button>
+                    <button id="projectActionsBtn" className={`orbit-layers-project-menu${projectActionsMenu?.source === "toolbar" ? " is-open" : ""}`} data-project-actions-control="true" type="button" title="Acciones de proyecto" aria-label="Acciones de proyecto" aria-haspopup="menu" aria-expanded={projectActionsMenu?.source === "toolbar"} aria-controls="projectActionsMenu" onClick={toggleProjectActionsMenu}><MoreHorizontalIcon /></button>
                     {projectActionsMenu?.source === "toolbar" && <ProjectActionsMenu source="toolbar" projectName={projectName} onSelect={selectProjectAction} />}
                 </div>
             </div>
@@ -412,7 +419,6 @@ export default function WorkspaceSidebar() {
                         {allLayersVisible ? <EyeIcon /> : <EyeOffIcon />}
                     </button>
                     <button className="object-global-remove-btn orbit-project-action is-danger" id="removeAllLayersHeaderBtn" type="button" title={designMode ? "Las capas no se pueden eliminar durante el diseño orbital" : "Quitar todas las capas"} aria-label="Quitar todas las capas" disabled={designMode} hidden={!hasActiveLayers}><TrashIcon /></button>
-                    <button className="object-add-btn orbit-layers-add-button" id={groundStationsOpen ? "addGroundStationLayerBtn" : "openCatalogBtn"} type="button" title={groundStationsOpen ? "Añadir estación terrestre" : designMode ? "El catálogo se bloquea durante el diseño orbital" : "Añadir capa"} aria-label={groundStationsOpen ? "Añadir estación terrestre" : "Añadir capa"} disabled={designMode} onClick={groundStationsOpen ? () => window.dispatchEvent(new Event("orbit:ground-stations-create-request")) : undefined}><PlusIcon /><span>Añadir</span></button>
                 </div>
                 <div className="orbit-project-divider" aria-hidden="true" />
             </div>
@@ -432,6 +438,8 @@ export default function WorkspaceSidebar() {
             <ProjectTimeFooter />
             <div className="sidebar-panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Redimensionar panel de capas" />
         </aside>
+        </div>
+        </section>
         {projectActionsMenu?.source === "context" && <ProjectActionsMenu source="context" left={projectActionsMenu.left} top={projectActionsMenu.top} projectName={projectName} onSelect={selectProjectAction} />}
         <div id="legacyHiddenInfo" hidden />
     </>;

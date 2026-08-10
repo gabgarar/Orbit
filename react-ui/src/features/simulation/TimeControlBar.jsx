@@ -75,9 +75,10 @@ export default function TimeControlBar() {
         return () => window.removeEventListener("orbit:ground-stations-analysis-result", sync);
     }, []);
     useEffect(() => {
-        const panel = document.getElementById("leftSatellitesPanel"); const infoPanel = document.getElementById("leftInfoPanel"); const rail = document.getElementById("leftSidebar"); const projectTimeFooter = document.getElementById("projectTimeFooter");
+        const shell = document.getElementById("leftWorkspaceShell"); const panel = document.getElementById("leftSatellitesPanel"); const infoPanel = document.getElementById("leftInfoPanel"); const rail = document.getElementById("leftSidebar"); const projectTimeFooter = document.getElementById("projectTimeFooter");
         const update = () => {
-            const active = panel?.classList.contains("open") ? panel : (infoPanel?.classList.contains("open") ? infoPanel : null);
+            const layersOpen = shell?.classList.contains("is-layers-open") && panel?.classList.contains("open");
+            const active = layersOpen ? shell : (infoPanel?.classList.contains("open") ? infoPanel : null);
             setDockLeft(String(Math.round(active ? active.getBoundingClientRect().right + 12 : (rail?.getBoundingClientRect().right || 54) + 12)) + "px");
 
             // Match the compact project clock height and anchor the dock to the
@@ -94,8 +95,8 @@ export default function TimeControlBar() {
             setDockHeight(footerHeight > 0 ? `${footerHeight}px` : null);
             setDockBottom(Number.isFinite(anchorBottom) && anchorBottom > 0 ? `${Math.max(0, window.innerHeight - anchorBottom)}px` : null);
         };
-        const afterTransition = () => window.setTimeout(update, 230); update(); const observer = new MutationObserver(afterTransition); if (panel) observer.observe(panel, { attributes: true, attributeFilter: ["class", "style"] }); if (infoPanel) observer.observe(infoPanel, { attributes: true, attributeFilter: ["class", "style"] }); const resizeObserver = new ResizeObserver(update); [panel, infoPanel, rail, projectTimeFooter].filter(Boolean).forEach((element) => resizeObserver.observe(element)); panel?.addEventListener("transitionend", update); infoPanel?.addEventListener("transitionend", update); window.addEventListener("resize", update);
-        return () => { observer.disconnect(); resizeObserver.disconnect(); panel?.removeEventListener("transitionend", update); infoPanel?.removeEventListener("transitionend", update); window.removeEventListener("resize", update); };
+        const afterTransition = () => window.setTimeout(update, 230); update(); const observer = new MutationObserver(afterTransition); if (shell) observer.observe(shell, { attributes: true, attributeFilter: ["class", "style"] }); if (panel) observer.observe(panel, { attributes: true, attributeFilter: ["class", "style"] }); if (infoPanel) observer.observe(infoPanel, { attributes: true, attributeFilter: ["class", "style"] }); const resizeObserver = new ResizeObserver(update); [shell, panel, infoPanel, rail, projectTimeFooter].filter(Boolean).forEach((element) => resizeObserver.observe(element)); shell?.addEventListener("transitionend", update); panel?.addEventListener("transitionend", update); infoPanel?.addEventListener("transitionend", update); window.addEventListener("resize", update);
+        return () => { observer.disconnect(); resizeObserver.disconnect(); shell?.removeEventListener("transitionend", update); panel?.removeEventListener("transitionend", update); infoPanel?.removeEventListener("transitionend", update); window.removeEventListener("resize", update); };
     }, []);
 
     const isSimulated = simulation.mode === "range";

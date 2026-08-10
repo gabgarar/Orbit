@@ -62,6 +62,10 @@ export function PlusIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>;
 }
 
+export function MoreHorizontalIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.35" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.35" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.35" fill="currentColor" stroke="none" /></svg>;
+}
+
 export function SearchIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3" /><path d="m16 16 4.3 4.3" /></svg>;
 }

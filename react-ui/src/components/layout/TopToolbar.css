@@ -1,0 +1,315 @@
+/*
+ * The global toolbar is application chrome, but it still follows the same
+ * surface, frame, radius and typography contract as every Orbit work panel.
+ * Fallbacks keep the standalone React build legible before the root tokens are
+ * loaded (for example in visual-test fixtures).
+ */
+#topToolbar.orbit-top-toolbar {
+    --orbit-toolbar-surface: var(--orbit-surface-toolbar, linear-gradient(90deg, #07111f 0%, #0b1728 56%, #07111f 100%));
+    --orbit-toolbar-frame: var(--orbit-frame-color, rgba(135, 151, 174, .52));
+    --orbit-toolbar-radius: var(--orbit-radius-window, 10px);
+    --orbit-toolbar-text: var(--orbit-text-primary, #d9e2f2);
+    --orbit-toolbar-text-muted: var(--orbit-text-secondary, #aebbd1);
+    --orbit-toolbar-accent: var(--orbit-text-accent, #7fa7ff);
+
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 10100;
+    display: flex;
+    align-items: center;
+    gap: clamp(14px, 1.5vw, 22px);
+    box-sizing: border-box;
+    min-width: 0;
+    height: max(64px, calc(76px * var(--orbit-ui-scale, 1)));
+    padding: 0 clamp(14px, 2vw, 28px);
+    overflow: visible;
+    border: 1px solid var(--orbit-toolbar-frame);
+    border-top: 0;
+    /* The toolbar spans the viewport, so square outer corners are cleaner
+       than two partial rounded corners fighting the viewport edge. */
+    border-radius: 0;
+    background: var(--orbit-toolbar-surface);
+    box-shadow: 0 7px 22px rgba(0, 0, 0, .32), inset 0 -1px rgba(255, 255, 255, .025);
+    color: var(--orbit-toolbar-text);
+    font-family: var(--orbit-font-ui, "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+#topToolbar .toolbar-brand {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: clamp(7px, 1vw, 12px);
+    margin-right: clamp(8px, 2vw, 28px);
+    color: var(--orbit-toolbar-accent);
+    font: 600 clamp(16px, 1.3vw, 20px) / 1 var(--orbit-font-ui, "Inter", ui-sans-serif, system-ui, sans-serif);
+    letter-spacing: .16em;
+    text-decoration: none;
+}
+
+#topToolbar .toolbar-brand:hover {
+    color: var(--orbit-toolbar-text);
+}
+
+#topToolbar .toolbar-brand-logo {
+    display: block;
+    width: max(32px, calc(36px * var(--orbit-ui-scale, 1)));
+    height: max(32px, calc(36px * var(--orbit-ui-scale, 1)));
+    object-fit: contain;
+}
+
+#topToolbar .toolbar-nav {
+    display: flex;
+    align-self: stretch;
+    align-items: center;
+    gap: clamp(12px, 1.5vw, 23px);
+    min-width: 0;
+}
+
+#topToolbar .toolbar-nav-link {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    align-self: stretch;
+    gap: 7px;
+    box-sizing: border-box;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--orbit-toolbar-text-muted);
+    font: 500 clamp(12px, .9vw, 14px) / 1 var(--orbit-font-ui, "Inter", ui-sans-serif, system-ui, sans-serif);
+    white-space: nowrap;
+    transition: color 150ms ease;
+}
+
+#topToolbar .toolbar-nav-link.is-available {
+    cursor: pointer;
+}
+
+#topToolbar .toolbar-nav-link.is-unavailable {
+    cursor: not-allowed;
+    opacity: .46;
+}
+
+#topToolbar .toolbar-nav-link.is-available:hover,
+#topToolbar .toolbar-nav-link.is-active {
+    color: var(--orbit-toolbar-text);
+}
+
+#topToolbar .toolbar-nav-link.is-active {
+    font-weight: 600;
+}
+
+#topToolbar .toolbar-nav-link.is-active::after {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    border-radius: var(--orbit-toolbar-radius) var(--orbit-toolbar-radius) 0 0;
+    background: var(--orbit-toolbar-accent);
+    box-shadow: 0 0 10px rgba(127, 167, 255, .7);
+    content: "";
+}
+
+#topToolbar .toolbar-nav-link:focus-visible,
+#topToolbar .toolbar-icon-btn:focus-visible,
+#topToolbar .toolbar-avatar:focus-visible {
+    outline: 2px solid var(--orbit-toolbar-accent);
+    outline-offset: 2px;
+}
+
+#topToolbar .toolbar-nav-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--orbit-toolbar-accent);
+}
+
+#topToolbar .toolbar-nav-icon-svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.7;
+}
+
+#topToolbar .toolbar-spacer {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+#topToolbar .toolbar-search {
+    border-color: var(--orbit-toolbar-frame) !important;
+    border-radius: calc(var(--orbit-toolbar-radius) - 2px) !important;
+    background: rgba(4, 12, 23, .76) !important;
+    color: var(--orbit-toolbar-text) !important;
+    font-family: var(--orbit-font-ui, "Inter", ui-sans-serif, system-ui, sans-serif) !important;
+    box-shadow: inset 0 1px rgba(255, 255, 255, .02);
+}
+
+#topToolbar .toolbar-search:focus {
+    border-color: var(--orbit-toolbar-accent) !important;
+    background: rgba(16, 35, 67, .82) !important;
+}
+
+#topToolbar .toolbar-search-icon {
+    color: var(--orbit-toolbar-text-muted) !important;
+}
+
+#topToolbar #topSearchSuggestions {
+    overflow: hidden;
+    border-color: var(--orbit-toolbar-frame) !important;
+    border-radius: var(--orbit-toolbar-radius) !important;
+    background: var(--orbit-toolbar-surface) !important;
+    box-shadow: 0 16px 34px rgba(0, 0, 0, .42), inset 0 1px rgba(255, 255, 255, .035);
+    font-family: var(--orbit-font-ui, "Inter", ui-sans-serif, system-ui, sans-serif);
+}
+
+#topToolbar .toolbar-search-option,
+#topToolbar .toolbar-search-empty {
+    border-color: var(--orbit-toolbar-frame) !important;
+    font-family: var(--orbit-font-ui, "Inter", ui-sans-serif, system-ui, sans-serif) !important;
+}
+
+#topToolbar .toolbar-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: clamp(5px, 1vw, 16px);
+}
+
+#topToolbar .toolbar-action-divider {
+    width: 1px;
+    height: 28px;
+    background: var(--orbit-toolbar-frame);
+    opacity: .72;
+}
+
+#topToolbar .toolbar-icon-btn {
+    position: relative;
+    display: grid;
+    width: 27px;
+    height: 30px;
+    padding: 0;
+    place-items: center;
+    border: 0;
+    border-radius: calc(var(--orbit-toolbar-radius) - 3px);
+    background: transparent;
+    color: var(--orbit-toolbar-text-muted);
+    cursor: pointer;
+    transition: color 150ms ease, background 150ms ease;
+}
+
+#topToolbar .toolbar-icon-btn:hover {
+    background: rgba(127, 167, 255, .11);
+    color: var(--orbit-toolbar-text);
+}
+
+#topToolbar .toolbar-vector-icon > svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8;
+}
+
+#topToolbar .toolbar-notification-dot {
+    position: absolute;
+    top: 1px;
+    right: 0;
+    width: 7px;
+    height: 7px;
+    border: 2px solid var(--orbit-toolbar-surface);
+    border-radius: 999px;
+    background: #ff625c;
+}
+
+#topToolbar .toolbar-avatar {
+    display: grid;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid var(--orbit-toolbar-frame);
+    border-radius: 50%;
+    background: linear-gradient(145deg, #293a9c, #17235e);
+    color: var(--orbit-toolbar-text);
+    font: 600 13px / 1 var(--orbit-font-ui, "Inter", ui-sans-serif, system-ui, sans-serif);
+    cursor: pointer;
+    transition: border-color 150ms ease, filter 150ms ease;
+}
+
+#topToolbar .toolbar-avatar:hover {
+    border-color: var(--orbit-toolbar-accent);
+    filter: brightness(1.13);
+}
+
+@media (max-width: 1100px) {
+    #topToolbar.orbit-top-toolbar {
+        gap: 14px;
+        padding-inline: 14px;
+    }
+
+    #topToolbar .toolbar-actions {
+        gap: 8px;
+    }
+}
+
+@media (max-width: 820px) {
+    #topToolbar.orbit-top-toolbar {
+        height: 56px;
+        gap: 10px;
+        padding-inline: 10px;
+    }
+
+    #topToolbar .toolbar-nav-link:not(.is-active),
+    #topToolbar .toolbar-action-divider,
+    #topToolbar .toolbar-avatar {
+        display: none;
+    }
+
+    #topToolbar .toolbar-actions {
+        gap: 5px;
+    }
+}
+
+@media (max-width: 620px) {
+    #topToolbar.orbit-top-toolbar {
+        gap: 6px;
+        padding-inline: 6px;
+    }
+
+    #topToolbar .toolbar-brand {
+        gap: 0;
+        margin-right: 0;
+    }
+
+    #topToolbar .toolbar-brand-logo,
+    #topToolbar .toolbar-spacer,
+    #topToolbar .toolbar-nav-icon {
+        display: none;
+    }
+
+    #topToolbar .toolbar-nav {
+        flex: 0 0 auto;
+        gap: 0;
+    }
+
+    #topToolbar .toolbar-icon-btn {
+        width: 26px;
+        height: 32px;
+    }
+
+    #topToolbar .toolbar-vector-icon > svg {
+        width: 18px;
+        height: 18px;
+    }
+}

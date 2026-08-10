@@ -20,7 +20,7 @@ export default function HelpPanel({ onClose }) {
         aria-modal="true"
         aria-label="Documentación de Orbit"
     >
-        <article className="grid min-h-0 overflow-hidden rounded-[14px] border border-[#36557c] bg-[#0b1526] shadow-[0_28px_80px_rgba(0,0,0,.62)] [grid-template-rows:auto_minmax(0,1fr)]">
+        <article className="orbit-help-panel grid min-h-0 overflow-hidden rounded-[14px] border border-[#36557c] bg-[#0b1526] shadow-[0_28px_80px_rgba(0,0,0,.62)] [grid-template-rows:auto_minmax(0,1fr)]">
             <header className="flex min-h-[54px] items-center justify-between gap-3 border-b border-[#294667] bg-[linear-gradient(105deg,rgba(14,30,52,.98),rgba(8,18,33,.98))] px-[clamp(12px,1.4vw,20px)] py-2.5 max-[620px]:flex-wrap">
                 <div className="min-w-0 font-[system-ui,sans-serif]">
                     <span className="block text-[9px] leading-none font-bold tracking-[.16em] text-[#7298dc]">ORBIT · HELP</span>

@@ -13,6 +13,22 @@ html, body, #root { background: #000; overflow: hidden; }
    only the lower inset: it is updated by TimeControlBar while a simulated
    range is visible, so right-side work panels never sit on top of it. */
 :root {
+    /* Application chrome: every primary window consumes these tokens instead
+       of introducing another near-identical blue border or font stack. */
+    --orbit-font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --orbit-font-ui: var(--orbit-font-sans);
+    --orbit-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --orbit-font-size-meta: 10px;
+    --orbit-font-size-body: 12px;
+    --orbit-font-size-section: 14px;
+    --orbit-font-size-panel-title: 15px;
+    --orbit-frame-width: 1px;
+    --orbit-frame-color: rgba(135, 151, 174, .52);
+    --orbit-radius-window: 10px;
+    --orbit-radius-window-inner: 9px;
+    --orbit-radius-control: 6px;
+    --orbit-surface-toolbar: linear-gradient(90deg, #08111e 0%, #0b1726 56%, #08111e 100%);
+    --orbit-surface-window: linear-gradient(145deg, rgba(12, 25, 42, .78), rgba(5, 14, 25, .70));
     --orbit-workspace-panel-top: max(72px, calc(76px * var(--orbit-ui-scale, 1)));
     --orbit-sidebar-left: 8px;
     --orbit-sidebar-width: 76px;
@@ -23,6 +39,14 @@ html, body, #root { background: #000; overflow: hidden; }
     --orbit-right-panel-base-bottom: 6px;
     --orbit-right-panel-bottom: var(--orbit-right-panel-base-bottom);
     --orbit-right-panel-width: min(420px, calc(100vw - 28px));
+    /* Compatibility alias for progressively migrated legacy surfaces. */
+    --orbit-panel-frame: var(--orbit-frame-color);
+}
+
+:root[data-theme="light"] {
+    --orbit-frame-color: rgba(105, 123, 148, .64);
+    --orbit-surface-toolbar: linear-gradient(90deg, #f7faff 0%, #edf3f9 56%, #f7faff 100%);
+    --orbit-surface-window: linear-gradient(145deg, rgba(248, 251, 255, .97), rgba(237, 243, 249, .95));
 }
 
 .orbit-right-panel {
@@ -32,9 +56,9 @@ html, body, #root { background: #000; overflow: hidden; }
     width: var(--orbit-right-panel-width);
     min-height: 0;
     max-height: none;
-    border-color: rgba(65, 99, 147, .66);
-    border-radius: 10px;
-    background: linear-gradient(145deg, rgba(12, 25, 42, .78), rgba(5, 14, 25, .70));
+    border-color: var(--orbit-frame-color);
+    border-radius: var(--orbit-radius-window);
+    background: var(--orbit-surface-window);
     box-shadow: 0 22px 60px rgba(0, 0, 0, .46), inset 0 1px rgba(255, 255, 255, .045);
     -webkit-backdrop-filter: blur(14px) saturate(112%);
     backdrop-filter: blur(14px) saturate(112%);
@@ -1132,6 +1156,221 @@ body.with-toolbars #cesiumContainer {
 }
 #leftSidebar #leftCameraControlsBtn::after { display: none; }
 
+/* Layers is a single workspace surface rather than two cards that happen to
+   sit beside one another.  The rail remains a separate interactive region so
+   its menus and focus behaviour stay intact, while the shell owns the border,
+   background and shadow shared by the rail, explorer and project clock. */
+#leftWorkspaceShell {
+    --orbit-left-panel-width: var(--orbit-layers-panel-width, min(calc(300px * var(--orbit-ui-scale)), 88vw));
+    --orbit-layers-content-inset: 20px;
+    /* Keep the two parts visibly distinct: the rail owns this darker surface,
+       while each workspace panel can provide its own surface to the right of
+       the structural divider. */
+    --orbit-rail-surface: linear-gradient(180deg, rgba(9, 18, 31, .98), rgba(5, 12, 23, .97));
+    --orbit-workspace-panel-surface: linear-gradient(148deg, rgba(15, 23, 38, .98), rgba(8, 15, 27, .96));
+    position: fixed;
+    top: var(--orbit-workspace-panel-top) !important;
+    bottom: var(--orbit-right-panel-base-bottom);
+    /* The rail is flush with the shared frame, while the whole workspace
+       keeps the same safe inset and rounded outer edge as the other docks. */
+    left: var(--orbit-sidebar-left);
+    z-index: 10130;
+    display: grid;
+    width: calc(var(--orbit-sidebar-width) + var(--orbit-left-panel-width));
+    min-height: 0;
+    grid-template-columns: var(--orbit-sidebar-width) minmax(0, 1fr);
+    box-sizing: border-box;
+    overflow: visible;
+    border: 1px solid var(--orbit-panel-frame);
+    border-radius: 11px;
+    background: var(--orbit-rail-surface);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, .36), inset 0 1px rgba(231, 242, 255, .045);
+    -webkit-backdrop-filter: blur(14px) saturate(112%);
+    backdrop-filter: blur(14px) saturate(112%);
+    transition: width .2s ease;
+}
+
+#leftWorkspaceShell.is-layers-closed {
+    width: var(--orbit-sidebar-width);
+    grid-template-columns: minmax(0, 1fr) 0;
+}
+
+#leftWorkspaceShell #leftSidebar {
+    position: relative !important;
+    top: auto !important;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    z-index: 2;
+    width: var(--orbit-sidebar-width);
+    min-height: 0;
+    padding: 8px 4px;
+    box-sizing: border-box;
+    border: 0;
+    border-right: 1px solid var(--orbit-panel-frame);
+    border-radius: 10px 0 0 10px;
+    background: var(--orbit-rail-surface);
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+#leftWorkspaceShell.is-layers-open #leftSidebar {
+    box-shadow: 1px 0 0 rgba(5, 12, 22, .46);
+}
+
+/* When the explorer is collapsed the outer shell, not a second adjacent
+   divider, owns the rail's right edge.  That leaves a single 1 px frame on
+   every side of the compact navigator. */
+#leftWorkspaceShell.is-layers-closed #leftSidebar {
+    width: 100%;
+    border-right-color: transparent;
+}
+
+#leftWorkspaceMain {
+    position: relative;
+    z-index: 1;
+    min-width: 0;
+    min-height: 0;
+}
+
+#leftWorkspaceShell.is-layers-closed #leftWorkspaceMain {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+#leftWorkspaceShell #leftSatellitesPanel {
+    position: relative !important;
+    top: auto !important;
+    right: auto;
+    bottom: auto;
+    left: auto !important;
+    z-index: 1 !important;
+    width: 100% !important;
+    max-width: 100%;
+    height: 100%;
+    min-height: 0;
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 0 10px 10px 0;
+    /* Starts immediately after the grey divider.  Do not inherit the rail
+       surface here: Layers and future workspace panels need their own field. */
+    background: var(--orbit-workspace-panel-surface);
+    box-shadow: none;
+    transform: translateX(-100%);
+}
+
+#leftWorkspaceShell.is-layers-open #leftSatellitesPanel.open {
+    transform: translateX(0);
+}
+
+#leftWorkspaceShell #leftSatellitesPanel .orbit-layers-panel-header {
+    border-top-right-radius: 10px;
+    padding-inline: var(--orbit-layers-content-inset);
+}
+
+/* Keep the explorer joined to the rail, but give its contents a deliberate
+   breathing room after the structural divider. */
+#leftWorkspaceShell #leftSatellitesPanel > .orbit-layers-search,
+#leftWorkspaceShell #leftSatellitesPanel > .orbit-project-module {
+    margin-inline: var(--orbit-layers-content-inset);
+}
+
+#leftWorkspaceShell #leftSatellitesPanel #leftSatellitesPanelContent {
+    margin-left: calc(30px + 6px);
+}
+
+/* The legacy header adds a decorative orbital ring through ::after. It reads
+   as a stray circle behind the project actions in the unified dock, so the
+   Layers header deliberately stays flat and technical. */
+#leftWorkspaceShell #leftSatellitesPanel .orbit-layers-panel-header::after {
+    display: none;
+}
+
+#leftWorkspaceShell #projectTimeFooter {
+    flex: 0 0 66px;
+    height: 66px;
+    margin: auto 0 0;
+    padding: 9px var(--orbit-layers-content-inset) 10px;
+    border-top-color: rgba(89, 127, 183, .45);
+    background: linear-gradient(90deg, rgba(15, 23, 38, .99), rgba(8, 15, 27, .98));
+}
+
+/* One quiet outline ties together the docked and floating work surfaces.
+   Individual controls still own their semantic colours; only window frames
+   use this neutral grey-blue. */
+#leftInfoPanel,
+#configPanel,
+.object-details-panel,
+#manualOrbitPanel,
+.propagated-orbit-parameters-panel,
+#groundStationModal .ground-station-panel,
+aside[aria-label="Operaciones de estaciones terrestres"],
+.react-simulation-dock,
+.orbit-floating-panel,
+#appDialogPanel,
+#satelliteVizPanel,
+.tle-info-panel,
+#catalogModal > section,
+#catalogFilterModal > section,
+#catalogExportModal > section,
+#sidebarConfirmModal > section,
+#folderNameModal > form,
+#projectActionModal > :is(form, section),
+#projectWelcome > div,
+.orbit-help-panel {
+    border-color: var(--orbit-panel-frame) !important;
+}
+
+#leftWorkspaceShell .orbit-layers-header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+#leftWorkspaceShell .orbit-layers-header-add,
+#leftWorkspaceShell .orbit-layers-project-menu {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #bdcce0;
+    cursor: pointer;
+    transition: border-color .15s ease, background-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+
+#leftWorkspaceShell .orbit-layers-header-add svg,
+#leftWorkspaceShell .orbit-layers-project-menu svg {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.75;
+}
+
+#leftWorkspaceShell .orbit-layers-header-add:hover,
+#leftWorkspaceShell .orbit-layers-header-add:focus-visible,
+#leftWorkspaceShell .orbit-layers-project-menu:hover,
+#leftWorkspaceShell .orbit-layers-project-menu.is-open,
+#leftWorkspaceShell .orbit-layers-project-menu:focus-visible {
+    border-color: rgba(109, 158, 212, .72);
+    background: rgba(58, 110, 168, .18);
+    color: #edf4ff;
+    box-shadow: 0 0 12px rgba(58, 110, 168, .18);
+    outline: none;
+}
+
+#leftWorkspaceShell .orbit-layers-header-add:disabled {
+    cursor: not-allowed;
+    opacity: .45;
+}
+
 /* Settings deliberately shares the right-side object-details composition.
    The legacy stylesheet still supplies IDs for an old centred modal, therefore
    these ID rules are kept here (after that stylesheet) to make the React
@@ -1292,4 +1531,226 @@ body.with-toolbars #cesiumContainer {
     #leftSidebar .sidebar-btn svg,
     #leftSidebar .sidebar-btn .sidebar-btn-icon { width: 22px; height: 22px; flex-basis: 22px; }
     #leftSidebar .sidebar-btn-label { display: none; }
+}
+
+/* Keep the joined rail + explorer usable on narrow screens: it becomes a
+   single inset surface with a compact icon column, rather than letting the
+   two desktop widths overflow the viewport. */
+@media (max-width: 620px) {
+    #leftWorkspaceShell,
+    #leftWorkspaceShell.is-layers-open {
+        right: 4px;
+        width: auto;
+        grid-template-columns: var(--orbit-sidebar-width) minmax(0, 1fr);
+        border-radius: 10px;
+    }
+
+    #leftWorkspaceShell.is-layers-closed {
+        right: auto;
+        width: var(--orbit-sidebar-width);
+        grid-template-columns: minmax(0, 1fr) 0;
+    }
+
+    #leftWorkspaceShell #leftSidebar {
+        --orbit-sidebar-rail-gap: 4px;
+        width: var(--orbit-sidebar-width);
+        padding: 4px;
+        gap: var(--orbit-sidebar-rail-gap);
+    }
+
+    #leftWorkspaceShell {
+        --orbit-layers-content-inset: 14px;
+    }
+
+    #leftWorkspaceShell #leftSatellitesPanel {
+        width: 100% !important;
+        border-radius: 0 10px 10px 0;
+    }
+
+    #leftWorkspaceShell #projectTimeFooter {
+        min-width: 0;
+        padding-inline: 10px;
+    }
+
+    #leftWorkspaceShell .orbit-layers-header-actions { gap: 3px; }
+    #leftWorkspaceShell .orbit-layers-header-add,
+    #leftWorkspaceShell .orbit-layers-project-menu { width: 28px; height: 28px; }
+}
+
+/* -------------------------------------------------------------------------
+   Shared application chrome
+
+   Primary windows intentionally share one physical frame: an integral 1 px
+   outline, 10 px outer radius and Inter UI face.  This final layer wins over
+   the older legacy sheets without changing semantic controls (alerts, focus
+   rings, status badges or dashed drop targets).  Integer radii and one frame
+   per surface prevent the anti-aliased double corners that appeared when the
+   rail, explorer and shell each painted a different rounded border.
+   ------------------------------------------------------------------------- */
+
+:is(
+    #leftWorkspaceShell,
+    #leftInfoPanel,
+    .orbit-right-panel,
+    #configPanel,
+    .object-details-panel,
+    #manualOrbitPanel,
+    .propagated-orbit-parameters-panel,
+    #groundStationModal .ground-station-panel,
+    aside[aria-label="Operaciones de estaciones terrestres"],
+    .react-simulation-dock,
+    .orbit-floating-panel,
+    #appDialogPanel,
+    #satelliteVizPanel,
+    .tle-info-panel,
+    #catalogModal > section,
+    #catalogFilterModal > section,
+    #catalogExportModal > section,
+    #sidebarConfirmModal > section,
+    #folderNameModal > form,
+    #projectActionModal > :is(form, section),
+    #projectWelcome > div,
+    .orbit-help-panel
+) {
+    border-style: solid;
+    border-width: var(--orbit-frame-width);
+    border-color: var(--orbit-frame-color) !important;
+    border-radius: var(--orbit-radius-window);
+    background-clip: padding-box;
+    isolation: isolate;
+    font-family: var(--orbit-font-sans);
+}
+
+/* Primary panel controls should not silently fall back to platform fonts.
+   Deliberately exclude code/data cells so technical vectors remain monospaced. */
+:is(
+    #topToolbar,
+    #leftWorkspaceShell,
+    #leftInfoPanel,
+    .orbit-right-panel,
+    #configPanel,
+    .object-details-panel,
+    #manualOrbitPanel,
+    .propagated-orbit-parameters-panel,
+    #groundStationModal .ground-station-panel,
+    aside[aria-label="Operaciones de estaciones terrestres"],
+    .react-simulation-dock,
+    .orbit-floating-panel,
+    #appDialogPanel,
+    #satelliteVizPanel,
+    .tle-info-panel,
+    #catalogModal > section,
+    #catalogFilterModal > section,
+    #catalogExportModal > section,
+    #sidebarConfirmModal > section,
+    #folderNameModal > form,
+    #projectActionModal > :is(form, section),
+    #projectWelcome > div,
+    .orbit-help-panel
+) :is(button, input, select, textarea, label, legend) {
+    font-family: var(--orbit-font-sans) !important;
+}
+
+/* The top bar is a horizontal member of the same chrome family.  It keeps a
+   bottom-only frame by design, while right/left panels retain their full
+   outline.  TopToolbar supplies the layout-specific properties. */
+#topToolbar {
+    border-bottom: var(--orbit-frame-width) solid var(--orbit-frame-color) !important;
+    background: var(--orbit-surface-toolbar) !important;
+    background-clip: padding-box;
+    isolation: isolate;
+    font-family: var(--orbit-font-sans);
+}
+
+/* Left workspace: paint exactly one outer frame and one structural divider.
+   The shell remains overflow-visible so camera and context menus are never
+   clipped; opaque child surfaces no longer stack backdrop filters at a corner. */
+#leftWorkspaceShell {
+    border: var(--orbit-frame-width) solid var(--orbit-frame-color);
+    border-radius: var(--orbit-radius-window);
+    background-clip: padding-box;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+#leftWorkspaceShell #leftSidebar {
+    border-right: var(--orbit-frame-width) solid var(--orbit-frame-color);
+    border-radius: var(--orbit-radius-window-inner) 0 0 var(--orbit-radius-window-inner);
+    background-clip: padding-box;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+#leftWorkspaceShell.is-layers-closed #leftSidebar {
+    border-right-color: transparent;
+    border-radius: var(--orbit-radius-window-inner);
+}
+
+#leftWorkspaceShell.is-layers-open #leftSidebar {
+    box-shadow: none;
+}
+
+#leftWorkspaceShell #leftSatellitesPanel {
+    border-radius: 0 var(--orbit-radius-window-inner) var(--orbit-radius-window-inner) 0;
+    background-clip: padding-box;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+#leftWorkspaceShell #leftSatellitesPanel .orbit-layers-panel-header {
+    border-top-right-radius: var(--orbit-radius-window-inner);
+    border-bottom-color: var(--orbit-frame-color);
+}
+
+#leftWorkspaceShell #leftSatellitesPanel .orbit-layers-heading {
+    font: 600 var(--orbit-font-size-panel-title) / 1 var(--orbit-font-sans);
+    letter-spacing: .035em;
+}
+
+#leftWorkspaceShell #projectTimeFooter {
+    border-bottom-right-radius: var(--orbit-radius-window-inner);
+    border-top-color: var(--orbit-frame-color);
+    background-clip: padding-box;
+    font-family: var(--orbit-font-sans);
+}
+
+/* The timeline is a full application window too, not a different family of
+   panel. Its control radius stays compact, while its exterior matches every
+   other dock exactly. */
+.react-simulation-dock {
+    border: var(--orbit-frame-width) solid var(--orbit-frame-color) !important;
+    border-radius: var(--orbit-radius-window);
+}
+
+.react-simulation-dock button,
+#projectTimeFooter .project-time-footer__mode {
+    border-radius: var(--orbit-radius-control);
+}
+
+/* Controls use an integer radius consistently. Pills, avatars and status
+   markers retain their own semantic 50%/999px geometry. */
+:is(
+    #topToolbar .toolbar-search,
+    #leftWorkspaceShell .orbit-layers-search input,
+    #leftWorkspaceShell .orbit-layers-header-add,
+    #leftWorkspaceShell .orbit-layers-project-menu,
+    #configPanel input,
+    #configPanel select,
+    #manualOrbitPanel input,
+    #manualOrbitPanel select,
+    #groundStationModal input,
+    #groundStationModal select
+) {
+    border-radius: var(--orbit-radius-control) !important;
+}
+
+@media (max-width: 620px) {
+    #leftWorkspaceShell,
+    #leftWorkspaceShell.is-layers-open {
+        border-radius: var(--orbit-radius-window);
+    }
+
+    #leftWorkspaceShell #leftSatellitesPanel {
+        border-radius: 0 var(--orbit-radius-window-inner) var(--orbit-radius-window-inner) 0;
+    }
 }
