@@ -157,7 +157,7 @@ Drawn range is capped to keep the scene responsive, while calculated physical ra
 
 ## Visibility, AOS, and LOS
 
-**Ground Stations** lets you freely select a station and an orbital source already present in Layers. It can be a catalogue TLE/SGP4 layer or a confirmed manual orbit. A permanent satellite-to-station association is not required. OEM and SP3 layers retain their visualisation, but do not yet have a general access provider for pass planning. The table lists AOS, LOS, and maximum elevation for the selected window; it can be exported as CSV. Response and CSV timestamps remain UTC; the table and chart render them in the station IANA time zone.
+**Ground Stations** lets you freely select a station and an orbital source already present in Layers. It can be a catalogue TLE/SGP4 layer, a confirmed manual orbit, or a satellite from an imported precise SP3 product. A permanent satellite-to-station association is not required. An SP3 ephemeris can plan passes only inside its published epochs; Orbit does not extrapolate it to fill an AOS/LOS window. Local OEM layers remain visual-only and do not provide a general access provider. The table lists AOS, LOS, and maximum elevation for the selected window; it can be exported as CSV. Response and CSV timestamps remain UTC; the table and chart render them in the station IANA time zone.
 
 ### Manual source for pass tables
 

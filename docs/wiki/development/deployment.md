@@ -61,9 +61,9 @@ de confianza.
 ## Persistencia
 
 Compose monta `./config` del host en `/app/config`. El volumen conserva el
-catálogo y la configuración cuando se recrea el contenedor. La imagen contiene
-una copia inicial de `config/`, pero el montaje la reemplaza al arrancar con
-Compose.
+catálogo, la configuración y `precise-products/` cuando se recrea el
+contenedor. La imagen contiene una copia inicial de `config/`, pero el montaje
+la reemplaza al arrancar con Compose.
 
 No hay migración de base de datos, almacenamiento remoto de proyectos, backup
 automático, cifrado de datos en reposo ni restauración integrada. El operador
@@ -81,7 +81,7 @@ volumen `/app/config`.
 | Snapshot C04 | `ORBIT_EOP_C04_PATH`, `ORBIT_EOP_C04_SHA256`, `ORBIT_EOP_C04_REQUIRE_SHA256`, `ORBIT_EOP_SOURCE`, `ORBIT_EOP_VERSION`, `ORBIT_EOP_QUALITY`. |
 | Política EOP | `ORBIT_EOP_STRICT`, `ORBIT_EOP_ALLOW_EXTRAPOLATION`, `ORBIT_EOP_REQUIRED_START`, `ORBIT_EOP_REQUIRED_END`. |
 | Leap seconds | `ORBIT_LEAP_SECONDS_PATH`, `ORBIT_LEAP_SECONDS_SHA256`, `ORBIT_LEAP_SECONDS_SOURCE`, `ORBIT_LEAP_SECONDS_VERSION`, `ORBIT_LEAP_SECONDS_REQUIRED`, `ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED`. |
-| Realización terrestre | `ORBIT_TERRESTRIAL_REALIZATION`, `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT`. |
+| Realización terrestre | `ORBIT_TERRESTRIAL_REALIZATION`, `ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT` (familia IGS20/IGb20/IGc20) o la variable histórica exacta `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT`; no active ambas. |
 
 En modo estricto, Orbit exige un C04 local, hash cuando la política lo requiere
 y una tabla local de segundos intercalares vigente. La carga se realiza al

@@ -35,6 +35,67 @@ Una efeméride usa `sat_id`, `start_time`, `end_time`, `step_seconds` e
     renderizado se transforma a ITRF. No use una respuesta de visualización
     como efeméride de navegación de alta fidelidad.
 
+## Productos GNSS precisos
+
+Los productos precisos se cargan por una ruta distinta del catálogo TLE. El
+gateway expone el contrato del backend Python, pero el archivo se proporciona
+siempre desde el cliente local: Orbit no recibe una URL, token Earthdata ni
+credencial de CDDIS/IGS/ESA.
+
+| Método y ruta | Operación | Límite principal |
+| --- | --- | --- |
+| `GET /api/precise-products` | Lista productos persistidos, diagnósticos de rehidratación y los IDs runtime por satélite. | No vuelve a descargar fuentes. |
+| `POST /api/precise-products/import` | Valida, descomprime, persiste y registra un SP3 con CLK opcional. | Un SP3 lógico y, opcionalmente, un CLK; archivos locales codificados en base64. |
+
+El cuerpo canónico de importación es:
+
+~~~json
+POST /api/precise-products/import
+Content-Type: application/json
+
+{
+  "files": [
+    {
+      "name": "IGS0OPSFIN_20262230000_01D_15M_ORB.SP3.gz",
+      "content_base64": "<base64-del-archivo-local>"
+    },
+    {
+      "name": "IGS0OPSFIN_20262230000_01D_05M_CLK.CLK.gz",
+      "content_base64": "<base64-del-archivo-local>"
+    }
+  ],
+  "provider_hint": "cddis-igs",
+  "product_class": "final"
+}
+~~~
+
+`content_base64` contiene el binario sin prefijo `data:`. Los valores canónicos
+de `provider_hint` son `auto`, `cddis-igs`, `igs-mgex`, `esa-nso` y `custom`;
+los de `product_class` son `auto`, `final`, `rapid` y `ultra-rapid`. Con
+`auto`, Orbit propone clasificación a partir del nombre de archivo y registra
+`custom`/`unknown` cuando no puede demostrarla.
+
+La ruta acepta como máximo ocho archivos subidos, 32 MiB por archivo y 64 MiB
+en total antes de descomprimir. Admite SP3/CLK no comprimidos, `gzip`, ZIP y
+UNIX `.Z`; el contenido expandido está limitado a 256 MiB. ZIP cifrados o
+anidados, miembros inseguros y pares con más de un SP3 o un CLK se rechazan con
+`422`.
+
+Una respuesta correcta contiene `product`, `satellites` e `importedIds`.
+`product` declara proveedor, clase, familia, detección, marco, escala temporal,
+cobertura, resumen de reloj y los checksums SHA-256 de sus fuentes. Cada ID de
+satélite registrado adopta la forma
+`precise:<product_id>:<identificador_gnss>`, por ejemplo
+`precise:precise-0123456789abcdef0123:G01`. Ese ID puede usarse como `sat_id`
+en las rutas de efemérides, parámetros orbitales, propagación y AOS/LOS, pero
+la consulta debe quedar dentro de la cobertura SP3.
+
+El servicio guarda el producto y su manifest verificado bajo el volumen
+`config/precise-products/`; el runtime lo vuelve a cargar al iniciar. El
+proyecto puede conservar el ID estable, pero no incorpora una copia del
+binario. Consulte [Productos GNSS precisos](../../formats/precise-products.md)
+para proveedores, calidad, CLK, realizaciones y límites científicos.
+
 ## Órbita manual
 
 `POST /api/manual-orbits` crea una órbita manual transitoria y su efeméride de

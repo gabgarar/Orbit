@@ -6,6 +6,10 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parents[4]
 CONFIG_DIR = BASE_DIR / "config"
 SYSTEM_CONFIG_PATH = CONFIG_DIR / "system_config.json"
+# Local precise products are content-addressed source files plus a small
+# manifest.  ``config`` is mounted into the container, so imports survive a
+# Docker rebuild/restart without being copied into the application image.
+PRECISE_PRODUCTS_DIR = CONFIG_DIR / "precise-products"
 
 AUTO_MIN_ORBIT_SAMPLES = 24
 # Enough for a 12-hour low-Earth path at the angular tessellation used by the

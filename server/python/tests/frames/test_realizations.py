@@ -9,11 +9,13 @@ import pytest
 from orbit_api.frames import (
     FrameId,
     FrameTransformService,
+    IGS20_FAMILY_ITRF2020_OPERATION,
     IGS20_ITRF2020_OPERATION,
     IGS20_ITRF2020_SOURCE,
     IGS20_ITRF2020_SOURCE_URL,
     StateVector,
     register_igs20_itrf2020_identity,
+    register_igs20_family_itrf2020_identities,
 )
 from orbit_api.timekeeping import TimeScale
 
@@ -128,3 +130,28 @@ def test_published_helper_refuses_to_replace_a_custom_direction_or_register_half
 
     assert service.has_terrestrial_realization_transform("IGS20", "ITRF2020")
     assert not service.has_terrestrial_realization_transform("ITRF2020", "IGS20")
+
+
+@pytest.mark.parametrize("realization", ["IGS20", "IGb20", "IGc20"])
+def test_igs20_family_alignment_is_opt_in_and_keeps_the_actual_source_label(realization: str):
+    service = FrameTransformService(default_terrestrial_realization="ITRF2020", strict_eop=True)
+    register_igs20_family_itrf2020_identities(service)
+    native = StateVector(
+        epoch=datetime(2026, 8, 3, tzinfo=UTC),
+        time_scale=TimeScale.GPS,
+        frame="IGS",
+        frame_realization=realization,
+        center="EARTH",
+        position_m=(7_000_000.0, -1_200_000.0, 2_500_000.0),
+        velocity_m_s=(1_000.0, 7_300.0, -800.0),
+        provenance={"source_format": "SP3"},
+    )
+
+    transformed = service.transform(native, target_frame=FrameId.ITRF)
+
+    assert transformed.frame is FrameId.ITRF
+    assert transformed.frame_realization == "ITRF2020"
+    assert transformed.position_m == native.position_m
+    operation = transformed.provenance["terrestrial_realization_transform"]
+    assert operation["operation"] == IGS20_FAMILY_ITRF2020_OPERATION
+    assert operation["source_realization"] == realization.upper()

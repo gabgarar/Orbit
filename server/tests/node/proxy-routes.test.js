@@ -2,7 +2,12 @@ import express from "express";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PYTHON_PROXY_TIMEOUT_MS } from "../../src/proxy/forwarder.js";
-import { registerPythonProxyRoutes } from "../../src/proxy/routes.js";
+import {
+    PRECISE_PRODUCT_IMPORT_JSON_LIMIT,
+    registerPreciseProductImportBodyParser,
+    registerPreciseProductImportProxyRoute,
+    registerPythonProxyRoutes
+} from "../../src/proxy/routes.js";
 
 async function withServer(app, callback) {
     const server = await new Promise((resolve) => {
@@ -18,7 +23,11 @@ async function withServer(app, callback) {
 
 function createProxyApp(request) {
     const app = express();
-    app.use(express.json());
+    // Match production ordering: the bounded large-product parser must run
+    // before the normal JSON parser.
+    registerPreciseProductImportBodyParser(app);
+    registerPreciseProductImportProxyRoute(app, { request });
+    app.use(express.json({ limit: "25mb" }));
     registerPythonProxyRoutes(app, { request });
     return app;
 }
@@ -108,6 +117,103 @@ test("proxy exposes the transient manual-orbits endpoint", async () => {
     assert.equal(calls[0].path, "/manual-orbits");
     assert.equal(calls[0].options.method, "POST");
     assert.equal(calls[0].options.body, JSON.stringify(payload));
+});
+
+test("proxy forwards paired precise-product uploads through the dedicated bounded route", async () => {
+    const calls = [];
+    const app = createProxyApp(async (path, options) => {
+        calls.push({ path, options });
+        return new Response('{"ok":true,"satellites":[]}', { headers: { "content-type": "application/json" } });
+    });
+    const payload = {
+        files: [
+            { name: "IGS0OPSFIN_20262220000_01D_05M_ORB.SP3.gz", content_base64: "U1Az" },
+            { name: "IGS0OPSFIN_20262220000_01D_30S_CLK.CLK.gz", content_base64: "Q0xL" }
+        ],
+        provider_hint: "cddis-igs",
+        product_class: "final"
+    };
+
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/precise-products/import`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        assert.equal(response.status, 200);
+    });
+
+    assert.equal(PRECISE_PRODUCT_IMPORT_JSON_LIMIT, "90mb");
+    assert.deepEqual(calls, [{
+        path: "/precise-products/import",
+        options: {
+            method: "POST",
+            headers: { Accept: "*/*", "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            timeoutMs: PYTHON_PROXY_TIMEOUT_MS
+        }
+    }]);
+});
+
+test("the precise upload parser does not widen normal API JSON limits", async () => {
+    const calls = [];
+    const request = async (path, options) => {
+        calls.push({ path, options });
+        return new Response("{}", { headers: { "content-type": "application/json" } });
+    };
+    const app = express();
+    registerPreciseProductImportBodyParser(app);
+    registerPreciseProductImportProxyRoute(app, { request });
+    // A deliberately small generic limit proves that the high upload limit
+    // remains isolated to /api/precise-products/import.
+    app.use(express.json({ limit: "256b" }));
+    registerPythonProxyRoutes(app, { request });
+    // Keep the expected 413 out of the test runner's stderr while retaining
+    // the same observable HTTP contract as Orbit's API error handler.
+    app.use((error, _request, response, next) => {
+        if (error?.type === "entity.too.large") {
+            response.status(413).json({ error: "request entity too large" });
+            return;
+        }
+        next(error);
+    });
+    const body = JSON.stringify({ files: [{ name: "demo.sp3", content_base64: "A".repeat(1024) }] });
+
+    await withServer(app, async (baseUrl) => {
+        const preciseResponse = await fetch(`${baseUrl}/api/precise-products/import`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body
+        });
+        assert.equal(preciseResponse.status, 200);
+
+        const ordinaryResponse = await fetch(`${baseUrl}/api/propagate`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ payload: "x".repeat(1024) })
+        });
+        assert.equal(ordinaryResponse.status, 413);
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].path, "/precise-products/import");
+});
+
+test("proxy exposes persisted precise-product metadata for startup hydration", async () => {
+    const calls = [];
+    const app = createProxyApp(async (path, options) => {
+        calls.push({ path, options });
+        return new Response('{"items":[]}', { headers: { "content-type": "application/json" } });
+    });
+
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/precise-products`);
+        assert.equal(response.status, 200);
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].path, "/precise-products");
+    assert.equal(calls[0].options.body, undefined);
 });
 
 test("proxy exposes the manual ephemeris export POST route without losing its format query", async () => {

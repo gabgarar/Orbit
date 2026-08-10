@@ -21,7 +21,7 @@ flowchart TD
 
 | Layer | Verifiable controls |
 | --- | --- |
-| Gateway | JSON with 25MB limit; syntax errors `400`, size `413`; configuration sanitization and catalog file names. |
+| Gateway | JSON with a 25 MB limit; SP3/CLK import uses its isolated 90 MB route; syntax errors `400`, size `413`; configuration sanitization and catalogue file names. |
 | Catalog | Parser, normalization and filtering of valid TLEs; OEMs without embedded TLE do not become native catalog orbits. |
 | Pydantic | Types, required fields, ranges, dates, single TLE/catalog source definition and manual orbit options. |
 | Application | Increasing intervals, sampling/integration budget, propagator resolution and domain errors converted into actionable HTTP. |
@@ -47,6 +47,7 @@ Examples of rules:
 | Manual AOS/LOS | `source.kind: manual` requires `manualOrbit` and cannot include `sat_id` or TLE lines; the access window still uses UTC `start_time < end_time`. |
 | Orbital parameters | 2…2000 samples; RK4 models are rejected if they exceed their internal step budget. |
 | Manual orbit | Requires Keplerian elements or state vector; Force options are normalized to the chosen engine. |
+| Precise GNSS product | One to eight base64 files; one logical SP3 and optional CLK, normalized provider/class, and upload/file/expansion limits. |
 
 Canonical forms and compatibility aliases are described in
 [REST API](../integrations/rest-api.md) and in the OpenAPI of the instance.
@@ -95,8 +96,12 @@ a known `REF_FRAME`. OEM covariances are only accepted for blocks
 cartesians; RTN/RSW/TNW representations are rejected. The interpolation
 Hermite requires an odd degree and appropriate position/velocity data.
 
-The existence of these Python readers does not automatically publish a path
-UI or REST to load high fidelity OEM/SP3.
+OEM remains a local-viewer route, not an operational runtime provider. SP3 is
+published through `POST /api/precise-products/import`, with optional CLK,
+compressed-file validation, manifest, checksums, and rehydration. That
+availability does not make the importer a remote download or guarantee an
+analysis centre's high-fidelity interpolation. See [Precise GNSS
+products](../formats/precise-products.md).
 
 ## Limits of meaning
 

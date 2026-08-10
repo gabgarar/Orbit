@@ -235,6 +235,11 @@ const activeLayerSatelliteIds = new Set();
 const tleBySatelliteId = new Map();
 const catalogEntryMetaBySatelliteId = new Map();
 const oemEphemerisTrackById = new Map();
+// Precise GNSS products are parsed and persisted by the Python runtime.  Keep
+// their compact catalogue representation client-side as well: the legacy Node
+// catalogue page only owns TLE/OMM records, while SP3 products need to remain
+// selectable after a catalogue refresh or a browser reload.
+const preciseProductEntryBySatelliteId = new Map();
 // Catalogue paths received through the WebSocket are rolling, real-time
 // previews. A simulated range needs its own timestamped ITRF ephemeris; it
 // must never reinterpret a rolling polyline as though it had been generated
@@ -282,6 +287,17 @@ let manualOrbitPreviewState = {
 
 function isLocalEphemerisTrack(id) {
     return oemEphemerisTrackById.has(id) || manualOrbitTrackById.has(id);
+}
+
+// A finite precise product has no promise of a valid state at wall-clock
+// `now`. TLE catalogue objects still obtain their first marker from the
+// normal realtime stream, so only SP3 products proactively request a full
+// exact range when activated. This avoids a bulk "show all" action spawning
+// thousands of unnecessary ephemeris requests for the live catalogue.
+function isFinitePreciseProductTrack(id) {
+    const normalizedId = String(id || "").trim();
+    return preciseProductEntryBySatelliteId.has(normalizedId)
+        || String(catalogEntryMetaBySatelliteId.get(normalizedId)?.sourceFormat || "").toUpperCase() === "SP3";
 }
 
 function catalogMetadataText(entry, keys, fallback = "") {
@@ -350,6 +366,173 @@ function createCatalogEntryMeta(entry = {}, fallbackName = "") {
         perigee_km: Number.isFinite(Number(entry?.perigee_km)) ? Number(entry.perigee_km) : null,
         decayRisk: entry?.decayRisk === true
     };
+}
+
+function compactPreciseProductEntry(entry = {}) {
+    const id = String(entry?.id ?? entry?.catalogId ?? entry?.catalog_id ?? "").trim();
+    if (!id) return null;
+
+    const sp3 = entry?.sp3 && typeof entry.sp3 === "object" ? entry.sp3 : {};
+    const catalogMeta = entry?.catalogMeta && typeof entry.catalogMeta === "object"
+        ? entry.catalogMeta
+        : (entry?.catalog_meta && typeof entry.catalog_meta === "object" ? entry.catalog_meta : {});
+    const inputMetadata = entry?.inputMetadata
+        ?? entry?.input_metadata
+        ?? entry?.sourceMetadata
+        ?? entry?.source_metadata
+        ?? sp3;
+    const displayName = catalogMetadataText(entry, ["display_name", "displayName", "name", "satellite_name", "satelliteName"], id);
+    const provider = catalogMetadataText(
+        entry,
+        ["provider", "provider_id", "sourceProvider", "source_provider"],
+        catalogMetadataText(catalogMeta, ["provider", "provider_id", "source_provider"], catalogMetadataText(sp3, ["provider", "provider_id", "source_provider"], ""))
+    );
+    const productClass = catalogMetadataText(
+        entry,
+        ["product_class", "productClass", "quality"],
+        catalogMetadataText(catalogMeta, ["product_class", "productClass", "quality"], catalogMetadataText(sp3, ["product_class", "productClass", "quality"], ""))
+    );
+
+    return {
+        ...entry,
+        id,
+        catalogId: id,
+        name: displayName,
+        sourceFormat: "SP3",
+        sourceOrigin: catalogMetadataText(entry, ["sourceOrigin", "source_origin"], provider ? "PRECISE_PRODUCT" : "USER"),
+        tleSource: provider || catalogMetadataText(sp3, ["agency", "originator"], "Producto preciso"),
+        dataQuality: productClass || catalogMetadataText(sp3, ["data_quality", "quality", "precision"], "Alta precisión"),
+        objectId: catalogMetadataText(entry, ["objectId", "object_id", "satellite_id", "satelliteId"], id),
+        inputMetadata: {
+            ...((inputMetadata && typeof inputMetadata === "object") ? inputMetadata : {}),
+            ...catalogMeta,
+            ...sp3,
+            provider: provider || sp3.provider || null,
+            product_class: productClass || sp3.product_class || null,
+            product_id: entry?.product_id ?? entry?.productId ?? sp3.product_id ?? sp3.productId ?? null,
+            satellite_id: entry?.satellite_id ?? entry?.satelliteId ?? sp3.satellite_id ?? sp3.satelliteId ?? null
+        }
+    };
+}
+
+/**
+ * The import service intentionally keeps a satellite entry small and puts
+ * product-level provenance (files, provider, coverage) next to the complete
+ * satellite collection. Fold those safe metadata fields into each entry
+ * before it reaches Layers so a later catalogue refresh cannot erase the
+ * identity of an SP3 layer.
+ */
+function enrichPreciseProductSatelliteEntry(entry, product = null) {
+    if (!entry || typeof entry !== "object") return null;
+    const sourceProduct = product && typeof product === "object" ? product : {};
+    const sourceSp3 = entry?.sp3 && typeof entry.sp3 === "object" ? entry.sp3 : {};
+    const provider = entry.provider
+        ?? entry.provider_id
+        ?? sourceSp3.provider
+        ?? sourceSp3.provider_id
+        ?? sourceProduct.provider
+        ?? sourceProduct.provider_id
+        ?? null;
+    const productClass = entry.product_class
+        ?? entry.productClass
+        ?? sourceSp3.product_class
+        ?? sourceSp3.productClass
+        ?? sourceProduct.product_class
+        ?? sourceProduct.productClass
+        ?? null;
+    const productId = entry.product_id
+        ?? entry.productId
+        ?? sourceSp3.product_id
+        ?? sourceSp3.productId
+        ?? sourceProduct.product_id
+        ?? sourceProduct.productId
+        ?? sourceProduct.id
+        ?? null;
+
+    return {
+        ...entry,
+        provider,
+        product_class: productClass,
+        product_id: productId,
+        product_name: entry.product_name ?? entry.productName ?? sourceProduct.name ?? null,
+        sp3: {
+            ...sourceSp3,
+            provider: sourceSp3.provider ?? provider,
+            product_class: sourceSp3.product_class ?? productClass,
+            product_id: sourceSp3.product_id ?? productId,
+            product_name: sourceSp3.product_name ?? sourceProduct.name ?? null,
+            file_name: sourceSp3.file_name ?? sourceSp3.fileName ?? sourceProduct.orbit_file ?? sourceProduct.orbitFile ?? null,
+            clock_file: sourceSp3.clock_file ?? sourceSp3.clockFile ?? sourceProduct.clock_file ?? sourceProduct.clockFile ?? null,
+            start_time: sourceSp3.start_time ?? sourceSp3.startTime ?? sourceProduct.start_time ?? sourceProduct.startTime ?? null,
+            end_time: sourceSp3.end_time ?? sourceSp3.endTime ?? sourceProduct.end_time ?? sourceProduct.endTime ?? null,
+            start_time_ms: sourceSp3.start_time_ms ?? sourceSp3.startTimeMs ?? sourceProduct.start_time_ms ?? sourceProduct.startTimeMs ?? null,
+            end_time_ms: sourceSp3.end_time_ms ?? sourceSp3.endTimeMs ?? sourceProduct.end_time_ms ?? sourceProduct.endTimeMs ?? null,
+            reference_frame: sourceSp3.reference_frame ?? sourceSp3.referenceFrame ?? sourceProduct.frame ?? null,
+            time_system: sourceSp3.time_system ?? sourceSp3.timeSystem ?? sourceProduct.time_system ?? sourceProduct.timeSystem ?? null,
+            rendering: sourceSp3.rendering ?? sourceProduct.rendering ?? null
+        }
+    };
+}
+
+function applyPreciseProductEntry(entry) {
+    const normalized = compactPreciseProductEntry(entry);
+    if (!normalized) return null;
+    preciseProductEntryBySatelliteId.set(normalized.id, normalized);
+    catalogSatelliteIds.add(normalized.id);
+    catalogEntryMetaBySatelliteId.set(normalized.id, createCatalogEntryMeta(normalized, normalized.name));
+    return normalized.id;
+}
+
+/**
+ * Registers metadata returned by the precise-products service.  Samples stay
+ * in the Python runtime; the WebSocket remains the sole source of Cesium
+ * states.  This gives SP3 layers the exact same activation/subscription path
+ * as a catalogue satellite without pretending they are TLEs.
+ */
+export function registerPreciseProductSatelliteEntries(entries = []) {
+    const ids = [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+        const id = applyPreciseProductEntry(entry);
+        if (id) ids.push(id);
+    }
+    if (ids.length) {
+        satelliteIdsDirty = true;
+        catalogLoaded = true;
+    }
+    return ids;
+}
+
+export function preciseProductSatelliteEntriesFromPayload(payload = {}) {
+    const product = payload?.product && typeof payload.product === "object" ? payload.product : null;
+    const direct = (Array.isArray(payload?.satellites) ? payload.satellites : [])
+        .map((entry) => enrichPreciseProductSatelliteEntry(entry, product));
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    const nested = items.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const itemProduct = item.product && typeof item.product === "object" ? item.product : item;
+        const satellites = Array.isArray(item.satellites)
+            ? item.satellites
+            : (Array.isArray(itemProduct.satellites) ? itemProduct.satellites : []);
+        return satellites.map((entry) => enrichPreciseProductSatelliteEntry(entry, itemProduct));
+    });
+    return [...direct, ...nested].filter((item) => item && typeof item === "object");
+}
+
+/** Hydrates persisted SP3 metadata after the normal Node catalogue loads. */
+export async function hydratePreciseProductSatelliteEntries() {
+    try {
+        const response = await fetch("/api/precise-products", { cache: "no-cache" });
+        if (!response.ok) {
+            // Older backend images do not expose this optional endpoint.  Do
+            // not make the entire workspace fail while they are upgraded.
+            return [];
+        }
+        const payload = await response.json();
+        return registerPreciseProductSatelliteEntries(preciseProductSatelliteEntriesFromPayload(payload));
+    } catch (error) {
+        logger.warn("No se pudieron restaurar productos precisos:", error);
+        return [];
+    }
 }
 let catalogLoaded = false;
 let lastCatalogUrl = "/config/catalog.json";
@@ -668,6 +851,134 @@ function requestRangeEphemeris(viewer, id, state, simulationCtx) {
 
     rangeEphemerisRequests.set(key, request);
     return request;
+}
+
+/**
+ * Loads a range ephemeris without requiring an existing Cesium state.
+ *
+ * Historical SP3 products often have no valid position at wall-clock `now`.
+ * Their first state must therefore come from the selected finite simulation
+ * interval, not from the realtime WebSocket stream. This uses the same cache
+ * and request key as the normal range renderer so both paths always consume
+ * the same physical samples.
+ */
+function loadRangeEphemerisForBootstrap(id, simulationCtx) {
+    const ephemerisWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
+    const key = rangeEphemerisKey(id, simulationCtx);
+    if (!key || !ephemerisWindow || isLocalEphemerisTrack(id)) return Promise.resolve(null);
+
+    const cached = rangeEphemerisCache.get(key);
+    if (cached) return Promise.resolve(cached);
+
+    const pending = rangeEphemerisRequests.get(key);
+    if (pending) return pending;
+
+    const request = fetch("/api/ephemeris", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+            sat_id: id,
+            start_time: new Date(ephemerisWindow.startMs).toISOString(),
+            end_time: new Date(ephemerisWindow.endMs).toISOString(),
+            step_seconds: rangeEphemerisStepSeconds(ephemerisWindow),
+            include_velocity: false
+        })
+    }).then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const ephemeris = parseRangeEphemeris(await response.json(), key);
+        if (!ephemeris) throw new Error("The selected ephemeris has no valid ITRF samples.");
+        cacheRangeEphemeris(key, ephemeris);
+        return ephemeris;
+    }).catch((error) => {
+        logger.warn(`No se pudo cargar la efeméride de simulación de ${id}:`, error);
+        return null;
+    }).finally(() => rangeEphemerisRequests.delete(key));
+
+    rangeEphemerisRequests.set(key, request);
+    return request;
+}
+
+function sampleRangeEphemerisAtTimelineTime(ephemeris, simulationCtx) {
+    const atMs = simulationCtx?.date?.getTime?.();
+    if (!ephemeris || !Number.isFinite(atMs)
+        || atMs < ephemeris.startMs
+        || atMs > ephemeris.endMs) {
+        return null;
+    }
+    return sampleTrackKinematics(ephemeris.orbit, ephemeris.sampleTimesMs, atMs);
+}
+
+/**
+ * Materialises an active remote layer from an exact ephemeris interval.
+ * This is deliberately independent of a realtime state update: an SP3 can
+ * be valid for the chosen historical range and unavailable at the current
+ * wall-clock instant at the same time.
+ */
+function bootstrapSatelliteRangeState(viewer, id, simulationCtx) {
+    const key = rangeEphemerisKey(id, simulationCtx);
+    if (!viewer || !entityPool || !key || isLocalEphemerisTrack(id)
+        || !activeLayerSatelliteIds.has(id) || hiddenSatelliteIds.has(id)) {
+        return Promise.resolve(null);
+    }
+
+    const existing = satelliteState[id];
+    if (existing) {
+        return requestRangeEphemeris(viewer, id, existing, simulationCtx);
+    }
+
+    return loadRangeEphemerisForBootstrap(id, simulationCtx).then((ephemeris) => {
+        // A range request can finish after the user moves the timeline or
+        // removes the layer. Do not insert stale samples into the new view.
+        if (!ephemeris
+            || rangeEphemerisKey(id, resolveSimulationTimelineContext()) !== key
+            || !activeLayerSatelliteIds.has(id)
+            || hiddenSatelliteIds.has(id)) {
+            return null;
+        }
+
+        const stateAlreadyCreated = satelliteState[id];
+        if (stateAlreadyCreated) {
+            applyRangeEphemerisToState(viewer, id, stateAlreadyCreated, ephemeris);
+            return stateAlreadyCreated;
+        }
+
+        const currentContext = resolveSimulationTimelineContext();
+        const sampled = sampleRangeEphemerisAtTimelineTime(ephemeris, currentContext);
+        if (!sampled?.position) return null;
+
+        const position = new Cesium.Cartesian3(
+            sampled.position.x,
+            sampled.position.y,
+            sampled.position.z
+        );
+        const sampledVelocity = finiteVector(sampled.velocity);
+        const orientation = shouldUse3DModelForSatellite(id) && vectorMagnitude(sampledVelocity) > 0
+            ? calculateOrientation(sampled.position, sampledVelocity)
+            : Cesium.Quaternion.IDENTITY;
+        const state = ensureSatelliteState(viewer, id, position, orientation);
+        state.renderPosition = position;
+        state.previousPosition = position;
+        state.targetPosition = position;
+        state.lastVelocity = sampledVelocity;
+        state.lastAcceleration = finiteVector(sampled.acceleration);
+        state.lastVelocityTimestampMs = currentContext.date.getTime();
+        state.lastStateReferenceFrame = normalizeReferenceFrame(ephemeris.referenceFrame) || "ITRF";
+
+        applyRangeEphemerisToState(viewer, id, state, ephemeris);
+        applySatelliteVisibility(id, state);
+        return state;
+    });
+}
+
+function primeSatelliteTimelineRange(id) {
+    if (!isFinitePreciseProductTrack(id)) {
+        return Promise.resolve(null);
+    }
+    const simulationCtx = resolveSimulationTimelineContext();
+    if (!simulationCtx || !getExactTimelineEphemerisWindow(id, simulationCtx)) {
+        return Promise.resolve(null);
+    }
+    return bootstrapSatelliteRangeState(currentViewer, id, simulationCtx);
 }
 
 function invalidateRetimedRangeOrbit(viewer, state) {
@@ -1475,11 +1786,29 @@ export function initSatelliteReceiver(viewer) {
                 catalogSatelliteIds.add(id);
             }
         }
+        // The WebSocket catalogue currently sends identifiers, not the rich
+        // provenance carried by an imported SP3 product. Reapply those local
+        // records after every catalogue broadcast so they do not disappear
+        // from Layers when a remote catalogue refresh completes.
+        for (const entry of preciseProductEntryBySatelliteId.values()) {
+            catalogSatelliteIds.add(entry.id);
+            catalogEntryMetaBySatelliteId.set(entry.id, createCatalogEntryMeta(entry, entry.name));
+        }
         catalogLoaded = true;
         satelliteIdsDirty = true;
     });
 
     wsClient = ws;
+
+    // A project can restore an already-active historical SP3 layer before
+    // Cesium finishes initialising. Seed it from the selected simulation
+    // interval now rather than waiting for a realtime position that is
+    // necessarily outside its finite product coverage.
+    for (const id of activeLayerSatelliteIds) {
+        if (isFinitePreciseProductTrack(id)) {
+            void primeSatelliteTimelineRange(id);
+        }
+    }
 
     ws.connect();
 }
@@ -2002,6 +2331,18 @@ export async function refreshSatelliteCatalog(catalogUrl = "/config/catalog.json
         catalogLoaded = true;
     }
 
+    // SP3 products are owned by the Python precise-product registry rather
+    // than the paginated Node catalogue. Keep their metadata and stable
+    // runtime ids available after a regular catalogue refresh.
+    for (const entry of preciseProductEntryBySatelliteId.values()) {
+        catalogSatelliteIds.add(entry.id);
+        catalogEntryMetaBySatelliteId.set(entry.id, createCatalogEntryMeta(entry, entry.name));
+    }
+    if (preciseProductEntryBySatelliteId.size) {
+        satelliteIdsDirty = true;
+        catalogLoaded = true;
+    }
+
     try {
         if (wsClient && typeof wsClient.setSubscriptions === "function") {
             const ids = Array.from(activeLayerSatelliteIds).filter((id) => !isLocalEphemerisTrack(id));
@@ -2162,6 +2503,11 @@ export function getSatelliteTelemetry(id) {
             is_in_time_window: hasWindow ? (frameTimeMs >= startMs && frameTimeMs <= endMs) : null
         };
     }
+    const sp3 = sourceFormat === "SP3"
+        ? ((entryMeta.inputMetadata && typeof entryMeta.inputMetadata === "object")
+            ? { ...entryMeta.inputMetadata }
+            : null)
+        : null;
 
     const earthCenterDistanceM = vectorMagnitude(positionVector);
     const footprintAngularRadius = positionEcef ? computeFootprintAngularRadius(positionEcef) : 0;
@@ -2202,6 +2548,7 @@ export function getSatelliteTelemetry(id) {
         footprint_radius_m: footprintRadiusM,
         propagation_future_hours: propagationFutureHours,
         oem,
+        sp3,
         // Kept alongside the camel-case catalog metadata for consumers that
         // build their object details directly from telemetry.
         manual_orbit: manualTrack?.manualOrbit ? cloneManualOrbitValue(manualTrack.manualOrbit) : null,
@@ -2233,6 +2580,12 @@ export function setSatelliteLayerActive(id, active) {
         activeLayerIdsDirty = true;
         if (!isLocalEphemerisTrack(id)) {
             wsClient?.subscribe([id]);
+        }
+        // An SP3 range can be historical, so its WebSocket update at `now`
+        // may contain no position. Prime the layer directly from its exact
+        // simulation interval when one is active.
+        if (isFinitePreciseProductTrack(id)) {
+            void primeSatelliteTimelineRange(id);
         }
         emitObjectStateChanged({ sourceId: id, reason: "activation" });
         return true;
@@ -2285,6 +2638,11 @@ export function setAllSatelliteLayersActive(active) {
         nextIds.forEach((id) => activeLayerSatelliteIds.add(id));
         activeLayerIdsDirty = true;
         wsClient?.setSubscriptions(nextIds.filter((id) => !isLocalEphemerisTrack(id)));
+        nextIds.forEach((id) => {
+            if (isFinitePreciseProductTrack(id)) {
+                void primeSatelliteTimelineRange(id);
+            }
+        });
         emitObjectStateChanged({ scope: "all-satellites", reason: "activation" });
         return {
             added: nextIds.length,
@@ -2364,6 +2722,10 @@ export function setSatelliteVisible(id, visible) {
     const state = satelliteState[id] || entityPool?.getState(id);
     if (state) {
         applySatelliteVisibility(id, state);
+    } else if (visible && activeLayerSatelliteIds.has(id) && isFinitePreciseProductTrack(id)) {
+        // A hidden historical layer intentionally has no entity. Recreate it
+        // from the current exact interval when it becomes visible again.
+        void primeSatelliteTimelineRange(id);
     }
 
     emitObjectStateChanged({ sourceId: id, reason: "visibility" });
@@ -2534,12 +2896,22 @@ export function refreshSatelliteOverlays(viewer = currentViewer) {
         return;
     }
 
+    // A project restore can reactivate historical SP3 layers before its saved
+    // range/static timeline is restored. Once the timeline changes, there is
+    // still no WebSocket state at wall-clock `now` to enter this loop. Prime
+    // those active-but-unmaterialised layers from their exact interval here.
+    for (const id of activeLayerSatelliteIds) {
+        if (!satelliteState[id] && !hiddenSatelliteIds.has(id) && isFinitePreciseProductTrack(id)) {
+            void primeSatelliteTimelineRange(id);
+        }
+    }
+
     for (const [id, state] of Object.entries(satelliteState)) {
         if (!state) {
             continue;
         }
 
-        if (state.lastOrbitPayload) {
+        if (state.lastOrbitPayload || state.rangeEphemeris) {
             renderFutureOrbitForState(viewer, id, state, state.lastOrbitPayload);
         } else {
             remove2DOverlays(viewer, state);

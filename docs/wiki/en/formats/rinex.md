@@ -4,17 +4,25 @@
 
 ## Support status
 
-Orbit does not implement observation, navigation, meteorology or clock RINEX.
+Orbit supports **RINEX CLK** as clock data associated with a precise SP3
+import. It reads `AS` satellite-clock records and retains bias and, when
+present, rate, rate-of-rate, and their sigmas in CLK-published units. A CLK is
+not a Cartesian ephemeris and cannot create an orbital layer without SP3.
 
-There is no parser, measurement preprocessing, receiver model, ephemeris of
-navigation, clock estimation, orbit determination or integration with
-ground stations from RINEX.
+Observation, navigation, and meteorological RINEX remain unimplemented. There
+is no measurement preprocessing, receiver model, navigation ephemeris, PPP,
+clock estimation, orbit determination, or ground-station integration from
+RINEX observations.
 
 ## Relationship with SP3
 
-SP3 and RINEX are different formats. The existence of a reader
-[SP3](sp3.md) does not provide compatibility with RINEX nor does it allow rebuilding an SP3
-from RINEX observations within Orbit.
+SP3 and RINEX are different formats. A CLK product accompanies SP3 states by
+GNSS identifier and epoch, but does not modify coordinates or velocity. The
+existence of an [SP3](sp3.md) reader does not allow rebuilding SP3 from RINEX
+observations inside Orbit.
+
+See [Precise GNSS products](precise-products.md) for SP3+CLK pairing,
+providers, provenance, time scales, and limitations.
 
 ## Alternatives
 

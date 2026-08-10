@@ -189,3 +189,35 @@ def test_igs20_itrf2020_alignment_is_an_explicit_orbit_datum_opt_in():
     })
     with pytest.raises(FrameTransformationError, match="realizaci.n terrestre registrada"):
         without_opt_in.transform(source, target_frame=FrameId.ITRF)
+
+
+def test_igs20_family_alignment_requires_an_explicit_itrf2020_policy_and_supports_igc20():
+    with pytest.raises(ValueError, match="ITRF2020"):
+        build_frame_transformer_from_environment({
+            "ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT": "true",
+        })
+    with pytest.raises(ValueError, match="no pueden activarse juntos"):
+        build_frame_transformer_from_environment({
+            "ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT": "true",
+            "ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT": "true",
+            "ORBIT_TERRESTRIAL_REALIZATION": "ITRF2020",
+        })
+
+    service = build_frame_transformer_from_environment({
+        "ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT": "true",
+        "ORBIT_TERRESTRIAL_REALIZATION": "ITRF2020",
+    })
+    source = StateVector(
+        epoch=datetime(2026, 7, 26, tzinfo=UTC),
+        time_scale="GPS",
+        frame="IGS",
+        frame_realization="IGc20",
+        center="EARTH",
+        position_m=(7_000_000.0, 200_000.0, -300_000.0),
+        velocity_m_s=(-500.0, 7_500.0, 100.0),
+    )
+
+    transformed = service.transform(source, target_frame=FrameId.ITRF)
+
+    assert transformed.frame_realization == "ITRF2020"
+    assert transformed.provenance["terrestrial_realization_transform"]["source_realization"] == "IGC20"

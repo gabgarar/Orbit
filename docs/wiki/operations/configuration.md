@@ -2,9 +2,10 @@
 
 [Inicio](../index.md) · [Operación](index.md) · [Rendimiento](performance.md) · [Tiempo y EOP](time-eop.md)
 
-Orbit conserva la configuración de aplicación y el catálogo editable dentro de
-config/. En el despliegue Compose estándar, esa ruta se monta en el contenedor
-como /app/config para que sobreviva a una recreación de la imagen.
+Orbit conserva la configuración de aplicación, el catálogo editable y los
+productos GNSS precisos importados dentro de config/. En el despliegue Compose
+estándar, esa ruta se monta en el contenedor como /app/config para que sobreviva
+a una recreación de la imagen.
 
 ## Archivo de configuración
 
@@ -63,6 +64,24 @@ caracteres de control y system_config.json.
     que el backend use valores seguros por defecto para la configuración que
     pueda cargar, y puede ocultar el error operativo hasta revisar los logs.
 
+## Productos GNSS precisos persistentes
+
+Cada importación SP3, con CLK opcional, se guarda bajo
+`config/precise-products/<product_id>/`. El directorio contiene las fuentes
+lógicas ya descomprimidas y un `manifest.json` con proveedor, clase, nombre
+original, compresión, miembro ZIP si aplica y checksums SHA-256. El runtime
+verifica los checksums y vuelve a analizar las fuentes al iniciar; una entrada
+corrupta se informa como diagnóstico y no debe sustituirse a mano mientras el
+servicio está activo.
+
+Incluya `config/precise-products/` en la copia de seguridad de la instancia.
+Un proyecto puede contener referencias estables a estos productos, pero no
+incluye por sí mismo sus archivos fuente. Si se restaura un proyecto sin su
+directorio de productos, la capa no puede rehidratarse.
+
+Consulte [Productos GNSS precisos](../formats/precise-products.md) para el
+contrato de importación y procedencia.
+
 ## Variables de ejecución
 
 | Variable | Efecto |
@@ -73,6 +92,13 @@ caracteres de control y system_config.json.
 | ORBIT_EOP_* | Política y procedencia del snapshot C04 local. |
 | ORBIT_LEAP_SECONDS_* | Política de la tabla UTC–TAI local. |
 | ORBIT_TERRESTRIAL_REALIZATION | Realización terrestre de salida elegida explícitamente. |
+| ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT | Activa, junto a `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`, la operación publicada IGS20/IGb20/IGc20→ITRF2020 para estados orbitales de satélite. |
+
+La política de familia está deshabilitada por defecto, conserva la realización
+fuente y no corrige estaciones ni antenas. No la active junto a la variable
+histórica exacta `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT`; ambas políticas son
+mutuamente excluyentes. Consulte [Realizaciones y modo visual](time-eop/realizations.md)
+antes de habilitarla.
 
 Las variables temporales y de realización no pertenecen al JSON de interfaz.
 Se inyectan en Compose al iniciar el proceso; su contrato se documenta en
@@ -98,4 +124,3 @@ Para reiniciar sin reconstruir la imagen actual:
 No use un reinicio para sustituir una política de precisión sin actualizar
 también los hashes y versiones de los archivos locales; consulte
 [Tiempo y EOP](time-eop.md).
-

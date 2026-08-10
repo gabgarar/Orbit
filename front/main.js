@@ -28,6 +28,8 @@ import {
     importOemEphemerisTrack,
     importManualOrbitTrack,
     replaceManualOrbitTrack,
+    registerPreciseProductSatelliteEntries,
+    hydratePreciseProductSatelliteEntries,
     getManualOrbitProjectEntries,
     getManualOrbitProjectEntry,
     renderManualOrbitPreview,
@@ -831,6 +833,58 @@ function getObjectTimeRange(layerId, telemetry) {
         oemRangeHours,
         label: `${formatObjectTimeRangeHours(oemRangeHours)} hacia futuro`
     };
+}
+
+function asPreciseProductCoverageTime(value) {
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value.getTime();
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+        // Product APIs use epoch milliseconds, but accepting a numeric epoch
+        // in seconds keeps external SP3 registry metadata unambiguous.
+        return Math.abs(value) < 10_000_000_000 ? value * 1000 : value;
+    }
+    const parsed = Date.parse(String(value || ""));
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resolvePreciseProductCoverage(entries = [], payload = {}) {
+    const products = [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+        if (!entry || typeof entry !== "object") continue;
+        products.push(entry, entry.sp3, entry.metadata, entry.inputMetadata, entry.input_metadata);
+    }
+    if (payload?.product && typeof payload.product === "object") {
+        products.push(payload.product, payload.product.sp3, payload.product.metadata);
+    }
+
+    const ranges = products.map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const start = asPreciseProductCoverageTime(
+            item.start_time_ms ?? item.startTimeMs ?? item.start_time ?? item.startTime ?? item.coverage_start ?? item.coverageStart
+        );
+        const end = asPreciseProductCoverageTime(
+            item.end_time_ms ?? item.endTimeMs ?? item.end_time ?? item.endTime ?? item.coverage_end ?? item.coverageEnd ?? item.stop_time
+        );
+        return Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
+    }).filter(Boolean);
+    if (!ranges.length) return null;
+
+    // A single product normally gives the same interval for every GNSS
+    // satellite. Taking the intersection remains correct if a future import
+    // bundles multiple related files with slightly different coverage.
+    const start = Math.max(...ranges.map((range) => range.start));
+    const end = Math.min(...ranges.map((range) => range.end));
+    return end > start ? { start, end } : null;
+}
+
+function alignSimulationToPreciseProductCoverage(entries, payload) {
+    const coverage = resolvePreciseProductCoverage(entries, payload);
+    if (!coverage || !applySimulationRange(new Date(coverage.start), new Date(coverage.end), { preferRequestedRange: true })) {
+        return false;
+    }
+    setSimulationMode(SIMULATION_MODE_RANGE);
+    return true;
 }
 
 function getTimelineRatioByDate(dateValue) {
@@ -2685,11 +2739,15 @@ function setSimulationMode(mode) {
     refreshSimulationControlsUi();
 }
 
-function applySimulationRange(startDate, endDate) {
+function applySimulationRange(startDate, endDate, { preferRequestedRange = false } = {}) {
     let startMs = startDate.getTime();
     let endMs = endDate.getTime();
 
-    if (hasLoadedOemEphemerisTracks()) {
+    // OEM normally owns the active simulation domain. A newly imported SP3
+    // is different: it has an explicit, finite published coverage and must
+    // never be silently moved to an unrelated OEM interval before its first
+    // runtime subscription.
+    if (!preferRequestedRange && hasLoadedOemEphemerisTracks()) {
         const bounds = getLoadedOemEphemerisTimeBounds();
         if (bounds) {
             startMs = Number(bounds.startTimeMs);
@@ -3336,6 +3394,11 @@ function restoreProjectSimulationState(snapshot) {
     simulationState.lastTickTimestamp = Date.now();
     applySimulationDateToViewer(getDisplayedSimulationDate());
     syncViewerClockPlayback();
+    // Restore can reactivate a finite SP3 layer before restoring the saved
+    // range/static clock. Re-render after the clock is authoritative so the
+    // satellite runtime seeds it from exact ephemeris rather than waiting for
+    // a realtime WebSocket position outside the product coverage.
+    refreshSatelliteOverlays(viewer);
     refreshSimulationControlsUi();
     updateTopToolbarTime();
     return true;
@@ -6241,6 +6304,11 @@ function setupPropagatedParametersInspector() {
         logger.warn("No se pudo precargar el catalogo:", e);
     }
 
+    // Precise SP3 products live in the Python runtime, not in the paginated
+    // TLE catalogue. Hydrate their persisted metadata before restoring or
+    // activating workspace layers so `precise:*` ids are immediately valid.
+    await hydratePreciseProductSatelliteEntries();
+
     initSatelliteReceiver(viewer);
     
     // Obtener los contenedores de los paneles de la sidebar izquierda
@@ -6406,6 +6474,8 @@ function setupPropagatedParametersInspector() {
         getObjectTleAsync: (id) => isCelestialBodyLayerId(id) ? Promise.resolve(null) : getSatelliteTleAsync(getSatelliteSourceIdFromLayerId(id)),
         getCatalogEntryMeta: (id) => getCompositeLayerMeta(id),
         onRefreshCatalog: () => refreshSatelliteCatalog(catalogUrl),
+        onRegisterPreciseProductEntries: (entries) => registerPreciseProductSatelliteEntries(entries),
+        onAlignToPreciseProductTimeDomain: (entries, payload) => alignSimulationToPreciseProductCoverage(entries, payload),
         getLoadedOemTimeBounds: () => getLoadedOemEphemerisTimeBounds(),
         onAlignToOemTimeDomain: () => {
             const bounds = getLoadedOemEphemerisTimeBounds();

@@ -2,9 +2,10 @@
 
 [Start](../index.md) · [Operation](index.md) · [Performance](performance.md) · [Time and EOP](time-eop.md)
 
-Orbit preserves application settings and editable catalog within
-config/. In the standard Compose deployment, that path is mounted to the container
-such as /app/config so that it survives a re-image.
+Orbit preserves application settings, the editable catalogue, and imported
+precise GNSS products within config/. In the standard Compose deployment, that
+path is mounted to the container as /app/config so that it survives an image
+recreation.
 
 ## Configuration file
 
@@ -63,6 +64,24 @@ control characters and system_config.json.
     have the backend use safe default values for the configuration that
     can load, and can hide the operational error until the logs are reviewed.
 
+## Persistent precise GNSS products
+
+Each SP3 import, with optional CLK, is stored under
+`config/precise-products/<product_id>/`. The directory contains decompressed
+logical sources and a `manifest.json` with provider, class, original name,
+compression, ZIP member where applicable, and SHA-256 checksums. The runtime
+verifies checksums and parses sources again at startup; a corrupt entry is
+reported as a diagnostic and must not be replaced manually while the service is
+running.
+
+Include `config/precise-products/` in the instance backup. A project can
+contain stable references to these products, but does not include the source
+files themselves. If a project is restored without its product directory, the
+layer cannot be rehydrated.
+
+See [Precise GNSS products](../formats/precise-products.md) for the import and
+provenance contract.
+
 ## Execution variables
 
 | Variable | Effect |
@@ -73,6 +92,13 @@ control characters and system_config.json.
 | ORBIT_EOP_* | Policy and origin of the local C04 snapshot. |
 | ORBIT_LEAP_SECONDS_* | Local UTC–TAI table policy. |
 | ORBIT_TERRESTRIAL_REALIZATION | Explicitly chosen output ground realization. |
+| ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT | Enables, together with `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`, the published IGS20/IGb20/IGc20→ITRF2020 operation for satellite-orbit states. |
+
+The family policy is disabled by default, retains the source realization, and
+does not correct stations or antennas. Do not enable it with the legacy exact
+`ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` variable; the two policies are
+mutually exclusive. See [Realizations and visual mode](time-eop/realizations.md)
+before enabling it.
 
 Temporary and implementation variables do not belong in the interface JSON.
 They are injected into Compose when starting the process; your contract is documented in

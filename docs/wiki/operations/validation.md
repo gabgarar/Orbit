@@ -55,6 +55,7 @@ el build de la imagen.
 | Configuración del sistema | Normalización de valores y nombre de catálogo contenido dentro de config/. |
 | Proyecto | El importador exige el formato orbit-project y versión 1. |
 | Catálogo | Los formatos TLE, OMM y OEM se analizan antes de incorporarse; OEM puro no se convierte en objeto de catálogo. |
+| Producto GNSS preciso | Se valida SP3 obligatorio, CLK opcional, límites de archivo/archivo comprimido, checksums, marco, escala temporal y duplicados por época. El manifest se vuelve a verificar al arrancar. |
 | C04 local | Se valida lectura, codificación, orden temporal, coherencia MJD/fecha, columnas y hash si se exige. |
 | leap-seconds.list | Se valida la identidad, cobertura y, cuando se configura, la expiración #@. |
 | Ventana EOP | En modo estricto, los límites declarados deben estar cubiertos por C04 y UTC–TAI. |
@@ -65,7 +66,7 @@ configuración de hashes y cobertura.
 
 ## Validación antes de una operación reproducible
 
-1. Conserve el archivo fuente de cada TLE, OMM u OEM.
+1. Conserve el archivo fuente de cada TLE, OMM, OEM o producto SP3/CLK y su SHA-256.
 2. Ejecute la suite adecuada tras actualizar código o configuración.
 3. Compruebe el healthcheck y los logs del runtime iniciado.
 4. Registre rango temporal, paso, propagador, marco y escala de cualquier

@@ -14,11 +14,19 @@ from .subscriptions import SubscriptionState
 class RealtimeSession:
     """Stream state and orbit updates for the subscriptions of one client."""
 
-    def __init__(self, websocket: WebSocket, get_snapshot: Callable, get_orbits: Callable, compression_threshold: int):
+    def __init__(
+        self,
+        websocket: WebSocket,
+        get_snapshot: Callable,
+        get_orbits: Callable,
+        compression_threshold: int,
+        build_state: Callable | None = None,
+    ):
         self._websocket = websocket
         self._get_snapshot = get_snapshot
         self._get_orbits = get_orbits
         self._compression_threshold = compression_threshold
+        self._build_state_callback = build_state
         self._subscriptions = SubscriptionState()
 
     async def run(self) -> None:
@@ -58,12 +66,25 @@ class RealtimeSession:
 
     def _build_state(self, by_name: dict) -> list[dict]:
         """Build a potentially expensive snapshot away from the ASGI event loop."""
+        if self._build_state_callback is not None:
+            return self._build_state_callback(by_name, self._subscriptions.satellite_ids)
         state = []
         for name in self._subscriptions.satellite_ids:
             propagator = by_name.get(name)
             if propagator is None:
                 continue
-            x, y, z, vx, vy, vz = propagator.propagate()
+            try:
+                x, y, z, vx, vy, vz = propagator.propagate()
+            except (ValueError, IndexError) as exc:
+                # Legacy fallback for direct unit-test/session use. Runtime
+                # integrations supply the StateVector serializer above.
+                state.append({
+                    "satellite": name,
+                    "availability": "unavailable",
+                    "reason": "state-unavailable",
+                    "detail": str(exc),
+                })
+                continue
             state.append({
                 "satellite": name,
                 "reference_frame": "ITRF",

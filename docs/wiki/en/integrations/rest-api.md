@@ -44,7 +44,7 @@ content when resending is successful.
 | Area | Content |
 | --- | --- |
 | [Status, configuration and catalog](rest-api/system-and-catalog.md) | Healthcheck, persistent configuration, documentation and catalog. |
-| [Propagation and ephemeris](rest-api/orbit-operations.md) | TLE, time series, parameters and manual orbits. |
+| [Propagation and ephemeris](rest-api/orbit-operations.md) | TLE, precise GNSS SP3/CLK products, time series, parameters, and manual orbits. |
 | [Ground Stations](rest-api/ground-stations.md) | AOS/LOS and limits of passing geometry. |
 | [Export](rest-api/exports.md) | TLE, OMM, OEM, OCM and exported anniversaries. |
 | [Backend Border](rest-api/backend-boundary.md) | Private routes that are not a public contract. |

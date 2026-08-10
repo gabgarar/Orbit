@@ -18,7 +18,7 @@ evitar que la arquitectura extensible se interprete como una promesa.
 | Propagación TLE SGP4 | Implementada con estado nativo TEME. | [Glosario](glossary.md) |
 | Órbitas manuales | Dos cuerpos y Cowell/RK4 con fuerzas limitadas, en EME2000. | [REST API](../integrations/rest-api.md) |
 | Tiempo y marcos explícitos | Módulos de EOP, leap seconds, `StateVector` y transformaciones. | [Arquitectura](../development/architecture.md) |
-| Lectores OEM/SP3 Python | Implementados como módulos de backend. | [Validación](../development/validation.md) |
+| Productos GNSS precisos SP3/CLK | Importación local durable de SP3, con CLK opcional y procedencia IGS/CDDIS, MGEX o ESA NSO. | [Productos GNSS precisos](../formats/precise-products.md) |
 | Docker Compose local | Implementado. | [Despliegue](../development/deployment.md) |
 
 ## Capacidades no disponibles
@@ -32,7 +32,7 @@ evitar que la arquitectura extensible se interprete como una promesa.
 | Colaboración/multitenencia | No implementada. | Que los proyectos se sincronicen entre usuarios. |
 | Determinación de órbita | No implementada. | Que los elementos osculadores sean una solución OD. |
 | Ajuste o exportación de TLE sintético | No implementado. | Que un estado manual EME2000 se convierta directamente en un TLE/TEME. |
-| Carga operativa OEM/SP3 de precisión | No expuesta por UI, gateway o API pública. | Que el lector Python implique una ruta de producto. |
+| Carga operativa OEM de precisión | No expuesta por UI, gateway o API pública. | Que el lector Python implique una ruta de producto. SP3/CLK tiene su propia ruta local documentada. |
 | CI, artefactos y releases automatizados | No declarados. | Que los comandos locales publiquen una release. |
 | Kubernetes/Helm/cloud gestionado | No incluido. | Que Docker Compose describa un despliegue multiinstancia. |
 

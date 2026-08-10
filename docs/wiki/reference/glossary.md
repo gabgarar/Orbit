@@ -43,8 +43,7 @@ las fuentes de [Bibliografía](bibliography.md).
 | **PEF** | Pseudo-Earth Fixed. Marco intermedio utilizado en la ruta TEME→PEF→ITRF. |
 | **ITRS** | International Terrestrial Reference System, sistema de referencia terrestre conceptual. |
 | **ITRF** | International Terrestrial Reference Frame. La denominación agrupa una familia o serie de realizaciones del ITRS; ITRF2020 es una realización concreta. En Orbit puede ser necesario declarar la realización específica. |
-| **IGS20** | Realización IGS relacionada con ITRF2020. Orbit sólo habilita el alineamiento global IGS20↔ITRF2020 mediante configuración explícita. |
-| **IGb20 / IGc20** | Realizaciones IGS cuyo identificador se conserva; Orbit no les aplica una conversión implícita hacia ITRF2020. |
+| **IGS20 / IGb20 / IGc20** | Realizaciones IGS cuyo identificador fuente se conserva. Orbit sólo habilita su alineamiento global publicado con ITRF2020 mediante la política explícita de familia y para estados orbitales de satélite; no hay relabelado implícito. |
 | **Realización terrestre** | Implementación concreta de un sistema terrestre, con época y convenciones propias. No debe sustituirse por la etiqueta genérica ITRF. |
 | **ECI / ECEF** | Etiquetas genéricas ambiguas. `StateVector` las rechaza porque no identifican modelo, realización o ruta de transformación suficientes. |
 
@@ -84,7 +83,9 @@ flowchart LR
 | **OMM** | Orbit Mean-Elements Message de la familia ODM. Orbit importa OMM JSON/XML cuando contiene los datos TLE necesarios y puede exportar una representación limitada. |
 | **OEM** | Orbit Ephemeris Message. Orbit contiene un lector Python segmentado y puede generar exportaciones simplificadas; la carga de un OEM de alta fidelidad no es una ruta pública de UI/REST. |
 | **OCM** | Orbit Comprehensive Message. Orbit genera una salida JSON simplificada; no declara cobertura completa del estándar. |
-| **SP3** | Formato de órbitas y relojes GNSS. Existe un lector Python con metadatos de estado; no se publica importación SP3 por UI, gateway o API. |
+| **SP3** | Formato tabulado de órbitas GNSS precisas, con corrección de reloj por registro cuando existe. Orbit importa productos locales SP3 como efemérides tabuladas y conserva marco, escala temporal, realización y procedencia. |
+| **CLK** | Producto RINEX de relojes. En Orbit puede acompañar un SP3; conserva registros satelitales `AS` y no crea ni modifica una órbita cartesiana. |
+| **Producto GNSS preciso** | Registro local durable de un SP3 y CLK opcional, con proveedor/clase/archivo y cobertura declarados. Admite productos IGS/CDDIS, MGEX, ESA NSO y proveedores equivalentes con contenido válido. |
 | **Covarianza** | Matriz 6×6 de incertidumbre cartesiana cuando la fuente la proporciona. Orbit conserva covarianza OEM cartesiana; no acepta bloques RTN/RSW/TNW. |
 | **Interpolación Lagrange** | Interpolación polinómica sobre muestras tabulares. El grado requiere un número correspondiente de puntos. |
 | **Interpolación Hermite** | Interpolación que usa posición y velocidad; en el lector OEM exige grado impar y número de muestras compatible. |

@@ -354,12 +354,61 @@ class PropagationRequest(TleSourceRequest):
 
 
 class OrbitRequest(TleSourceRequest):
+    # The anchor is particularly important for tabular SP3/OEM-like sources:
+    # their valid window is finite and may be historical relative to wall
+    # clock.  Omitting it preserves the legacy ``utc_now()`` behaviour.
+    at: datetime.datetime | None = None
     horizon_hours: float = Field(
         default=12.0,
         ge=PROPAGATION_HOURS_MIN,
         le=PROPAGATION_HOURS_MAX,
     )
     samples: int | None = Field(default=None, ge=2, le=AUTO_MAX_ORBIT_SAMPLES)
+
+
+class PreciseProductFileUpload(BaseModel):
+    """One browser-uploaded local SP3/CLK file encoded as base64.
+
+    The application service performs the authoritative binary/archive limits
+    and checksum validation.  This model keeps aliases stable for browser
+    clients while rejecting obviously oversized JSON fields before decoding.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(min_length=1, max_length=180)
+    content_base64: str = Field(
+        validation_alias=AliasChoices("content_base64", "contentBase64"),
+        min_length=1,
+        # 32 MiB binary in canonical base64 plus a small padding allowance.
+        max_length=((32 * 1024 * 1024 * 4) // 3) + 16,
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_upload_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned or "\x00" in cleaned:
+            raise ValueError("El nombre del fichero preciso no es válido")
+        return cleaned
+
+
+class PreciseProductImportRequest(BaseModel):
+    """Local precise-product import: one SP3 and an optional RINEX CLK."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    files: list[PreciseProductFileUpload] = Field(min_length=1, max_length=8)
+    provider_hint: str = Field(
+        default="auto",
+        validation_alias=AliasChoices("provider_hint", "providerHint", "provider"),
+        max_length=40,
+    )
+    product_class: str = Field(
+        default="auto",
+        validation_alias=AliasChoices("product_class", "productClass", "class"),
+        max_length=40,
+    )
 
 
 def _azimuth_within_limits(azimuth_deg: float, minimum_deg: float, maximum_deg: float) -> bool:

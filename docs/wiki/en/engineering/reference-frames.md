@@ -88,17 +88,23 @@ ITRF is a family of realizations, not an authorization to relabel
 coordinates. An ITRF state without realization cannot be converted to a
 concrete realization without a recorded datum operation.
 
-The only published operation included as a helper is `IGS20 ↔ ITRF2020`, from
-null global datum parameters. It is disabled by default and requires:
+The published global helper operation covers `IGS20 ↔ ITRF2020`,
+`IGb20 ↔ ITRF2020`, and `IGc20 ↔ ITRF2020`, using zero global datum
+parameters. It is disabled by default and requires:
 
 ```text
 ORBIT_TERRESTRIAL_REALIZATION=ITRF2020
-ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT=true
+ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true
 ```
 
-Applies to geocentric orbital states `IGS20`; does not apply corrections
-station, antenna or product conventions. `IGb20` and `IGc20` remain
-as different realizations until registering an explicit operation.
+It applies only to geocentric satellite-orbit states declared as `IGS20`,
+`IGb20`, or `IGc20`; it does not apply station, antenna, or product-convention
+corrections. Orbit retains the source label in provenance, so there is no
+silent conversion or relabelling. The legacy
+`ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` setting remains for deployments that
+need exactly its previous policy, but it cannot be enabled with the family
+policy. `IGS14` and other historical realizations have no route until an
+explicit published operation is registered.
 
 ## Velocity, acceleration and covariance
 

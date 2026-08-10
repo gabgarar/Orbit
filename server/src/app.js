@@ -5,10 +5,41 @@ import { registerCatalogRoutes } from "./routes/catalog.js";
 import { registerCatalogExportRoutes } from "./routes/catalog-exports.js";
 import { registerApiErrorHandler } from "./routes/errors.js";
 import { registerSystemRoutes } from "./routes/system.js";
-import { registerPythonProxyRoutes } from "./proxy/routes.js";
+import {
+    registerPreciseProductImportBodyParser,
+    registerPreciseProductImportProxyRoute,
+    registerPythonProxyRoutes
+} from "./proxy/routes.js";
+
+function isPrivateConfigStaticPath(request) {
+    // `express.static` correctly prevents filesystem traversal, but the
+    // persisted precise-product directory itself must never be a public web
+    // asset. Decode a few times so `%2F`/double-encoded separators cannot
+    // disguise the first logical path component on Windows or Linux.
+    let decodedPath = String(request.path || request.url || "");
+    try {
+        for (let index = 0; index < 4; index += 1) {
+            const next = decodeURIComponent(decodedPath);
+            if (next === decodedPath) break;
+            decodedPath = next;
+        }
+    } catch {
+        // A malformed encoded path cannot be a legitimate public config
+        // asset, and denying it is safer than allowing static fallthrough.
+        return true;
+    }
+
+    const normalised = path.posix.normalize(`/${decodedPath.replaceAll("\\", "/")}`).toLowerCase();
+    return normalised === "/precise-products" || normalised.startsWith("/precise-products/");
+}
 
 export function createOrbitApp({ runtime, config, catalog, importer, refresher, pythonBackend, pythonClient }) {
     const app = express();
+    // A compressed SP3/CLK pair can be tens of MiB. Register this bounded
+    // parser before the default parser: base64 expansion needs more than
+    // 25 MiB, while all unrelated Orbit JSON APIs retain their smaller limit.
+    registerPreciseProductImportBodyParser(app);
+    registerPreciseProductImportProxyRoute(app, pythonClient);
     app.use(express.json({ limit: "25mb" }));
 
     registerSystemRoutes(app, {
@@ -47,6 +78,16 @@ export function createOrbitApp({ runtime, config, catalog, importer, refresher, 
     }));
     app.use(express.static(runtime.reactDistDir));
     app.use(express.static(runtime.frontDir));
+    // Config keeps public catalogue/UI assets, but precise SP3/CLK uploads are
+    // private runtime data. They are exposed only through the explicit
+    // API/proxy contract, never by the broad static `/config` mount.
+    app.use("/config", (request, response, next) => {
+        if (isPrivateConfigStaticPath(request)) {
+            response.status(404).end();
+            return;
+        }
+        next();
+    });
     app.use("/config", express.static(runtime.configDir));
     app.get("/health", async (_request, response) => {
         let ready = false;

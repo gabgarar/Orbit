@@ -31,8 +31,8 @@ flowchart LR
 | React interface | `react-ui/` | Application composition, panels, dialogs and Vite build. | Serve HTTP, persist catalog or compute propagation. |
 | Legacy Cesium Runtime | `front/` | Viewer, assets and modules that continue in the incremental migration. | Become a second backend API. |
 | Gateway | `server/` | Serve files, persist configuration, import/refresh catalog and HTTP/WebSocket proxy. | Implement orbital algorithms. |
-| Orbital Backend | `server/python/orbit_api/` | Propagation, ephemeris, frames, time, formats, visibility and FastAPI routes. | Expose yourself directly as a public API by default. |
-| Persistent data | `config/` | System configuration, catalog and local data mounted in Docker. | Authentication, multi-tenancy or remote database. |
+| Orbital Backend | `server/python/orbit_api/` | Propagation, ephemeris, frames, time, formats, visibility, precise GNSS products, and FastAPI routes. | Expose itself directly as a public API by default. |
+| Persistent data | `config/` | System configuration, catalogue, and mounted local precise-product sources/manifests. | Authentication, multi-tenancy, or a remote database. |
 | Local operation | `.scripts/` | Restart, status, logs and test execution in Windows. | A versioned product CLI. |
 
 ## Runtime composition
@@ -95,7 +95,7 @@ flowchart TD
     F --> M[frames]
     A --> R[OrbitRuntime]
     R --> PR[propagator registry]
-    R --> CA[catálogo y cachés]
+    R --> CA[catalogue, precise products, and caches]
     A --> RT[routers FastAPI]
     RT --> AP[application]
     AP --> R
@@ -105,18 +105,19 @@ flowchart TD
 | Module | Responsibility |
 | --- | --- |
 | `api/routes/` | HTTP and WebSocket adapters; they do not contain the main numerical logic. |
-| `application/` | Runtime use cases, manual orbits, orbital parameters and exporters. |
+| `application/` | Runtime use cases, manual orbits, precise SP3/CLK products, orbital parameters, and exporters. |
 | `domain/requests.py` | Pydantic models and request normalization. |
 | `orbits/propagators/` | SGP4 contracts and engines, two bodies, Cowell/RK4 and legacy routes. |
 | `frames/` | `StateVector`, frame identifiers, transformations and ground realizations. |
 | `timekeeping/` | Time scales, leap second tables, and local EOP C04 providers. |
-| `formats/` | SP3 and OEM tabular readers with frame/time metadata. |
+| `formats/` | SP3, RINEX CLK, and OEM tabular readers with frame/time metadata. |
 | `ground_stations/` | Sampled elevation and extraction of AOS/LOS windows. |
 | `infrastructure/` | TTL/LRU cache and configuration directory watcher. |
 
-The FastAPI lifecycle loads the constellation and activates an observer not
-`config/` recursive. The observer requests a reload when the
-system configuration or the configured catalog file.
+The FastAPI lifecycle loads the constellation, including verified SP3/CLK
+products under `config/precise-products/`, and activates a non-recursive
+`config/` observer. The observer requests a reload when system configuration
+or the configured catalogue file changes.
 
 ## Numeric contracts
 

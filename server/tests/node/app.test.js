@@ -152,6 +152,51 @@ test("the prebuilt MkDocs site is served from /Orbit without replacing FastAPI S
     }
 });
 
+test("precise product uploads are not public static config assets", async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "orbit-private-precise-products-"));
+    const configDir = path.join(temporaryRoot, "config");
+    const preciseDir = path.join(configDir, "precise-products", "igs-final");
+    const frontDir = path.join(temporaryRoot, "front");
+    const reactDistDir = path.join(temporaryRoot, "react-dist");
+    await Promise.all([
+        fs.mkdir(preciseDir, { recursive: true }),
+        fs.mkdir(frontDir, { recursive: true }),
+        fs.mkdir(reactDistDir, { recursive: true })
+    ]);
+    await Promise.all([
+        fs.writeFile(path.join(configDir, "catalog.json"), '{"entries":[]}'),
+        fs.writeFile(path.join(preciseDir, "IGS0OPSFIN_ORB.SP3.gz"), "private precise product")
+    ]);
+
+    try {
+        const app = createOrbitApp(dependencies(async () => true, {
+            runtime: {
+                reactDistDir,
+                frontDir,
+                configDir,
+                docsSiteDir: path.join(temporaryRoot, "docs-site")
+            }
+        }));
+        await withApp(app, async (baseUrl) => {
+            const publicCatalog = await fetch(`${baseUrl}/config/catalog.json`);
+            assert.equal(publicCatalog.status, 200, "normal public config assets remain available");
+
+            for (const suffix of [
+                "/config/precise-products/igs-final/IGS0OPSFIN_ORB.SP3.gz",
+                "/config/PRECISE-PRODUCTS/igs-final/IGS0OPSFIN_ORB.SP3.gz",
+                "/config/precise-products%2Figs-final%2FIGS0OPSFIN_ORB.SP3.gz",
+                "/config/safe%2F..%2Fprecise-products%2Figs-final%2FIGS0OPSFIN_ORB.SP3.gz"
+            ]) {
+                const response = await fetch(`${baseUrl}${suffix}`);
+                assert.equal(response.status, 404, suffix);
+                assert.equal(await response.text(), "", "private raw bytes must not reach the response");
+            }
+        });
+    } finally {
+        await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
+});
+
 test("invalid JSON payloads use the API error contract without mutating configuration", async () => {
     let readCalls = 0;
     let saveCalls = 0;

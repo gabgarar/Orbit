@@ -10,14 +10,22 @@ from dataclasses import replace
 
 from fastapi import HTTPException
 
+from orbit_api.application.precise_products import (
+    PreciseProduct,
+    PreciseProductImportError,
+    PreciseProductRepository,
+    import_precise_product,
+)
 from orbit_api.catalog.repository import find_entry, load_entries
 from orbit_api.catalog.tle_loader import load_all_tles_from_config
+from orbit_api.formats import EphemerisFormatError
 from orbit_api.frames import FrameId, FrameTransformService, StateVector
 from orbit_api.core.settings import (
     AUTO_MAX_ORBIT_SAMPLES, AUTO_MIN_ORBIT_SAMPLES, CONFIG_DIR,
     EPHEMERIS_CACHE_TTL_SECONDS, MAX_EPHEMERIS_CACHE_ITEMS, MAX_EPHEMERIS_POINTS,
-    MAX_TOTAL_ORBIT_POINTS_PER_BATCH, ORBIT_CACHE_TTL_SECONDS, SYSTEM_CONFIG_PATH,
+    MAX_TOTAL_ORBIT_POINTS_PER_BATCH, ORBIT_CACHE_TTL_SECONDS, PRECISE_PRODUCTS_DIR, SYSTEM_CONFIG_PATH,
 )
+from orbit_api.frames.transforms import FrameTransformationError
 from orbit_api.core.system_config import clamp_propagation_hours, load_system_config
 from orbit_api.infrastructure.ttl_cache import TtlLruCache
 from orbit_api.orbits.propagators import OrbitPropagator, build_default_registry
@@ -28,7 +36,12 @@ from orbit_api.timekeeping import ensure_utc, utc_now
 class OrbitRuntime:
     """Own the mutable runtime state required by API route adapters."""
 
-    def __init__(self, frame_transformer: FrameTransformService | None = None) -> None:
+    def __init__(
+        self,
+        frame_transformer: FrameTransformService | None = None,
+        *,
+        precise_products_dir=None,
+    ) -> None:
         self._lock = threading.Lock()
         self._propagators: list[tuple[str, OrbitPropagator]] = []
         self._propagators_by_name: dict[str, OrbitPropagator] = {}
@@ -42,6 +55,11 @@ class OrbitRuntime:
         self._ephemeris_cache = TtlLruCache(MAX_EPHEMERIS_CACHE_ITEMS, EPHEMERIS_CACHE_TTL_SECONDS)
         self._frame_transformer = frame_transformer or FrameTransformService()
         self._propagator_registry = build_default_registry(self._frame_transformer)
+        self._precise_product_repository = PreciseProductRepository(
+            precise_products_dir or PRECISE_PRODUCTS_DIR
+        )
+        self._precise_products_by_id: dict[str, PreciseProduct] = {}
+        self._precise_product_diagnostics: tuple[str, ...] = ()
 
     @property
     def frame_transformer(self) -> FrameTransformService:
@@ -271,6 +289,66 @@ class OrbitRuntime:
         with self._lock:
             return list(self._propagators), dict(self._system_config), dict(self._propagators_by_name)
 
+    def import_precise_product(
+        self,
+        files,
+        *,
+        provider_hint: object = "auto",
+        product_class: object = "auto",
+    ) -> PreciseProduct:
+        """Persist and register a local SP3/CLK precise product.
+
+        The source is written to the mounted configuration volume before it
+        becomes visible to callers.  A browser refresh or container restart
+        can therefore reconstruct the same runtime IDs from checksummed input
+        rather than leaving project layers dangling.
+        """
+
+        product = import_precise_product(
+            files,
+            provider_hint=provider_hint,
+            product_class=product_class,
+            frame_transformer=self._frame_transformer,
+        )
+        self._precise_product_repository.save(product)
+        with self._lock:
+            products = dict(self._precise_products_by_id)
+            products[product.product_id] = product
+            self._set_precise_products_locked(products)
+        return product
+
+    def precise_products_payload(self) -> dict:
+        """Return persisted precise products and registered satellite entries."""
+
+        with self._lock:
+            products = tuple(self._precise_products_by_id.values())
+            diagnostics = self._precise_product_diagnostics
+        return {
+            "items": [
+                {
+                    "product": product.payload(),
+                    "satellites": [
+                        product.satellite_payload(identifier)
+                        for identifier in product.satellite_ids
+                    ],
+                    "importedIds": [product.runtime_id(identifier) for identifier in product.satellite_ids],
+                }
+                for product in products
+            ],
+            "diagnostics": list(diagnostics),
+        }
+
+    def precise_product_import_payload(self, product: PreciseProduct) -> dict:
+        """Return the public payload shared by POST import and GET hydration."""
+
+        satellites = [product.satellite_payload(identifier) for identifier in product.satellite_ids]
+        return {
+            "ok": True,
+            "product": product.payload(),
+            "satellites": satellites,
+            "importedIds": [item["id"] for item in satellites],
+        }
+
     def resolve_propagator(
         self,
         sat_id: str | None,
@@ -301,7 +379,23 @@ class OrbitRuntime:
         return load_entries(CONFIG_DIR, data_config.get("satellites_catalog_file", "catalog.json"), load_all_tles_from_config)
 
     def find_catalog_entry(self, sat_id: str):
-        return find_entry(self.load_catalog_entries(), sat_id)
+        entry = find_entry(self.load_catalog_entries(), sat_id)
+        if entry:
+            return entry
+        with self._lock:
+            for product in self._precise_products_by_id.values():
+                for satellite_id in product.satellite_ids:
+                    if product.runtime_id(satellite_id) == sat_id:
+                        payload = product.satellite_payload(satellite_id)
+                        return {
+                            "name": payload["name"],
+                            "id": sat_id,
+                            "sourceFormat": "SP3",
+                            "source_format": "SP3",
+                            "preciseProduct": product.payload(),
+                            "satellite_id": satellite_id,
+                        }
+        return None
 
     def build_ephemeris(
         self,
@@ -352,11 +446,17 @@ class OrbitRuntime:
             )
 
         points, cursor = [], start_utc
-        while cursor <= end_utc:
-            points.append(sample(cursor))
-            cursor += datetime.timedelta(seconds=step)
-        if points and points[-1]["time"] != end_utc.isoformat():
-            points.append(sample(end_utc))
+        try:
+            while cursor <= end_utc:
+                points.append(sample(cursor))
+                cursor += datetime.timedelta(seconds=step)
+            if points and points[-1]["time"] != end_utc.isoformat():
+                points.append(sample(end_utc))
+        except (EphemerisFormatError, FrameTransformationError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"La efeméride solicitada no está disponible para {name}: {exc}",
+            ) from exc
         renderer_frame = points[0]["frame"] if points else {"name": "ITRF", "realization": None, "center": "EARTH"}
         renderer_reference_frame = points[0]["reference_frame"] if points else "ITRF"
         renderer_time_scale = points[0]["time_scale"] if points else "UTC"
@@ -394,15 +494,32 @@ class OrbitRuntime:
             except Exception as exc:
                 invalid += 1
                 print(f"Invalid TLE ignored: {name} ({exc})")
+        precise_products, diagnostics = self._precise_product_repository.load_all(
+            frame_transformer=self._frame_transformer,
+        )
+        for product in precise_products:
+            for satellite_id in product.satellite_ids:
+                runtime_id = product.runtime_id(satellite_id)
+                if runtime_id in by_name:
+                    diagnostics = (*diagnostics, f"{runtime_id}: ID de producto preciso duplicado")
+                    continue
+                provider = product.provider_for_satellite(satellite_id)
+                props.append((runtime_id, provider))
+                by_name[runtime_id] = provider
         with self._lock:
             self._propagators, self._propagators_by_name, self._system_config = props, by_name, system_config
+            self._precise_products_by_id = {product.product_id: product for product in precise_products}
+            self._precise_product_diagnostics = tuple(diagnostics)
             self._orbit_point_cache.clear(); self._orbit_cache_payload = []; self._orbit_cache_key = None
             self._orbit_cache_valid_until = datetime.datetime.min.replace(tzinfo=datetime.UTC)
             # The name of a catalogue entry is stable while its TLE is not.
             # Cached ephemerides are keyed by name, so they must be discarded
             # when a reload swaps an element set under the same identifier.
             self._ephemeris_cache.clear()
-        print(f"Constellation ready: {len(props)} valid, {invalid} invalid")
+        print(
+            f"Constellation ready: {len(props)} valid, {invalid} invalid, "
+            f"{len(precise_products)} precise products"
+        )
 
     def satellite_count(self) -> int:
         with self._lock:
@@ -414,6 +531,43 @@ class OrbitRuntime:
 
     def catalog_satellite_ids(self) -> list[str]:
         return [name for name, _ in self.get_state_snapshot()[0]]
+
+    def build_realtime_state(self, by_name: dict, satellite_ids: tuple[str, ...] | list[str]) -> list[dict]:
+        """Serialize selected state sources without letting one SP3 break WS.
+
+        Precise products can be historical and SP3 ``P`` files commonly have
+        no velocity records.  The shared StateVector serializer preserves that
+        absence instead of calling the legacy six-component ``propagate``
+        adapter, and reports an unavailable source as data rather than killing
+        the realtime task.
+        """
+
+        moment = utc_now()
+        states: list[dict] = []
+        for name in satellite_ids:
+            propagator = by_name.get(name)
+            if propagator is None:
+                continue
+            try:
+                renderer_state = self.renderer_state_at(propagator, moment)
+                native_state = self.native_state_at(propagator, moment)
+                payload = self.serialize_state(
+                    name,
+                    moment,
+                    include_velocity=True,
+                    state=renderer_state,
+                    native_state=native_state,
+                )
+                payload["availability"] = "available"
+                states.append(payload)
+            except (EphemerisFormatError, FrameTransformationError, ValueError) as exc:
+                states.append({
+                    "satellite": name,
+                    "availability": "unavailable",
+                    "reason": "out-of-coverage-or-frame-unavailable",
+                    "detail": str(exc),
+                })
+        return states
 
     def compute_auto_orbit_samples(self, horizon_hours, satellites_count=1, prop=None) -> int:
         return compute_auto_samples(horizon_hours, satellites_count, prop, AUTO_MIN_ORBIT_SAMPLES, AUTO_MAX_ORBIT_SAMPLES, MAX_TOTAL_ORBIT_POINTS_PER_BATCH)
@@ -458,17 +612,57 @@ class OrbitRuntime:
                 # independently makes its implicit ``now`` drift across a
                 # dense path and can introduce tiny non-uniform chords.
                 reference_time = now
-                for index in range(samples):
-                    offset = (index / max(samples - 1, 1)) * horizon_hours * 3600
-                    state = self.renderer_state_at(
-                        prop,
-                        reference_time + datetime.timedelta(seconds=offset),
-                    )
-                    orbit.append({"x": state.position_m[0], "y": state.position_m[1], "z": state.position_m[2]})
+                try:
+                    for index in range(samples):
+                        offset = (index / max(samples - 1, 1)) * horizon_hours * 3600
+                        state = self.renderer_state_at(
+                            prop,
+                            reference_time + datetime.timedelta(seconds=offset),
+                        )
+                        orbit.append({"x": state.position_m[0], "y": state.position_m[1], "z": state.position_m[2]})
+                except (EphemerisFormatError, FrameTransformationError, ValueError) as exc:
+                    payload.append({
+                        "satellite": name,
+                        "orbit": [],
+                        "orbit_horizon_hours": horizon_hours,
+                        "orbit_samples": samples,
+                        "availability": "unavailable",
+                        "reason": "out-of-coverage-or-frame-unavailable",
+                        "detail": str(exc),
+                    })
+                    continue
                 with self._lock:
                     self._orbit_point_cache[cache_key] = {"orbit": orbit, "valid_until": now + datetime.timedelta(seconds=ORBIT_CACHE_TTL_SECONDS)}
             payload.append({"satellite": name, "orbit": orbit, "orbit_horizon_hours": horizon_hours, "orbit_samples": samples})
         return payload
+
+    def _set_precise_products_locked(self, products: dict[str, PreciseProduct]) -> None:
+        """Merge an imported product into the live constellation atomically."""
+
+        catalog_entries = [
+            (name, propagator)
+            for name, propagator in self._propagators
+            if not name.startswith("precise:")
+        ]
+        by_name = {name: propagator for name, propagator in catalog_entries}
+        for product in products.values():
+            for satellite_id in product.satellite_ids:
+                runtime_id = product.runtime_id(satellite_id)
+                if runtime_id in by_name:
+                    raise PreciseProductImportError(
+                        f"El ID de producto preciso {runtime_id} ya existe"
+                    )
+                provider = product.provider_for_satellite(satellite_id)
+                catalog_entries.append((runtime_id, provider))
+                by_name[runtime_id] = provider
+        self._propagators = catalog_entries
+        self._propagators_by_name = by_name
+        self._precise_products_by_id = dict(products)
+        self._orbit_point_cache.clear()
+        self._orbit_cache_payload = []
+        self._orbit_cache_key = None
+        self._orbit_cache_valid_until = datetime.datetime.min.replace(tzinfo=datetime.UTC)
+        self._ephemeris_cache.clear()
 
     def get_orbits_cached(self, props, config: dict) -> list:
         now, horizon = utc_now(), self._runtime_hours(config)

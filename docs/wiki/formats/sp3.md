@@ -1,66 +1,124 @@
 # SP3
 
-[Inicio](../index.md) · [Formatos](index.md) · [Marcos de referencia](../engineering/reference-frames.md) · [Sistemas temporales](../engineering/time-systems.md)
+[Satélite](../satellite/index.md) · [Formatos espaciales](index.md) · [Productos GNSS precisos](precise-products.md) · [Marcos de referencia](../engineering/reference-frames.md)
 
-## Estado de soporte
+## Visión general
 
-`Sp3StateProvider` es un lector Python de estados tabulados SP3. No hay
-importación SP3 en la UI, gateway, API pública ni `OrbitRuntime`; el lector no
-crea automáticamente objetos de catálogo o capas del visor.
+SP3 es un formato tabulado de órbitas GNSS precisas. Orbit lo usa como una
+fuente de estados por época y satélite, no como un conjunto de elementos
+keplerianos, un TLE ni un modelo de fuerzas configurable.
 
-## Cabecera admitida
+Un SP3 importado crea una fuente de efeméride para cada identificador de
+satélite contenido en el archivo. Puede acompañarse de un CLK RINEX para
+conservar información de reloj, pero las coordenadas y la velocidad siguen
+procediendo exclusivamente de SP3.
 
-El parser exige una primera cabecera significativa con `#`, distinta de `##`,
-y al menos 51 caracteres. Conserva:
+Para proveedores, clases Final/Rapid/Ultra-Rapid, MGEX, compresión y flujo de
+importación, consulte [Productos GNSS precisos](precise-products.md).
 
-| Campo | Fuente |
+## Cabecera y contrato de metadatos
+
+Orbit exige una cabecera SP3 significativa que empieza por `#` —distinta de
+`##`— y que contiene los campos estructurales necesarios. Conserva los
+siguientes metadatos en lugar de inferirlos del nombre de archivo:
+
+| Campo | Uso en Orbit |
 | --- | --- |
-| Versión y tipo de registro | Posiciones fijas de la cabecera `#`. El tipo debe ser `P` o `V`. |
-| Época inicial | Calendario de cabecera, sin asumir UTC. |
-| Número de épocas, datos, tipo orbital y agencia | Campos fijos cuando están presentes. |
-| Sistema de coordenadas | Campo de cabecera, obligatorio. |
-| Sistema temporal | Línea `%c`, campo `TIME_SYSTEM`, obligatorio. |
+| Versión SP3 y tipo de registro | Valida que la serie contiene posiciones (`P`) o posiciones/velocidades (`V`). |
+| Época inicial y número de épocas | Delimita la cobertura de la serie. |
+| Tipo orbital y agencia | Procedencia declarada por el producto. |
+| Sistema de coordenadas | Marco nativo de los estados. |
+| `TIME_SYSTEM` de `%c` | Escala temporal nativa de las épocas. |
+| Lista de satélites | Determina las capas/series que se pueden seleccionar. |
 
 Las realizaciones `IGS20`, `IGb20` e `IGc20` se conservan como familia `IGS`
-con realización explícita. No se renombran como ITRF.
+con realización explícita. No se renombran como ITRF ni como una etiqueta
+genérica `ECEF`.
 
 ## Registros de estado
 
 Las épocas se introducen mediante líneas `*`. Los registros `P` y `V` se
 asocian por época e identificador de satélite.
 
-| Registro | Unidades de fuente | Conversión a `StateVector` |
+| Registro | Unidades de fuente | Conversión interna |
 | --- | --- | --- |
-| `P` | km | m. |
-| `V` | dm/s | m/s. |
+| `P` | km | posición en m. |
+| `V` | dm/s | velocidad en m/s. |
 
-El centinela SP3 de componente ausente (`abs(valor) >= 999999`) se omite; no
-se trata como una coordenada válida. Registros duplicados del mismo tipo,
-época y satélite se rechazan.
+El centinela de componente ausente (`abs(valor) >= 999999`) no se interpreta
+como una coordenada válida. Los registros duplicados del mismo tipo, época y
+satélite se rechazan: una serie tabulada no puede tener dos valores diferentes
+para la misma muestra.
+
+La cuarta columna de un registro SP3 corresponde al reloj en el formato fuente.
+Orbit la conserva como metadato de reloj cuando está disponible; no se usa para
+modificar la posición, velocidad, marcos, escalas temporales ni la geometría de
+visibilidad.
 
 ## Selección e interpolación
 
-Un fichero SP3 puede contener múltiples satélites. El método de consulta exige
-`satellite_id` excepto cuando la serie contiene exactamente uno. Cada satélite
-usa `TabularStateProvider` con interpolación lineal acotada por defecto.
+Un archivo SP3 puede incluir muchos satélites. La consulta exige
+`satellite_id` salvo cuando la serie contiene exactamente uno. Cada satélite usa
+una serie `TabularStateProvider` con interpolación Lagrange local y acotada. La
+ventana usa como máximo diez muestras (grado 9) y, si el fichero contiene menos
+registros, degrada de forma explícita al mayor grado disponible (`n - 1`). Por
+ejemplo, una serie de dos épocas conserva un polinomio de grado 1; no se
+presenta como una interpolación precisa de orden alto.
+Una serie con una única época solo admite la consulta exacta de esa muestra.
 
-Las consultas se convierten desde la escala indicada por el solicitante a la
-escala nativa antes de buscar e interpolar. Por ejemplo, una serie GPS conserva
-sus épocas GPS en la salida aunque la consulta se haya formulado en UTC.
+Una consulta se convierte desde la escala solicitada a la escala nativa antes
+de buscar e interpolar. Por ejemplo, una serie GPS mantiene sus épocas GPS en
+sus metadatos aunque una petición se formule en UTC.
 
-## Marco y realización
+!!! warning "La interpolación de Orbit no sustituye la del proveedor"
 
-`native_state_at` devuelve la muestra en el marco de la cabecera. Pedir ITRF
-para un SP3 en `IGS20` falla si no existe una transformación de realización
-registrada. La única alineación integrada optativa es IGS20↔ITRF2020 bajo la
-política descrita en [Marcos de referencia](../engineering/reference-frames.md);
-IGb20 e IGc20 no se convierten implícitamente.
+    La calidad publicada por IGS o ESA pertenece a sus muestras y a su cadena
+    de producción. Orbit aplica una ventana Lagrange local de hasta grado 9,
+    pero no reproduce la estrategia completa del centro de análisis ni sus
+    productos auxiliares. Use una cadencia adecuada, no consulte fuera de
+    cobertura y documente los EOP, leap seconds y la transformación empleada
+    antes de atribuir precisión geodésica al resultado.
+
+## Tiempo, marco y realización
+
+`native_state_at` devuelve el estado en el marco y escala declarados por el
+archivo. Solicitar ITRF para un SP3 de la familia IGS exige una transformación
+de realización registrada. Orbit no renombra implícitamente `IGS20`, `IGb20`
+ni `IGc20`.
+
+La alineación global publicada para esa familia es optativa: requiere
+`ORBIT_TERRESTRIAL_REALIZATION=ITRF2020` y
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true`. Sólo se aplica a estados
+orbitales geocéntricos de satélite y conserva la etiqueta de realización
+fuente. No transforma estaciones ni antenas. La política histórica exacta
+`ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` es incompatible con la política de
+familia; `IGS14` y otras realizaciones históricas necesitan su propia operación
+publicada. Consulte [Marcos de referencia](../engineering/reference-frames.md).
+
+La transformación de un estado terrestre requiere los datos auxiliares
+pertinentes. Para una ejecución reproducible, cargue los productos de tiempo y
+EOP locales indicados en [Tiempo, EOP e ITRF](../operations/time-eop.md).
+
+## Reloj asociado
+
+Un archivo RINEX CLK puede importarse junto al SP3 de la misma serie. Aporta
+sesgos de reloj y, cuando los publica, tasas y precisiones por época e
+identificador GNSS. En Orbit su papel actual es de procedencia y metadato de
+producto:
+
+- no crea una órbita sin un SP3 válido;
+- no se interpola como estado cartesiano;
+- no desplaza la época del SP3;
+- no calcula PPP, correcciones de pseudodistancia ni una solución de
+  navegación.
 
 ## Límites
 
-- No se implementan entrada UI/API, exportación SP3 ni registro en runtime.
-- No hay interpolación de alta orden declarada por SP3, precisión de reloj ni
-  uso de campos de error o correlación.
+- No hay exportación SP3/CLK ni generación de productos precisos por Orbit.
+- No hay descarga autenticada desde CDDIS Earthdata ni sincronización remota
+  de IGS/MGEX/ESA; la entrada es un archivo local.
+- No se fusionan productos ni se deduce cuál de Final, Rapid o Ultra-Rapid es
+  preferible para una misión concreta.
 - Una escala temporal no reconocida se conserva al leer metadatos, pero se
-  rechaza al construir el proveedor de estados.
-- No hay transformación inventada entre realizaciones terrestres.
+  rechaza al construir un proveedor de estados convertible.
+- No se inventa una transformación entre realizaciones terrestres.

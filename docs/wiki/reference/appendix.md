@@ -65,7 +65,8 @@ Variables clave:
 | `ORBIT_LEAP_SECONDS_PATH` | Ruta de la tabla local `leap-seconds.list`. |
 | `ORBIT_LEAP_SECONDS_SHA256` | Hash esperado de la tabla de leap seconds. |
 | `ORBIT_TERRESTRIAL_REALIZATION` | Realización terrestre de salida controlada. |
-| `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` | Activa el alineamiento global opcional IGS20↔ITRF2020 bajo sus precondiciones. |
+| `ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT` | Activa la alineación global opcional IGS20/IGb20/IGc20↔ITRF2020 para estados orbitales de satélite; requiere `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`. |
+| `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` | Política histórica exacta sólo para IGS20; es mutuamente excluyente con la política de familia. |
 
 Las rutas se configuran dentro del entorno que ejecuta Orbit. Con Compose, los
 ficheros montados en `./config` se ven normalmente bajo `/app/config`.

@@ -179,9 +179,37 @@ test("OMM, OEM and SP3 retain their own input vocabulary without masquerading as
     assert.equal(oem.Muestras, "12");
     assert.equal(oem.Maniobras, "No disponible en la fuente");
 
-    const sp3 = asObject(buildObjectDetails({ id: "SP3-1", sourceFormat: "SP3", telemetry: { id: "SP3-1", geo: {} } }).rows.input);
+    const sp3 = asObject(buildObjectDetails({
+        id: "SP3-1",
+        sourceFormat: "SP3",
+        telemetry: { id: "SP3-1", geo: {} },
+        catalogMeta: {
+            inputMetadata: {
+                provider: "NASA CDDIS / IGS",
+                product_class: "final",
+                product_id: "IGS0OPSFIN_20262220000_01D",
+                file_name: "IGS0OPSFIN_20262220000_01D_05M_ORB.SP3.gz",
+                clock_file: "IGS0OPSFIN_20262220000_01D_30S_CLK.CLK.gz",
+                reference_frame: "ITRF",
+                time_system: "GPS",
+                start_time: "2026-08-10T00:00:00Z",
+                end_time: "2026-08-11T00:00:00Z",
+                rendering: {
+                    available: false,
+                    reason: "IGS14 requires a registered terrestrial-realization transform."
+                },
+                samples: 288,
+                clock_corrections: 288
+            }
+        }
+    }).rows.input);
     assert.equal(sp3["Tipo de entrada"], "SP3");
-    assert.equal(sp3.Estado, "Formato preparado; aún no conectado al runtime");
+    assert.equal(sp3.Proveedor, "NASA CDDIS / IGS");
+    assert.equal(sp3["Clase de producto"], "final");
+    assert.equal(sp3["Archivo SP3"], "IGS0OPSFIN_20262220000_01D_05M_ORB.SP3.gz");
+    assert.equal(sp3["Archivo CLK"], "IGS0OPSFIN_20262220000_01D_30S_CLK.CLK.gz");
+    assert.match(sp3["Visualización ITRF"], /^No disponible: IGS14 requires/);
+    assert.equal(sp3.Estado, "Registrado en el runtime de efemérides precisas");
 });
 
 test("celestial bodies retain the common tabs without a fictional TLE engine", () => {

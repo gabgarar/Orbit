@@ -117,6 +117,21 @@ function metadataPresence(sources, keys, fallback = INPUT_UNAVAILABLE) {
     return fallback;
 }
 
+function preciseRenderingStatus(metadata) {
+    const rendering = metadata?.rendering ?? metadata;
+    if (!rendering || typeof rendering !== "object") return INPUT_UNAVAILABLE;
+    if (rendering.available === true) {
+        const target = value(rendering.target_frame || rendering.targetFrame, "ITRF");
+        const realization = value(rendering.target_realization || rendering.targetRealization, "");
+        return realization ? `Disponible en ${target} / ${realization}` : `Disponible en ${target}`;
+    }
+    if (rendering.available === false) {
+        const reason = value(rendering.reason, "");
+        return reason ? `No disponible: ${reason}` : "No disponible: falta una transformación hacia ITRF";
+    }
+    return INPUT_UNAVAILABLE;
+}
+
 function tleAgeHours(summary, referenceTimeMs) {
     const ageMs = tleEpochAgeMs(summary?.epoch, hasNumber(referenceTimeMs) ? Number(referenceTimeMs) : Date.now());
     return Number.isFinite(ageMs) ? Math.max(0, ageMs / (60 * 60 * 1000)) : null;
@@ -289,6 +304,7 @@ export function buildObjectDetails(detail) {
         || catalogMeta.source_metadata
         || telemetry.inputMetadata
         || telemetry.input_metadata
+        || telemetry.sp3
         || {};
     const metadataSources = [manualObjectMetadata, inputMetadata, catalogMeta, telemetry];
     // Keep the legacy metadata precedence for existing workspaces. Input
@@ -480,16 +496,26 @@ export function buildObjectDetails(detail) {
             ["Maniobras", metadataPresence(metadataSources, ["maneuvers", "maneuver_data", "maneuverData"])]
         ];
     } else if (sourceFormat === "SP3") {
+        const preciseRendering = inputMetadata?.rendering
+            || telemetry?.sp3?.rendering
+            || null;
         inputRows = [
             ["Tipo de entrada", "SP3"],
             ["Proveedor", metadataValue(metadataSources, ["provider", "agency", "orbitType", "orbit_type"], INPUT_UNAVAILABLE)],
+            ["Clase de producto", metadataValue(metadataSources, ["productClass", "product_class", "quality", "dataQuality", "data_quality"], INPUT_UNAVAILABLE)],
+            ["Producto", metadataValue(metadataSources, ["productId", "product_id", "productName", "product_name"], INPUT_UNAVAILABLE)],
+            ["Archivo SP3", metadataValue(metadataSources, ["fileName", "file_name", "orbitFile", "orbit_file", "sp3_file"], INPUT_UNAVAILABLE)],
+            ["Archivo CLK", metadataValue(metadataSources, ["clockFile", "clock_file", "clk_file"], "No incluido")],
             ["Época", inputEpoch],
+            ["Inicio de cobertura", utcDate(metadataValue(metadataSources, ["startTimeMs", "start_time_ms", "startTime", "start_time", "coverageStart", "coverage_start"], ""))],
+            ["Fin de cobertura", utcDate(metadataValue(metadataSources, ["endTimeMs", "end_time_ms", "endTime", "end_time", "coverageEnd", "coverage_end", "stop_time"], ""))],
             ["Marco declarado", metadataValue(metadataSources, ["referenceFrame", "reference_frame", "frame", "coordSystem", "coordinate_system"], INPUT_UNAVAILABLE)],
             ["Sistema de tiempo", metadataValue(metadataSources, ["timeSystem", "time_system", "timeScale", "time_scale"], INPUT_UNAVAILABLE)],
+            ["Visualización ITRF", preciseRenderingStatus(preciseRendering)],
             ["Efeméride precisa", metadataPresence(metadataSources, ["states", "samples", "preciseEphemeris", "precise_ephemeris"])],
             ["Correcciones de reloj", metadataPresence(metadataSources, ["clockCorrections", "clock_corrections", "clocks"])],
             ["RMS", metadataPresence(metadataSources, ["rms", "accuracy", "standardDeviation", "standard_deviation"])],
-            ["Estado", "Formato preparado; aún no conectado al runtime"]
+            ["Estado", "Registrado en el runtime de efemérides precisas"]
         ];
     } else {
         inputRows = [["Tipo de entrada", inputType], ["Época", inputEpoch], ["Metadatos", INPUT_UNAVAILABLE]];

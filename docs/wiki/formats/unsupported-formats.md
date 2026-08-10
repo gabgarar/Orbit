@@ -15,9 +15,8 @@ validación y una ruta operativa comprobable.
 | --- | --- | --- |
 | [OPM](opm.md) | No disponible. | Estado manual o OEM/SP3 externo. |
 | [CPF](cpf.md) | No disponible. | OEM externo, sin carga CPF. |
-| [RINEX](rinex.md) | No disponible. | Procesamiento externo y efeméride compatible. |
+| [RINEX](rinex.md) de observaciones | No disponible. | Procesamiento externo y efeméride compatible. El producto RINEX CLK asociado a un SP3 se admite en la ruta de productos GNSS precisos. |
 | OEM puro como objeto de catálogo, proveedor API o fuente de `OrbitRuntime` | No disponible. | El visor puede mostrar un track OEM local y transitorio; el lector Python interno está documentado en [OEM](oem.md). |
-| SP3 en UI/API | No disponible. | Lector Python interno [SP3](sp3.md). |
 | OMM sin TLE embebido | No disponible como catálogo. | TLE u OMM con ambas líneas. |
 | OCM completo | No disponible. | El gateway solo exporta un JSON simplificado. |
 
@@ -39,6 +38,7 @@ un vector.
 
 !!! warning "No sustituir un formato por una etiqueta"
 
-    Marcar una entrada como `OEM`, `SP3` u `OPM` no activa un lector. El
-    runtime de catálogo opera con TLE/SGP4; los lectores tabulados Python son
-    explícitamente independientes de esa ruta de producto.
+    Marcar una entrada como `OEM` u `OPM` no activa un lector. SP3 se importa
+    por una ruta separada de productos GNSS precisos, con contrato de tiempo,
+    marco y procedencia propios; no lo convierta en un TLE. Consulte
+    [SP3](sp3.md) y [Productos GNSS precisos](precise-products.md).

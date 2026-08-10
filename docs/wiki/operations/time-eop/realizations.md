@@ -4,11 +4,22 @@
 
 ## Realizaciones GNSS
 
-Por defecto, un estado IGS20 conserva esa realización y no se reescribe a ITRF.
-El alineamiento global IGS20 ↔ ITRF2020 exige habilitar expresamente
-ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT junto con ITRF2020 como realización de
-salida. No aplica correcciones de estación o antena. IGb20 e IGc20 no reciben
-una conversión implícita.
+Por defecto, un estado `IGS20`, `IGb20` o `IGc20` conserva su realización y no
+se reescribe a ITRF. El alineamiento global publicado de esa familia con
+ITRF2020 exige habilitar expresamente:
+
+```text
+ORBIT_TERRESTRIAL_REALIZATION=ITRF2020
+ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true
+```
+
+La política sólo se aplica a estados orbitales geocéntricos de satélite y
+conserva la etiqueta fuente en la procedencia. No aplica correcciones de
+estación o antena. La variable histórica
+`ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` conserva el comportamiento exacto para
+`IGS20`, pero no puede activarse a la vez. `IGS14` y otras realizaciones
+históricas no reciben una conversión implícita: requieren su propia operación
+publicada.
 
 ## Modo visual
 

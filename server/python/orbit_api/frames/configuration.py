@@ -22,7 +22,10 @@ from orbit_api.timekeeping import (
     load_leap_second_table_from_environment,
 )
 
-from .realizations import register_igs20_itrf2020_identity
+from .realizations import (
+    register_igs20_family_itrf2020_identities,
+    register_igs20_itrf2020_identity,
+)
 from .transforms import FrameTransformService
 
 
@@ -111,6 +114,12 @@ def build_frame_transformer_from_environment(
         ``ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`` and never applies
         station/antenna corrections. Newer IGS realizations remain explicit
         until their own published operation is registered.
+    ``ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT``
+        Explicitly enables the published zero-datum operations for IGS20,
+        IGb20 and IGc20 satellite orbit states. It likewise requires
+        ``ORBIT_TERRESTRIAL_REALIZATION=ITRF2020``. It is mutually exclusive
+        with the older exact-IGS20 flag so deployments can preserve their
+        existing datum policy exactly.
     ``ORBIT_EOP_REQUIRED_START``, ``ORBIT_EOP_REQUIRED_END``
         Optional ISO-8601 bounds that must be covered by the mounted snapshot
         at startup. They prevent a deployment from starting with stale data
@@ -126,9 +135,17 @@ def build_frame_transformer_from_environment(
     realization = str(values.get("ORBIT_TERRESTRIAL_REALIZATION", "")).strip() or None
     quality = str(values.get("ORBIT_EOP_QUALITY", "final")).strip().lower() or "final"
     enable_igs20_itrf2020 = _enabled(values.get("ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT"))
-    if enable_igs20_itrf2020 and (realization or "").upper() != "ITRF2020":
+    enable_igs20_family_itrf2020 = _enabled(
+        values.get("ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT")
+    )
+    if enable_igs20_itrf2020 and enable_igs20_family_itrf2020:
         raise ValueError(
-            "ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT requiere "
+            "ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT y "
+            "ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT no pueden activarse juntos"
+        )
+    if (enable_igs20_itrf2020 or enable_igs20_family_itrf2020) and (realization or "").upper() != "ITRF2020":
+        raise ValueError(
+            "La alineación IGS20/IGb20/IGc20 requiere "
             "ORBIT_TERRESTRIAL_REALIZATION=ITRF2020"
         )
     eop_provider: IersC04EarthOrientationProvider | None
@@ -175,6 +192,8 @@ def build_frame_transformer_from_environment(
     )
     if enable_igs20_itrf2020:
         register_igs20_itrf2020_identity(service)
+    elif enable_igs20_family_itrf2020:
+        register_igs20_family_itrf2020_identities(service)
     # Time-scale configuration belongs to its own module, but the public
     # frame factory is the composition boundary: direct library callers and
     # FastAPI therefore use the same pinned UTC→TT table. It runs only after

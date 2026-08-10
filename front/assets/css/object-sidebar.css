@@ -325,6 +325,89 @@ body.with-toolbars #objectSidebar.collapsed {
     display: flex;
 }
 
+/* Precise SP3/CLK uploads deliberately use the same quiet modal language as
+   catalogue filters. The file list makes a paired orbit/clock import obvious
+   before any large product is uploaded to the local runtime. */
+#preciseProductImportModal {
+    position: fixed;
+    inset: 0;
+    z-index: 10135;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
+    background: var(--orbit-bg-overlay);
+}
+
+#preciseProductImportModal.open {
+    display: flex;
+}
+
+.precise-product-import-panel {
+    width: min(520px, calc(100vw - 32px));
+    max-height: min(680px, calc(100dvh - 32px));
+    overflow: auto;
+}
+
+.precise-product-import-lead {
+    max-width: 405px;
+    margin: 4px 0 0;
+    color: var(--orbit-text-secondary);
+    font: 500 11px/1.45 var(--orbit-font-ui, Inter, sans-serif);
+}
+
+.precise-product-file-list {
+    display: grid;
+    gap: 6px;
+    max-height: 162px;
+    overflow: auto;
+    padding: 2px;
+}
+
+.precise-product-file-row {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+    padding: 8px 9px;
+    border: 1px solid color-mix(in srgb, var(--orbit-border-primary) 84%, transparent);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--orbit-bg-elevated) 72%, transparent);
+}
+
+.precise-product-file-name {
+    overflow: hidden;
+    color: var(--orbit-text-primary);
+    font: 600 11px/1.3 var(--orbit-font-ui, Inter, sans-serif);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.precise-product-file-meta,
+.precise-product-import-note {
+    margin: 0;
+    color: var(--orbit-text-tertiary);
+    font: 500 10px/1.5 var(--orbit-font-ui, Inter, sans-serif);
+}
+
+.precise-product-import-note code {
+    color: var(--orbit-text-accent);
+    font: 600 9px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.precise-product-import-actions {
+    gap: 8px;
+}
+
+.precise-product-import-confirm {
+    border-color: var(--orbit-border-focus);
+    background: var(--orbit-bg-active);
+}
+
+.precise-product-import-confirm:hover:not(:disabled) {
+    filter: brightness(1.12);
+}
+
 #tleInfoModal {
     position: fixed;
     inset: 0;

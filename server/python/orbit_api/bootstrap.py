@@ -13,6 +13,7 @@ from orbit_api.api.routes.ground_stations import create_ground_stations_router
 from orbit_api.api.routes.manual_orbits import create_manual_orbits_router
 from orbit_api.api.routes.orbit_parameters import create_orbit_parameters_router
 from orbit_api.api.routes.orbits import create_orbits_router
+from orbit_api.api.routes.precise_products import create_precise_products_router
 from orbit_api.api.routes.realtime import create_realtime_router
 from orbit_api.api.routes.system import create_system_router
 from orbit_api.application.orbit_runtime import OrbitRuntime
@@ -45,6 +46,11 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Orbit Propagation API", version="0.1.0", description="Orbital propagation backend for Orbit.", docs_url="/docs", redoc_url="/redoc", openapi_url="/openapi.json", lifespan=lifespan)
     app.include_router(create_system_router(runtime.satellite_count, runtime.reload_constellation))
     app.include_router(create_catalog_router(runtime.catalog_satellite_ids))
+    app.include_router(create_precise_products_router(
+        runtime.import_precise_product,
+        runtime.precise_products_payload,
+        runtime.precise_product_import_payload,
+    ))
     app.include_router(create_orbits_router(
         runtime.resolve_propagator,
         runtime.serialize_state,
@@ -75,5 +81,10 @@ def create_app() -> FastAPI:
         ensure_utc,
         runtime.frame_transformer,
     ))
-    app.include_router(create_realtime_router(runtime.get_state_snapshot, runtime.get_orbits_cached, COMPRESSION_THRESHOLD))
+    app.include_router(create_realtime_router(
+        runtime.get_state_snapshot,
+        runtime.get_orbits_cached,
+        COMPRESSION_THRESHOLD,
+        runtime.build_realtime_state,
+    ))
     return app

@@ -21,7 +21,7 @@ flowchart TD
 
 | Capa | Controles comprobables |
 | --- | --- |
-| Gateway | JSON con límite de 25 MB; errores de sintaxis `400`, tamaño `413`; sanitización de configuración y nombres de archivo de catálogo. |
+| Gateway | JSON con límite de 25 MB; la importación SP3/CLK usa su ruta aislada de 90 MB; errores de sintaxis `400`, tamaño `413`; sanitización de configuración y nombres de archivo de catálogo. |
 | Catálogo | Parser, normalización y filtrado de TLE válidos; los OEM sin TLE embebido no se convierten en órbitas nativas de catálogo. |
 | Pydantic | Tipos, campos obligatorios, rangos, fechas, definición única de fuente TLE/catálogo y opciones de órbita manual. |
 | Aplicación | Intervalos crecientes, presupuesto de muestreo/integración, resolución de propagador y errores de dominio convertidos en HTTP accionable. |
@@ -47,6 +47,7 @@ Ejemplos de reglas:
 | AOS/LOS manual | `source.kind: manual` requiere `manualOrbit` y no admite `sat_id` ni líneas TLE; la ventana de acceso sigue usando `start_time < end_time` en UTC. |
 | Parámetros orbitales | 2…2000 muestras; los modelos RK4 se rechazan si exceden su presupuesto interno de pasos. |
 | Órbita manual | Requiere elementos keplerianos o vector de estado; las opciones de fuerzas se normalizan al motor elegido. |
+| Producto GNSS preciso | De uno a ocho archivos base64; un SP3 lógico y CLK opcional, proveedor/clase normalizados y límites de carga/archivo/expansión. |
 
 Las formas canónicas y los alias de compatibilidad se describen en
 [REST API](../integrations/rest-api.md) y en OpenAPI de la instancia.
@@ -95,8 +96,12 @@ un `REF_FRAME` conocido. Las covarianzas OEM sólo se aceptan para bloques
 cartesianos; las representaciones RTN/RSW/TNW se rechazan. La interpolación
 Hermite requiere un grado impar y datos de posición/velocidad apropiados.
 
-La existencia de estos lectores Python no publica automáticamente una ruta de
-UI o REST para cargar OEM/SP3 de alta fidelidad.
+OEM sigue siendo una ruta de visor local, no un proveedor operativo de
+runtime. SP3 sí se publica mediante `POST /api/precise-products/import`, con
+CLK opcional, validación de archivo comprimido, manifest, checksums y
+rehidratación. Esa disponibilidad no convierte al importador en una descarga
+remota ni garantiza una interpolación de alta fidelidad del centro de análisis.
+Consulte [Productos GNSS precisos](../formats/precise-products.md).
 
 ## Límites de significado
 

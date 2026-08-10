@@ -88,17 +88,23 @@ ITRF es una familia de realizaciones, no una autorización para relabelar
 coordenadas. Un estado ITRF sin realización no se puede convertir a una
 realización concreta sin una operación de datum registrada.
 
-La única operación publicada incluida como helper es `IGS20 ↔ ITRF2020`, de
-parámetros de datum globales nulos. Está deshabilitada por defecto y requiere:
+La operación global publicada incluida como helper cubre la familia
+`IGS20 ↔ ITRF2020`, `IGb20 ↔ ITRF2020` e `IGc20 ↔ ITRF2020`, con parámetros de
+datum globales nulos. Está deshabilitada por defecto y requiere:
 
 ```text
 ORBIT_TERRESTRIAL_REALIZATION=ITRF2020
-ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT=true
+ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true
 ```
 
-Se aplica a estados orbitales geocéntricos `IGS20`; no aplica correcciones de
-estación, antena ni convenciones de producto. `IGb20` e `IGc20` permanecen
-como realizaciones distintas hasta registrar una operación explícita.
+Se aplica solamente a estados orbitales geocéntricos declarados `IGS20`,
+`IGb20` o `IGc20`; no aplica correcciones de estación, antena ni convenciones
+de producto. Orbit conserva la etiqueta fuente en la procedencia, por lo que
+no existe una conversión o relabelado silencioso. El ajuste histórico
+`ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` se mantiene para despliegues que
+requieren exactamente su política anterior, pero no puede activarse junto con
+la política de familia. `IGS14` y otras realizaciones históricas permanecen
+sin ruta hasta registrar una operación publicada explícita.
 
 ## Velocidad, aceleración y covarianza
 

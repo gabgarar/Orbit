@@ -31,8 +31,8 @@ flowchart LR
 | Interfaz React | `react-ui/` | Composición de la aplicación, paneles, diálogos y build Vite. | Servir HTTP, persistir catálogo o calcular propagación. |
 | Runtime Cesium heredado | `front/` | Visor, assets y módulos que siguen en la migración incremental. | Convertirse en una segunda API de backend. |
 | Gateway | `server/` | Servir archivos, persistir configuración, importar/refrescar catálogo y proxy HTTP/WebSocket. | Implementar los algoritmos orbitales. |
-| Backend orbital | `server/python/orbit_api/` | Propagación, efemérides, marcos, tiempo, formatos, visibilidad y rutas FastAPI. | Exponerse directamente como API pública por defecto. |
-| Datos persistentes | `config/` | Configuración de sistema, catálogo y datos locales montados en Docker. | Autenticación, multitenencia o base de datos remota. |
+| Backend orbital | `server/python/orbit_api/` | Propagación, efemérides, marcos, tiempo, formatos, visibilidad, productos GNSS precisos y rutas FastAPI. | Exponerse directamente como API pública por defecto. |
+| Datos persistentes | `config/` | Configuración de sistema, catálogo y fuentes/manifest de productos precisos locales montados en Docker. | Autenticación, multitenencia o base de datos remota. |
 | Operación local | `.scripts/` | Reinicio, estado, logs y ejecución de pruebas en Windows. | Una CLI de producto versionada. |
 
 ## Composición del runtime
@@ -95,7 +95,7 @@ flowchart TD
     F --> M[frames]
     A --> R[OrbitRuntime]
     R --> PR[propagator registry]
-    R --> CA[catálogo y cachés]
+    R --> CA[catálogo, productos precisos y cachés]
     A --> RT[routers FastAPI]
     RT --> AP[application]
     AP --> R
@@ -105,16 +105,17 @@ flowchart TD
 | Módulo | Responsabilidad |
 | --- | --- |
 | `api/routes/` | Adaptadores HTTP y WebSocket; no contienen la lógica numérica principal. |
-| `application/` | Casos de uso de runtime, órbitas manuales, parámetros orbitales y exportadores. |
+| `application/` | Casos de uso de runtime, órbitas manuales, productos precisos SP3/CLK, parámetros orbitales y exportadores. |
 | `domain/requests.py` | Modelos Pydantic y normalización de solicitudes. |
 | `orbits/propagators/` | Contratos y motores SGP4, dos cuerpos, Cowell/RK4 y rutas heredadas. |
 | `frames/` | `StateVector`, identificadores de marco, transformaciones y realizaciones terrestres. |
 | `timekeeping/` | Escalas temporales, tablas de segundos intercalares y proveedores EOP C04 locales. |
-| `formats/` | Lectores tabulares SP3 y OEM con metadatos de marco/tiempo. |
+| `formats/` | Lectores tabulares SP3, RINEX CLK y OEM con metadatos de marco/tiempo. |
 | `ground_stations/` | Elevación y extracción muestreada de ventanas AOS/LOS. |
 | `infrastructure/` | Caché TTL/LRU y observador del directorio de configuración. |
 
-El ciclo de vida FastAPI carga la constelación y activa un observador no
+El ciclo de vida FastAPI carga la constelación, incluidos los productos SP3/CLK
+verificados bajo `config/precise-products/`, y activa un observador no
 recursivo de `config/`. El observador solicita una recarga cuando cambia la
 configuración del sistema o el archivo de catálogo configurado.
 

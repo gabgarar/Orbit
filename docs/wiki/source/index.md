@@ -129,11 +129,12 @@ análisis o exportación de precisión.
 !!! note "Realizaciones terrestres"
 
     ITRF designa una familia de realizaciones; no es sinónimo de cualquier
-    sistema terrestre. La conversión global IGS20 a ITRF2020 se habilita de
-    forma explícita y solo para estados orbitales geocéntricos. Las
-    realizaciones IGb20 e IGc20 se preservan sin conversión implícita. Las
-    correcciones de estación o antena no se infieren a partir de esa operación
-    global.
+    sistema terrestre. La conversión global publicada de IGS20, IGb20 e IGc20
+    a ITRF2020 se habilita de forma explícita y sólo para estados orbitales
+    geocéntricos de satélite. La procedencia conserva la realización fuente;
+    las correcciones de estación o antena no se infieren a partir de esa
+    operación global. IGS14 y otras realizaciones históricas requieren una
+    operación propia.
 
 ## Formatos y efemérides
 
@@ -142,9 +143,9 @@ análisis o exportación de precisión.
 | TLE | Importación, catálogo, SGP4 y exportación disponibles. | El estado propagado nativo es TEME. |
 | OMM | Importación JSON/XML cuando contiene TLE y exportación JSON/XML disponibles. | La cobertura depende de los campos necesarios para construir el objeto de catálogo. |
 | OEM | El visor puede cargar una trayectoria OEM tabulada local. | Un OEM puro no entra como objeto de catálogo; esa ruta de navegador no garantiza la transformación de un OEM TEME/GCRF arbitrario mediante el servicio de marcos. |
-| SP3 | Existe un lector Python de posiciones y velocidades con metadatos nativos. | No existe importación SP3 mediante la UI, gateway, API pública ni `OrbitRuntime`. |
+| SP3 y CLK | Importación local durable de SP3, con CLK RINEX opcional, procedencia y registro tabulado por satélite. | No descarga productos de CDDIS/IGS/ESA ni sustituye la cadena de precisión del proveedor. |
 | OEM de precisión | Existe un lector Python segmentado con interpolación lineal, Lagrange y Hermite; OEM 2 puede conservar aceleración y covarianza cartesiana por época. | No existe carga operativa de ese proveedor desde la UI o la API pública. |
-| OPM, CPF y RINEX | No disponibles. | No deben declararse como formatos admitidos. |
+| OPM, CPF y RINEX de observaciones | No disponibles. | RINEX CLK asociado a SP3 es la excepción documentada; no debe confundirse con RINEX de observaciones. |
 
 ## Límites explícitos de producto
 

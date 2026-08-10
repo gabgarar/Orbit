@@ -60,10 +60,10 @@ trustworthy.
 
 ## Persistence
 
-Compose mounts the host's `./config` to `/app/config`. The volume preserves the
-catalog and configuration when the container is recreated. The image contains
-an initial copy of `config/`, but the assembly replaces it when booting with
-Compose.
+Compose mounts the host's `./config` to `/app/config`. The volume preserves
+the catalogue, configuration, and `precise-products/` when the container is
+recreated. The image contains an initial copy of `config/`, but the mount
+replaces it when booting with Compose.
 
 No database migration, remote project storage, backup
 automatic, data encryption at rest, or built-in restore. The operator
@@ -81,7 +81,7 @@ volume `/app/config`.
 | Snapshot C04 | `ORBIT_EOP_C04_PATH`, `ORBIT_EOP_C04_SHA256`, `ORBIT_EOP_C04_REQUIRE_SHA256`, `ORBIT_EOP_SOURCE`, `ORBIT_EOP_VERSION`, `ORBIT_EOP_QUALITY`. |
 | EOP Policy | `ORBIT_EOP_STRICT`, `ORBIT_EOP_ALLOW_EXTRAPOLATION`, `ORBIT_EOP_REQUIRED_START`, `ORBIT_EOP_REQUIRED_END`. |
 | Leap seconds | `ORBIT_LEAP_SECONDS_PATH`, `ORBIT_LEAP_SECONDS_SHA256`, `ORBIT_LEAP_SECONDS_SOURCE`, `ORBIT_LEAP_SECONDS_VERSION`, `ORBIT_LEAP_SECONDS_REQUIRED`, `ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED`. |
-| Land realization | `ORBIT_TERRESTRIAL_REALIZATION`, `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT`. |
+| Terrestrial realization | `ORBIT_TERRESTRIAL_REALIZATION`, `ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT` (the IGS20/IGb20/IGc20 family) or the legacy exact `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` variable; do not enable both. |
 
 In strict mode, Orbit enforces a local C04 hash when policy requires it
 and a current local leap second table. Charging is done at

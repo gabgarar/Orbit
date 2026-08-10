@@ -157,7 +157,7 @@ El rango dibujado se limita para mantener la escena ágil, mientras que el rango
 
 ## Visibilidad, AOS y LOS
 
-**Ground Stations** permite seleccionar libremente una estación y una fuente orbital presente en Layers. Puede ser una capa TLE/SGP4 de catálogo o una órbita manual confirmada. No es necesaria una asociación permanente entre satélite y estación. Las capas OEM y SP3 conservan su visualización, pero todavía no tienen un proveedor general de acceso para planificar pases. La tabla lista AOS, LOS y elevación máxima para la ventana elegida; se puede exportar como CSV. Los instantes de la respuesta y del CSV se conservan en UTC; la tabla y la gráfica los presentan en la zona IANA de la estación.
+**Ground Stations** permite seleccionar libremente una estación y una fuente orbital presente en Layers. Puede ser una capa TLE/SGP4 de catálogo, una órbita manual confirmada o un satélite de un producto SP3 preciso importado. No es necesaria una asociación permanente entre satélite y estación. Una efeméride SP3 sólo puede planificar pases dentro de sus épocas publicadas; Orbit no la extrapola para completar una ventana AOS/LOS. Las capas OEM locales siguen siendo sólo de visualización y no ofrecen un proveedor general de acceso. La tabla lista AOS, LOS y elevación máxima para la ventana elegida; se puede exportar como CSV. Los instantes de la respuesta y del CSV se conservan en UTC; la tabla y la gráfica los presentan en la zona IANA de la estación.
 
 ### Fuente manual para tablas de pases
 

@@ -9,29 +9,33 @@
 | [TLE](tle.md) | Yes. | TLE catalog upload. | Yes, SGP4. | TLE; CSV/JSON/OEM ephemeris sampled with SGP4. |
 | [WMO](omm.md) | Yes, JSON/XML when it contains TLE. | There is no general status OMM reader. | Yes, like TLE extracted. | OMM JSON/XML minimal. |
 | [OEM](oem.md) | The viewer can load a temporary local track; does not create a catalog object. The gateway only extracts embedded TLE. | Yes, segmented and interpolated. | Not integrated into `OrbitRuntime`. | OEM catalog header and OEM SGP4 anniversaries. |
-| [SP3](sp3.md) | No. | Yes, by satellite and interpolated. | Not integrated into `OrbitRuntime`. | No. |
-| [OPM](opm.md), [CPF](cpf.md), [RINEX](rinex.md) | No. | No. | No. | No. |
+| [SP3](sp3.md) and [precise GNSS products](precise-products.md) | Yes, through local SP3 import with optional CLK. | Yes, by satellite and interpolated. | Yes, as a runtime tabulated ephemeris. | No. |
+| [OPM](opm.md), [CPF](cpf.md), and observation RINEX | No. | No. | No. | No. |
 
 ## Product boundaries
 
 ```mermaid
 flowchart LR
-    U[UI / Gateway] --> C[Catálogo TLE u OMM con TLE]
+    U[UI / Gateway] --> C[TLE or OMM-with-TLE catalogue]
     C --> R[OrbitRuntime / SGP4]
+    U --> P[Local SP3 + optional CLK import]
+    P --> T[Tabulated provider per satellite]
+    T --> R
     V[Visor web] --> L[Track OEM local y transitorio]
     O[OEM Python] --> T[TabularStateProvider]
     S[SP3 Python] --> T
     T --> F[FrameTransformService]
     O -. no conectado al runtime .-> U
-    S -. no conectado .-> U
 ```
 
-The web viewer has a local and temporary route to view an OEM
-pure. That route does not register a catalog object, it does not go through Gateway/FastAPI
-nor does it deliver an ephemeris source to `OrbitRuntime`. Outside of it, there is no
-operational import of OEM/SP3 by API nor a runtime integration that
-register as catalog satellites. Python readers exist for consumption
-library and internal testing.
+The web viewer has a local and temporary route to view a pure OEM. That route
+does not register a catalogue object, go through Gateway/FastAPI, or supply an
+ephemeris source to `OrbitRuntime`. By contrast, precise GNSS product import
+registers a tabulated SP3 source per satellite with optional CLK clock data and
+provenance metadata. The registration is retained in the local precise-product
+store and rehydrated by the runtime on startup. It does not turn the product
+into a TLE object or download files from a provider. See [Precise GNSS
+products](precise-products.md).
 
 ## Common tabulated contract
 

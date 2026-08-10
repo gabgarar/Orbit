@@ -75,6 +75,7 @@ plugins:
                         - OEM: formats/oem.md
                         - OPM: formats/opm.md
                         - SP3: formats/sp3.md
+                        - Precise GNSS products: formats/precise-products.md
                     - Unsupported formats: formats/unsupported-formats.md
                 - Orbit design and catalogue:
                     - Manual orbits: user-guide/manual-orbits.md
@@ -281,6 +282,7 @@ nav:
               - OEM: formats/oem.md
               - OPM: formats/opm.md
               - SP3: formats/sp3.md
+              - Productos GNSS precisos: formats/precise-products.md
           - Formatos no soportados: formats/unsupported-formats.md
       - Diseño y catálogo:
           - Órbitas manuales: user-guide/manual-orbits.md

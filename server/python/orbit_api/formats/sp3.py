@@ -7,11 +7,10 @@ state adapter reads P/V samples without applying a display-frame conversion.
 from __future__ import annotations
 
 import datetime
-from collections.abc import Iterable
-from dataclasses import dataclass, replace
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field, replace
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from types import MappingProxyType
-from typing import Mapping
 
 from orbit_api.frames import FrameId, FrameTransformService, StateVector
 from orbit_api.timekeeping import TimeScale, utc_now
@@ -19,8 +18,34 @@ from orbit_api.timekeeping import TimeScale, utc_now
 from .metadata import EphemerisFormatError, Sp3Metadata, parse_reference_frame
 from .tabular import TabularStateProvider, source_epoch
 
-
 _SP3_MISSING_COMPONENT = 999_999.0
+
+# IGS SP3 position records are normally separated by minutes.  Treating that
+# cadence as piecewise-linear is visibly and numerically inadequate for
+# sub-minute requests such as AOS/LOS and range calculations.  A centred
+# ninth-degree Lagrange polynomial (ten records) is the conventional bounded
+# SP3 interpolation policy; shorter test, partial, or near-real-time files
+# use the highest degree their available records support.  The provider never
+# extrapolates outside its declared coverage.
+SP3_INTERPOLATION_METHOD = "LAGRANGE"
+SP3_MAX_INTERPOLATION_DEGREE = 9
+
+
+@dataclass(frozen=True, slots=True)
+class Sp3ClockSample:
+    """Clock correction carried alongside one SP3 state record.
+
+    SP3 position records carry a clock correction in microseconds and SP3
+    velocity records carry its rate in :math:`10^{-4}` microseconds per
+    second.  They are not Cartesian state components, so Orbit stores them as
+    a separate product rather than pretending they are part of a velocity
+    vector.  RINEX CLK remains the richer companion clock format.
+    """
+
+    satellite_id: str
+    epoch: datetime.datetime
+    bias_seconds: float | None = None
+    rate_seconds_per_second: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +60,7 @@ class Sp3StateProvider:
 
     metadata: Sp3Metadata
     satellites: Mapping[str, TabularStateProvider]
+    clock_samples: Mapping[str, tuple[Sp3ClockSample, ...]] = field(default_factory=dict)
     frame_transformer: FrameTransformService | None = None
 
     def __post_init__(self) -> None:
@@ -56,6 +82,14 @@ class Sp3StateProvider:
             for identifier, provider in providers.items()
         }
         object.__setattr__(self, "satellites", MappingProxyType(aligned_providers))
+        normalized_clock_samples: dict[str, tuple[Sp3ClockSample, ...]] = {}
+        for identifier, samples in self.clock_samples.items():
+            satellite_id = _satellite_id(identifier)
+            ordered = tuple(sorted(samples, key=lambda sample: sample.epoch))
+            if any(sample.satellite_id != satellite_id for sample in ordered):
+                raise EphemerisFormatError("Los relojes SP3 no coinciden con su satélite")
+            normalized_clock_samples[satellite_id] = ordered
+        object.__setattr__(self, "clock_samples", MappingProxyType(normalized_clock_samples))
         object.__setattr__(self, "frame_transformer", transformer)
 
     @classmethod
@@ -64,7 +98,7 @@ class Sp3StateProvider:
         source: str | Iterable[str],
         *,
         frame_transformer: FrameTransformService | None = None,
-    ) -> "Sp3StateProvider":
+    ) -> Sp3StateProvider:
         """Read SP3 samples into per-satellite native-state adapters."""
 
         lines = _source_lines(source)
@@ -75,6 +109,7 @@ class Sp3StateProvider:
             )
 
         positions, velocities = _sp3_records(lines)
+        clock_samples = _sp3_clock_samples(lines)
         samples_by_satellite: dict[str, list[StateVector]] = {}
         for (epoch, satellite_id), position_km in positions.items():
             velocity_dm_s = velocities.get((epoch, satellite_id))
@@ -86,6 +121,15 @@ class Sp3StateProvider:
                 "time_system": metadata.time_scale_label,
                 "agency": metadata.agency,
             }
+            # The lookup key remains the raw SP3 calendar epoch; the emitted
+            # Sp3ClockSample carries the aware source-epoch carrier just like
+            # the corresponding StateVector below.
+            clock = clock_samples.get(satellite_id, {}).get(epoch)
+            if clock is not None:
+                if clock.bias_seconds is not None:
+                    provenance["sp3_clock_bias_seconds"] = clock.bias_seconds
+                if clock.rate_seconds_per_second is not None:
+                    provenance["sp3_clock_rate_seconds_per_second"] = clock.rate_seconds_per_second
             sample = StateVector(
                 epoch=source_epoch(epoch),
                 time_scale=metadata.time_scale,
@@ -107,20 +151,37 @@ class Sp3StateProvider:
 
         transformer = frame_transformer or FrameTransformService()
         providers = {
-            satellite_id: TabularStateProvider(
-                source_format="SP3",
+            satellite_id: _sp3_tabular_provider(
                 samples=tuple(samples),
                 frame_transformer=transformer,
             )
             for satellite_id, samples in samples_by_satellite.items()
         }
-        return cls(metadata=metadata, satellites=providers, frame_transformer=transformer)
+        clocks_by_satellite = {
+            satellite_id: tuple(
+                clock_by_epoch[epoch]
+                for epoch in sorted(clock_by_epoch)
+            )
+            for satellite_id, clock_by_epoch in clock_samples.items()
+        }
+        return cls(
+            metadata=metadata,
+            satellites=providers,
+            clock_samples=clocks_by_satellite,
+            frame_transformer=transformer,
+        )
 
     @property
     def satellite_ids(self) -> tuple[str, ...]:
         """Return the normalized identifiers represented by this SP3 file."""
 
         return tuple(self.satellites)
+
+    @property
+    def clock_sample_count(self) -> int:
+        """Return the number of usable embedded SP3 clock corrections."""
+
+        return sum(len(samples) for samples in self.clock_samples.values())
 
     def for_satellite(self, satellite_id: str) -> TabularStateProvider:
         """Return the native adapter for one SP3 satellite record series."""
@@ -216,6 +277,35 @@ class Sp3StateProvider:
         )
 
 
+def _sp3_tabular_provider(
+    *,
+    samples: tuple[StateVector, ...],
+    frame_transformer: FrameTransformService,
+) -> TabularStateProvider:
+    """Build one SP3 series with its bounded interpolation declaration.
+
+    A one-record fragment is still importable for provenance and an exact
+    sample lookup, but it cannot interpolate.  For two or more records, keep
+    the method explicit instead of falling back to TabularStateProvider's
+    compatibility default of piecewise linear interpolation.
+    """
+
+    if len(samples) < 2:
+        return TabularStateProvider(
+            source_format="SP3",
+            samples=samples,
+            frame_transformer=frame_transformer,
+        )
+    degree = min(SP3_MAX_INTERPOLATION_DEGREE, len(samples) - 1)
+    return TabularStateProvider(
+        source_format="SP3",
+        samples=samples,
+        declared_interpolation=SP3_INTERPOLATION_METHOD,
+        declared_interpolation_degree=degree,
+        frame_transformer=frame_transformer,
+    )
+
+
 def parse_sp3_metadata(source: str | Iterable[str]) -> Sp3Metadata:
     """Parse SP3 header metadata without reading its ephemeris samples.
 
@@ -296,7 +386,12 @@ def _parse_epoch(value: str) -> datetime.datetime:
         year, month, day, hour, minute = (int(part) for part in parts[:5])
         seconds = Decimal(parts[5])
         microseconds = int((seconds * Decimal(1_000_000)).to_integral_value(rounding=ROUND_HALF_UP))
-        return datetime.datetime(year, month, day, hour, minute) + datetime.timedelta(microseconds=microseconds)
+        # SP3 calendars carry their own declared time scale. ``source_epoch``
+        # attaches the UTC carrier only after the parser has retained that
+        # separate scale metadata.
+        return datetime.datetime(year, month, day, hour, minute) + datetime.timedelta(  # noqa: DTZ001
+            microseconds=microseconds,
+        )
     except (InvalidOperation, ValueError, OverflowError) as exc:
         raise EphemerisFormatError("La época de cabecera SP3 no es válida") from exc
 
@@ -375,6 +470,57 @@ def _sp3_record_vector(line: str) -> tuple[str, str, tuple[float, float, float] 
         # satellite/epoch. It is not a real Earth-centred coordinate.
         return record_type, satellite_id, None
     return record_type, satellite_id, vector  # type: ignore[return-value]
+
+
+def _sp3_clock_samples(
+    lines: tuple[str, ...],
+) -> dict[str, dict[datetime.datetime, Sp3ClockSample]]:
+    """Read optional position-clock and velocity-clock components.
+
+    Position and velocity records are intentionally scanned independently of
+    :func:`_sp3_records`: existing Cartesian parsing continues to accept a
+    legal three-component record, while this helper only enriches a product
+    when a valid fourth field was actually supplied.
+    """
+
+    position_clock: dict[tuple[datetime.datetime, str], float] = {}
+    velocity_clock: dict[tuple[datetime.datetime, str], float] = {}
+    current_epoch: datetime.datetime | None = None
+    for line in lines:
+        if line.startswith("*"):
+            current_epoch = _parse_epoch(line[1:])
+            continue
+        if not line.startswith(("P", "V")) or current_epoch is None:
+            continue
+        fields = line[1:].split()
+        if len(fields) < 5:
+            continue
+        satellite_id = _satellite_id(fields[0])
+        try:
+            clock_value = float(fields[4])
+        except ValueError as exc:
+            raise EphemerisFormatError("Un registro SP3 contiene un reloj no numérico") from exc
+        if abs(clock_value) >= _SP3_MISSING_COMPONENT:
+            continue
+        target = position_clock if line.startswith("P") else velocity_clock
+        key = (current_epoch, satellite_id)
+        if key in target:
+            raise EphemerisFormatError(f"SP3 contiene un reloj {line[0]} duplicado para {satellite_id}")
+        target[key] = clock_value
+
+    grouped: dict[str, dict[datetime.datetime, Sp3ClockSample]] = {}
+    for epoch, satellite_id in set(position_clock) | set(velocity_clock):
+        # SP3 P clock is microseconds; V clock rate is 10^-4 microseconds/s.
+        # Convert both at the ingestion boundary so later products remain SI.
+        bias = position_clock.get((epoch, satellite_id))
+        rate = velocity_clock.get((epoch, satellite_id))
+        grouped.setdefault(satellite_id, {})[epoch] = Sp3ClockSample(
+            satellite_id=satellite_id,
+            epoch=source_epoch(epoch),
+            bias_seconds=(bias * 1e-6) if bias is not None else None,
+            rate_seconds_per_second=(rate * 1e-10) if rate is not None else None,
+        )
+    return grouped
 
 
 def _satellite_id(value: str) -> str:

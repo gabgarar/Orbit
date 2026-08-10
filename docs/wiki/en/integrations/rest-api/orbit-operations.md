@@ -35,6 +35,67 @@ An ephemeris uses `sat_id`, `start_time`, `end_time`, `step_seconds` and
     rendering is transformed to ITRF. Don't use a display response
     as a hi-fi navigation anniversary.
 
+## Precise GNSS products
+
+Precise products load through a route separate from the TLE catalogue. The
+gateway exposes the Python-backend contract, but the file always comes from the
+local client: Orbit does not accept a URL, Earthdata token, or CDDIS/IGS/ESA
+credential.
+
+| Method and route | Operation | Main limit |
+| --- | --- | --- |
+| `GET /api/precise-products` | Lists persisted products, rehydration diagnostics, and runtime IDs per satellite. | It does not download sources again. |
+| `POST /api/precise-products/import` | Validates, decompresses, persists, and registers SP3 with optional CLK. | One logical SP3 and optional CLK; local files encoded as base64. |
+
+The canonical import body is:
+
+~~~json
+POST /api/precise-products/import
+Content-Type: application/json
+
+{
+  "files": [
+    {
+      "name": "IGS0OPSFIN_20262230000_01D_15M_ORB.SP3.gz",
+      "content_base64": "<base64-of-local-file>"
+    },
+    {
+      "name": "IGS0OPSFIN_20262230000_01D_05M_CLK.CLK.gz",
+      "content_base64": "<base64-of-local-file>"
+    }
+  ],
+  "provider_hint": "cddis-igs",
+  "product_class": "final"
+}
+~~~
+
+`content_base64` carries the binary without a `data:` prefix. Canonical
+`provider_hint` values are `auto`, `cddis-igs`, `igs-mgex`, `esa-nso`, and
+`custom`; `product_class` values are `auto`, `final`, `rapid`, and
+`ultra-rapid`. With `auto`, Orbit proposes a classification from the file name
+and records `custom`/`unknown` when it cannot substantiate one.
+
+The route accepts at most eight uploaded files, 32 MiB per file, and 64 MiB in
+total before decompression. It accepts uncompressed SP3/CLK, `gzip`, ZIP, and
+UNIX `.Z`; expanded content is capped at 256 MiB. Encrypted or nested ZIP
+files, unsafe members, and pairs with more than one SP3 or CLK are rejected
+with `422`.
+
+A successful response contains `product`, `satellites`, and `importedIds`.
+`product` declares provider, class, family, detection, frame, time scale,
+coverage, clock summary, and SHA-256 checksums of its sources. Each registered
+satellite ID has the form
+`precise:<product_id>:<gnss_identifier>`, for example
+`precise:precise-0123456789abcdef0123:G01`. That ID can be used as `sat_id` in
+ephemeris, orbital-parameter, propagation, and AOS/LOS routes, but a query
+must remain inside SP3 coverage.
+
+The service stores the product and its verified manifest under the
+`config/precise-products/` volume; the runtime loads it again at startup. A
+project can retain the stable ID, but it does not embed a binary copy. See
+[Precise GNSS products](../../formats/precise-products.md) for providers,
+quality, CLK, realizations, and scientific limitations.
+
 ## Manual orbit
 
 `POST /api/manual-orbits` creates a temporary manual orbit and its ephemeris

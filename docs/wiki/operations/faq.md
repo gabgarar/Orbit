@@ -19,9 +19,11 @@ No combine -SkipBuild con -NoCache.
 ## ¿Dónde se conservan la configuración y el catálogo?
 
 Se conservan en config/ del repositorio. Compose monta esa carpeta como
-/app/config, por lo que la recreación normal de un contenedor no la borra.
-Consulte [Configuración](configuration.md) antes de editar
-config/system_config.json manualmente.
+/app/config, por lo que la recreación normal de un contenedor no la borra. Los
+productos GNSS precisos importados se guardan además en
+config/precise-products/ con sus checksums y manifest. Consulte
+[Configuración](configuration.md) antes de editar config/system_config.json o
+archivos de producto manualmente.
 
 ## ¿Por qué Orbit sólo abre en mi equipo?
 
@@ -60,9 +62,15 @@ al JSON de proyecto y vuelva a cargarlo. Véase [Proyectos](../user-guide/projec
 
 ## ¿Puedo importar SP3, OPM, CPF o RINEX desde la interfaz?
 
-No. Existe un lector Python de SP3 con metadatos nativos, pero no existe una
-ruta de importación SP3 por UI, gateway público ni runtime de Orbit. OPM, CPF y
-RINEX no están disponibles. Consulte [Importar](../user-guide/import.md).
+Sí para productos GNSS precisos SP3 locales, con CLK RINEX opcional asociado.
+La ruta de producto admite las series IGS/CDDIS, MGEX y ESA NSO cuando el
+contenido SP3/CLK es válido; conserva el proveedor, marco y escala temporal y
+registra una efeméride tabulada. No inicia sesión ni descarga archivos desde el
+proveedor.
+
+OPM, CPF y RINEX de observaciones siguen sin estar disponibles. Un CLK RINEX
+por sí solo tampoco es una órbita. Consulte [Importar](../user-guide/import.md)
+y [Productos GNSS precisos](../formats/precise-products.md).
 
 ## ¿El modo visual sirve para exportación terrestre de precisión?
 
@@ -76,8 +84,10 @@ ventana de cobertura y realización explícita siguiendo
 
 No. El acrónimo correcto es ITRF, International Terrestrial Reference Frame.
 Además, ITRF representa una familia de realizaciones. Orbit no reetiqueta
-implícitamente IGS20, IGb20 o IGc20 como ITRF; la única alineación global
-incluida es IGS20 ↔ ITRF2020 y requiere una activación explícita.
+implícitamente IGS20, IGb20 o IGc20 como ITRF. La alineación global publicada
+de esas tres realizaciones a ITRF2020 requiere una activación explícita de
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true` junto con
+`ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`; IGS14 necesita una operación propia.
 
 ## ¿Orbit incluye usuarios, colaboración, API pública estable, SDK o CLI?
 

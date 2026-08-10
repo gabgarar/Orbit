@@ -44,7 +44,7 @@ contenido cuando el reenvío tiene éxito.
 | Área | Contenido |
 | --- | --- |
 | [Estado, configuración y catálogo](rest-api/system-and-catalog.md) | Healthcheck, configuración persistente, documentación y catálogo. |
-| [Propagación y efemérides](rest-api/orbit-operations.md) | TLE, series temporales, parámetros y órbitas manuales. |
+| [Propagación y efemérides](rest-api/orbit-operations.md) | TLE, productos GNSS precisos SP3/CLK, series temporales, parámetros y órbitas manuales. |
 | [Estaciones de tierra](rest-api/ground-stations.md) | AOS/LOS y límites de la geometría de pases. |
 | [Exportación](rest-api/exports.md) | TLE, OMM, OEM, OCM y efemérides exportadas. |
 | [Frontera del backend](rest-api/backend-boundary.md) | Rutas privadas que no son contrato público. |

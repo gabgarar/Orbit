@@ -274,6 +274,13 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/overview/"/>
     </url>
     <url>
+        <loc>https://gabgarar.github.io/Orbit/formats/precise-products/</loc>
+        <lastmod>2026-08-10</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/precise-products/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/precise-products/"/>
+    </url>
+    <url>
         <loc>https://gabgarar.github.io/Orbit/formats/rinex/</loc>
         <lastmod>2026-08-10</lastmod>
         <changefreq>daily</changefreq>
@@ -1203,6 +1210,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/overview/"/>
         <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/overview/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/formats/precise-products/</loc>
+        <lastmod>2026-08-10</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/formats/precise-products/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/formats/precise-products/"/>
     </url>
     <url>
         <loc>https://gabgarar.github.io/Orbit/en/formats/rinex/</loc>

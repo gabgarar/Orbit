@@ -3,6 +3,9 @@
 from pathlib import Path
 import hashlib
 
+from fastapi import APIRouter
+
+import orbit_api.bootstrap as bootstrap
 from orbit_api.application.orbit_runtime import OrbitRuntime
 from orbit_api.bootstrap import create_app
 from orbit_api.timekeeping import configure_default_leap_second_table, default_leap_second_table
@@ -27,6 +30,21 @@ def test_runtime_serializes_utc_state():
     from datetime import datetime
     payload = OrbitRuntime().serialize_state("ISS", datetime(2024, 1, 1), 1, 2, 3, 4, 5, 6)
     assert payload["time"].endswith("+00:00") and payload["velocity"]["z"] == 6
+
+
+def test_application_wires_the_statevector_realtime_callback(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def realtime_router(*args):
+        captured["args"] = args
+        return APIRouter()
+
+    monkeypatch.setattr(bootstrap, "create_realtime_router", realtime_router)
+    bootstrap.create_app()
+
+    callback = captured["args"][3]
+    assert callable(callback)
+    assert callback.__name__ == "build_realtime_state"
 
 
 def test_application_loads_an_opt_in_local_leap_second_snapshot_at_startup(tmp_path, monkeypatch):

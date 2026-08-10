@@ -32,6 +32,49 @@ Los datos importados se validan antes de incorporarse al catálogo. Un OEM que
 no contiene un TLE embebido no puede convertirse en un objeto de catálogo
 nativo y se rechaza en esa ruta.
 
+## Productos GNSS precisos: SP3 y CLK
+
+La opción **Import precise GNSS (SP3 / CLK)**, disponible en **Layers → + →
+Add layer → Add satellite**, carga efemérides GNSS locales como fuentes
+tabuladas. No usa el importador de catálogo TLE/OMM: un SP3 conserva sus
+identificadores GNSS, su marco y su escala temporal nativos, y no se convierte
+en un TLE.
+
+Seleccione al menos un SP3 y, opcionalmente, el CLK RINEX correspondiente de
+la misma serie. Se pueden proporcionar archivos sin comprimir, `gzip`, ZIP o
+la compresión histórica `.Z` admitida por el importador. Orbit identifica el
+contenido y rechaza un archivo de reloj aislado como trayectoria, porque un CLK
+no contiene posiciones. Un producto admite un único SP3 y, como máximo, un CLK
+después de descomprimir; no mezcle productos de fechas o centros distintos en
+la misma carga.
+
+| Producto descargado localmente | Ejemplo de uso |
+| --- | --- |
+| IGS Final/Rapid/Ultra-Rapid desde [NASA CDDIS](https://cddis.nasa.gov/Data_and_Derived_Products/GNSS/orbit_and_clock_products.html) | Cargar el SP3 de la fecha de análisis; añadir el CLK asociado si se debe conservar la información de reloj. |
+| [IGS MGEX](https://igs.org/mgex/data-products/) SP3 + CLK | Importar una constelación multi-GNSS conservando IDs como `G01`, `E11` o `C19`. |
+| [ESA NSO](https://navigation-office.esa.int/GNSS_based_products.html) Final/Rapid/Ultra-Rapid | Cargar los ficheros descargados de la serie ESA correspondiente. |
+
+Revise antes de importar la clase de producto, la fecha, el marco y
+`TIME_SYSTEM`. Un Ultra-Rapid puede mezclar intervalos observados y predichos;
+esa cobertura no debe interpretarse como uniformemente observada. La entrada
+se registra de forma durable en el almacén local de productos precisos y se
+rehidrata al arrancar. Un proyecto referencia el producto estable, pero no
+incluye una copia de su binario fuente.
+
+La interfaz permite hasta ocho archivos, 32 MiB por archivo y 64 MiB en total
+antes de descomprimir. Los ZIP cifrados o anidados se rechazan, al igual que
+los archivos que excedan el límite de seguridad descomprimido.
+
+!!! warning "No es una descarga remota"
+
+    CDDIS puede requerir Earthdata Login, y los proveedores cambian sus
+    esquemas de distribución. Orbit no inicia sesión ni descarga estos
+    productos: la autenticación y verificación del archivo ocurren fuera de la
+    aplicación. Consulte [Productos GNSS precisos](../formats/precise-products.md)
+    para calidad, procedencia, CLK, marcos y límites. Tras una carga correcta,
+    la pestaña de entrada del objeto muestra la ficha de producto y la línea
+    temporal simulada se alinea a su cobertura común.
+
 ## Trayectorias OEM locales
 
 El visor puede cargar una trayectoria OEM tabulada local como órbita temporal.
@@ -65,7 +108,6 @@ para el contrato, las extensiones admitidas y los datos que se recalculan.
 
 | Formato | Situación actual |
 | --- | --- |
-| SP3 | Existe lector Python con metadatos nativos; no existe importación SP3 por UI, gateway público ni runtime de Orbit. |
 | OPM, CPF y RINEX | No disponibles. |
 | OEM de precisión segmentado | Existe lector Python para uso interno; no existe carga operativa mediante UI o API pública. |
 
