@@ -133,11 +133,14 @@ test("orbit export identifies the object with the shared satellite glyph", async
     await expect(icon).toHaveAttribute("stroke", "currentColor");
 
     const geometry = await icon.evaluate((svg) => ({
-        panels: svg.querySelectorAll("rect").length,
-        solarArrayPaths: svg.querySelectorAll("path").length,
-        rotation: svg.querySelector("g")?.getAttribute("transform") || ""
+        bus: svg.querySelector("rect") ? {
+            x: svg.querySelector("rect").getAttribute("x"),
+            y: svg.querySelector("rect").getAttribute("y"),
+            width: svg.querySelector("rect").getAttribute("width"),
+            height: svg.querySelector("rect").getAttribute("height")
+        } : null,
+        solarArrayPaths: svg.querySelectorAll("path").length
     }));
-    expect(geometry.panels, "The satellite bus must remain present").toBe(1);
+    expect(geometry.bus, "The Layers satellite bus must remain present").toEqual({ x: "9", y: "8", width: "6", height: "8" });
     expect(geometry.solarArrayPaths, "The compact glyph must keep its solar arrays and antenna").toBeGreaterThanOrEqual(2);
-    expect(geometry.rotation).toContain("rotate(");
 });

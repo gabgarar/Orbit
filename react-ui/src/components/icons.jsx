@@ -24,11 +24,9 @@ export function SatelliteIcon() {
  * filled Layers rail glyph so contextual surfaces remain monochrome. */
 export function OrbitalSatelliteIcon() {
     return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" data-orbit-icon="satellite">
-        <g transform="rotate(-18 12 12)">
-            <rect x="9.25" y="8.15" width="5.5" height="7.7" rx="1.05" />
-            <path d="M4.1 9.35h5.15v5.3H4.1zM14.75 9.35h5.15v5.3h-5.15zM6.68 9.35v5.3M17.32 9.35v5.3" />
-            <path d="M12 8.15V5.3m0 13.4v-2.85M10.1 5.3 12 3.4l1.9 1.9M10.1 18.7l1.9 1.9 1.9-1.9" />
-        </g>
+        <rect x="9" y="8" width="6" height="8" rx="1.1" />
+        <path d="M9 10H4.5v4H9m6-4h4.5v4H15M11 8V5m2 0v3m-2 8v3m2-3v3" />
+        <path d="m10.4 5 1.6-2 1.6 2M10.4 19l1.6 2 1.6-2" />
     </svg>;
 }
 
