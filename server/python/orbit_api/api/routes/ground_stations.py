@@ -214,6 +214,11 @@ def create_ground_stations_router(
             raise HTTPException(status_code=422, detail="Falta la fuente orbital para AOS/LOS")
         if source.kind != "manual":
             name, propagator = resolve_propagator(source.sat_id, source.line1, source.line2)
+            native_reference = getattr(propagator, "dynamics_reference_realization", None) or getattr(
+                propagator,
+                "dynamics_reference_frame",
+                None,
+            )
             return name, name, propagator, {
                 "kind": "catalog",
                 "sat_id": source.sat_id,
@@ -221,6 +226,10 @@ def create_ground_stations_router(
                 "dynamics_reference_frame": str(
                     getattr(propagator, "dynamics_reference_frame", "TEME")
                 ),
+                "native_reference_frame": str(native_reference) if native_reference is not None else None,
+                # This is a requested renderer target, not evidence that a
+                # rigorous ITRF transformation has already been performed.
+                "renderer_target_frame": "ITRF",
             }
 
         manual = source.manual_orbit
@@ -249,8 +258,11 @@ def create_ground_stations_router(
             "definition_source": definition_source,
             "dynamics_reference_frame": "EME2000",
             # Access geometry always samples the runtime renderer position,
-            # which is transformed to ITRF before the ENU calculation below.
+            # which is transformed to the renderer Earth-fixed target before
+            # the ENU calculation below. The response carries the actual
+            # EOP/visual qualification of that transformation.
             "ephemeris_reference_frame": "ITRF",
+            "renderer_target_frame": "ITRF",
         }
 
     def calculate_access_windows(payload: AosLosRequest) -> dict:
@@ -510,7 +522,14 @@ def create_ground_stations_router(
             # from the propagator's native inertial state. Publish that
             # contract so every consumer can prove which frame and transport
             # time scale fed its AOS/LOS values.
-            "reference_frame": str(ephemeris.get("reference_frame") or "ITRF"),
+            # ``reference_frame`` remains the frame of the coordinates used
+            # for ENU geometry. ``renderer_reference`` tells callers whether
+            # that Earth-fixed view used final/rapid EOP, an explicit datum
+            # operation, or the visual UTC~UT1 approximation.
+            "reference_frame": ephemeris.get("reference_frame"),
+            "native_reference_frame": ephemeris.get("native_reference_frame"),
+            "native_frame": ephemeris.get("native_frame"),
+            "renderer_reference": ephemeris.get("renderer_reference"),
             "time_scale": str(ephemeris.get("transport_time_scale") or ephemeris.get("time_scale") or "UTC"),
             "step_seconds": payload.step_seconds,
             "passes": passes,

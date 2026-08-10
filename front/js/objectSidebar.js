@@ -2962,15 +2962,28 @@ export function setupObjectSidebar({
 
     function preciseProductRenderingWarning(payload, entries = []) {
         const candidates = [
+            payload?.product?.renderer_reference,
             payload?.product?.rendering,
-            ...entries.map((entry) => entry?.sp3?.rendering ?? entry?.rendering)
+            ...entries.flatMap((entry) => [
+                entry?.renderer_reference,
+                entry?.sp3?.renderer_reference,
+                entry?.sp3?.rendering,
+                entry?.rendering
+            ])
         ];
-        const unavailable = candidates.find((candidate) => candidate && typeof candidate === "object" && candidate.available === false);
+        const unavailable = candidates.find((candidate) => candidate && typeof candidate === "object"
+            && (candidate.available === false || String(candidate.status || "").toLowerCase() === "unavailable"));
         if (!unavailable) return "";
         const reason = String(unavailable.reason || "").trim();
         if (reason) return reason;
-        const frame = String(unavailable.source_frame || unavailable.sourceFrame || "el marco nativo del producto").trim();
-        return `${frame} todavía no tiene una transformación terrestre activa hacia ITRF.`;
+        const frame = String(
+            unavailable.native_reference_frame
+            || unavailable.nativeReferenceFrame
+            || unavailable.source_frame
+            || unavailable.sourceFrame
+            || "el marco nativo del producto"
+        ).trim();
+        return `${frame} todavía no tiene una transformación terrestre activa declarada.`;
     }
 
     function renderPreciseProductFileList(files = []) {

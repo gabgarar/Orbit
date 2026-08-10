@@ -99,6 +99,15 @@ La transformación de un estado terrestre requiere los datos auxiliares
 pertinentes. Para una ejecución reproducible, cargue los productos de tiempo y
 EOP locales indicados en [Tiempo, EOP e ITRF](../operations/time-eop.md).
 
+El marco nativo y una vista terrestre no son la misma afirmación. Una
+coordenada SP3 declarada `IGS20` sigue siendo `IGS20` aunque el visor pueda
+colocarla sobre el globo; no se presenta como `ITRF` sin una operación de
+realización fuente→ITRF registrada. Si una ruta inercial genera una vista
+terrestre con UTC≈UT1 y EOP nulos, el resultado se etiqueta **terrestre
+aproximada (sin EOP)**, no ITRF. Una salida ITRF reproducible requiere la ruta
+explícita, segundos intercalares y EOP versionados —DUT1, `xp`, `yp` y, para la
+reducción moderna, `dX`/`dY`—.
+
 ## Reloj asociado
 
 Un archivo RINEX CLK puede importarse junto al SP3 de la misma serie. Aporta

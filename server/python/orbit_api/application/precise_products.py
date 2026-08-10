@@ -250,7 +250,7 @@ class PreciseProduct:
         }
 
     def rendering_summary(self) -> dict[str, object]:
-        """Describe whether Orbit can presently produce the ITRF renderer view.
+        """Describe whether Orbit can presently produce an Earth-fixed view.
 
         Import always preserves the native SP3 realization.  A state declared
         as IGS14, or an IGS20-family product without its explicit policy, may
@@ -290,11 +290,48 @@ class PreciseProduct:
                     f"El frame de origen {reference.label} no tiene una ruta ITRF activa. "
                     "Importa o registra una transformación de realización explícita."
                 )
+        if not available:
+            status = "unavailable"
+            display_label = reference.label
+        elif reference.family == "ITRF":
+            # A declared ITRF/ITRF20xx SP3 state is already terrestrial. No
+            # EOP/ERP rotation or datum operation is implied by a renderer
+            # requesting an Earth-fixed coordinate array.
+            status = "native"
+            display_label = reference.label
+        else:
+            status = "terrestrial_realization_transform"
+            display_label = target_realization or "ITRF"
+        terrestrial_source = reference.family in {"ITRF", "IGS", "ITRS", "WGS84", "PZ90"}
         return {
             "available": available,
             "target_frame": "ITRF",
             "target_realization": target_realization,
             "source_frame": reference.label,
+            # Additive native/render split. Existing clients may continue to
+            # read ``source_frame``; new clients must not infer ITRF from the
+            # renderer target when no realization operation is registered.
+            "native_reference_frame": reference.label,
+            "native_frame": {
+                "name": reference.family,
+                "realization": reference.realization,
+                "center": "EARTH",
+                "time_scale": self.sp3.metadata.time_scale.value,
+            },
+            "status": status,
+            "display_label": display_label,
+            "earth_orientation": {
+                # Typical SP3 coordinates are already terrestrial. Neither a
+                # native ITRF state nor an explicit IGS->ITRF datum operation
+                # uses EOP/ERP, so do not advertise a nonexistent solution.
+                "required": not terrestrial_source,
+                "applied": False,
+                "source": None,
+                "version": None,
+                "quality": None,
+                "snapshot_id": None,
+            },
+            "terrestrial_realization_operation": None,
             "reason": reason,
         }
 
@@ -303,6 +340,7 @@ class PreciseProduct:
         provider = self.provider_for_satellite(identifier)
         start, end = self.coverage_utc(identifier)
         clock = self.clock_summary(identifier)
+        rendering = self.rendering_summary()
         return {
             "id": self.runtime_id(identifier),
             "name": f"{identifier} · {self.name}",
@@ -310,6 +348,9 @@ class PreciseProduct:
             "sourceFormat": "SP3",
             "source_format": "SP3",
             "satellite_id": identifier,
+            "native_reference_frame": self.sp3.metadata.reference_frame.label,
+            "native_frame": rendering["native_frame"],
+            "renderer_reference": rendering,
             "norad": None,
             "product_id": self.product_id,
             "catalogMeta": {
@@ -330,12 +371,13 @@ class PreciseProduct:
                 "start_time": _iso_or_none(start),
                 "end_time": _iso_or_none(end),
                 "clock": clock,
-                "rendering": self.rendering_summary(),
+                "rendering": rendering,
             },
         }
 
     def payload(self) -> dict[str, object]:
         start, end = self.coverage_utc()
+        rendering = self.rendering_summary()
         return {
             "id": self.product_id,
             "name": self.name,
@@ -356,6 +398,8 @@ class PreciseProduct:
             "source_files": [source.payload() for source in self.source_files],
             "checksums": {source.name: source.sha256 for source in self.source_files},
             "frame": self.sp3.metadata.reference_frame.label,
+            "native_reference_frame": self.sp3.metadata.reference_frame.label,
+            "native_frame": rendering["native_frame"],
             "time_scale": self.sp3.metadata.time_scale_label,
             "time_system": self.sp3.metadata.time_scale_label,
             "start_time": _iso_or_none(start),
@@ -363,7 +407,8 @@ class PreciseProduct:
             "start_time_ms": _epoch_millis(start),
             "end_time_ms": _epoch_millis(end),
             "clock": self.clock_summary(),
-            "rendering": self.rendering_summary(),
+            "renderer_reference": rendering,
+            "rendering": rendering,
             "satellite_count": len(self.satellite_ids),
             "satellite_ids": list(self.satellite_ids),
             "persistence": {"scope": "config-volume", "reloadable": True},

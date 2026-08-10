@@ -96,6 +96,15 @@ A terrestrial-state transformation requires relevant auxiliary data. For a
 reproducible run, load the local time and EOP products described in [Time, EOP,
 and ITRF](../operations/time-eop.md).
 
+The native frame and an Earth-fixed view are not the same claim. An SP3
+coordinate declared as `IGS20` remains `IGS20` even if the viewer can place it
+on the globe; it is not presented as `ITRF` without a registered
+source→ITRF realization operation. If an inertial route creates an Earth-fixed
+view using UTC≈UT1 and null EOP, the result is labelled **approximate
+Earth-fixed (without EOP)**, not ITRF. Reproducible ITRF output requires the
+explicit route, leap seconds, and versioned EOP — DUT1, `xp`, `yp`, and, for
+modern reduction, `dX`/`dY`.
+
 ## Associated clock
 
 A RINEX CLK file can be imported alongside the SP3 from the same series. It

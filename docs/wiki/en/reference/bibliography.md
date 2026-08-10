@@ -13,7 +13,8 @@ concrete is defined by the contracts and limits of the application.
 | --- | --- |
 | Petit, G.; Luzum, B. (eds.). [IERS Conventions (2010), IERS Technical Note 36](https://www.iers.org/SharedDocs/Publikationen/EN/IERS/Publications/tn/TechnNote36/tn36.pdf?__blob=publicationFile&v=1). | Terminology and conventions for celestial/terrestrial frames, orientation and time scales. |
 | IERS. [Conventions Centre](https://www.iers.org/iers/en/dataproducts/conventions/conventions). | Editorial status of conventions and associated updates. |
-| IERS. [EOP C04 20, product metadata](https://datacenter.iers.org/versionMetadata.php?filename=latestVersionMeta%2F234_EOP_C04_20.62-NOW234.txt). | Reference source for C04 snapshots used locally with DUT1, polar motion and dX/dY. |
+| IERS. [EOP 20u24 C04, product and metadata](https://datacenter.iers.org/products/eop/long-term/c04_20u24/). | Recommended source for local C04 snapshots with DUT1, polar motion, and `dX`/`dY`; the exact revision and hash must be pinned. |
+| IERS/USNO. [Bulletin A](https://maia.usno.navy.mil/products/bulletin-a). | Future route for rapid EOP and predictions; Orbit does not import it directly. |
 | IERS. [ITRS and ITRF](https://www.iers.org/iers/en/dataproducts/itrs/itrs). | Distinction between conceptual earth system and its realizations. |
 | IAU SOFA. [Standards of Fundamental Astronomy](https://www.iausofa.org/). | Basis of astronomical reference routines. |
 | ERFA. [Essential Routines for Fundamental Astronomy](https://github.com/liberfa/erfa). | Free implementation of SOFA routines used through `pyerfa`. |
@@ -41,6 +42,7 @@ general.
 | International GNSS Service. [IGS20 and product transition](https://igs.org/news/igs20/). | Context of IGS20, igs20.atx and its relationship with ITRF2020. |
 | International GNSS Service. [Reference Frame Working Group](https://igs.org/wg/reference-frame/). | Information on IGS achievements, stations and reference products. |
 | International GNSS Service. [ITRF2020→IGS20 parameters](https://files.igs.org/pub/station/coord/IGS20/ITRF2020_to_IGS20.txt). | Source of published parameters for Orbit's optional global alignment. |
+| International GNSS Service. [IGS products](https://igs.org/products/). | Reference for ERP products associated with GNSS series; Orbit does not yet import or pair ERP with SP3. |
 | ISO. [ISO 8601 — date and time formats](https://www.iso.org/iso-8601-date-and-time-format.html). | Sharing convention for moments sent to the API. |
 
 ## Repository implementation sources

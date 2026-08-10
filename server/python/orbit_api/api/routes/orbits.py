@@ -16,6 +16,7 @@ def create_orbits_router(
     auto_samples: Callable,
     build_ephemeris: Callable,
     renderer_state_at: Callable | None = None,
+    native_state_at: Callable | None = None,
 ) -> APIRouter:
     """Build orbit routes from application-level operations."""
     router = APIRouter(tags=["orbits"])
@@ -44,25 +45,67 @@ def create_orbits_router(
         sample_count = samples or auto_samples(horizon_hours, 1, propagator)
         reference_time = ensure_utc(reference_time or utc_now())
         points = []
+        first_renderer_state = None
         try:
             for index in range(sample_count):
                 offset = (index / max(sample_count - 1, 1)) * horizon_hours * 3600
                 moment = reference_time + datetime.timedelta(seconds=offset)
                 if renderer_state_at is not None:
                     state = renderer_state_at(propagator, moment)
+                    if first_renderer_state is None:
+                        first_renderer_state = state
                     points.append({"x": state.position_m[0], "y": state.position_m[1], "z": state.position_m[2]})
                 else:
                     x, y, z, _, _, _ = propagator.propagate_datetime(moment)
                     points.append({"x": x, "y": y, "z": z})
         except ValueError as exc:
             raise unavailable("La órbita solicitada", name, exc) from exc
-        return {
+        payload = {
             "satellite": name,
             "orbit_reference_time": reference_time.isoformat(),
             "orbit_horizon_hours": horizon_hours,
             "orbit_samples": sample_count,
             "orbit": points,
         }
+        if first_renderer_state is not None:
+            native_state = None
+            if native_state_at is not None:
+                # Native provenance is supplementary to an already rendered
+                # path. Do not turn a valid renderer response into a 422 when
+                # a legacy provider cannot expose a second native view.
+                try:
+                    native_state = native_state_at(propagator, reference_time)
+                except ValueError:
+                    native_state = None
+            reference_payload = serialize_state(
+                name,
+                reference_time,
+                include_velocity=False,
+                state=first_renderer_state,
+                native_state=native_state,
+            )
+            for key in ("native_reference_frame", "native_frame", "renderer_reference"):
+                if key in reference_payload:
+                    payload[key] = reference_payload[key]
+        return payload
+
+    def serialized_renderer_state(name, propagator, target: datetime.datetime) -> dict:
+        """Serialize one renderer state with optional native provenance."""
+
+        state = renderer_state_at(propagator, target)
+        native_state = None
+        if native_state_at is not None:
+            try:
+                native_state = native_state_at(propagator, target)
+            except ValueError:
+                native_state = None
+        return serialize_state(
+            name,
+            target,
+            include_velocity=True,
+            state=state,
+            native_state=native_state,
+        )
 
     @router.get("/propagate/{sat_id}")
     def propagate_satellite_at(sat_id: str, at: datetime.datetime | None = Query(default=None)) -> dict:
@@ -70,8 +113,7 @@ def create_orbits_router(
         target = ensure_utc(at or utc_now())
         try:
             if renderer_state_at is not None:
-                state = renderer_state_at(propagator, target)
-                return serialize_state(name, target, include_velocity=True, state=state)
+                return serialized_renderer_state(name, propagator, target)
             x, y, z, vx, vy, vz = propagator.propagate_datetime(target)
             return serialize_state(name, target, x, y, z, vx, vy, vz, include_velocity=True)
         except ValueError as exc:
@@ -83,8 +125,7 @@ def create_orbits_router(
         target = ensure_utc(payload.at or utc_now())
         try:
             if renderer_state_at is not None:
-                state = renderer_state_at(propagator, target)
-                return serialize_state(name, target, include_velocity=True, state=state)
+                return serialized_renderer_state(name, propagator, target)
             x, y, z, vx, vy, vz = propagator.propagate_datetime(target)
             return serialize_state(name, target, x, y, z, vx, vy, vz, include_velocity=True)
         except ValueError as exc:

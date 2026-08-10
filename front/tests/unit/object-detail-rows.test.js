@@ -190,6 +190,7 @@ test("OMM, OEM and SP3 retain their own input vocabulary without masquerading as
                 product_id: "IGS0OPSFIN_20262220000_01D",
                 file_name: "IGS0OPSFIN_20262220000_01D_05M_ORB.SP3.gz",
                 clock_file: "IGS0OPSFIN_20262220000_01D_30S_CLK.CLK.gz",
+                native_reference_frame: "IGS14",
                 reference_frame: "ITRF",
                 time_system: "GPS",
                 start_time: "2026-08-10T00:00:00Z",
@@ -208,8 +209,80 @@ test("OMM, OEM and SP3 retain their own input vocabulary without masquerading as
     assert.equal(sp3["Clase de producto"], "final");
     assert.equal(sp3["Archivo SP3"], "IGS0OPSFIN_20262220000_01D_05M_ORB.SP3.gz");
     assert.equal(sp3["Archivo CLK"], "IGS0OPSFIN_20262220000_01D_30S_CLK.CLK.gz");
-    assert.match(sp3["Visualización ITRF"], /^No disponible: IGS14 requires/);
+    assert.equal(sp3["Marco nativo"], "IGS14");
+    assert.equal(sp3["Marco de representación"], "IGS14");
+    assert.match(sp3["Estado de representación"], /^No disponible: IGS14 requires/);
+    assert.equal(sp3["Visualización ITRF"], undefined);
     assert.equal(sp3.Estado, "Registrado en el runtime de efemérides precisas");
+});
+
+test("SP3 object details expose native or qualified terrestrial frames without fictional ITRF precision", () => {
+    const unavailable = buildObjectDetails({
+        id: "precise:igs20:G01",
+        sourceFormat: "SP3",
+        telemetry: {
+            id: "precise:igs20:G01",
+            position_frame: "ITRF",
+            position_frame_display: "IGS20",
+            position: { x: 1, y: 2, z: 3 },
+            velocity: { x: 4, y: 5, z: 6 },
+            geo: { latitude_deg: 10, longitude_deg: 20, altitude_m: 500000 }
+        },
+        catalogMeta: {
+            sourceFormat: "SP3",
+            inputMetadata: {
+                native_reference_frame: "IGS20",
+                reference_frame: "ITRF",
+                rendering: { available: false, source_frame: "IGS20", reason: "EOP unavailable" }
+            }
+        }
+    });
+    const unavailableOrbit = asObject(unavailable.rows.orbit);
+    const unavailableTelemetry = asObject(unavailable.rows.telemetry);
+    assert.equal(unavailableOrbit["Marco de referencia"], "IGS20");
+    assert.match(unavailableOrbit["Estado cartesiano"], /^No disponible:/);
+    assert.equal(unavailableTelemetry["Marco del estado"], "IGS20");
+    assert.match(unavailableTelemetry["Estado de representación"], /^No disponible:/);
+
+    const approximate = buildObjectDetails({
+        id: "precise:igs20:G02",
+        sourceFormat: "SP3",
+        telemetry: {
+            id: "precise:igs20:G02",
+            position_frame: "ITRF",
+            position_frame_display: "Terrestre aproximado (sin EOP)",
+            geo: { latitude_deg: 10, longitude_deg: 20, altitude_m: 500000 }
+        },
+        catalogMeta: {
+            sourceFormat: "SP3",
+            inputMetadata: {
+                native_reference_frame: "IGS20",
+                rendering: {
+                    available: true,
+                    source_frame: "IGS20",
+                    target_frame: "ITRF",
+                    earth_orientation: { quality: "approximate" }
+                }
+            }
+        }
+    });
+    const approximateOrbit = asObject(approximate.rows.orbit);
+    assert.equal(approximateOrbit["Marco de referencia"], "Terrestre aproximado (sin EOP)");
+
+    const legacyUnverified = buildObjectDetails({
+        id: "precise:igs14:legacy",
+        sourceFormat: "SP3",
+        telemetry: { id: "precise:igs14:legacy", position_frame: "ITRF", geo: {} },
+        catalogMeta: {
+            sourceFormat: "SP3",
+            inputMetadata: { native_reference_frame: "IGS14", reference_frame: "ITRF" }
+        }
+    });
+    const legacyInput = asObject(legacyUnverified.rows.input);
+    const legacyOrbit = asObject(legacyUnverified.rows.orbit);
+    assert.equal(legacyInput["Marco de representación"], "IGS14");
+    assert.match(legacyInput["Estado de representación"], /^No verificado:/);
+    assert.equal(legacyOrbit["Marco de referencia"], "IGS14");
 });
 
 test("celestial bodies retain the common tabs without a fictional TLE engine", () => {

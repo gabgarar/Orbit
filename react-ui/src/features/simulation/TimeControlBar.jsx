@@ -52,7 +52,7 @@ export default function TimeControlBar() {
     const [speedMenuOpen, setSpeedMenuOpen] = useState(false); const [dateMenuOpen, setDateMenuOpen] = useState(false); const [designMode, setDesignMode] = useState(isManualOrbitDesignActive);
     const [accessMarks, setAccessMarks] = useState([]);
     const [accessWindow, setAccessWindow] = useState(null);
-    const [accessContext, setAccessContext] = useState({ stationName: "", satelliteName: "", referenceFrame: "ITRF", timeScale: "UTC" });
+    const [accessContext, setAccessContext] = useState({ stationName: "", satelliteName: "", referenceFrame: "Marco no declarado", timeScale: "UTC" });
     const [hoveredPassMarker, setHoveredPassMarker] = useState(null);
     const sendAction = (type, value) => window.dispatchEvent(new CustomEvent("orbit:simulation-action", { detail: { type, value } }));
 
@@ -66,7 +66,7 @@ export default function TimeControlBar() {
             setAccessContext({
                 stationName: String(detail.stationName || detail.station?.name || "").trim(),
                 satelliteName: String(detail.satelliteName || detail.satellite || "").trim(),
-                referenceFrame: String(detail.referenceFrame || detail.reference_frame || "ITRF"),
+                referenceFrame: String(detail.referenceFrameLabel || detail.reference_frame_label || detail.referenceFrame || detail.reference_frame || "Marco no declarado"),
                 timeScale: String(detail.timeScale || detail.time_scale || "UTC")
             });
             setHoveredPassMarker(null);

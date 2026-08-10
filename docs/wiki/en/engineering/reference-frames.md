@@ -32,13 +32,14 @@ boundaries:
 
 | Source | Input and dynamics frame | Generated Earth-fixed view |
 | --- | --- | --- |
-| Manual two-body or Cowell/RK4 orbit | `EME2000` | `ITRF`, through a subsequent transformation. |
-| Catalogue TLE with SGP4 | `TEME` | `ITRF`, through the TEME→PEF→ITRF route. |
+| Manual two-body or Cowell/RK4 orbit | `EME2000` | `ITRF` through a subsequent transformation with versioned EOP; without them, only an approximate Earth-fixed view. |
+| Catalogue TLE with SGP4 | `TEME` | `ITRF` through the TEME→PEF→ITRF route with versioned EOP; without them, only an approximate Earth-fixed view. |
 
 The Earth-fixed option for a manual orbit is not a second integrator: it
 expresses the same `EME2000` ephemeris in `ITRF` for the globe, map, or an
-Earth-fixed output. Therefore the visible labels must be `EME2000` and `ITRF`,
-not `ECI` or `ECEF`.
+Earth-fixed output when the required transformation and EOP exist. With the
+visual fallback, the label must be `approximate Earth-fixed (without EOP)`.
+Therefore the visible labels are never generic `ECI` or `ECEF`.
 
 A future synthetic TLE will require fitting the SGP4 model to a reference
 ephemeris expressed in TEME. It is not obtained by directly rotating a manual
@@ -69,18 +70,33 @@ as well as source, version, quality and a snapshot identity. The supplier
 tabular linearly interpolates dated EOP records; out of coverage
 fails unless extrapolation has been explicitly allowed.
 
-The local reader accepts C04-14 and C04-20 with the IAU 2000A `dX/dY` convention.
-Reject headers that declare the legacy product `dPsi/dEps` to avoid a
-physically incorrect CIO reduction.
+The local reader accepts the C04-20 layout with the IAU 2000A `dX`/`dY`
+convention. The recommended operational source is [IERS EOP 20u24 C04](https://datacenter.iers.org/products/eop/long-term/c04_20u24/).
+C04-14 remains only for replaying historical snapshots. Orbit rejects headers
+that declare the legacy `dPsi`/`dEps` product to avoid a physically incorrect
+CIO reduction.
 
 | Politics | Effect |
 | --- | --- |
-| Default Visual | UTC≈UT1 and EOP null; the status is marked `approximate`. |
+| Visual Earth-fixed fallback | UTC≈UT1 and null EOP; status is `approximate_earth_fixed` and is not rigorous ITRF. |
 | Configured Snapshot | Local file source, version, hash and coverage are preserved. |
 | `ORBIT_EOP_STRICT=true` | Requires local C04, quality `final` or `rapid`, without extrapolation and local leap seconds table. |
 
 In strict mode, the absence of `pyerfa` is also a bug: Orbit does not use the
 visual approach as a substitute for reduction IAU 2006/2000A.
+
+## Native frame and Earth-fixed rendering
+
+The coordinate frame and the frame required by the renderer are not
+synonyms. An SP3 product declared as `IGS20`, `IGb20`, or `IGc20` retains that
+native realization even when it is shown over Earth. It must not be presented
+as `ITRF` unless a registered source→ITRF realization operation exists.
+
+When an inertial route uses the UTC≈UT1 fallback with zero polar motion, Orbit
+can construct an Earth-fixed view for the renderer. The correct label is
+**approximate Earth-fixed (without EOP)**, not `ITRF`: DUT1, `xp`, `yp`, and,
+for modern reduction, versioned `dX`/`dY` are absent. Reproducible ITRF output
+requires those snapshots, leap seconds, and the explicit frame route.
 
 ## Land achievements
 

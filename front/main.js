@@ -122,6 +122,7 @@ import {
     toManualOrbitApiPayload
 } from "./js/features/manualOrbit/editorState.js";
 import { normalizeManualOrbitPreviewReferenceFrame } from "./js/features/frames/referenceFrame.js";
+import { resolvePreciseProductFrameStatus } from "./js/features/preciseProducts/frameStatus.js";
 import { createPropagatedParametersContextBuilder } from "./js/features/propagatedParameters/context.js";
 
 const logger = getLogger("main");
@@ -3190,6 +3191,38 @@ async function groundStationPassResponseError(response) {
     return new Error(`El servicio AOS/LOS rechazó la solicitud (HTTP ${response.status})${reason ? `: ${reason}` : "."}`);
 }
 
+/**
+ * Keep the human-facing frame label separate from the frame used internally
+ * by Cesium and the AOS/LOS endpoint. In particular, a native IGS/ITRF SP3
+ * realization is not an ITRF rendering result until the backend confirms its
+ * EOP/ERP and realization operation. The same helper also qualifies a visual
+ * Earth-fixed fallback as "Terrestre aproximado (sin EOP)".
+ */
+function resolveGroundPassFrameStatus(satelliteId, responsePayload = null) {
+    const catalogMeta = getCatalogEntryMeta(satelliteId) || {};
+    const runtimeFrame = responsePayload?.reference_frame
+        ?? responsePayload?.referenceFrame
+        ?? responsePayload?.frame
+        ?? "";
+    return resolvePreciseProductFrameStatus({
+        ...catalogMeta,
+        sp3: catalogMeta.inputMetadata ?? catalogMeta.input_metadata ?? null,
+        rendering: responsePayload?.rendering ?? responsePayload?.renderer_reference ?? null,
+        renderer_reference: responsePayload?.renderer_reference ?? responsePayload?.rendererReference ?? null,
+        earth_orientation: responsePayload?.earth_orientation ?? responsePayload?.earthOrientation ?? null
+    }, { runtimeFrame });
+}
+
+function isPreciseProductLayer(satelliteId) {
+    return String(getCatalogEntryMeta(satelliteId)?.sourceFormat || "").toUpperCase() === "SP3";
+}
+
+function unavailablePreciseGroundPassMessage(frameStatus) {
+    const native = frameStatus?.nativeFrame || "el marco nativo del producto";
+    const reason = String(frameStatus?.reason || "No hay una transformación terrestre disponible.").trim();
+    return `No se pueden calcular AOS/LOS para ${native}: ${reason}`;
+}
+
 async function analyzeGroundStationPasses(detail = {}) {
     const stationId = String(detail.stationId || "").trim();
     const satelliteLayerId = String(detail.satelliteId || "").trim();
@@ -3212,6 +3245,30 @@ async function analyzeGroundStationPasses(detail = {}) {
     const stationSignature = groundStationAnalysisSignature(station);
     let requestContext = null;
     try {
+        const declaredFrameStatus = resolveGroundPassFrameStatus(satelliteId);
+        if (isPreciseProductLayer(satelliteId) && declaredFrameStatus.available === false) {
+            if (requestId === groundStationAnalysisRequestSequence) {
+                clearGroundStationAnalysisVisuals();
+                window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+                    detail: {
+                        error: unavailablePreciseGroundPassMessage(declaredFrameStatus),
+                        passes: [],
+                        samples: [],
+                        stationName: String(station.name || stationId),
+                        satelliteName: String(getLayerDisplayName(satelliteLayerId) || satelliteId),
+                        stationTimeZone: station.time_zone || "UTC",
+                        referenceFrame: declaredFrameStatus.nativeFrame,
+                        referenceFrameLabel: declaredFrameStatus.displayFrame,
+                        rendererReference: declaredFrameStatus,
+                        renderingAvailable: false,
+                        timeScale: "UTC",
+                        analysisSelection: { stationId, satelliteLayerId },
+                        visibleNow: false
+                    }
+                }));
+            }
+            return;
+        }
         const fallbackWindow = getGroundStationAnalysisWindow();
         const request = createGroundStationPassRequest(station, satelliteId, fallbackWindow.startDate, fallbackWindow.endDate, {
             stepSeconds: GROUND_STATION_ANALYSIS_STEP_SECONDS,
@@ -3243,7 +3300,10 @@ async function analyzeGroundStationPasses(detail = {}) {
                         stationName: String(station.name || stationId),
                         satelliteName: String(getLayerDisplayName(satelliteLayerId) || satelliteId),
                         stationTimeZone: station.time_zone || "UTC",
-                        referenceFrame: "ITRF",
+                        referenceFrame: declaredFrameStatus.returnedFrame || declaredFrameStatus.nativeFrame || "",
+                        referenceFrameLabel: declaredFrameStatus.displayFrame,
+                        rendererReference: declaredFrameStatus,
+                        renderingAvailable: declaredFrameStatus.available,
                         timeScale: "UTC",
                         analysisSelection: { stationId, satelliteLayerId },
                         linkContract: linkContract.kind,
@@ -3260,6 +3320,29 @@ async function analyzeGroundStationPasses(detail = {}) {
         if (!response.ok) throw await groundStationPassResponseError(response);
         const result = await response.json();
         if (!isCurrentGroundStationPassAnalysis(requestContext)) return;
+        const resolvedFrameStatus = resolveGroundPassFrameStatus(satelliteId, result);
+        if (isPreciseProductLayer(satelliteId) && resolvedFrameStatus.available === false) {
+            clearGroundStationAnalysisVisuals();
+            window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+                detail: {
+                    ...result,
+                    error: unavailablePreciseGroundPassMessage(resolvedFrameStatus),
+                    passes: [],
+                    samples: [],
+                    stationName: String(station.name || stationId),
+                    satelliteName: String(getLayerDisplayName(satelliteLayerId) || satelliteId),
+                    stationTimeZone: station.time_zone || "UTC",
+                    referenceFrame: resolvedFrameStatus.nativeFrame,
+                    referenceFrameLabel: resolvedFrameStatus.displayFrame,
+                    rendererReference: resolvedFrameStatus,
+                    renderingAvailable: false,
+                    timeScale: String(result.time_scale || "UTC"),
+                    analysisSelection: { stationId, satelliteLayerId },
+                    visibleNow: false
+                }
+            }));
+            return;
+        }
         showGroundStationAnalysisVisuals(station, satelliteLayerId, minElevationDeg);
         const satelliteEntity = getCompositeLayerEntity(satelliteLayerId);
         const stationPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
@@ -3284,7 +3367,10 @@ async function analyzeGroundStationPasses(detail = {}) {
                 stationName: String(station.name || stationId),
                 satelliteName: String(getLayerDisplayName(satelliteLayerId) || satelliteId),
                 stationTimeZone: station.time_zone || "UTC",
-                referenceFrame: String(result.reference_frame || "ITRF"),
+                referenceFrame: resolvedFrameStatus.returnedFrame || "",
+                referenceFrameLabel: resolvedFrameStatus.displayFrame,
+                rendererReference: resolvedFrameStatus,
+                renderingAvailable: resolvedFrameStatus.available,
                 timeScale: String(result.time_scale || "UTC"),
                 analysisWindow: {
                     startTime: result.start_time || startDate.toISOString(),
@@ -5840,8 +5926,9 @@ function buildPropagatedParametersTarget(context) {
         propagator: context?.manualOrbit?.propagator || context?.propagator || (isManual ? "two-body" : "sgp4"),
         // The selected scene view is distinct from the frame in which the
         // orbital-elements endpoint derives its native state.
-        displayReferenceFrame: context?.referenceFrame || null,
-        referenceFrame: context?.referenceFrame || null
+        displayReferenceFrame: context?.displayReferenceFrame ?? context?.referenceFrame ?? null,
+        referenceFrame: context?.referenceFrame || null,
+        rendererReference: context?.preciseRendering || null
     };
 }
 
@@ -5873,6 +5960,11 @@ async function buildPropagatedParametersRequest(context, range) {
         const sourceFormat = String(context?.catalogMeta?.sourceFormat || context?.catalogMeta?.source_format || "TLE").toUpperCase();
         if (sourceFormat === "OEM") {
             throw new Error("Las efemérides OEM aún no se pueden repropagar como elementos osculantes.");
+        }
+        if (sourceFormat === "SP3" && context?.preciseRendering?.available === false) {
+            const nativeFrame = context.preciseRendering.nativeFrame || "el marco nativo";
+            const reason = context.preciseRendering.reason ? ` ${context.preciseRendering.reason}` : "";
+            throw new Error(`No se pueden calcular parámetros osculantes para este SP3: la representación desde ${nativeFrame} no está disponible.${reason}`);
         }
         const satId = String(context?.sourceId || getSatelliteSourceIdFromLayerId(context?.id || "") || "").trim();
         if (!satId) {

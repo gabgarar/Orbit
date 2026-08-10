@@ -21,6 +21,12 @@ La interfaz muestra UTC. UT1 se obtiene aplicando DUT1 y TT mediante
 UTC → TAI → TT. Las etiquetas genéricas ECI y ECEF se rechazan. El acrónimo
 correcto es ITRF, no IRTF.
 
+Una etiqueta `ITRF` rigurosa no se infiere del globo ni de una rotación con
+UTC≈UT1. Para transformar un estado inercial se necesita una ruta de marcos
+explícita, segundos intercalares y EOP versionados —como mínimo DUT1, `xp` e
+`yp`, y `dX`/`dY` en la reducción CIO—. Sin ellos la interfaz solo puede
+presentar una **vista terrestre aproximada**, nunca relabelarla como ITRF.
+
 ## Guías operativas
 
 | Tema | Contenido |

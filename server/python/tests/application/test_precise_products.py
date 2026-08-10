@@ -123,6 +123,9 @@ def test_import_classifies_current_igs_final_and_associates_optional_rinex_clock
     assert clock["rinex_clk"]["coverage"]["start_time"] == "2026-07-26T00:00:18+00:00"
     payload = product.payload()
     assert payload["frame"] == "ITRF"
+    assert payload["native_reference_frame"] == "ITRF"
+    assert payload["renderer_reference"]["status"] == "native"
+    assert payload["renderer_reference"]["earth_orientation"]["applied"] is False
     assert payload["time_system"] == "UTC"
     assert payload["clock"]["sp3_embedded"]["sample_count"] == 2
 
@@ -208,6 +211,75 @@ def test_igc20_renderability_is_explicit_until_the_family_alignment_is_opted_in(
     assert available.satellite_payload("G01")["sp3"]["rendering"]["available"] is True
     assert state.frame is FrameId.ITRF
     assert state.frame_realization == "ITRF2020"
+
+
+def test_sp3_frame_contract_preserves_native_realization_and_marks_only_registered_itrf_output(tmp_path):
+    upload = [_upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text(frame="IGc20"))]
+    unavailable = import_precise_product(upload)
+
+    native_provider = unavailable.provider_for_satellite("G01")
+    assert native_provider.ephemeris_reference_frame == "IGC20"
+    assert native_provider.ephemeris_reference_realization == "IGC20"
+    rendering = unavailable.satellite_payload("G01")["renderer_reference"]
+    assert rendering["native_reference_frame"] == "IGC20"
+    assert rendering["status"] == "unavailable"
+    assert rendering["available"] is False
+    # A terrestrial SP3 realization is not rotated with EOP/ERP merely to
+    # call it ITRF. It needs a separate, explicit datum operation.
+    assert rendering["earth_orientation"]["required"] is False
+    assert rendering["earth_orientation"]["applied"] is False
+
+    transformer = build_frame_transformer_from_environment({
+        "ORBIT_TERRESTRIAL_REALIZATION": "ITRF2020",
+        "ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT": "true",
+    })
+    runtime = OrbitRuntime(
+        transformer,
+        precise_products_dir=tmp_path / "precise-products",
+    )
+    product = runtime.import_precise_product(upload)
+    runtime_id, propagator = runtime.resolve_propagator(product.runtime_id("G01"), None, None)
+    start = datetime(2026, 7, 26, 0, 0, 18, tzinfo=UTC)
+
+    ephemeris = runtime.build_ephemeris(runtime_id, propagator, start, start, 30)
+
+    assert ephemeris["native_reference_frame"] == "IGC20"
+    assert ephemeris["native_frame"] == {
+        "name": "IGS",
+        "realization": "IGC20",
+        "center": "EARTH",
+        "time_scale": "UTC",
+    }
+    assert ephemeris["reference_frame"] == "ITRF2020"
+    renderer = ephemeris["renderer_reference"]
+    assert renderer["status"] == "terrestrial_realization_transform"
+    assert renderer["target_frame"] == "ITRF"
+    assert renderer["target_realization"] == "ITRF2020"
+    assert renderer["earth_orientation"]["required"] is False
+    assert renderer["earth_orientation"]["applied"] is False
+    operation = renderer["terrestrial_realization_operation"]
+    assert operation["source_realization"] == "IGC20"
+    assert operation["target_realization"] == "ITRF2020"
+    assert ephemeris["points"][0]["native_reference_frame"] == "IGC20"
+
+    router = create_orbits_router(
+        runtime.resolve_propagator,
+        runtime.serialize_state,
+        runtime.compute_auto_orbit_samples,
+        runtime.build_ephemeris,
+        runtime.renderer_state_at,
+        runtime.native_state_at,
+    )
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/propagate/{sat_id}")
+    orbit_endpoint = next(route.endpoint for route in router.routes if route.path == "/orbits/{sat_id}")
+    state_payload = endpoint(runtime_id, at=start)
+    orbit_payload = orbit_endpoint(runtime_id, horizon_hours=1 / 120, samples=2, at=start)
+
+    assert state_payload["reference_frame"] == "ITRF2020"
+    assert state_payload["native_reference_frame"] == "IGC20"
+    assert state_payload["renderer_reference"]["status"] == "terrestrial_realization_transform"
+    assert orbit_payload["native_reference_frame"] == "IGC20"
+    assert orbit_payload["renderer_reference"]["status"] == "terrestrial_realization_transform"
 
 
 def test_zip_is_safely_inspected_and_must_contain_one_sp3_plus_optional_clk():
@@ -377,6 +449,8 @@ def test_precise_runtime_id_is_usable_by_the_shared_aos_los_route(tmp_path):
 
     assert response["satellite"] == runtime_id
     assert response["reference_frame"] == "ITRF"
+    assert response["native_reference_frame"] == "ITRF"
+    assert response["renderer_reference"]["status"] == "native"
     assert response["count"] == 3
     assert response["passes"]
 

@@ -236,12 +236,19 @@ class Sp3StateProvider:
 
     @property
     def ephemeris_reference_frame(self) -> str:
-        return FrameId.ITRF.value
+        """Return the exact terrestrial frame declared by the SP3 header.
+
+        ``IGS20``/``IGb20``/``IGc20`` are not aliases for a renderer ITRF
+        realization.  The renderer may request ITRF only through an explicit
+        realization operation, so this property remains source-native even
+        when a deployment has opted into such an operation.
+        """
+
+        return self.metadata.reference_frame.label
 
     @property
     def ephemeris_reference_realization(self) -> str | None:
-        assert self.frame_transformer is not None
-        return self.frame_transformer.default_terrestrial_realization
+        return self.metadata.reference_frame.realization
 
     def _selected_satellite(self, satellite_id: str | None) -> TabularStateProvider:
         if satellite_id is None:

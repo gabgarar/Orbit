@@ -1,5 +1,6 @@
 import { tleEpochAgeMs, tleEpochToDate } from "../../../../front/js/features/objectDetails/tleEpoch.js";
 import { formatReferenceFrame } from "../../../../front/js/features/frames/referenceFrame.js";
+import { resolvePreciseProductFrameStatus } from "../../../../front/js/features/preciseProducts/frameStatus.js";
 
 const number = (input, digits = 1) => input !== null && input !== undefined && input !== "" && Number.isFinite(Number(input)) ? Number(input).toFixed(digits) : "-";
 const value = (input, fallback = "-") => input === undefined || input === null || input === "" ? fallback : String(input);
@@ -117,19 +118,8 @@ function metadataPresence(sources, keys, fallback = INPUT_UNAVAILABLE) {
     return fallback;
 }
 
-function preciseRenderingStatus(metadata) {
-    const rendering = metadata?.rendering ?? metadata;
-    if (!rendering || typeof rendering !== "object") return INPUT_UNAVAILABLE;
-    if (rendering.available === true) {
-        const target = value(rendering.target_frame || rendering.targetFrame, "ITRF");
-        const realization = value(rendering.target_realization || rendering.targetRealization, "");
-        return realization ? `Disponible en ${target} / ${realization}` : `Disponible en ${target}`;
-    }
-    if (rendering.available === false) {
-        const reason = value(rendering.reason, "");
-        return reason ? `No disponible: ${reason}` : "No disponible: falta una transformación hacia ITRF";
-    }
-    return INPUT_UNAVAILABLE;
+function preciseRenderingStatus(status) {
+    return status?.renderingLabel || INPUT_UNAVAILABLE;
 }
 
 function tleAgeHours(summary, referenceTimeMs) {
@@ -307,6 +297,21 @@ export function buildObjectDetails(detail) {
         || telemetry.sp3
         || {};
     const metadataSources = [manualObjectMetadata, inputMetadata, catalogMeta, telemetry];
+    const preciseFrameStatus = sourceFormat === "SP3"
+        ? resolvePreciseProductFrameStatus({
+            ...catalogMeta,
+            inputMetadata,
+            sp3: telemetry.sp3 || inputMetadata,
+            renderer_reference: telemetry.renderer_reference || telemetry.rendererReference || null,
+            earth_orientation: telemetry.earth_orientation || telemetry.earthOrientation || null
+        }, {
+            runtimeFrame: telemetry.position_frame
+                || telemetry.reference_frame
+                || telemetry.frame
+                || ""
+        })
+        : null;
+    const preciseRenderingUnavailable = preciseFrameStatus?.available === false;
     // Keep the legacy metadata precedence for existing workspaces. Input
     // metadata remains available in its dedicated tab, but must not rename an
     // already identified catalogue or manually authored object.
@@ -347,8 +352,13 @@ export function buildObjectDetails(detail) {
     const positionFrame = frameLabel(telemetry.position_frame || telemetry.reference_frame || telemetry.frame);
     const velocityFrame = frameLabel(telemetry.velocity_frame) || positionFrame;
     const stateFrame = positionFrame || velocityFrame;
-    const earthFixed = /(?:ITRF|ECEF|PEF|TIRS)/i.test(stateFrame || "");
-    const unavailableGeography = stateFrame
+    const displayStateFrame = preciseFrameStatus
+        ? (frameLabel(telemetry.position_frame_display) || preciseFrameStatus.displayFrame || stateFrame)
+        : stateFrame;
+    const earthFixed = !preciseRenderingUnavailable && /(?:ITRF|ECEF|PEF|TIRS)/i.test(stateFrame || "");
+    const unavailableGeography = preciseRenderingUnavailable
+        ? `No disponible: ${preciseRenderingStatus(preciseFrameStatus)}`
+        : stateFrame
         ? `No aplicable: ${stateFrame} no es terrestre`
         : "Sin estado instantáneo";
     const simulation = telemetry.simulation || {};
@@ -420,14 +430,14 @@ export function buildObjectDetails(detail) {
         ["Latitud", earthFixed ? numberWithUnit(geo.latitude_deg, "deg", 4) : unavailableGeography],
         ["Longitud", earthFixed ? numberWithUnit(geo.longitude_deg, "deg", 4) : unavailableGeography],
         ["Altitud", earthFixed ? convertedNumberWithUnit(geo.altitude_m, 1000, "km") : unavailableGeography],
-        [stateFrame ? `Velocidad instantánea (${stateFrame})` : "Velocidad instantánea", numberWithUnit(telemetry.speed_m_s, "m/s")],
+        [displayStateFrame ? `Velocidad instantánea (${displayStateFrame})` : "Velocidad instantánea", preciseRenderingUnavailable ? unavailableGeography : numberWithUnit(telemetry.speed_m_s, "m/s")],
         ["Período orbital", numberWithUnit(orbitalPeriodMinutes, "min", 2)],
         ["Anomalía verdadera", numberWithUnit(telemetry.true_anomaly_deg ?? telemetry.trueAnomalyDeg, "deg", 3)],
         ["Argumento de latitud", numberWithUnit(telemetry.argument_of_latitude_deg ?? telemetry.argumentOfLatitudeDeg, "deg", 3)],
         ["Distancia al centro de la Tierra", convertedNumberWithUnit(telemetry.earth_center_distance_m, 1000, "km")],
-        ["Marco de referencia", stateFrame || "-"],
-        [stateFrame ? `Posición ${stateFrame}` : "Posición", vectorWithUnit(positionVector, "km", 1, 1000)],
-        [(velocityFrame || stateFrame) ? `Velocidad ${velocityFrame || stateFrame}` : "Velocidad", vectorWithUnit(velocityVector, "m/s")],
+        ["Marco de referencia", displayStateFrame || "-"],
+        [preciseRenderingUnavailable ? "Estado cartesiano" : (displayStateFrame ? `Posición ${displayStateFrame}` : "Posición"), preciseRenderingUnavailable ? unavailableGeography : vectorWithUnit(positionVector, "km", 1, 1000)],
+        [preciseRenderingUnavailable ? "Velocidad cartesiana" : ((displayStateFrame || velocityFrame || stateFrame) ? `Velocidad ${displayStateFrame || velocityFrame || stateFrame}` : "Velocidad"), preciseRenderingUnavailable ? unavailableGeography : vectorWithUnit(velocityVector, "m/s")],
         ["Distancia a estación", hasNumber(telemetry.station_distance_m) ? convertedNumberWithUnit(telemetry.station_distance_m, 1000, "km") : "Sin estación seleccionada"],
         ["AOS / LOS", aosLos],
         ["Ground track", groundTrackState],
@@ -447,6 +457,12 @@ export function buildObjectDetails(detail) {
         ["Escala temporal", hasNumber(simulation.time_scale) ? `${number(simulation.time_scale, 0)}×` : "-"],
         ["Edad de telemetría", numberWithUnit(telemetry.telemetry_age_ms, "ms", 0)]
     ];
+    if (preciseFrameStatus) {
+        telemetryRows.push(
+            ["Marco del estado", displayStateFrame || preciseFrameStatus.nativeFrame],
+            ["Estado de representación", preciseRenderingStatus(preciseFrameStatus)]
+        );
+    }
     let inputRows;
     if (celestial) {
         inputRows = [["Tipo de entrada", "Modelo de referencia"], ["Fuente", "Cesium"]];
@@ -496,9 +512,6 @@ export function buildObjectDetails(detail) {
             ["Maniobras", metadataPresence(metadataSources, ["maneuvers", "maneuver_data", "maneuverData"])]
         ];
     } else if (sourceFormat === "SP3") {
-        const preciseRendering = inputMetadata?.rendering
-            || telemetry?.sp3?.rendering
-            || null;
         inputRows = [
             ["Tipo de entrada", "SP3"],
             ["Proveedor", metadataValue(metadataSources, ["provider", "agency", "orbitType", "orbit_type"], INPUT_UNAVAILABLE)],
@@ -509,9 +522,11 @@ export function buildObjectDetails(detail) {
             ["Época", inputEpoch],
             ["Inicio de cobertura", utcDate(metadataValue(metadataSources, ["startTimeMs", "start_time_ms", "startTime", "start_time", "coverageStart", "coverage_start"], ""))],
             ["Fin de cobertura", utcDate(metadataValue(metadataSources, ["endTimeMs", "end_time_ms", "endTime", "end_time", "coverageEnd", "coverage_end", "stop_time"], ""))],
-            ["Marco declarado", metadataValue(metadataSources, ["referenceFrame", "reference_frame", "frame", "coordSystem", "coordinate_system"], INPUT_UNAVAILABLE)],
+            ["Marco nativo", preciseFrameStatus?.nativeFrame || metadataValue(metadataSources, ["nativeReferenceFrame", "native_reference_frame", "referenceFrame", "reference_frame", "frame", "coordSystem", "coordinate_system"], INPUT_UNAVAILABLE)],
             ["Sistema de tiempo", metadataValue(metadataSources, ["timeSystem", "time_system", "timeScale", "time_scale"], INPUT_UNAVAILABLE)],
-            ["Visualización ITRF", preciseRenderingStatus(preciseRendering)],
+            ["Marco de representación", preciseFrameStatus?.displayFrame || INPUT_UNAVAILABLE],
+            ["Estado de representación", preciseRenderingStatus(preciseFrameStatus)],
+            ["Operación de realización", preciseFrameStatus?.operation || "No aplicada"],
             ["Efeméride precisa", metadataPresence(metadataSources, ["states", "samples", "preciseEphemeris", "precise_ephemeris"])],
             ["Correcciones de reloj", metadataPresence(metadataSources, ["clockCorrections", "clock_corrections", "clocks"])],
             ["RMS", metadataPresence(metadataSources, ["rms", "accuracy", "standardDeviation", "standard_deviation"])],
@@ -523,6 +538,7 @@ export function buildObjectDetails(detail) {
     const dynamicsFrame = manual ? "EME2000"
         : (sourceFormat === "TLE" || sourceFormat === "OMM") ? "TEME"
             : sourceFormat === "OEM" ? value(oem.ref_frame, INPUT_UNAVAILABLE)
+                : sourceFormat === "SP3" ? (preciseFrameStatus?.nativeFrame || INPUT_UNAVAILABLE)
                 : metadataValue(metadataSources, ["dynamicsFrame", "dynamics_frame", "referenceFrame", "reference_frame", "frame"], INPUT_UNAVAILABLE);
     const propagationRows = celestial
         ? [["Motor", "No aplica"], ["Marco mostrado", stateFrame || "-"]]
@@ -542,8 +558,9 @@ export function buildObjectDetails(detail) {
                     : (sourceFormat === "OEM" || sourceFormat === "SP3") ? "Contenido en la efeméride de entrada" : INPUT_UNAVAILABLE],
             ...(manualUsesCowell ? [["Arrastre atmosférico", onOff(manualForceTerms.includes("drag"))]] : []),
             ["Marco de integración", dynamicsFrame],
-            ["Marco de salida", stateFrame || INPUT_UNAVAILABLE],
-            ["Marco mostrado", stateFrame || INPUT_UNAVAILABLE],
+            ["Marco de salida", preciseFrameStatus ? (preciseFrameStatus.available === false ? INPUT_UNAVAILABLE : (displayStateFrame || preciseFrameStatus.displayFrame)) : (stateFrame || INPUT_UNAVAILABLE)],
+            ["Marco mostrado", preciseFrameStatus ? (displayStateFrame || preciseFrameStatus.displayFrame) : (stateFrame || INPUT_UNAVAILABLE)],
+            ...(preciseFrameStatus ? [["Estado de representación", preciseRenderingStatus(preciseFrameStatus)]] : []),
             ["Modo temporal", simulationMode(simulation.mode)],
             ["Escala temporal", hasNumber(simulation.time_scale) ? `${number(simulation.time_scale, 0)}×` : "-"]
         ];

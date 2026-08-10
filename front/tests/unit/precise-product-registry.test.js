@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
     getCatalogEntryMeta,
+    getSatelliteTelemetry,
     getSatelliteIds,
     preciseProductSatelliteEntriesFromPayload,
     registerPreciseProductSatelliteEntries
@@ -48,6 +49,8 @@ test("precise product response folds product provenance into every SP3 layer", (
             orbit_file: "IGS0OPSFIN_20262230000_01D_05M_ORB.SP3.gz",
             clock_file: "IGS0OPSFIN_20262230000_01D_30S_CLK.CLK.gz",
             frame: "ITRF",
+            native_reference_frame: "IGC20",
+            native_frame: { name: "IGS", realization: "IGC20", center: "EARTH", time_scale: "UTC" },
             time_system: "GPS",
             start_time: "2026-08-10T00:00:00Z",
             end_time: "2026-08-10T23:55:00Z",
@@ -55,6 +58,13 @@ test("precise product response folds product provenance into every SP3 layer", (
                 available: false,
                 source_frame: "IGS14",
                 reason: "IGS14 requires a registered terrestrial-realization transform."
+            },
+            renderer_reference: {
+                status: "unavailable",
+                available: false,
+                reference_frame: "ITRF",
+                display_label: "IGC20",
+                reason: "IGC20 requires a registered terrestrial-realization transform."
             }
         },
         satellites: [{
@@ -72,6 +82,9 @@ test("precise product response folds product provenance into every SP3 layer", (
     assert.equal(entries[0].sp3.clock_file, "IGS0OPSFIN_20262230000_01D_30S_CLK.CLK.gz");
     assert.equal(entries[0].sp3.start_time, "2026-08-10T00:00:00Z");
     assert.equal(entries[0].sp3.rendering.available, false);
+    assert.equal(entries[0].sp3.native_reference_frame, "IGC20");
+    assert.equal(entries[0].sp3.native_frame.realization, "IGC20");
+    assert.equal(entries[0].sp3.renderer_reference.status, "unavailable");
 
     registerPreciseProductSatelliteEntries(entries);
     const metadata = getCatalogEntryMeta(id);
@@ -80,4 +93,33 @@ test("precise product response folds product provenance into every SP3 layer", (
     assert.equal(metadata.inputMetadata.product_name, "IGS final 2026-08-10");
     assert.equal(metadata.inputMetadata.file_name, "IGS0OPSFIN_20262230000_01D_05M_ORB.SP3.gz");
     assert.equal(metadata.inputMetadata.rendering.available, false);
+    assert.equal(metadata.inputMetadata.native_reference_frame, "IGC20");
+    assert.equal(metadata.inputMetadata.renderer_reference.display_label, "IGC20");
+});
+
+test("native-only precise products expose their native frame to every UI consumer", () => {
+    const id = "precise:igc20-native:G03";
+    registerPreciseProductSatelliteEntries([{
+        id,
+        name: "G03",
+        sourceFormat: "SP3",
+        satellite_id: "G03",
+        product_id: "igc20-native",
+        sp3: {
+            native_reference_frame: "IGC20",
+            reference_frame: "ITRF",
+            renderer_reference: {
+                status: "unavailable",
+                available: false,
+                reference_frame: "ITRF",
+                reason: "No EOP realization operation is configured."
+            }
+        }
+    }]);
+
+    const telemetry = getSatelliteTelemetry(id);
+    assert.equal(telemetry.position_frame, "IGC20");
+    assert.equal(telemetry.position_frame_display, "IGC20");
+    assert.equal(telemetry.rendering_available, false);
+    assert.equal(telemetry.runtime_state, "UNAVAILABLE");
 });

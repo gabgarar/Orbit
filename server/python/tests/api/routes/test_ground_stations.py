@@ -543,6 +543,7 @@ def test_post_aos_los_uses_the_manual_two_body_engine_and_shared_itrf_transforme
         "definition_source": "keplerian",
         "dynamics_reference_frame": "EME2000",
         "ephemeris_reference_frame": "ITRF",
+        "renderer_target_frame": "ITRF",
     }
     assert response["reference_frame"] == "ITRF"
     assert response["time_scale"] == "UTC"

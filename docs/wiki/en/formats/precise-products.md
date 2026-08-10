@@ -69,6 +69,7 @@ it never replaces the header.
 | --- | --- | --- |
 | `*.sp3`, `*.sp3c`, or `*.sp3d` (or a variant recognised by header) | Position, and velocity when the product carries it, by epoch and satellite. | Yes. |
 | `*.clk`, `*.clk_30s`, or `*.clk_05s` | Clock bias and, when present, clock rate/precision by epoch and satellite. | No; it is associated with the SP3 product from the same import. |
+| `*.erp` | Earth-orientation parameters published alongside some GNSS products. | No; ERP is not currently imported or paired with SP3. |
 | Any of those extensions with `.gz` | GNU gzip-compressed variant. | Yes, after local decompression. |
 | `*.zip` | Local container for one or more SP3/CLK files. | Yes, when it contains a valid SP3. |
 | `*.Z` | Historical UNIX compression used by legacy CDDIS files. | Yes, when its content decompresses and validates correctly. |
@@ -149,10 +150,24 @@ unavailable and exposes the frame diagnostic; operations needing that
 terrestrial state, such as an ITRF view or AOS/LOS, must be configured with a
 valid route instead of assuming a conversion.
 
+An SP3 state declared in a terrestrial realization remains native to that
+realization. The fact that an Earth-fixed scene can draw it does not authorize
+renaming, for example, `IGS20` as `ITRF2020`. A registered realization
+transformation is a datum operation distinct from Earth orientation. If Orbit
+creates a view from an inertial route with UTC≈UT1 and null EOP, the UI must
+show **approximate Earth-fixed (without EOP)**; it is not a rigorous ITRF
+output or a precision result for AOS/LOS or export.
+
 Queries convert from the requested scale to the native scale before looking up
 a sample. A reproducible terrestrial transformation also needs the relevant
 time and Earth-orientation data in addition to SP3/CLK; see [Time, EOP, and
 ITRF](../operations/time-eop.md).
+
+ERP products and rapid EOP are not inferred from an SP3 name. The current
+operational reference is a local [IERS EOP 20u24 C04](time/iers-c04.md)
+snapshot with its version and hash. [IERS Bulletin A](time/bulletins.md) and
+IGS ERP are future routes: this import has no reader, download, or automatic
+pairing for them.
 
 ## Import workflow
 
@@ -189,6 +204,8 @@ file's provenance card, not an independent accuracy estimate.
   between Final, Rapid, and Ultra-Rapid.
 - CLK samples are retained as clock metadata; they do not change SP3
   position/velocity or become a navigation solution.
+- ERP, Bulletin A, and Bulletin B files are not accepted or paired with SP3.
+  Those products require a future local, versioned, and auditable EOP route.
 - Orbit interpolates each SP3 series through a local Lagrange window of up to
   ten samples (degree 9); with fewer records it explicitly degrades to the
   highest available degree. This bounded policy does not replace the
@@ -211,3 +228,5 @@ Product sources:
 - [IGS: Products](https://www.igs.org/products/)
 - [IGS: MGEX data products](https://igs.org/mgex/data-products/)
 - [ESA Navigation Support Office: GNSS-based products](https://navigation-office.esa.int/GNSS_based_products.html)
+- [IERS EOP 20u24 C04](https://datacenter.iers.org/products/eop/long-term/c04_20u24/)
+- [IERS Bulletin A](https://maia.usno.navy.mil/products/bulletin-a)

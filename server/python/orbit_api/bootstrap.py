@@ -57,6 +57,7 @@ def create_app() -> FastAPI:
         runtime.compute_auto_orbit_samples,
         runtime.build_ephemeris,
         runtime.renderer_state_at,
+        runtime.native_state_at,
     ))
     app.include_router(create_manual_orbits_router(
         runtime.build_ephemeris,

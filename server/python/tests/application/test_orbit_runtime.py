@@ -51,6 +51,31 @@ class NativeEme2000FakePropagator(FakePropagator):
         )
 
 
+class VisualEarthFixedFakePropagator(FakePropagator):
+    """Native EME2000 source using the runtime's visual EOP fallback."""
+
+    dynamics_reference_frame = "EME2000"
+
+    def __init__(self, frame_transformer):
+        self.frame_transformer = frame_transformer
+
+    def native_state_at(self, moment):
+        return StateVector.from_kilometres(
+            epoch=moment,
+            time_scale=TimeScale.UTC,
+            frame=FrameId.EME2000,
+            frame_realization=None,
+            center="EARTH",
+            position_km=(7000, 0, 0),
+            velocity_km_s=(0, 7.5, 0),
+        )
+
+    def state_at(self, moment, *, target_frame):
+        return self.frame_transformer.transform(
+            self.native_state_at(moment),
+            target_frame=target_frame,
+        )
+
 class MutableEopProvider:
     """Test double exposing a revision change without a network refresh."""
 
@@ -203,6 +228,35 @@ def test_native_ephemeris_serializes_explicit_eme2000_and_itrf2020_metadata():
     # current UI consumers; it must never claim the generic ECI frame.
     first_eci = first_point["eci"]
     assert first_eci == {**first_native, "legacy_field": True}
+
+
+def test_visual_earth_fixed_renderer_is_qualified_without_relabelling_coordinates_as_precise_itrf():
+    runtime = OrbitRuntime()
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    result = runtime.build_ephemeris(
+        "Visual",
+        VisualEarthFixedFakePropagator(runtime.frame_transformer),
+        start,
+        start,
+        30,
+    )
+
+    # The coordinate array remains compatible with the existing Cesium ITRF
+    # path, but the adjacent semantic contract makes the visual fallback
+    # impossible to present as a rigorous terrestrial realization.
+    assert result["reference_frame"] == "ITRF"
+    assert result["native_reference_frame"] == "EME2000"
+    renderer = result["renderer_reference"]
+    assert renderer["status"] == "approximate_earth_fixed"
+    assert renderer["display_label"] == "Earth-fixed (visual approximation)"
+    orientation = renderer["earth_orientation"]
+    assert orientation["required"] is True
+    assert orientation["applied"] is True
+    assert str(orientation["source"]).endswith("visual fallback")
+    assert orientation["version"] == "zero-eop"
+    assert orientation["quality"] == "approximate"
+    assert orientation["snapshot_id"] is None
+    assert result["points"][0]["renderer_reference"] == renderer
 
 
 def test_position_only_ephemeris_keeps_itrf_positions_and_skips_frame_derivatives(monkeypatch):

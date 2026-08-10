@@ -10,6 +10,6 @@ silently estimated during a transformation.
 
 | Product | Status | Use |
 | --- | --- | --- |
-| [IERS EOP C04](iers-c04.md) | Available. | DUT1, polar motion, dX, dY and LOD. |
+| [IERS EOP 20u24 C04](iers-c04.md) | Available; recommended source. | DUT1, polar motion, dX, dY and LOD. |
 | [leap-seconds.list](leap-seconds.md) | Available. | UTC, TAI, TT and GNSS scales. |
-| [IERS Bulletins A and B](bulletins.md) | No direct reader. | Must be converted or integrated explicitly. |
+| [IERS Bulletins A/B and IGS ERP](bulletins.md) | Future; no direct reader. | They require versioned local snapshots and explicit provenance. |

@@ -39,3 +39,29 @@ test("manual contexts retain the canonical preview frame and active definition",
     assert.equal(context.referenceFrame, "ITRF");
     assert.equal(context.manualOrbit.definitionSource, "keplerian");
 });
+
+test("precise-product contexts retain the actual vector frame but expose a qualified display frame", () => {
+    const context = createBuilder({
+        getCompositeLayerTelemetry: () => ({
+            position_frame: "ITRF",
+            position_frame_display: "Terrestre aproximado (sin EOP)"
+        }),
+        getCompositeLayerMeta: () => ({
+            sourceFormat: "SP3",
+            inputMetadata: {
+                native_reference_frame: "IGC20",
+                renderer_reference: {
+                    status: "approximate_earth_fixed",
+                    reference_frame: "ITRF",
+                    display_label: "Terrestre aproximado (sin EOP)",
+                    earth_orientation: { quality: "approximate" }
+                }
+            }
+        })
+    })({ id: "layer:precise:demo:G01" });
+
+    assert.equal(context.referenceFrame, "ITRF");
+    assert.equal(context.displayReferenceFrame, "Terrestre aproximado (sin EOP)");
+    assert.equal(context.preciseRendering.nativeFrame, "IGC20");
+    assert.equal(context.preciseRendering.approximate, true);
+});

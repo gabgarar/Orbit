@@ -95,8 +95,8 @@ reduction IAU 2006/2000A when available.
 - Orbit does not incorporate a general correlation with mission time, SCLK or
   relativistic scales.
 - Does not download or update tables during a conversion.
-- A visual fallback UTC≈UT1 is marked as approximate and does not satisfy the
-  strict EOP policy.
+- A visual UTC≈UT1 fallback is marked as approximate, does not satisfy the
+  strict EOP policy, and is not labelled as a rigorous ITRF output.
 
 See [Reference frames](reference-frames.md) and
 [SP3](../formats/sp3.md) for scales declared by formats.

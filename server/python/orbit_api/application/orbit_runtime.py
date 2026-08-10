@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import json
 import threading
+from collections.abc import Mapping
 from dataclasses import replace
 
 from fastapi import HTTPException
@@ -87,6 +88,7 @@ class OrbitRuntime:
         *,
         state: StateVector | None = None,
         native_state: StateVector | None = None,
+        native_reference: dict | None = None,
     ) -> dict:
         """Serialize an explicit state while retaining legacy scalar support.
 
@@ -128,10 +130,205 @@ class OrbitRuntime:
         if native_state is not None:
             native_payload = self._state_payload(native_state, include_velocity=include_velocity)
             payload["native_state"] = native_payload
+            native_reference = self._reference_metadata(native_state)
             # Existing visual editor code reads ``point.eci``. Preserve that
             # field temporarily, but make its true EME2000 label explicit.
             if native_state.frame in {FrameId.EME2000, FrameId.GCRF, FrameId.ICRF}:
                 payload["eci"] = {**native_payload, "legacy_field": True}
+        if native_reference is not None:
+            payload["native_reference_frame"] = native_reference["reference_frame"]
+            payload["native_frame"] = {
+                **native_reference["frame"],
+                "time_scale": native_reference["time_scale"],
+            }
+        payload["renderer_reference"] = self._renderer_reference_metadata(
+            state,
+            native_reference=native_reference,
+        )
+        return payload
+
+    @staticmethod
+    def _reference_metadata(state: StateVector) -> dict:
+        """Return the declared frame/time identity without coordinates.
+
+        This deliberately reports the source realization (for example
+        ``IGS20``) rather than a renderer preference.  It is used alongside
+        coordinate payloads so clients can distinguish native input from a
+        later display transformation.
+        """
+
+        frame_name = state.frame.value if isinstance(state.frame, FrameId) else state.frame
+        return {
+            "reference_frame": state.frame_label,
+            "frame": {
+                "name": frame_name,
+                "realization": state.frame_realization,
+                "center": state.center,
+            },
+            "time_scale": state.time_scale.value,
+        }
+
+    @staticmethod
+    def _native_reference_metadata_for_propagator(propagator: OrbitPropagator) -> dict | None:
+        """Describe a provider's native frame without forcing a state sample.
+
+        Position-only AOS/LOS sampling intentionally avoids a second native
+        state evaluation.  Tabular providers still expose their source
+        contract through ``dynamics_reference_*`` and ``native_time_scale``;
+        preserve that metadata instead of calling the renderer target ITRF.
+        """
+
+        raw_frame = getattr(propagator, "dynamics_reference_frame", None)
+        if raw_frame is None:
+            return None
+        frame_name = raw_frame.value if isinstance(raw_frame, FrameId) else str(raw_frame).strip().upper()
+        if not frame_name:
+            return None
+        realization = getattr(propagator, "dynamics_reference_realization", None)
+        realization = str(realization).strip().upper() if realization is not None else None
+        if not realization:
+            realization = None
+        time_scale = getattr(propagator, "native_time_scale", None)
+        if hasattr(time_scale, "value"):
+            time_scale = time_scale.value
+        elif time_scale is not None:
+            time_scale = str(time_scale).strip().upper() or None
+        return {
+            "reference_frame": realization or frame_name,
+            "frame": {
+                "name": frame_name,
+                "realization": realization,
+                "center": "EARTH",
+            },
+            "time_scale": time_scale,
+        }
+
+    @staticmethod
+    def _renderer_reference_metadata(
+        state: StateVector,
+        *,
+        native_reference: dict | None = None,
+    ) -> dict:
+        """Qualify an Earth-fixed renderer state without changing its vectors.
+
+        ``reference_frame`` remains the frame of the returned coordinates for
+        compatibility with Cesium and existing clients.  The sibling
+        ``renderer_reference`` is the canonical semantic contract: a visual
+        UTC~UT1 / zero-polar-motion transformation is explicitly an
+        *approximate Earth-fixed* view, not a rigorous ITRF realization.
+        """
+
+        renderer = OrbitRuntime._reference_metadata(state)
+        operation = state.provenance.get("terrestrial_realization_transform")
+        operation_payload = dict(operation) if isinstance(operation, Mapping) else None
+        eop_applied = state.earth_orientation_source is not None
+        eop_quality = state.earth_orientation_quality
+        approximate_eop = str(eop_quality or "").strip().lower() in {
+            "approximate",
+            "extrapolated",
+        }
+        earth_orientation = {
+            "required": eop_applied,
+            "applied": eop_applied,
+            "source": state.earth_orientation_source,
+            "version": state.earth_orientation_version,
+            "quality": eop_quality,
+            "snapshot_id": state.earth_orientation_snapshot_id,
+        }
+        same_native_frame = bool(
+            native_reference
+            and native_reference.get("reference_frame") == renderer["reference_frame"]
+            and native_reference.get("frame") == renderer["frame"]
+        )
+        compatibility = state.provenance.get("compatibility")
+        # A visual EOP marker wins even if a provider happens to return the
+        # same nominal frame label as its source. The state was still born
+        # from UTC~UT1 / zero-polar-motion orientation data and must not be
+        # presented as a rigorous ITRF realization.
+        if eop_applied and approximate_eop:
+            status = "approximate_earth_fixed"
+            display_label = "Earth-fixed (visual approximation)"
+            reason = (
+                "UTC~UT1 and zero polar motion were used for a visual Earth-fixed view; "
+                "this is not a rigorous ITRF realization."
+            )
+        elif same_native_frame:
+            status = "native"
+            display_label = renderer["reference_frame"]
+            reason = "The returned coordinates are in the source-native frame; no renderer transformation was applied."
+        elif operation_payload is not None:
+            status = "terrestrial_realization_transform"
+            display_label = renderer["reference_frame"]
+            reason = "A registered terrestrial-realization operation produced the renderer coordinates."
+        elif eop_applied:
+            status = "earth_orientation_transform"
+            display_label = renderer["reference_frame"]
+            reason = "The renderer coordinates were transformed with the declared Earth-orientation data."
+        elif compatibility is not None:
+            status = "legacy_compatibility"
+            display_label = "Earth-fixed compatibility view"
+            reason = "The legacy provider did not declare a native frame or a renderer transformation."
+        else:
+            status = "transformed"
+            display_label = renderer["reference_frame"]
+            reason = "The renderer coordinates were produced by the selected state provider."
+        payload = {
+            "available": True,
+            "requested_frame": "ITRF",
+            "target_frame": "ITRF",
+            "target_realization": renderer["frame"]["realization"],
+            "reference_frame": renderer["reference_frame"],
+            "frame": renderer["frame"],
+            "status": status,
+            "display_label": display_label,
+            "reason": reason,
+            "earth_orientation": earth_orientation,
+            "terrestrial_realization_operation": operation_payload,
+        }
+        if native_reference is not None:
+            payload["native_reference_frame"] = native_reference["reference_frame"]
+            payload["source_frame"] = native_reference["reference_frame"]
+            payload["native_frame"] = {
+                **native_reference["frame"],
+                "time_scale": native_reference["time_scale"],
+            }
+        return payload
+
+    @staticmethod
+    def _unavailable_renderer_reference(
+        detail: object,
+        *,
+        native_reference: dict | None = None,
+    ) -> dict:
+        """Return the same frame contract when no Earth-fixed view exists."""
+
+        payload = {
+            "available": False,
+            "requested_frame": "ITRF",
+            "target_frame": "ITRF",
+            "target_realization": None,
+            "reference_frame": None,
+            "frame": None,
+            "status": "unavailable",
+            "display_label": "Renderer unavailable",
+            "reason": str(detail),
+            "earth_orientation": {
+                "required": None,
+                "applied": False,
+                "source": None,
+                "version": None,
+                "quality": None,
+                "snapshot_id": None,
+            },
+            "terrestrial_realization_operation": None,
+        }
+        if native_reference is not None:
+            payload["native_reference_frame"] = native_reference["reference_frame"]
+            payload["source_frame"] = native_reference["reference_frame"]
+            payload["native_frame"] = {
+                **native_reference["frame"],
+                "time_scale": native_reference["time_scale"],
+            }
         return payload
 
     @staticmethod
@@ -427,6 +624,7 @@ class OrbitRuntime:
         native_samples_available = callable(getattr(prop, "native_state_at", None)) or callable(
             getattr(prop, "propagate_eme2000_datetime", None)
         ) or callable(getattr(prop, "propagate_eci_datetime", None))
+        native_reference = self._native_reference_metadata_for_propagator(prop)
 
         def sample(moment: datetime.datetime) -> dict:
             renderer_state = (
@@ -443,6 +641,7 @@ class OrbitRuntime:
                 include_velocity=False if position_only else include_velocity,
                 state=renderer_state,
                 native_state=native_state,
+                native_reference=native_reference,
             )
 
         points, cursor = [], start_utc
@@ -479,6 +678,14 @@ class OrbitRuntime:
             "cached": False,
             "earth_orientation_cache_token": eop_token,
         }
+        if native_reference is not None:
+            payload["native_reference_frame"] = native_reference["reference_frame"]
+            payload["native_frame"] = {
+                **native_reference["frame"],
+                "time_scale": native_reference["time_scale"],
+            }
+        if points:
+            payload["renderer_reference"] = points[0]["renderer_reference"]
         self._ephemeris_cache.set(cache_key, payload)
         return payload
 
@@ -548,6 +755,7 @@ class OrbitRuntime:
             propagator = by_name.get(name)
             if propagator is None:
                 continue
+            native_reference = self._native_reference_metadata_for_propagator(propagator)
             try:
                 renderer_state = self.renderer_state_at(propagator, moment)
                 native_state = self.native_state_at(propagator, moment)
@@ -557,16 +765,28 @@ class OrbitRuntime:
                     include_velocity=True,
                     state=renderer_state,
                     native_state=native_state,
+                    native_reference=native_reference,
                 )
                 payload["availability"] = "available"
                 states.append(payload)
             except (EphemerisFormatError, FrameTransformationError, ValueError) as exc:
-                states.append({
+                unavailable = {
                     "satellite": name,
                     "availability": "unavailable",
                     "reason": "out-of-coverage-or-frame-unavailable",
                     "detail": str(exc),
-                })
+                    "renderer_reference": self._unavailable_renderer_reference(
+                        exc,
+                        native_reference=native_reference,
+                    ),
+                }
+                if native_reference is not None:
+                    unavailable["native_reference_frame"] = native_reference["reference_frame"]
+                    unavailable["native_frame"] = {
+                        **native_reference["frame"],
+                        "time_scale": native_reference["time_scale"],
+                    }
+                states.append(unavailable)
         return states
 
     def compute_auto_orbit_samples(self, horizon_hours, satellites_count=1, prop=None) -> int:
@@ -594,6 +814,7 @@ class OrbitRuntime:
         horizon_hours, now, payload = self._runtime_hours(config), utc_now(), []
         for name, prop in props:
             samples = self.compute_auto_orbit_samples(horizon_hours, len(props), prop)
+            native_reference = self._native_reference_metadata_for_propagator(prop)
             horizon_end = now + datetime.timedelta(hours=horizon_hours)
             cache_key = (
                 name,
@@ -606,8 +827,10 @@ class OrbitRuntime:
                 cached = self._orbit_point_cache.get(cache_key)
             if cached and now < cached["valid_until"]:
                 orbit = cached["orbit"]
+                renderer_reference = cached.get("renderer_reference")
             else:
                 orbit = []
+                first_renderer_state: StateVector | None = None
                 # All vertices share the same epoch.  Calling propagate_offset
                 # independently makes its implicit ``now`` drift across a
                 # dense path and can introduce tiny non-uniform chords.
@@ -619,9 +842,11 @@ class OrbitRuntime:
                             prop,
                             reference_time + datetime.timedelta(seconds=offset),
                         )
+                        if first_renderer_state is None:
+                            first_renderer_state = state
                         orbit.append({"x": state.position_m[0], "y": state.position_m[1], "z": state.position_m[2]})
                 except (EphemerisFormatError, FrameTransformationError, ValueError) as exc:
-                    payload.append({
+                    unavailable = {
                         "satellite": name,
                         "orbit": [],
                         "orbit_horizon_hours": horizon_hours,
@@ -629,11 +854,44 @@ class OrbitRuntime:
                         "availability": "unavailable",
                         "reason": "out-of-coverage-or-frame-unavailable",
                         "detail": str(exc),
-                    })
+                        "renderer_reference": self._unavailable_renderer_reference(
+                            exc,
+                            native_reference=native_reference,
+                        ),
+                    }
+                    if native_reference is not None:
+                        unavailable["native_reference_frame"] = native_reference["reference_frame"]
+                        unavailable["native_frame"] = {
+                            **native_reference["frame"],
+                            "time_scale": native_reference["time_scale"],
+                        }
+                    payload.append(unavailable)
                     continue
+                assert first_renderer_state is not None
+                renderer_reference = self._renderer_reference_metadata(
+                    first_renderer_state,
+                    native_reference=native_reference,
+                )
                 with self._lock:
-                    self._orbit_point_cache[cache_key] = {"orbit": orbit, "valid_until": now + datetime.timedelta(seconds=ORBIT_CACHE_TTL_SECONDS)}
-            payload.append({"satellite": name, "orbit": orbit, "orbit_horizon_hours": horizon_hours, "orbit_samples": samples})
+                    self._orbit_point_cache[cache_key] = {
+                        "orbit": orbit,
+                        "renderer_reference": renderer_reference,
+                        "valid_until": now + datetime.timedelta(seconds=ORBIT_CACHE_TTL_SECONDS),
+                    }
+            item = {
+                "satellite": name,
+                "orbit": orbit,
+                "orbit_horizon_hours": horizon_hours,
+                "orbit_samples": samples,
+                "renderer_reference": renderer_reference,
+            }
+            if native_reference is not None:
+                item["native_reference_frame"] = native_reference["reference_frame"]
+                item["native_frame"] = {
+                    **native_reference["frame"],
+                    "time_scale": native_reference["time_scale"],
+                }
+            payload.append(item)
         return payload
 
     def _set_precise_products_locked(self, products: dict[str, PreciseProduct]) -> None:

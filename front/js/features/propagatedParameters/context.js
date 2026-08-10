@@ -1,4 +1,5 @@
 import { normalizeManualOrbitPreviewReferenceFrame } from "../frames/referenceFrame.js";
+import { resolvePreciseProductFrameStatus } from "../preciseProducts/frameStatus.js";
 
 function asIsoDate(value) {
     const date = value instanceof Date ? value : new Date(value);
@@ -72,14 +73,29 @@ export function createPropagatedParametersContextBuilder(services) {
         const timeRange = getObjectTimeRange(id, telemetry);
         const manualOrbit = getManualOrbitProjectEntry(sourceId) || null;
         const sourceFormat = String(catalogMeta?.sourceFormat || catalogMeta?.source_format || "TLE").toUpperCase();
+        const preciseRendering = sourceFormat === "SP3"
+            ? resolvePreciseProductFrameStatus({
+                ...catalogMeta,
+                sp3: telemetry?.sp3 || catalogMeta?.inputMetadata || catalogMeta?.input_metadata || null,
+                renderer_reference: telemetry?.renderer_reference || telemetry?.rendererReference || null,
+                earth_orientation: telemetry?.earth_orientation || telemetry?.earthOrientation || null
+            }, {
+                runtimeFrame: telemetry?.position_frame || telemetry?.reference_frame || telemetry?.frame || ""
+            })
+            : null;
         const referenceFrame = manualOrbit
             ? normalizeManualOrbitPreviewReferenceFrame(
                 manualOrbit.previewReferenceFrame ?? manualOrbit.preview_reference_frame,
                 "eme2000"
             ).toUpperCase()
-            : (sourceFormat === "OEM"
-                ? (telemetry?.position_frame || telemetry?.reference_frame || telemetry?.frame || null)
-                : "TEME");
+            : sourceFormat === "SP3"
+                ? (preciseRendering?.returnedFrame || preciseRendering?.nativeFrame || null)
+                : (sourceFormat === "OEM"
+                    ? (telemetry?.position_frame || telemetry?.reference_frame || telemetry?.frame || null)
+                    : "TEME");
+        const displayReferenceFrame = sourceFormat === "SP3"
+            ? (preciseRendering?.displayFrame || referenceFrame)
+            : referenceFrame;
 
         return {
             id,
@@ -96,6 +112,8 @@ export function createPropagatedParametersContextBuilder(services) {
             timeRange,
             simulation: getSimulationTelemetryContext(),
             referenceFrame,
+            displayReferenceFrame,
+            preciseRendering,
             propagator: manualOrbit?.propagator || telemetry?.propagator || null
         };
     };

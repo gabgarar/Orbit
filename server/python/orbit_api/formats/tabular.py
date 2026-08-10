@@ -109,12 +109,21 @@ class TabularStateProvider:
 
     @property
     def ephemeris_reference_frame(self) -> str:
-        return FrameId.ITRF.value
+        """Return the source frame represented by this tabular ephemeris.
+
+        This compatibility property used to advertise the renderer's usual
+        ITRF target.  That is unsafe for an SP3/OEM source declared in IGS20
+        (or another realization) when no datum operation has been registered:
+        no ITRF state has then been produced.  Consumers that need a rendered
+        view must call :meth:`state_at` explicitly and inspect its returned
+        :class:`StateVector`.
+        """
+
+        return self.native_realization or self.dynamics_reference_frame
 
     @property
     def ephemeris_reference_realization(self) -> str | None:
-        assert self.frame_transformer is not None
-        return self.frame_transformer.default_terrestrial_realization
+        return self.native_realization
 
     @property
     def coverage_start(self) -> datetime.datetime:

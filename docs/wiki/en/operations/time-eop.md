@@ -21,6 +21,12 @@ The interface displays UTC. UT1 is obtained by applying DUT1 and TT using
 UTC → TAI → TT. Generic ECI and ECEF labels are rejected. The acronym
 correct is ITRF, not IRTF.
 
+A rigorous `ITRF` label is not inferred from the globe or a UTC≈UT1 rotation.
+Transforming an inertial state requires an explicit frame route, leap seconds,
+and versioned EOP — at minimum DUT1, `xp`, `yp`, and `dX`/`dY` in the CIO
+reduction. Without them the interface can present only an **approximate
+Earth-fixed view**, never relabel it as ITRF.
+
 ## Operational guides
 
 | Theme | Content |

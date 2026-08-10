@@ -3,6 +3,10 @@ import { getLogger } from "./logger.js";
 import { emitObjectStateChanged } from "./runtime/objectDetailsEvents.js";
 import { buildUniformSampleTimes, sampleTrackKinematics } from "./runtime/trackKinematics.js";
 import { layoutVectorLabelOffsets } from "./runtime/vectorLabelLayout.js";
+import {
+    isPreciseProductRenderingUnavailable,
+    resolvePreciseProductFrameStatus
+} from "./features/preciseProducts/frameStatus.js";
 
 const logger = getLogger("satellites");
 
@@ -300,6 +304,54 @@ function isFinitePreciseProductTrack(id) {
         || String(catalogEntryMetaBySatelliteId.get(normalizedId)?.sourceFormat || "").toUpperCase() === "SP3";
 }
 
+/**
+ * A precise product owns a native terrestrial realization (for example
+ * IGS20). Cesium only accepts an Earth-fixed rendering vector after the
+ * backend explicitly says that its realization operation is available. Keep
+ * this policy here, next to activation, so an unavailable product cannot be
+ * accidentally re-requested by WebSocket, range bootstrap or a visibility
+ * refresh.
+ */
+function preciseProductFrameStatusForId(id, runtimeFrame = "", runtimePayload = null) {
+    const normalizedId = String(id || "").trim();
+    const entry = preciseProductEntryBySatelliteId.get(normalizedId)
+        || catalogEntryMetaBySatelliteId.get(normalizedId)
+        || {};
+    const response = runtimePayload && typeof runtimePayload === "object" ? runtimePayload : {};
+    return resolvePreciseProductFrameStatus({
+        ...entry,
+        native_reference_frame: response.native_reference_frame ?? response.nativeReferenceFrame ?? entry.native_reference_frame,
+        native_frame: response.native_frame ?? response.nativeFrame ?? entry.native_frame,
+        renderer_reference: response.renderer_reference ?? response.rendererReference ?? entry.renderer_reference,
+        rendering: response.rendering ?? entry.rendering,
+        earth_orientation: response.earth_orientation ?? response.earthOrientation ?? entry.earth_orientation
+    }, { runtimeFrame });
+}
+
+function canRenderPreciseProduct(id) {
+    return !isFinitePreciseProductTrack(id)
+        || !isPreciseProductRenderingUnavailable(
+            preciseProductEntryBySatelliteId.get(String(id || "").trim())
+            || catalogEntryMetaBySatelliteId.get(String(id || "").trim())
+            || {}
+        );
+}
+
+function clearUnavailablePreciseProductRendering(id) {
+    if (!isFinitePreciseProductTrack(id) || canRenderPreciseProduct(id)) return;
+    const state = satelliteState[id];
+    if (!state) return;
+    const frameStatus = preciseProductFrameStatusForId(id);
+    state.preciseRenderingUnavailable = true;
+    state.lastStateReferenceFrame = normalizeReferenceFrame(frameStatus.nativeFrame) || null;
+    if (state.orbitEntity && currentViewer) {
+        currentViewer.entities.remove(state.orbitEntity);
+        state.orbitEntity = null;
+    }
+    if (currentViewer) remove2DOverlays(currentViewer, state);
+    if (state.entity) state.entity.show = false;
+}
+
 function catalogMetadataText(entry, keys, fallback = "") {
     for (const key of keys) {
         const value = entry?.[key];
@@ -410,7 +462,16 @@ function compactPreciseProductEntry(entry = {}) {
             provider: provider || sp3.provider || null,
             product_class: productClass || sp3.product_class || null,
             product_id: entry?.product_id ?? entry?.productId ?? sp3.product_id ?? sp3.productId ?? null,
-            satellite_id: entry?.satellite_id ?? entry?.satelliteId ?? sp3.satellite_id ?? sp3.satelliteId ?? null
+            satellite_id: entry?.satellite_id ?? entry?.satelliteId ?? sp3.satellite_id ?? sp3.satelliteId ?? null,
+            native_reference_frame: inputMetadata?.native_reference_frame ?? inputMetadata?.nativeReferenceFrame
+                ?? entry?.native_reference_frame ?? entry?.nativeReferenceFrame
+                ?? sp3.native_reference_frame ?? sp3.nativeReferenceFrame ?? null,
+            native_frame: inputMetadata?.native_frame ?? inputMetadata?.nativeFrame
+                ?? entry?.native_frame ?? entry?.nativeFrame ?? sp3.native_frame ?? sp3.nativeFrame ?? null,
+            renderer_reference: inputMetadata?.renderer_reference ?? inputMetadata?.rendererReference
+                ?? entry?.renderer_reference ?? entry?.rendererReference ?? sp3.renderer_reference ?? sp3.rendererReference ?? null,
+            earth_orientation: inputMetadata?.earth_orientation ?? inputMetadata?.earthOrientation
+                ?? entry?.earth_orientation ?? entry?.earthOrientation ?? sp3.earth_orientation ?? sp3.earthOrientation ?? null
         }
     };
 }
@@ -467,9 +528,29 @@ function enrichPreciseProductSatelliteEntry(entry, product = null) {
             end_time: sourceSp3.end_time ?? sourceSp3.endTime ?? sourceProduct.end_time ?? sourceProduct.endTime ?? null,
             start_time_ms: sourceSp3.start_time_ms ?? sourceSp3.startTimeMs ?? sourceProduct.start_time_ms ?? sourceProduct.startTimeMs ?? null,
             end_time_ms: sourceSp3.end_time_ms ?? sourceSp3.endTimeMs ?? sourceProduct.end_time_ms ?? sourceProduct.endTimeMs ?? null,
-            reference_frame: sourceSp3.reference_frame ?? sourceSp3.referenceFrame ?? sourceProduct.frame ?? null,
-            time_system: sourceSp3.time_system ?? sourceSp3.timeSystem ?? sourceProduct.time_system ?? sourceProduct.timeSystem ?? null,
-            rendering: sourceSp3.rendering ?? sourceProduct.rendering ?? null
+            // Preserve the backend's native realization and rendering
+            // provenance verbatim. The UI deliberately distinguishes these
+            // fields from the compatibility `reference_frame` of a returned
+            // Cartesian vector.
+            native_reference_frame: sourceSp3.native_reference_frame ?? sourceSp3.nativeReferenceFrame
+                ?? entry.native_reference_frame ?? entry.nativeReferenceFrame
+                ?? sourceProduct.native_reference_frame ?? sourceProduct.nativeReferenceFrame ?? null,
+            native_frame: sourceSp3.native_frame ?? sourceSp3.nativeFrame
+                ?? entry.native_frame ?? entry.nativeFrame
+                ?? sourceProduct.native_frame ?? sourceProduct.nativeFrame ?? null,
+            reference_frame: sourceSp3.reference_frame ?? sourceSp3.referenceFrame
+                ?? entry.reference_frame ?? entry.referenceFrame
+                ?? sourceProduct.reference_frame ?? sourceProduct.referenceFrame ?? sourceProduct.frame ?? null,
+            time_system: sourceSp3.time_system ?? sourceSp3.timeSystem
+                ?? entry.time_system ?? entry.timeSystem
+                ?? sourceProduct.time_system ?? sourceProduct.timeSystem ?? sourceProduct.time_scale ?? sourceProduct.timeScale ?? null,
+            renderer_reference: sourceSp3.renderer_reference ?? sourceSp3.rendererReference
+                ?? entry.renderer_reference ?? entry.rendererReference
+                ?? sourceProduct.renderer_reference ?? sourceProduct.rendererReference ?? null,
+            earth_orientation: sourceSp3.earth_orientation ?? sourceSp3.earthOrientation
+                ?? entry.earth_orientation ?? entry.earthOrientation
+                ?? sourceProduct.earth_orientation ?? sourceProduct.earthOrientation ?? null,
+            rendering: sourceSp3.rendering ?? entry.rendering ?? sourceProduct.rendering ?? null
         }
     };
 }
@@ -480,6 +561,10 @@ function applyPreciseProductEntry(entry) {
     preciseProductEntryBySatelliteId.set(normalized.id, normalized);
     catalogSatelliteIds.add(normalized.id);
     catalogEntryMetaBySatelliteId.set(normalized.id, createCatalogEntryMeta(normalized, normalized.name));
+    // A rehydrated product may be changed from renderable to native-only by a
+    // new realization/EOP policy. Hide an old cached Cesium entity rather
+    // than continuing to present a stale ITRF-looking orbit.
+    clearUnavailablePreciseProductRendering(normalized.id);
     return normalized.id;
 }
 
@@ -742,7 +827,7 @@ function rangeEphemerisStepSeconds(ephemerisWindow) {
     return Math.max(30, Math.min(3600, Math.ceil(spanSeconds / RANGE_EPHEMERIS_MAX_POINTS)));
 }
 
-function parseRangeEphemeris(payload, key) {
+function parseRangeEphemeris(payload, key, id = "") {
     const points = Array.isArray(payload?.points) ? payload.points : [];
     const parsed = points.map((point) => {
         const position = point?.position || {};
@@ -758,13 +843,27 @@ function parseRangeEphemeris(payload, key) {
         if (parsed[index].timeMs <= parsed[index - 1].timeMs) return null;
     }
 
+    const runtimeFrame = normalizeReferenceFrame(
+        payload?.reference_frame ?? payload?.referenceFrame ?? payload?.frame
+    );
+    const frameStatus = isFinitePreciseProductTrack(id)
+        ? preciseProductFrameStatusForId(id, runtimeFrame, payload)
+        : null;
+    // Native SP3 coordinates must never be sent to Cesium as if they were a
+    // compatible Earth-fixed realization. Modern backends reject this route;
+    // this guard also covers old images or a delayed metadata refresh.
+    if (frameStatus?.available === false) return null;
+
     return {
         key,
         startMs: parsed[0].timeMs,
         endMs: parsed.at(-1).timeMs,
         orbit: parsed.map(({ x, y, z }) => ({ x, y, z })),
         sampleTimesMs: parsed.map((point) => point.timeMs),
-        referenceFrame: String(payload?.reference_frame || "ITRF")
+        // Do not invent an ITRF label. The endpoint must declare the frame
+        // of the returned samples, or a prior explicit runtime state owns it.
+        referenceFrame: runtimeFrame,
+        frameStatus
     };
 }
 
@@ -797,14 +896,17 @@ function applyRangeEphemerisToState(viewer, id, state, ephemeris) {
     state.rangeEphemerisStartMs = ephemeris.startMs;
     state.rangeEphemerisEndMs = ephemeris.endMs;
     state.awaitingRangeEphemeris = false;
-    state.lastStateReferenceFrame = normalizeReferenceFrame(ephemeris.referenceFrame) || "ITRF";
+    state.lastStateReferenceFrame = normalizeReferenceFrame(ephemeris.referenceFrame)
+        || state.lastStateReferenceFrame
+        || (isFinitePreciseProductTrack(id) ? normalizeReferenceFrame(preciseProductFrameStatusForId(id).nativeFrame) : null);
+    state.frameStatus = ephemeris.frameStatus || state.frameStatus || null;
     renderFutureOrbitForState(viewer, id, state, state.lastOrbitPayload);
 }
 
 function requestRangeEphemeris(viewer, id, state, simulationCtx) {
     const ephemerisWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
     const key = rangeEphemerisKey(id, simulationCtx);
-    if (!key || !ephemerisWindow || isLocalEphemerisTrack(id)) return Promise.resolve(null);
+    if (!key || !ephemerisWindow || isLocalEphemerisTrack(id) || !canRenderPreciseProduct(id)) return Promise.resolve(null);
     if (state.rangeEphemeris?.key === key) return Promise.resolve(state.rangeEphemeris);
 
     const cached = rangeEphemerisCache.get(key);
@@ -830,8 +932,8 @@ function requestRangeEphemeris(viewer, id, state, simulationCtx) {
         })
     }).then(async (response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const ephemeris = parseRangeEphemeris(await response.json(), key);
-        if (!ephemeris) throw new Error("La efeméride de simulación no contiene muestras ITRF válidas.");
+        const ephemeris = parseRangeEphemeris(await response.json(), key, id);
+        if (!ephemeris) throw new Error("La efeméride de simulación no contiene muestras en un marco terrestre disponible.");
         cacheRangeEphemeris(key, ephemeris);
         const currentContext = resolveSimulationTimelineContext();
         if (rangeEphemerisKey(id, currentContext) === key && satelliteState[id] === state) {
@@ -865,7 +967,7 @@ function requestRangeEphemeris(viewer, id, state, simulationCtx) {
 function loadRangeEphemerisForBootstrap(id, simulationCtx) {
     const ephemerisWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
     const key = rangeEphemerisKey(id, simulationCtx);
-    if (!key || !ephemerisWindow || isLocalEphemerisTrack(id)) return Promise.resolve(null);
+    if (!key || !ephemerisWindow || isLocalEphemerisTrack(id) || !canRenderPreciseProduct(id)) return Promise.resolve(null);
 
     const cached = rangeEphemerisCache.get(key);
     if (cached) return Promise.resolve(cached);
@@ -885,8 +987,8 @@ function loadRangeEphemerisForBootstrap(id, simulationCtx) {
         })
     }).then(async (response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const ephemeris = parseRangeEphemeris(await response.json(), key);
-        if (!ephemeris) throw new Error("The selected ephemeris has no valid ITRF samples.");
+        const ephemeris = parseRangeEphemeris(await response.json(), key, id);
+        if (!ephemeris) throw new Error("The selected ephemeris has no samples in an available terrestrial frame.");
         cacheRangeEphemeris(key, ephemeris);
         return ephemeris;
     }).catch((error) => {
@@ -917,7 +1019,8 @@ function sampleRangeEphemerisAtTimelineTime(ephemeris, simulationCtx) {
 function bootstrapSatelliteRangeState(viewer, id, simulationCtx) {
     const key = rangeEphemerisKey(id, simulationCtx);
     if (!viewer || !entityPool || !key || isLocalEphemerisTrack(id)
-        || !activeLayerSatelliteIds.has(id) || hiddenSatelliteIds.has(id)) {
+        || !activeLayerSatelliteIds.has(id) || hiddenSatelliteIds.has(id)
+        || !canRenderPreciseProduct(id)) {
         return Promise.resolve(null);
     }
 
@@ -962,7 +1065,10 @@ function bootstrapSatelliteRangeState(viewer, id, simulationCtx) {
         state.lastVelocity = sampledVelocity;
         state.lastAcceleration = finiteVector(sampled.acceleration);
         state.lastVelocityTimestampMs = currentContext.date.getTime();
-        state.lastStateReferenceFrame = normalizeReferenceFrame(ephemeris.referenceFrame) || "ITRF";
+        state.lastStateReferenceFrame = normalizeReferenceFrame(ephemeris.referenceFrame)
+            || state.lastStateReferenceFrame
+            || normalizeReferenceFrame(preciseProductFrameStatusForId(id).nativeFrame);
+        state.frameStatus = ephemeris.frameStatus || state.frameStatus || null;
 
         applyRangeEphemerisToState(viewer, id, state, ephemeris);
         applySatelliteVisibility(id, state);
@@ -971,7 +1077,7 @@ function bootstrapSatelliteRangeState(viewer, id, simulationCtx) {
 }
 
 function primeSatelliteTimelineRange(id) {
-    if (!isFinitePreciseProductTrack(id)) {
+    if (!isFinitePreciseProductTrack(id) || !canRenderPreciseProduct(id)) {
         return Promise.resolve(null);
     }
     const simulationCtx = resolveSimulationTimelineContext();
@@ -1138,7 +1244,10 @@ function applySatelliteVisibility(id, state) {
 
     const isActiveLayer = activeLayerSatelliteIds.has(id);
     const outOfTime = state.isOutOfTimeVisualState === true;
-    const visible = isActiveLayer && !hiddenSatelliteIds.has(id) && !outOfTime;
+    const visible = isActiveLayer
+        && !hiddenSatelliteIds.has(id)
+        && !outOfTime
+        && canRenderPreciseProduct(id);
     const overlayMode = resolveOrbitOverlayMode(currentViewer, id);
     state.entity.show = visible;
 
@@ -1248,7 +1357,7 @@ export function setOrbitConfig(config) {
 
     // Forzar refresh de payloads de órbita en WS para reflejar cambios sin esperar al ciclo natural.
     if ((propagationChanged || orbitFutureChanged) && wsClient) {
-        wsClient.setSubscriptions(Array.from(activeLayerSatelliteIds));
+        wsClient.setSubscriptions(Array.from(activeLayerSatelliteIds).filter((id) => canRenderPreciseProduct(id)));
     }
 
     emitObjectStateChanged({ scope: "all-satellites", reason: "global-visualization" });
@@ -2139,6 +2248,10 @@ function updateSatelliteState(viewer, satData) {
     if (!activeLayerSatelliteIds.has(id)) {
         return;
     }
+    if (!canRenderPreciseProduct(id)) {
+        clearUnavailablePreciseProductRendering(id);
+        return;
+    }
     const isNewSatellite = !satelliteState[id];
 
     // Si el satélite está oculto, ignorar por completo updates para ahorrar CPU.
@@ -2166,12 +2279,20 @@ function updateSatelliteState(viewer, satData) {
     state.lastAcceleration = deriveAcceleration(previousVelocity, vel, elapsedSeconds);
     state.lastVelocity = vel;
     state.lastVelocityTimestampMs = receivedAtMs;
-    // The current backend publishes earth-fixed state vectors. Retain an
-    // explicit frame when the stream supplies one so the details panel does
-    // not silently relabel a future non-Earth-fixed source as ECEF.
-    state.lastStateReferenceFrame = normalizeReferenceFrame(
+    // The regular catalogue stream is Earth-fixed today, but a precise SP3
+    // layer must never inherit that ITRF fallback. Its explicit runtime frame
+    // (or native provenance when there is no renderable stream frame) owns the
+    // label shown to the operator.
+    const streamedFrame = normalizeReferenceFrame(
         satData.reference_frame || satData.referenceFrame || satData.ref_frame || satData.frame
-    ) || state.lastStateReferenceFrame || "ITRF";
+    );
+    state.lastStateReferenceFrame = streamedFrame
+        || state.lastStateReferenceFrame
+        || (isFinitePreciseProductTrack(id)
+            ? normalizeReferenceFrame(preciseProductFrameStatusForId(id).returnedFrame)
+                || normalizeReferenceFrame(preciseProductFrameStatusForId(id).nativeFrame)
+                || null
+            : "ITRF");
 
     const isVisible = applySatelliteVisibility(id, state);
 
@@ -2345,7 +2466,7 @@ export async function refreshSatelliteCatalog(catalogUrl = "/config/catalog.json
 
     try {
         if (wsClient && typeof wsClient.setSubscriptions === "function") {
-            const ids = Array.from(activeLayerSatelliteIds).filter((id) => !isLocalEphemerisTrack(id));
+            const ids = Array.from(activeLayerSatelliteIds).filter((id) => !isLocalEphemerisTrack(id) && canRenderPreciseProduct(id));
             if (ids.length) {
                 wsClient.setSubscriptions(ids);
             }
@@ -2416,10 +2537,52 @@ export function getCatalogEntryMeta(id) {
 }
 
 export function getSatelliteTelemetry(id) {
+    const entryMeta = getCatalogEntryMeta(id) || {};
+    const sourceFormat = String(entryMeta.sourceFormat || "TLE").toUpperCase();
+    const sourceOrigin = String(entryMeta.sourceOrigin || "CATALOG").toUpperCase();
+    const sp3 = sourceFormat === "SP3"
+        ? ((entryMeta.inputMetadata && typeof entryMeta.inputMetadata === "object")
+            ? { ...entryMeta.inputMetadata }
+            : null)
+        : null;
+    const metadataPreciseFrameStatus = sourceFormat === "SP3"
+        ? resolvePreciseProductFrameStatus({ ...entryMeta, sp3 })
+        : null;
+    // Native-only products remain visible as Layers/Input provenance, but no
+    // Cartesian state can be shown or used for station geometry until the
+    // backend has explicitly provided a terrestrial realization operation.
+    if (metadataPreciseFrameStatus?.available === false) {
+        return {
+            id,
+            source_format: sourceFormat,
+            source_origin: sourceOrigin,
+            position: null,
+            position_ecef_m: null,
+            position_frame: metadataPreciseFrameStatus.nativeFrame,
+            position_frame_display: metadataPreciseFrameStatus.displayFrame,
+            velocity: { x: null, y: null, z: null },
+            velocity_frame: metadataPreciseFrameStatus.nativeFrame,
+            geo: null,
+            sp3,
+            renderer_reference: metadataPreciseFrameStatus,
+            earth_orientation: metadataPreciseFrameStatus.earthOrientation || null,
+            rendering_available: false,
+            runtime_state: "UNAVAILABLE",
+            is_visible: !hiddenSatelliteIds.has(id),
+            timestamp_ms: Date.now()
+        };
+    }
+
     const state = satelliteState[id];
     if (!state || !state.entity) {
         return null;
     }
+    // A range/ephemeris response can carry a newer realization/EOP diagnostic
+    // than the persisted product record. Prefer that status for presentation,
+    // while retaining product metadata as the startup fallback.
+    const preciseFrameStatus = sourceFormat === "SP3"
+        ? (state.frameStatus || metadataPreciseFrameStatus)
+        : null;
 
     const simulationCtx = resolveSimulationTimelineContext();
     const usesTimelineFrame = Boolean(simulationCtx && simulationCtx.mode !== "realtime");
@@ -2438,9 +2601,6 @@ export function getSatelliteTelemetry(id) {
         return null;
     }
 
-    const entryMeta = getCatalogEntryMeta(id) || {};
-    const sourceFormat = String(entryMeta.sourceFormat || "TLE").toUpperCase();
-    const sourceOrigin = String(entryMeta.sourceOrigin || "CATALOG").toUpperCase();
     const oemTrack = oemEphemerisTrackById.get(id);
     const manualTrack = manualOrbitTrackById.get(id);
     // TLE/SGP4 state is converted from TEME to Cesium-compatible ECEF by the
@@ -2448,7 +2608,8 @@ export function getSatelliteTelemetry(id) {
     // when that declaration is explicitly earth-fixed.
     const sourceFrame = sourceFormat === "OEM"
         ? String(oemTrack?.refFrame || "").trim().toUpperCase() || null
-        : normalizeReferenceFrame(state.lastStateReferenceFrame) || "ITRF";
+        : normalizeReferenceFrame(state.lastStateReferenceFrame)
+            || (sourceFormat === "SP3" ? preciseFrameStatus?.returnedFrame || preciseFrameStatus?.nativeFrame || null : "ITRF");
     const coordinatesAreEarthFixed = isEarthFixedFrame(sourceFrame);
     const positionVector = finiteVector(position);
     // In range simulation the rendered position comes from the sampled orbit,
@@ -2503,12 +2664,6 @@ export function getSatelliteTelemetry(id) {
             is_in_time_window: hasWindow ? (frameTimeMs >= startMs && frameTimeMs <= endMs) : null
         };
     }
-    const sp3 = sourceFormat === "SP3"
-        ? ((entryMeta.inputMetadata && typeof entryMeta.inputMetadata === "object")
-            ? { ...entryMeta.inputMetadata }
-            : null)
-        : null;
-
     const earthCenterDistanceM = vectorMagnitude(positionVector);
     const footprintAngularRadius = positionEcef ? computeFootprintAngularRadius(positionEcef) : 0;
     const footprintRadiusM = footprintAngularRadius > 0
@@ -2526,6 +2681,7 @@ export function getSatelliteTelemetry(id) {
         position: positionVector,
         position_ecef_m: positionEcef,
         position_frame: sourceFrame,
+        position_frame_display: preciseFrameStatus?.displayFrame || sourceFrame,
         geo: coordinatesAreEarthFixed ? {
             latitude_deg: latitudeDeg,
             longitude_deg: longitudeDeg,
@@ -2549,6 +2705,9 @@ export function getSatelliteTelemetry(id) {
         propagation_future_hours: propagationFutureHours,
         oem,
         sp3,
+        renderer_reference: preciseFrameStatus || state.frameStatus || null,
+        earth_orientation: preciseFrameStatus?.earthOrientation || state.frameStatus?.earthOrientation || null,
+        rendering_available: preciseFrameStatus?.available ?? null,
         // Kept alongside the camel-case catalog metadata for consumers that
         // build their object details directly from telemetry.
         manual_orbit: manualTrack?.manualOrbit ? cloneManualOrbitValue(manualTrack.manualOrbit) : null,
@@ -2578,14 +2737,18 @@ export function setSatelliteLayerActive(id, active) {
         }
         activeLayerSatelliteIds.add(id);
         activeLayerIdsDirty = true;
-        if (!isLocalEphemerisTrack(id)) {
+        if (!isLocalEphemerisTrack(id) && canRenderPreciseProduct(id)) {
             wsClient?.subscribe([id]);
         }
         // An SP3 range can be historical, so its WebSocket update at `now`
         // may contain no position. Prime the layer directly from its exact
         // simulation interval when one is active.
-        if (isFinitePreciseProductTrack(id)) {
+        if (isFinitePreciseProductTrack(id) && canRenderPreciseProduct(id)) {
             void primeSatelliteTimelineRange(id);
+        } else if (isFinitePreciseProductTrack(id)) {
+            // Keep the layer and its provenance selectable, but do not make a
+            // native realization appear as a Cesium/ITRF orbit.
+            clearUnavailablePreciseProductRendering(id);
         }
         emitObjectStateChanged({ sourceId: id, reason: "activation" });
         return true;
@@ -2637,10 +2800,12 @@ export function setAllSatelliteLayersActive(active) {
         activeLayerSatelliteIds.clear();
         nextIds.forEach((id) => activeLayerSatelliteIds.add(id));
         activeLayerIdsDirty = true;
-        wsClient?.setSubscriptions(nextIds.filter((id) => !isLocalEphemerisTrack(id)));
+        wsClient?.setSubscriptions(nextIds.filter((id) => !isLocalEphemerisTrack(id) && canRenderPreciseProduct(id)));
         nextIds.forEach((id) => {
-            if (isFinitePreciseProductTrack(id)) {
+            if (isFinitePreciseProductTrack(id) && canRenderPreciseProduct(id)) {
                 void primeSatelliteTimelineRange(id);
+            } else if (isFinitePreciseProductTrack(id)) {
+                clearUnavailablePreciseProductRendering(id);
             }
         });
         emitObjectStateChanged({ scope: "all-satellites", reason: "activation" });
@@ -2930,6 +3095,10 @@ function updateSatelliteOrbit(viewer, satData) {
 
     // Nunca dibujar órbitas de satélites sin capa activa.
     if (!activeLayerSatelliteIds.has(id)) {
+        return;
+    }
+    if (!canRenderPreciseProduct(id)) {
+        clearUnavailablePreciseProductRendering(id);
         return;
     }
 

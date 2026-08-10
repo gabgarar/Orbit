@@ -346,12 +346,13 @@ class OemStateProvider:
 
     @property
     def ephemeris_reference_frame(self) -> str:
-        return FrameId.ITRF.value
+        if self.segment_count != 1:
+            return "MULTI_SEGMENT"
+        return self.metadata.segments[0].reference_frame.label
 
     @property
     def ephemeris_reference_realization(self) -> str | None:
-        assert self.frame_transformer is not None
-        return self.frame_transformer.default_terrestrial_realization
+        return self.metadata.segments[0].reference_frame.realization if self.segment_count == 1 else None
 
     def propagate_datetime(
         self,

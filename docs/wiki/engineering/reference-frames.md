@@ -32,13 +32,14 @@ mantiene estas separaciones:
 
 | Origen | Marco de entrada y dinámica | Vista terrestre generada |
 | --- | --- | --- |
-| Órbita manual de dos cuerpos o Cowell/RK4 | `EME2000` | `ITRF`, mediante una transformación posterior. |
-| TLE de catálogo con SGP4 | `TEME` | `ITRF`, por la ruta TEME→PEF→ITRF. |
+| Órbita manual de dos cuerpos o Cowell/RK4 | `EME2000` | `ITRF` mediante una transformación posterior con EOP versionados; sin ellos, solo vista terrestre aproximada. |
+| TLE de catálogo con SGP4 | `TEME` | `ITRF` por la ruta TEME→PEF→ITRF con EOP versionados; sin ellos, solo vista terrestre aproximada. |
 
 La opción terrestre de una órbita manual no es un segundo integrador: expresa
 la misma efeméride `EME2000` en `ITRF` para el globo, el mapa o una salida
-terrestre. Por eso las etiquetas visibles deben ser `EME2000` e `ITRF`, no
-`ECI` ni `ECEF`.
+terrestre cuando existe la transformación y los EOP necesarios. Con el
+fallback visual, la etiqueta debe ser `terrestre aproximada (sin EOP)`. Por eso
+las etiquetas visibles no son genéricos `ECI` ni `ECEF`.
 
 Un futuro TLE sintético requerirá ajustar el modelo SGP4 sobre una efeméride
 de referencia expresada en TEME. No se obtiene al rotar directamente un estado
@@ -69,18 +70,33 @@ además de fuente, versión, calidad y una identidad de snapshot. El proveedor
 tabular interpola linealmente registros EOP fechados; fuera de la cobertura
 falla salvo que se haya permitido extrapolación de forma explícita.
 
-El lector local acepta C04-14 y C04-20 con la convención IAU 2000A `dX/dY`.
-Rechaza cabeceras que declaran el producto legado `dPsi/dEps` para evitar una
-reducción CIO físicamente incorrecta.
+El lector local acepta el diseño C04-20 con la convención IAU 2000A `dX/dY`.
+La fuente operativa recomendada es [IERS EOP 20u24 C04](https://datacenter.iers.org/products/eop/long-term/c04_20u24/).
+C04-14 sólo se mantiene para reproducir snapshots históricos. Orbit rechaza
+cabeceras que declaran el producto legado `dPsi/dEps` para evitar una reducción
+CIO físicamente incorrecta.
 
 | Política | Efecto |
 | --- | --- |
-| Visual predeterminada | UTC≈UT1 y EOP nulo; el estado queda marcado `approximate`. |
+| Fallback visual terrestre | UTC≈UT1 y EOP nulo; se marca `approximate_earth_fixed` y no es ITRF riguroso. |
 | Snapshot configurado | Se conserva fuente, versión, hash y cobertura del archivo local. |
 | `ORBIT_EOP_STRICT=true` | Exige C04 local, calidad `final` o `rapid`, sin extrapolación y tabla local de leap seconds. |
 
 En modo estricto, la ausencia de `pyerfa` también es un error: Orbit no usa la
 aproximación visual como sustituto de la reducción IAU 2006/2000A.
+
+## Marco nativo y representación terrestre
+
+El marco de la coordenada y el marco que necesita el visor no son sinónimos.
+Un producto SP3 declarado `IGS20`, `IGb20` o `IGc20` conserva esa realización
+nativa incluso si se muestra sobre la Tierra. No debe presentarse como `ITRF`
+salvo que exista una operación de realización fuente→ITRF registrada.
+
+Cuando una ruta inercial usa el fallback UTC≈UT1 con movimiento polar nulo,
+Orbit puede construir una vista Earth-fixed para el visor. La etiqueta correcta
+es **terrestre aproximada (sin EOP)**, no `ITRF`: faltan DUT1, `xp`, `yp` y,
+para la reducción moderna, `dX`/`dY` versionados. Una salida ITRF reproducible
+requiere esos snapshots, segundos intercalares y la ruta de marcos explícita.
 
 ## Realizaciones terrestres
 

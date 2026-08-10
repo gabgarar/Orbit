@@ -74,6 +74,7 @@ sustituye a la cabecera.
 | --- | --- | --- |
 | `*.sp3`, `*.sp3c` o `*.sp3d` (o variante reconocida por cabecera) | Posición, y velocidad cuando el producto la contiene, por época y satélite. | Sí. |
 | `*.clk`, `*.clk_30s` o `*.clk_05s` | Sesgo de reloj y, si existe, tasa/precisión del reloj por época y satélite. | No; se asocia al producto SP3 de la misma importación. |
+| `*.erp` | Parámetros de orientación terrestre publicados junto a algunos productos GNSS. | No; ERP no se importa ni se empareja con SP3 actualmente. |
 | Cualquiera de esas extensiones con `.gz` | Variante comprimida GNU gzip. | Sí, una vez descomprimida localmente. |
 | `*.zip` | Contenedor local de uno o varios SP3/CLK. | Sí, si contiene un SP3 válido. |
 | `*.Z` | Compresión UNIX histórica usada por ficheros CDDIS legados. | Sí, si su contenido se descomprime y valida correctamente. |
@@ -155,10 +156,24 @@ renderizado terrestre no está disponible y expone el diagnóstico de marco; las
 operaciones que necesitan ese estado terrestre, como una vista ITRF o AOS/LOS,
 deben configurarse con una ruta válida en lugar de asumir una conversión.
 
+Un estado SP3 declarado en una realización terrestre sigue siendo un estado
+nativo de esa realización. Que una escena Earth-fixed pueda dibujarlo no
+autoriza a cambiar, por ejemplo, `IGS20` por `ITRF2020`. Una transformación de
+realización registrada es una operación de datum distinta de la orientación de
+la Tierra. Si Orbit crea desde una ruta inercial una vista con UTC≈UT1 y EOP
+nulos, la UI debe mostrar **terrestre aproximada (sin EOP)**; no es una salida
+ITRF rigurosa ni un resultado de precisión para AOS/LOS o exportación.
+
 Las consultas se convierten desde la escala solicitada a la escala nativa antes
 de buscar una muestra. Para una transformación terrestre reproducible hacen
 falta, además del SP3/CLK, los datos de tiempo y orientación terrestre
 apropiados: consulte [Tiempo, EOP e ITRF](../operations/time-eop.md).
+
+Los productos ERP y los EOP rápidos no se infieren del nombre de un SP3. La
+referencia operativa actual es un snapshot local de [IERS EOP 20u24 C04](time/iers-c04.md)
+con su versión y hash. [IERS Bulletin A](time/bulletins.md) y ERP IGS son rutas
+futuras: no hay lector, descarga ni emparejamiento automático en esta
+importación.
 
 ## Flujo de importación
 
@@ -196,6 +211,9 @@ estimación independiente de precisión.
   automática entre Final, Rapid y Ultra-Rapid.
 - Las muestras de CLK se conservan como metadatos de reloj; no cambian la
   posición/velocidad SP3 ni se transforman en una solución de navegación.
+- No se aceptan ni se emparejan ficheros ERP, Bulletin A o Bulletin B con el
+  SP3. Esos productos requieren una futura ruta de EOP local, versionada y
+  auditable.
 - Orbit interpola cada serie SP3 con una ventana Lagrange local de hasta diez
   muestras (grado 9); con menos registros degrada explícitamente al mayor
   grado disponible. Esa política acotada no sustituye la estrategia de
@@ -218,3 +236,5 @@ Fuentes de producto:
 - [IGS: Products](https://www.igs.org/products/)
 - [IGS: MGEX data products](https://igs.org/mgex/data-products/)
 - [ESA Navigation Support Office: GNSS-based products](https://navigation-office.esa.int/GNSS_based_products.html)
+- [IERS EOP 20u24 C04](https://datacenter.iers.org/products/eop/long-term/c04_20u24/)
+- [IERS Bulletin A](https://maia.usno.navy.mil/products/bulletin-a)

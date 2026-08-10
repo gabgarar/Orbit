@@ -423,6 +423,7 @@ function InformationTab({
     propagator,
     referenceFrame,
     displayFrame,
+    rendererReference,
     start,
     end,
     statusLabel,
@@ -448,6 +449,14 @@ function InformationTab({
     const metadataCards = framesDiffer
         ? [["MODEL", propagator], ["DISPLAY FRAME", displayFrame], ["DYNAMICS FRAME", referenceFrame], ["SOURCE", source]]
         : [["MODEL", propagator], ["FRAME", referenceFrame || displayFrame], ["SOURCE", source]];
+    const rendererUnavailable = rendererReference?.available === false
+        || String(rendererReference?.status || "").toLowerCase() === "unavailable";
+    const rendererApproximate = rendererReference?.approximate === true
+        || String(rendererReference?.status || "").toLowerCase() === "approximate_earth_fixed";
+    const rendererNativeFrame = rendererReference?.nativeFrame
+        || rendererReference?.native_reference_frame
+        || rendererReference?.nativeReferenceFrame
+        || "el marco nativo";
 
     return <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-0.5">
         <section className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2.5 rounded-[8px] border border-[#25405f] bg-[rgba(12,27,48,.68)] px-3 py-2.5" aria-label="Resumen de propagación">
@@ -497,6 +506,16 @@ function InformationTab({
         </section>
 
         {framesDiffer && <p className="m-0 shrink-0 text-[9px] leading-[1.4] text-[#8297b5]">La vista usa {formatReferenceFrame(displayFrame)}; los elementos osculantes se derivan del estado dinámico nativo en {formatReferenceFrame(referenceFrame)}.</p>}
+
+        {rendererUnavailable && <div className="shrink-0 rounded-[7px] border border-[rgba(218,154,51,.62)] bg-[rgba(96,62,16,.2)] px-3 py-2 text-[10px] leading-[1.45] text-[#ffdca0]" role="status">
+            <strong>Representación terrestre no disponible.</strong> El producto conserva su marco nativo {formatReferenceFrame(rendererNativeFrame)} y no se calculan elementos ni una visualización terrestre hasta configurar la transformación requerida{rendererReference.reason ? `: ${rendererReference.reason}` : "."}
+        </div>}
+        {rendererApproximate && !rendererUnavailable && <div className="shrink-0 rounded-[7px] border border-[rgba(84,142,201,.58)] bg-[rgba(25,69,111,.2)] px-3 py-2 text-[10px] leading-[1.45] text-[#c9e4ff]" role="status">
+            <strong>Terrestre aproximado (sin EOP).</strong> La escena usa una referencia fija para visualizar el producto, pero no representa una transformación terrestre precisa ni una realización EOP/ERP.
+        </div>}
+        {rendererReference?.unverifiedTerrestrialTransform === true && !rendererUnavailable && !rendererApproximate && <div className="shrink-0 rounded-[7px] border border-[rgba(218,154,51,.62)] bg-[rgba(96,62,16,.2)] px-3 py-2 text-[10px] leading-[1.45] text-[#ffdca0]" role="status">
+            <strong>Transformación terrestre sin procedencia.</strong> Se conserva el marco nativo {formatReferenceFrame(rendererNativeFrame)}; la referencia terrestre recibida no declara EOP/ERP ni una operación de realización verificable.
+        </div>}
 
         {samples.length > 0 && <DeltaStrip samples={samples} />}
         {panel?.error && <div className="shrink-0 rounded-[7px] border border-[rgba(210,75,91,.52)] bg-[rgba(123,35,49,.2)] px-3 py-2 text-[10px] leading-[1.45] text-[#ffc3cb]" role="alert">{errorMessage(panel.error)}</div>}
@@ -987,13 +1006,22 @@ export default function PropagatedOrbitParametersPanel() {
     const propagator = firstDefined(result, ["propagator", "propagationModel", "propagation_model", "model"])
         ?? firstDefined(panel.target, ["propagator", "propagationModel", "propagation_model", "model"]);
     const referenceFrame = firstDefined(result, ["reference_frame", "referenceFrame", "frame"])
-        ?? firstDefined(panel.range, ["referenceFrame", "reference_frame", "frame"]);
-    const displayFrame = firstDefined(panel.target, [
+        ?? firstDefined(panel.range, ["referenceFrame", "reference_frame", "frame"])
+        ?? firstDefined(panel.target, ["referenceFrame", "reference_frame", "frame"]);
+    const displayFrame = firstDefined(result, [
+        "position_frame_display", "positionFrameDisplay", "reference_frame_display", "referenceFrameDisplay", "display_frame", "displayFrame"
+    ]) ?? firstDefined(panel.target, [
         "displayReferenceFrame",
         "display_reference_frame",
         "previewReferenceFrame",
         "preview_reference_frame"
     ]) ?? firstDefined(panel.target, ["referenceFrame", "reference_frame", "frame"]);
+    const rendererReference = firstDefined(result, ["renderer_reference", "rendererReference", "rendering"])
+        ?? firstDefined(panel.target, ["rendererReference", "renderer_reference", "rendering"]);
+    // Keep the raw result frame for numerical provenance and CSV data, but
+    // every visible Ephemerides label must carry the product's qualified
+    // display frame (for example "Terrestre aproximado (sin EOP)").
+    const visibleReferenceFrame = displayFrame || referenceFrame;
     const errorText = errorMessage(panel.error);
     const [statusLabel, statusClass, statusText] = statusDescriptor(panel.status, errorText, hasTarget, samples.length);
 
@@ -1132,9 +1160,9 @@ export default function PropagatedOrbitParametersPanel() {
         </nav>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3.5">
-            {activeTab === "info" && <InformationTab panel={panel} result={result} samples={samples} targetLabel={targetLabel} targetId={targetId} hasTarget={hasTarget} source={source} propagator={propagator} referenceFrame={referenceFrame} displayFrame={displayFrame} start={start} end={end} statusLabel={statusLabel} statusClass={statusClass} statusText={statusText} draftRange={draftRange} setDraftRange={setDraftRange} onUpdateRange={updateRange} onApplySimulation={applySimulation} onRefresh={requestRefresh} />}
-            {activeTab === "chart" && <GraphTab samples={samples} option={chartOption} onOptionChange={setChartOption} hasTarget={hasTarget} status={panel.status} error={errorText} referenceFrame={referenceFrame} />}
-            {activeTab === "values" && <ValuesTab samples={samples} hasTarget={hasTarget} status={panel.status} error={errorText} referenceFrame={referenceFrame} onExport={exportCsv} />}
+            {activeTab === "info" && <InformationTab panel={panel} result={result} samples={samples} targetLabel={targetLabel} targetId={targetId} hasTarget={hasTarget} source={source} propagator={propagator} referenceFrame={referenceFrame} displayFrame={displayFrame} rendererReference={rendererReference} start={start} end={end} statusLabel={statusLabel} statusClass={statusClass} statusText={statusText} draftRange={draftRange} setDraftRange={setDraftRange} onUpdateRange={updateRange} onApplySimulation={applySimulation} onRefresh={requestRefresh} />}
+            {activeTab === "chart" && <GraphTab samples={samples} option={chartOption} onOptionChange={setChartOption} hasTarget={hasTarget} status={panel.status} error={errorText} referenceFrame={visibleReferenceFrame} />}
+            {activeTab === "values" && <ValuesTab samples={samples} hasTarget={hasTarget} status={panel.status} error={errorText} referenceFrame={visibleReferenceFrame} onExport={exportCsv} />}
         </div>
 
         {RESIZE_HANDLES.map(([direction, className]) => <div key={direction} className={"absolute z-40 touch-none " + className} aria-hidden="true" onPointerDown={(event) => beginResize(direction, event)} />)}
