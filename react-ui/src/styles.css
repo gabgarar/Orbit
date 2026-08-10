@@ -1754,3 +1754,30 @@ aside[aria-label="Operaciones de estaciones terrestres"],
         border-radius: 0 var(--orbit-radius-window-inner) var(--orbit-radius-window-inner) 0;
     }
 }
+
+/* Exports contain dense technical data. Keep their actual dialog surface
+   opaque over the globe while leaving the surrounding application chrome and
+   scene translucency untouched. */
+:root {
+    --orbit-surface-export-dialog: linear-gradient(145deg, #0d192a 0%, #081321 100%);
+    --orbit-frame-export-dialog: #50657b;
+}
+
+:root[data-theme="light"] {
+    --orbit-surface-export-dialog: linear-gradient(145deg, #f8fbff 0%, #e8eef6 100%);
+    --orbit-frame-export-dialog: #8193a8;
+}
+
+#catalogExportModal > section,
+#groundStationExportMenu > section {
+    background: var(--orbit-surface-export-dialog) !important;
+    border-color: var(--orbit-frame-export-dialog) !important;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+/* Three time controls are distinct inputs rather than a single run-on row. */
+#catalogExportModal .orbit-export-schedule-fields {
+    column-gap: 20px;
+    row-gap: 16px;
+}

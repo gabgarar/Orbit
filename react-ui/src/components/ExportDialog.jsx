@@ -102,7 +102,7 @@ export default function ExportDialog() {
                     <p className="m-0 text-[10px] leading-relaxed text-[#d7bd88]">{selectedFormat.note}</p>
                 </section>
 
-                {!sourceOnly && <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-2">
+                {!sourceOnly && <div className="orbit-export-schedule-fields grid grid-cols-[repeat(auto-fit,minmax(168px,1fr))] gap-x-5 gap-y-4">
                     <label className="grid gap-1.5 text-[var(--orbit-font-size-body)] font-semibold text-[var(--orbit-text-secondary)]">Fecha inicio<input className={fieldControlClass} type="datetime-local" value={ephemeris.start} onChange={(event) => update("start", event.target.value)} /></label>
                     <label className="grid gap-1.5 text-[var(--orbit-font-size-body)] font-semibold text-[var(--orbit-text-secondary)]">Fecha fin<input className={fieldControlClass} type="datetime-local" value={ephemeris.end} onChange={(event) => update("end", event.target.value)} /></label>
                     <label className="grid gap-1.5 text-[var(--orbit-font-size-body)] font-semibold text-[var(--orbit-text-secondary)]">Intervalo (s)<input className={fieldControlClass} type="number" min="1" max="3600" value={ephemeris.step} onChange={(event) => update("step", event.target.value)} /></label>
