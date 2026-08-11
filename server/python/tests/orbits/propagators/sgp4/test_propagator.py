@@ -5,11 +5,14 @@ kept locally so the suite never depends on a live catalogue or network access.
 """
 
 import math
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from orbit_api.frames import FrameId
 from orbit_api.orbits.propagators.sgp4.propagator import SGP4Propagator
+from sgp4.api import Satrec, jday
+from sgp4.conveniences import sat_epoch_datetime
 
 # Vallado / SGP4 verification case 00005 (Vanguard 1).  At 2000-06-28T00:00Z
 # the reference TEME state is published by the SGP4 verification suite in km
@@ -28,6 +31,100 @@ VANGUARD_REFERENCE_VELOCITY_KM_S = (-5.58365782280485, -0.9764014685717839, -1.4
 DECAYED_LINE1 = "1 44160U 19006AX  20162.79712247 +.00816806 +19088-3 +34711-2 0  9997"
 DECAYED_LINE2 = "2 44160 095.2472 272.0808 0216413 032.6694 328.7739 15.58006382062511"
 DECAYED_ERROR_UTC = datetime(2020, 7, 25, 19, 7, 51, tzinfo=UTC)
+
+
+@dataclass(frozen=True)
+class _OfficialSgp4Vector:
+    """One locally embedded Vallado SGP4 verification vector.
+
+    Positions are kilometres and velocities kilometres per second, exactly as
+    published in ``tcppver.out`` distributed with the ``sgp4`` dependency.
+    The file is the public Vallado SGP4 verification suite, copied into the
+    installed dependency, so this regression test has no network dependency.
+    """
+
+    name: str
+    line1: str
+    line2: str
+    minutes_since_epoch: float
+    position_km: tuple[float, float, float]
+    velocity_km_s: tuple[float, float, float]
+
+
+# Representative cases from the local/public Vallado tcppver verification
+# output: near-Earth LEO, 12-hour Molniya, extreme eccentricity, GEO and a
+# long deep-space propagation interval.  Keeping the numerical references in
+# Orbit's test suite makes a dependency upgrade scientifically reviewable.
+OFFICIAL_SGP4_VECTORS = (
+    _OfficialSgp4Vector(
+        "delta-1-leo",
+        "1 06251U 62025E   06176.82412014  .00008885  00000-0  12808-3 0  3985",
+        "2 06251  58.0579  54.0425 0030035 139.1568 221.1854 15.56387291  6774",
+        120.0,
+        (-3935.69800083, 409.10980837, 5471.33577327),
+        (-3.374784183, -6.635211043, -1.942056221),
+    ),
+    _OfficialSgp4Vector(
+        "molniya-12-hour-deep-space",
+        "1 08195U 75081A   06176.33215444  .00000099  00000-0  11873-3 0   813",
+        "2 08195  64.1586 279.0717 6877146 264.7651  20.2257  2.00491383225656",
+        120.0,
+        (15223.91713658, -17852.95881713, 25280.39558224),
+        (1.079041732, 0.875187372, 2.485682813),
+    ),
+    _OfficialSgp4Vector(
+        "wind-extreme-eccentricity",
+        "1 23333U 94071A   94305.49999999 -.00172956  26967-3  10000-3 0    15",
+        "2 23333  28.7490   2.3720 9728298  30.4360   1.3500  0.07309491    70",
+        120.0,
+        (-44672.91239680, -6213.11996581, -1738.80131727),
+        (-3.719475070, -1.336673022, -0.621888261),
+    ),
+    _OfficialSgp4Vector(
+        "italsat-geo",
+        "1 24208U 96044A   06177.04061740 -.00000094  00000-0  10000-3 0  1600",
+        "2 24208   3.8536  80.0121 0026640 311.0977  48.3000  1.00778054 36119",
+        120.0,
+        (-14289.19940414, 39469.05530051, 1428.62838591),
+        (-2.893205245, -1.045447840, 0.179634249),
+    ),
+    _OfficialSgp4Vector(
+        "intelsat-long-deep-space",
+        "1 26900U 01039A   06106.74503247  .00000045  00000-0  10000-3 0  8290",
+        "2 26900   0.0164 266.5378 0003319  86.1794 182.2590  1.00273847 16981",
+        9300.0,
+        (40968.68133298, -9905.99156086, 11.84946837),
+        (0.722756848, 2.989645389, -0.000161261),
+    ),
+)
+
+
+def _verification_instant(vector: _OfficialSgp4Vector) -> datetime:
+    """Return the UTC instant corresponding to an official TLE offset."""
+
+    satellite = Satrec.twoline2rv(vector.line1, vector.line2)
+    return sat_epoch_datetime(satellite) + timedelta(minutes=vector.minutes_since_epoch)
+
+
+def _direct_satrec_state(
+    vector: _OfficialSgp4Vector,
+    instant: datetime,
+) -> tuple[int, tuple[float, float, float], tuple[float, float, float]]:
+    """Evaluate the installed official implementation at one UTC instant."""
+
+    julian_day, julian_fraction = jday(
+        instant.year,
+        instant.month,
+        instant.day,
+        instant.hour,
+        instant.minute,
+        instant.second + (instant.microsecond / 1_000_000.0),
+    )
+    error_code, position_km, velocity_km_s = Satrec.twoline2rv(vector.line1, vector.line2).sgp4(
+        julian_day,
+        julian_fraction,
+    )
+    return error_code, tuple(position_km), tuple(velocity_km_s)
 
 
 @pytest.fixture
@@ -58,6 +155,85 @@ def test_sgp4_matches_the_local_vallado_reference_and_converts_native_units(
     # Raw SGP4 is km/km/s; Orbit's typed native state is always SI.
     assert native.position_m == pytest.approx(tuple(value * 1_000.0 for value in raw[:3]), abs=1.0e-6)
     assert native.velocity_m_s == pytest.approx(tuple(value * 1_000.0 for value in raw[3:]), abs=1.0e-9)
+
+
+@pytest.mark.parametrize("vector", OFFICIAL_SGP4_VECTORS, ids=lambda vector: vector.name)
+def test_sgp4_matches_representative_official_vallado_verification_vectors(
+    vector: _OfficialSgp4Vector,
+):
+    """Keep near-Earth and deep-space regression results tied to Vallado."""
+
+    actual = SGP4Propagator(vector.line1, vector.line2).propagate_teme_datetime(
+        _verification_instant(vector),
+    )
+
+    # tcppver.out prints position to 1e-8 km.  A centimetre position tolerance
+    # permits the documented microsecond timestamp rounding in its text output,
+    # while rejecting any scientifically meaningful implementation drift.
+    assert actual[:3] == pytest.approx(vector.position_km, abs=1.0e-5)
+    assert actual[3:] == pytest.approx(vector.velocity_km_s, abs=1.0e-8)
+
+
+@pytest.mark.parametrize("vector", OFFICIAL_SGP4_VECTORS, ids=lambda vector: vector.name)
+def test_sgp4_wrapper_matches_installed_reference_and_preserves_si_units(
+    vector: _OfficialSgp4Vector,
+):
+    """Differentially check Orbit's UTC adapter against the installed SGP4 API."""
+
+    instant = _verification_instant(vector)
+    reference_error, reference_position_km, reference_velocity_km_s = _direct_satrec_state(
+        vector,
+        instant,
+    )
+    propagator = SGP4Propagator(vector.line1, vector.line2)
+    raw = propagator.propagate_teme_datetime(instant)
+    native = propagator.native_state_at(instant)
+
+    assert reference_error == 0
+    assert raw[:3] == pytest.approx(reference_position_km, abs=1.0e-10)
+    assert raw[3:] == pytest.approx(reference_velocity_km_s, abs=1.0e-12)
+    assert native.position_m == pytest.approx(
+        tuple(component * 1_000.0 for component in reference_position_km),
+        abs=1.0e-6,
+    )
+    assert native.velocity_m_s == pytest.approx(
+        tuple(component * 1_000.0 for component in reference_velocity_km_s),
+        abs=1.0e-9,
+    )
+
+
+@pytest.mark.parametrize(
+    ("line1", "line2", "instant", "expected_error"),
+    (
+        pytest.param("not a TLE", "not a TLE", VANGUARD_REFERENCE_UTC, 2, id="invalid-elements"),
+        pytest.param(DECAYED_LINE1, DECAYED_LINE2, DECAYED_ERROR_UTC, 1, id="invalid-propagated-state"),
+    ),
+)
+def test_sgp4_reports_library_error_codes_and_rejects_invalid_native_states(
+    line1: str,
+    line2: str,
+    instant: datetime,
+    expected_error: int,
+):
+    """A library error must remain an explicit failure at Orbit's boundary."""
+
+    julian_day, julian_fraction = jday(
+        instant.year,
+        instant.month,
+        instant.day,
+        instant.hour,
+        instant.minute,
+        instant.second + (instant.microsecond / 1_000_000.0),
+    )
+    reference_error, reference_position_km, reference_velocity_km_s = Satrec.twoline2rv(line1, line2).sgp4(
+        julian_day,
+        julian_fraction,
+    )
+
+    assert reference_error == expected_error
+    assert all(math.isnan(component) for component in (*reference_position_km, *reference_velocity_km_s))
+    with pytest.raises(ValueError, match=rf"code {expected_error}"):
+        SGP4Propagator(line1, line2).native_state_at(instant)
 
 
 def test_sgp4_normalizes_offset_datetimes_and_is_deterministic(
