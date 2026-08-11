@@ -9,6 +9,10 @@ const componentSource = readFileSync(
     new URL("../../../react-ui/src/components/ObjectDetailsPanel.jsx", import.meta.url),
     "utf8"
 );
+const fieldHelpTooltipSource = readFileSync(
+    new URL("../../../react-ui/src/components/FieldHelpTooltip.jsx", import.meta.url),
+    "utf8"
+);
 
 function markupNear(testId, before = 420, after = 820) {
     const marker = `data-testid="${testId}"`;
@@ -64,4 +68,21 @@ test("object-details content uses the shared Orbit custom scrollbar rather than 
     assert.match(scrollMarkup, /\bmin-h-0\b/);
     assert.match(scrollMarkup, /\bflex-1\b/);
     assert.match(scrollMarkup, /tabIndex=\{0\}/, "keyboard users must be able to focus the scroll viewport");
+});
+
+test("object-details help relies on the field hover target instead of visual info icons", () => {
+    assert.match(componentSource, /<FieldHelpTooltip className=\{classes\}/);
+    assert.doesNotMatch(
+        componentSource,
+        /\{help && <svg/,
+        "detail labels must not render a separate visual information icon"
+    );
+    assert.match(fieldHelpTooltipSource, /onPointerEnter=\{showTooltip\}/);
+    assert.match(fieldHelpTooltipSource, /onFocus=\{showTooltip\}/);
+    assert.match(fieldHelpTooltipSource, /tabIndex=\{0\}/);
+    assert.doesNotMatch(
+        fieldHelpTooltipSource,
+        />i<\/span>/,
+        "the help popup itself must not add a decorative information glyph"
+    );
 });

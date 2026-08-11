@@ -85,7 +85,6 @@ export default function FieldHelpTooltip({ label, description, children, classNa
                     transform: tooltip.placement === "top" ? "translate(-50%, -100%)" : "translateX(-50%)"
                 }}
             >
-                <span className="mr-1.5 inline-flex size-3 items-center justify-center rounded-full border border-[#5c86b6] text-[8px] leading-none font-bold text-[#a9c9f0]" aria-hidden="true">i</span>
                 {description}
             </span>,
             document.body

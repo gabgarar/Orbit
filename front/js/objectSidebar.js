@@ -29,6 +29,28 @@ import {
 } from "./features/preciseProducts/validationUi.js";
 import { preciseProductSatelliteEntriesFromPayload } from "./satellites.js";
 
+export const PRECISE_PRODUCT_PREVIEW_ACTION_LABEL = "Previsualizar satélites";
+export const PRECISE_PRODUCT_PREVIEW_BUSY_LABEL = "Analizando…";
+
+/**
+ * Keep the import-dialog action deterministic across preview sessions.
+ * A completed or cancelled request must never leave a later SP3 import with
+ * the prior request's busy label or disabled control.
+ */
+export function derivePreciseProductPreviewActionState({
+    hasSp3 = false,
+    previewBusy = false,
+    importBusy = false
+} = {}) {
+    const analysing = previewBusy === true;
+    const busy = analysing || importBusy === true;
+    return {
+        disabled: !hasSp3 || busy,
+        label: analysing ? PRECISE_PRODUCT_PREVIEW_BUSY_LABEL : PRECISE_PRODUCT_PREVIEW_ACTION_LABEL,
+        ariaBusy: analysing ? "true" : null
+    };
+}
+
 function visibilityIconMarkup(isVisible) {
     return isVisible
         ? '<svg class="orbit-visibility-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.6"/></svg>'
@@ -1045,6 +1067,7 @@ export function setupObjectSidebar({
     let preciseProductImportBusy = false;
     let preciseProductPreviewBusy = false;
     let preciseProductPreviewRequestId = 0;
+    let preciseProductPreviewActiveRequestId = null;
     let preciseProductPreviewAbortController = null;
     let pendingPreciseProductPreview = null;
     const selectedPreciseProductSatelliteIds = new Set();
@@ -1774,7 +1797,7 @@ export function setupObjectSidebar({
             <p class="precise-product-import-status" id="preciseProductImportStatus" role="status" aria-live="polite">Selecciona un SP3 para empezar.</p>
             <footer class="catalog-filter-actions precise-product-import-actions">
                 <button class="catalog-header-btn" id="preciseProductImportCancelBtn" type="button">Cancelar</button>
-                <button class="catalog-header-btn precise-product-import-confirm" id="preciseProductImportConfirmBtn" type="button">Previsualizar satélites</button>
+                <button class="catalog-header-btn precise-product-import-confirm" id="preciseProductImportConfirmBtn" type="button">${PRECISE_PRODUCT_PREVIEW_ACTION_LABEL}</button>
             </footer>
         </section>
     `;
@@ -3334,6 +3357,27 @@ export function setupObjectSidebar({
         return Boolean(pendingPreciseProductFileForSlot(kind));
     }
 
+    function pendingPreciseProductHasPreviewSource() {
+        return pendingPreciseProductHasSlot("sp3")
+            || pendingPreciseProductFiles.some((entry) => entry.kind === "archive");
+    }
+
+    function syncPreciseProductPreviewAction() {
+        if (!preciseProductImportConfirmBtn) return;
+        const state = derivePreciseProductPreviewActionState({
+            hasSp3: pendingPreciseProductHasPreviewSource(),
+            previewBusy: preciseProductPreviewBusy,
+            importBusy: preciseProductImportBusy
+        });
+        preciseProductImportConfirmBtn.disabled = state.disabled;
+        preciseProductImportConfirmBtn.textContent = state.label;
+        if (state.ariaBusy) {
+            preciseProductImportConfirmBtn.setAttribute("aria-busy", state.ariaBusy);
+        } else {
+            preciseProductImportConfirmBtn.removeAttribute("aria-busy");
+        }
+    }
+
     function setPreciseProductImportStatus(message, state = "") {
         if (!preciseProductImportStatus) return;
         preciseProductImportStatus.textContent = String(message || "");
@@ -3344,7 +3388,7 @@ export function setupObjectSidebar({
 
     function syncPreciseProductImportStatus() {
         const selectedCount = pendingPreciseProductFiles.length;
-        if (!pendingPreciseProductHasSlot("sp3")) {
+        if (!pendingPreciseProductHasPreviewSource()) {
             setPreciseProductImportStatus(PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3, "error");
             return;
         }
@@ -3592,6 +3636,7 @@ export function setupObjectSidebar({
             pendingPreciseProductFolderAssignment = null;
             renderPreciseProductFileList([]);
         }
+        syncPreciseProductPreviewAction();
     }
 
     function preciseProductRenderingWarning(payload, entries = []) {
@@ -3652,12 +3697,21 @@ export function setupObjectSidebar({
         }
         preciseProductExtraFileList.hidden = archives.length === 0;
         syncPreciseProductImportStatus();
+        syncPreciseProductPreviewAction();
     }
 
     function abortPreciseProductPreviewRequest() {
         const controller = preciseProductPreviewAbortController;
+        const hadActiveRequest = preciseProductPreviewActiveRequestId !== null;
         preciseProductPreviewAbortController = null;
+        preciseProductPreviewActiveRequestId = null;
+        preciseProductPreviewBusy = false;
         if (controller && !controller.signal.aborted) controller.abort();
+        syncPreciseProductPreviewAction();
+        // An abort is a terminal state for this preview session. Clear the
+        // shared catalog gate synchronously so a new SP3 can be opened even
+        // if a non-compliant fetch implementation never settles its promise.
+        if (hadActiveRequest) setCatalogBusyState(false, "");
     }
 
     function replacePendingPreciseProductSlotFile(kind, file) {
@@ -3710,6 +3764,7 @@ export function setupObjectSidebar({
             resetPreciseProductPreview();
             renderPreciseProductFileList([]);
         }
+        syncPreciseProductPreviewAction();
     }
 
     function openPreciseProductImportModal(files = []) {
@@ -3719,30 +3774,42 @@ export function setupObjectSidebar({
         resetPreciseProductPreview();
         renderPreciseProductFileList(pendingPreciseProductFiles);
         preciseProductImportModal.classList.add("open");
-        (pendingPreciseProductHasSlot("sp3") ? preciseProductImportConfirmBtn : preciseProductSlotInputs.get("sp3"))?.focus({ preventScroll: true });
+        (pendingPreciseProductHasPreviewSource() ? preciseProductImportConfirmBtn : preciseProductSlotInputs.get("sp3"))?.focus({ preventScroll: true });
     }
 
     async function requestPreciseProductPreview() {
         if (preciseProductPreviewBusy || preciseProductImportBusy) return;
         const files = [...pendingPreciseProductFiles];
-        const initialButtonLabel = preciseProductImportConfirmBtn.textContent;
         const requestId = ++preciseProductPreviewRequestId;
         const abortController = new AbortController();
         preciseProductPreviewAbortController = abortController;
+        preciseProductPreviewActiveRequestId = requestId;
         preciseProductPreviewBusy = true;
+        syncPreciseProductPreviewAction();
 
         try {
             // Satellite discovery only needs the SP3. Large CLK/ATT
             // companions stay queued for the final import instead of making
             // this non-persistent preview exhaust the proxy body budget.
             const requestPayload = await buildPreciseProductPreviewPayload(files);
+            // Reading a local SP3 can itself be asynchronous. Do not let a
+            // cancelled first import acquire the shared busy gate after the
+            // operator has already opened a second product.
+            if (
+                requestId !== preciseProductPreviewRequestId
+                || preciseProductPreviewActiveRequestId !== requestId
+                || !preciseProductImportModal.classList.contains("open")
+            ) {
+                return;
+            }
             setPreciseProductImportStatus("Analizando el producto GNSS sin importarlo…", "busy");
-            preciseProductImportConfirmBtn.disabled = true;
-            preciseProductImportConfirmBtn.textContent = "Analizando…";
-            preciseProductImportConfirmBtn.setAttribute("aria-busy", "true");
             setCatalogBusyState(true, "Previsualizando producto preciso...");
             const payload = await fetchPreciseProductPreview(requestPayload, { signal: abortController.signal });
-            if (requestId !== preciseProductPreviewRequestId || !preciseProductImportModal.classList.contains("open")) {
+            if (
+                requestId !== preciseProductPreviewRequestId
+                || preciseProductPreviewActiveRequestId !== requestId
+                || !preciseProductImportModal.classList.contains("open")
+            ) {
                 return;
             }
             const validation = preciseProductValidationReport(payload);
@@ -3753,7 +3820,11 @@ export function setupObjectSidebar({
             }
             openPreciseProductPreviewModal(payload);
         } catch (error) {
-            if (requestId !== preciseProductPreviewRequestId || !preciseProductImportModal.classList.contains("open")) {
+            if (
+                requestId !== preciseProductPreviewRequestId
+                || preciseProductPreviewActiveRequestId !== requestId
+                || !preciseProductImportModal.classList.contains("open")
+            ) {
                 return;
             }
             const message = error instanceof Error ? error.message : String(error);
@@ -3771,14 +3842,11 @@ export function setupObjectSidebar({
             if (preciseProductPreviewAbortController === abortController) {
                 preciseProductPreviewAbortController = null;
             }
+            const ownsRequest = preciseProductPreviewActiveRequestId === requestId;
+            if (!ownsRequest) return;
+            preciseProductPreviewActiveRequestId = null;
             preciseProductPreviewBusy = false;
-            if (requestId !== preciseProductPreviewRequestId || !preciseProductImportModal.classList.contains("open")) {
-                setCatalogBusyState(false, "");
-                return;
-            }
-            preciseProductImportConfirmBtn.disabled = false;
-            preciseProductImportConfirmBtn.textContent = initialButtonLabel;
-            preciseProductImportConfirmBtn.removeAttribute("aria-busy");
+            syncPreciseProductPreviewAction();
             setCatalogBusyState(false, "");
         }
     }
@@ -3894,6 +3962,7 @@ export function setupObjectSidebar({
             }
         } finally {
             preciseProductImportBusy = false;
+            syncPreciseProductPreviewAction();
             if (preciseProductPreviewModal.classList.contains("open")) {
                 setPreciseProductPreviewImportControls(false);
                 preciseProductPreviewConfirmBtn.textContent = initialButtonLabel;

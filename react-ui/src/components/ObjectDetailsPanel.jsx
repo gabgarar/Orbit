@@ -92,10 +92,7 @@ function DetailRows({ rows, sourceFormat, section }) {
         {rows.map(([label, data, tone], index) => {
             const help = getObjectDetailFieldHelp(label, { sourceFormat, section });
             const rowContent = <>
-                <span className="inline-flex min-w-0 items-start gap-1.5">
-                    <span>{label}</span>
-                    {help && <svg className="mt-px size-3 shrink-0 text-[#6f91bd] opacity-80" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="5.6" stroke="currentColor" strokeWidth="1.2" /><path d="M8 7.05v3.45M8 4.85v.15" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>}
-                </span>
+                <span className="min-w-0">{label}</span>
                 <strong className={`wrap-anywhere text-right font-semibold text-[#e0e9f8] ${toneClass[tone] || ""}`}>{data}</strong>
             </>;
             const classes = "grid grid-cols-[minmax(92px,1fr)_minmax(80px,1.25fr)] items-start gap-2.5 text-[11px] leading-[1.35] font-medium text-[#91a1b8]";
