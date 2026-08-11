@@ -139,6 +139,69 @@ def test_precise_product_request_rejects_bad_or_oversized_upload_shape_before_im
         }])
 
 
+def test_precise_product_request_deduplicates_named_slots_and_rejects_a_mismatched_slot_suffix():
+    encoded = base64.b64encode(b"sp3").decode("ascii")
+    request = PreciseProductImportRequest(
+        files=[{"name": "product.SP3", "kind": "sp3", "content_base64": encoded}],
+        sp3={"name": "product.SP3", "kind": "sp3", "content_base64": encoded},
+    )
+
+    assert [(item.name, item.kind) for item in request.uploads()] == [("product.SP3", "sp3")]
+    with pytest.raises(ValidationError, match="campo SP3|extensión"):
+        PreciseProductImportRequest(
+            sp3={"name": "product.txt", "kind": "sp3", "content_base64": encoded},
+        )
+    with pytest.raises(ValidationError, match="campo SP3 solo admite"):
+        PreciseProductImportRequest(
+            sp3={"name": "bundle.zip", "kind": "sp3", "content_base64": encoded},
+        )
+    with pytest.raises(ValidationError, match="campo SP3 solo admite"):
+        PreciseProductImportRequest(
+            sp3={"name": "legacy.SP3c", "kind": "sp3", "content_base64": encoded},
+        )
+    with pytest.raises(ValidationError, match="tipo declarado ERP"):
+        PreciseProductImportRequest(
+            files=[{"name": "product.SP3", "kind": "erp", "content_base64": encoded}],
+        )
+
+
+def test_precise_product_route_projects_exact_missing_sp3_and_erp_for_eci_errors():
+    router = create_precise_products_router(
+        import_precise_product,
+        lambda: {"items": [], "diagnostics": []},
+    )
+    endpoint = _endpoint(router, "/precise-products/import")
+
+    with pytest.raises(HTTPException) as missing_sp3:
+        endpoint(PreciseProductImportRequest(
+            erp={
+                "name": "product.ERP",
+                "kind": "erp",
+                "content_base64": base64.b64encode(b"MJD Xpole Ypole UT1-UTC LOD\n").decode("ascii"),
+            },
+        ))
+    assert missing_sp3.value.status_code == 422
+    assert missing_sp3.value.detail == "Debe proporcionar un fichero SP3."
+
+    source = """#cP2026 07 26 00 00 18.00000000       2 ORBIT ITRF  FIT COD
+%c cc UTC ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc
+*  2026 07 26 00 00 18.00000000
+PG01 7000.000000 0.000000 0.000000 0.000000
+*  2026 07 26 00 01 18.00000000
+PG01 7060.000000 0.000000 0.000000 0.000000"""
+    with pytest.raises(HTTPException) as missing_erp:
+        endpoint(PreciseProductImportRequest(
+            sp3={
+                "name": "product.SP3",
+                "kind": "sp3",
+                "content_base64": base64.b64encode(source.encode("ascii")).decode("ascii"),
+            },
+            requireEci=True,
+        ))
+    assert missing_erp.value.status_code == 422
+    assert missing_erp.value.detail == "Debe proporcionar un fichero ERP para convertir a ECI."
+
+
 def test_precise_product_fastapi_endpoints_return_the_public_post_and_get_contract():
     source = """#cP2026 07 26 00 00 18.00000000       2 ORBIT ITRF  FIT COD 
 %c cc UTC ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc

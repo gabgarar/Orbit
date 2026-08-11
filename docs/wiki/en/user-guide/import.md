@@ -32,19 +32,30 @@ Imported data is validated before being added to the catalog. An OEM that
 does not contain an embedded TLE cannot be converted to a catalog object
 native and is rejected on that path.
 
-## Precise GNSS products: SP3 and CLK
+## Precise GNSS products
 
-**Import precise GNSS (SP3 / CLK)**, available from **Layers → + → Add layer →
-Add satellite**, loads local GNSS ephemerides as tabulated sources. It does not
-use the TLE/OMM catalogue importer: SP3 retains its native GNSS identifiers,
-frame, and time scale, and is not converted into a TLE.
+**Import GNSS product**, available from **Layers → + → Add layer → Add
+satellite**, loads local GNSS ephemerides as tabulated sources. It does not use
+the TLE/OMM catalogue importer: SP3 retains its native GNSS identifiers, frame,
+and time scale, and is not converted into a TLE.
 
-Select at least one SP3 and, optionally, the matching RINEX CLK from the same
-series. Uncompressed, `gzip`, ZIP, and legacy `.Z` compression accepted by the
-importer can be supplied. Orbit identifies file content and rejects a clock
-file alone as a trajectory because CLK contains no positions.
-Each product accepts one SP3 and at most one CLK after decompression; do not
-mix products from different dates or analysis centres in the same upload.
+The **SP3** field is required and accepts `.SP3` or `.SP3.gz`. When it is
+empty, Orbit displays exactly **“Debe proporcionar un fichero SP3.”**. The
+remaining fields are optional while no inertial operation is enabled:
+
+| Field | Accepted extensions | Use |
+| --- | --- | --- |
+| CLK | `.CLK`, `.CLK.gz` | Associated precise clocks. |
+| ERP | `.ERP`, `.ERP.gz` | Associated Earth-rotation parameters. |
+| SUM | `.SUM` | Product metadata/summary. |
+| ATT | `.ATT.OBX`, `.ATT.OBX.gz` | Published satellite attitude. |
+| OSB | `.OSB.BIA`, `.OSB.BIA.gz` | Observable-specific biases. |
+
+If the user enables an ITRF-to-ECI conversion, ERP ceases to be optional.
+Without it, Orbit blocks the operation with **“Debe proporcionar un fichero
+ERP para convertir a ECI.”**. CLK, SUM, ATT, and OSB cannot create an orbit
+without SP3; they are associated with the same product and their provenance is
+retained.
 
 | Locally downloaded product | Example use |
 | --- | --- |
@@ -56,11 +67,14 @@ Before importing, check the product class, date, frame, and `TIME_SYSTEM`. An
 Ultra-Rapid product can mix observed and predicted intervals; its coverage must
 not be read as uniformly observed. The input is durably registered in the local
 precise-product store and rehydrated at startup. A project references the
-stable product, but does not include a copy of its source binary.
+stable product, but does not include copies of its source binaries.
 
-The UI accepts up to eight files, 32 MiB per file, and 64 MiB in total before
-decompression. Encrypted or nested ZIP files are rejected, as are files that
-exceed the decompressed safety limit.
+After import, the displayed frame depends on ERP and the realization route:
+with ERP and a datum transformation applied, Orbit shows **ITRF (con ERP
+aplicado)** and allows conversion to ECI; without ERP it shows **Marco
+terrestre aproximado (sin ERP)**. ERP supplies UT1 and polar motion, but does
+not itself turn an IGS realization into ITRF. The SP3 header remains visible as
+the native file frame.
 
 !!! warning "This is not a remote download"
 

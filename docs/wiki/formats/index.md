@@ -14,7 +14,7 @@ no equivale a una función expuesta por la interfaz, el gateway o la API públic
 | [OMM](omm.md) | Catálogo JSON/XML limitado a elementos TLE embebidos. |
 | [OEM](oem.md) | Lector Python segmentado; importación de catálogo solo si contiene TLE. |
 | [SP3](sp3.md) | Contrato de efeméride precisa tabulada. |
-| [Productos GNSS precisos](precise-products.md) | Importación local de IGS/CDDIS, MGEX y ESA NSO; SP3 con CLK opcional y procedencia. |
+| [Productos GNSS precisos](precise-products.md) | Importación local de IGS/CDDIS, MGEX y ESA NSO; SP3 obligatorio, CLK/ERP/SUM/ATT/OSB asociados y procedencia. |
 | [OPM](opm.md) | No disponible. |
 | [Formatos no soportados](unsupported-formats.md) | Límites de producto y alternativas. |
 

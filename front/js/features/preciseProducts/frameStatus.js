@@ -1,4 +1,5 @@
 import { formatReferenceFrame } from "../frames/referenceFrame.js";
+import { PRECISE_PRODUCT_IMPORT_ERRORS } from "./import.js";
 
 function text(value) {
     if (value === undefined || value === null) return "";
@@ -73,6 +74,33 @@ function booleanValue(value) {
     return null;
 }
 
+function booleanFromSources(sources, keys) {
+    for (const source of sources) {
+        const value = record(source);
+        if (!value) continue;
+        for (const key of keys) {
+            const parsed = booleanValue(value[key]);
+            if (parsed !== null) return parsed;
+        }
+    }
+    return null;
+}
+
+function hasErpSource(sources) {
+    for (const source of sources) {
+        const value = record(source);
+        if (!value) continue;
+        const direct = value.erp ?? value.erp_file ?? value.erpFile;
+        if (text(direct)) return true;
+        const files = value.source_files ?? value.sourceFiles ?? value.files;
+        if (!Array.isArray(files)) continue;
+        if (files.some((file) => text(record(file)?.kind ?? record(file)?.type).toLowerCase() === "erp")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function isEarthFixedFrame(frame) {
     const normalized = text(frame).toUpperCase();
     return normalized === "ECEF"
@@ -132,6 +160,10 @@ export function resolvePreciseProductFrameStatus(source = {}, { runtimeFrame = "
     ], ["earth_orientation", "earthOrientation", "eop", "eop_status", "eopStatus"]);
     const earthOrientation = record(earthOrientationValue)
         || (text(earthOrientationValue) ? { quality: text(earthOrientationValue) } : null);
+    const eciConversion = firstRecord([
+        renderer,
+        ...metadata
+    ], ["eci_conversion", "eciConversion", "inertial_conversion", "inertialConversion"]);
 
     const nativeFrameRecordName = firstText([nativeFrameRecord], [
         "realization", "reference_frame", "referenceFrame", "frame", "name"
@@ -167,7 +199,36 @@ export function resolvePreciseProductFrameStatus(source = {}, { runtimeFrame = "
         "display_label", "displayLabel", "display_frame", "displayFrame", "frame_display", "frameDisplay",
         "reference_frame_display", "referenceFrameDisplay"
     ]);
-    const approximate = availability !== false && isApproximateEarthOrientation(earthOrientation, renderer);
+    const explicitErpApplied = booleanFromSources([
+        eciConversion,
+        earthOrientation,
+        renderer,
+        ...metadata
+    ], [
+        "erp_applied", "erpApplied", "earth_orientation_applied", "earthOrientationApplied", "applied"
+    ]);
+    const erpProvided = hasErpSource([renderer, ...metadata]);
+    const eciAvailability = booleanFromSources([eciConversion, renderer, ...metadata], [
+        "eci_available", "eciAvailable", "available", "enabled", "ready"
+    ]);
+    // A label alone is not permission to claim an ECI-capable route.  In
+    // particular, an ERP can be present while the source realization lacks
+    // the datum operation required by the backend.  An explicit unavailable
+    // capability always wins over a stale/persisted display label.
+    const erpApplied = (explicitErpApplied === true
+        || backendDisplayLabel === "ITRF (con ERP aplicado)")
+        && eciAvailability !== false;
+    // An ERP may be attached without being applicable to the requested epoch.
+    // Only an explicitly applied ERP capability unlocks ECI work.
+    const eciAvailable = erpApplied && eciAvailability !== false;
+    const eciReason = firstText([eciConversion, renderer, ...metadata], [
+        "eci_reason", "eciReason", "reason", "message", "detail", "error"
+    ]) || (eciAvailable
+        ? ""
+        : erpProvided
+            ? "El ERP está disponible, pero falta una ruta de realización terrestre válida para convertir a ECI."
+            : PRECISE_PRODUCT_IMPORT_ERRORS.missingErpForEci);
+    const approximate = !erpApplied || isApproximateEarthOrientation(earthOrientation, renderer);
     // Older persisted products may predate `renderer_reference`. If the
     // native realization and the runtime's Earth-fixed label differ, do not
     // make the latter look like a confirmed realization transform. Rendering
@@ -181,30 +242,29 @@ export function resolvePreciseProductFrameStatus(source = {}, { runtimeFrame = "
             || isEarthFixedFrame(returnedFrame)
         );
 
-    let displayFrame = backendDisplayLabel || returnedFrame || nativeFrame || "Marco no declarado";
-    if (availability === false) {
-        displayFrame = nativeFrame || "Marco nativo no declarado";
-    } else if (approximate && isEarthFixedFrame(returnedFrame || nativeFrame)) {
-        // Cesium may still use these Earth-fixed coordinates for a visual
-        // fallback, but this label makes the absent EOP/ERP solution explicit.
-        displayFrame = "Terrestre aproximado (sin EOP)";
-    } else if (unverifiedTerrestrialTransform) {
-        displayFrame = nativeFrame.toUpperCase() === returnedFrame.toUpperCase()
-            ? `${nativeFrame} nativo (sin EOP declarado)`
-            : nativeFrame;
-    }
+    // A GNSS product must never present an Earth-fixed rendering value as a
+    // complete ITRF-to-ECI solution unless the imported ERP was actually
+    // applied.  Keep the no-ERP label exact, while distinguishing the less
+    // common case in which an ERP is attached but the source datum has no
+    // registered route to ECI.
+    const approximateFrameLabel = erpProvided
+        ? "Marco terrestre aproximado (ERP sin ruta ECI)"
+        : "Marco terrestre aproximado (sin ERP)";
+    let displayFrame = erpApplied
+        ? "ITRF (con ERP aplicado)"
+        : approximateFrameLabel;
 
     let renderingLabel;
     if (availability === false) {
         renderingLabel = reason
             ? `No disponible: ${reason}`
             : "No disponible: no hay una transformación terrestre configurada.";
-    } else if (approximate && isEarthFixedFrame(returnedFrame || nativeFrame)) {
-        renderingLabel = "Terrestre aproximado (sin EOP)";
+    } else if (erpApplied) {
+        renderingLabel = "ITRF (con ERP aplicado)";
     } else if (unverifiedTerrestrialTransform) {
-        renderingLabel = nativeFrame.toUpperCase() === returnedFrame.toUpperCase()
-            ? `No verificado: ${nativeFrame} se conserva como marco nativo, sin procedencia EOP/ERP declarada.`
-            : `No verificado: falta la procedencia de la transformación desde ${nativeFrame} hacia ${returnedFrame}.`;
+        renderingLabel = `${approximateFrameLabel}. Se conserva ${nativeFrame || "el marco nativo"} como procedencia.`;
+    } else if (approximate) {
+        renderingLabel = approximateFrameLabel;
     } else if (availability === true) {
         const target = returnedFrame || "marco terrestre declarado";
         const realization = targetRealization ? ` / ${targetRealization}` : "";
@@ -224,6 +284,10 @@ export function resolvePreciseProductFrameStatus(source = {}, { runtimeFrame = "
         operation,
         targetRealization,
         earthOrientation,
+        erpProvided,
+        erpApplied,
+        eciAvailable,
+        eciReason,
         renderingLabel
     };
 }
@@ -231,4 +295,19 @@ export function resolvePreciseProductFrameStatus(source = {}, { runtimeFrame = "
 /** True only for a product explicitly marked as non-renderable. */
 export function isPreciseProductRenderingUnavailable(source = {}) {
     return resolvePreciseProductFrameStatus(source).available === false;
+}
+
+/**
+ * Reusable guard for a future propagator-comparison UI.  Rendering a native
+ * terrestrial SP3 remains possible without ERP, but a comparison in ECI is
+ * intentionally a different capability and must be blocked.
+ */
+export function assertPreciseProductEciAvailable(source = {}) {
+    const status = resolvePreciseProductFrameStatus(source);
+    if (!status.eciAvailable) {
+        throw new Error(status.erpProvided
+            ? (status.eciReason || "La conversión a ECI no está disponible para este producto.")
+            : PRECISE_PRODUCT_IMPORT_ERRORS.missingErpForEci);
+    }
+    return status;
 }

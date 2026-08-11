@@ -1,5 +1,6 @@
 """HTTP endpoints for durable local precise GNSS product imports."""
 
+import inspect
 from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException
@@ -13,7 +14,7 @@ def create_precise_products_router(
     list_products: Callable,
     serialize_import: Callable | None = None,
 ) -> APIRouter:
-    """Expose the SP3 + optional RINEX CLK import/hydration contract."""
+    """Expose the SP3-centred GNSS product import/hydration contract."""
 
     router = APIRouter(tags=["precise-products"])
 
@@ -28,10 +29,19 @@ def create_precise_products_router(
         """Persist one local precise product after strict archive validation."""
 
         try:
+            kwargs = {
+                "provider_hint": payload.provider_hint,
+                "product_class": payload.product_class,
+            }
+            # ``create_precise_products_router`` is intentionally injectable
+            # for service hosts and tests.  Keep pre-GNSS adapters working if
+            # they only expose the historical two keyword arguments, while
+            # production OrbitRuntime receives the new explicit ECI intent.
+            if _accepts_keyword(import_product, "require_eci"):
+                kwargs["require_eci"] = payload.require_eci
             product = import_product(
-                [(file.name, file.content_base64) for file in payload.files],
-                provider_hint=payload.provider_hint,
-                product_class=payload.product_class,
+                [(file.name, file.content_base64) for file in payload.uploads()],
+                **kwargs,
             )
         except PreciseProductImportError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -42,3 +52,22 @@ def create_precise_products_router(
         return {"ok": True, "product": product.payload()}
 
     return router
+
+
+def _accepts_keyword(callback: Callable, keyword: str) -> bool:
+    """Return whether an injected callable can receive ``keyword``.
+
+    A few extension callables are implemented in C or use signatures that
+    cannot be inspected.  In that case, prefer the modern contract; any real
+    application error must remain visible rather than being hidden by a broad
+    ``TypeError`` fallback.
+    """
+
+    try:
+        parameters = inspect.signature(callback).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        parameter.name == keyword or parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )

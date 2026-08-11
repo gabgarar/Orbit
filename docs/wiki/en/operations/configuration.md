@@ -66,8 +66,8 @@ control characters and system_config.json.
 
 ## Persistent precise GNSS products
 
-Each SP3 import, with optional CLK, is stored under
-`config/precise-products/<product_id>/`. The directory contains decompressed
+Each GNSS import, with required SP3 and associated CLK/ERP/SUM/ATT/OSB when
+supplied, is stored under `config/precise-products/<product_id>/`. The directory contains decompressed
 logical sources and a `manifest.json` with provider, class, original name,
 compression, ZIP member where applicable, and SHA-256 checksums. The runtime
 verifies checksums and parses sources again at startup; a corrupt entry is

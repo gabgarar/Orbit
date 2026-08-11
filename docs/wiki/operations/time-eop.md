@@ -27,6 +27,15 @@ explícita, segundos intercalares y EOP versionados —como mínimo DUT1, `xp` e
 `yp`, y `dX`/`dY` en la reducción CIO—. Sin ellos la interfaz solo puede
 presentar una **vista terrestre aproximada**, nunca relabelarla como ITRF.
 
+Para un producto GNSS importado, el ERP seleccionado con el SP3 es el contrato
+de producto para pedir ITRF → ECI. Aporta UT1 y movimiento polar, pero no crea
+por sí solo una operación de datum IGS→ITRF: también debe existir y aplicarse
+la ruta de realización correspondiente. Solo entonces la UI muestra **ITRF
+(con ERP aplicado)**. Si no existe ERP, debe mostrar **Marco terrestre
+aproximado (sin ERP)** y rechazar cualquier solicitud que declare `require_eci`.
+El snapshot C04 global no se adopta silenciosamente como ERP de una revisión
+SP3: ambos orígenes mantienen su propia versión y procedencia.
+
 ## Guías operativas
 
 | Tema | Contenido |

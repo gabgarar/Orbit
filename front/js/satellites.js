@@ -524,6 +524,12 @@ function enrichPreciseProductSatelliteEntry(entry, product = null) {
             product_name: sourceSp3.product_name ?? sourceProduct.name ?? null,
             file_name: sourceSp3.file_name ?? sourceSp3.fileName ?? sourceProduct.orbit_file ?? sourceProduct.orbitFile ?? null,
             clock_file: sourceSp3.clock_file ?? sourceSp3.clockFile ?? sourceProduct.clock_file ?? sourceProduct.clockFile ?? null,
+            erp_file: sourceSp3.erp_file ?? sourceSp3.erpFile ?? sourceProduct.erp_file ?? sourceProduct.erpFile
+                ?? sourceProduct.erp?.file ?? sourceProduct.erp?.name ?? null,
+            sum_file: sourceSp3.sum_file ?? sourceSp3.sumFile ?? sourceProduct.sum_file ?? sourceProduct.sumFile ?? null,
+            attitude_file: sourceSp3.attitude_file ?? sourceSp3.attitudeFile ?? sourceProduct.attitude_file ?? sourceProduct.attitudeFile ?? null,
+            osb_file: sourceSp3.osb_file ?? sourceSp3.osbFile ?? sourceProduct.osb_file ?? sourceProduct.osbFile ?? null,
+            source_files: sourceSp3.source_files ?? sourceSp3.sourceFiles ?? sourceProduct.source_files ?? sourceProduct.sourceFiles ?? [],
             start_time: sourceSp3.start_time ?? sourceSp3.startTime ?? sourceProduct.start_time ?? sourceProduct.startTime ?? null,
             end_time: sourceSp3.end_time ?? sourceSp3.endTime ?? sourceProduct.end_time ?? sourceProduct.endTime ?? null,
             start_time_ms: sourceSp3.start_time_ms ?? sourceSp3.startTimeMs ?? sourceProduct.start_time_ms ?? sourceProduct.startTimeMs ?? null,
@@ -550,6 +556,9 @@ function enrichPreciseProductSatelliteEntry(entry, product = null) {
             earth_orientation: sourceSp3.earth_orientation ?? sourceSp3.earthOrientation
                 ?? entry.earth_orientation ?? entry.earthOrientation
                 ?? sourceProduct.earth_orientation ?? sourceProduct.earthOrientation ?? null,
+            eci_conversion: sourceSp3.eci_conversion ?? sourceSp3.eciConversion
+                ?? entry.eci_conversion ?? entry.eciConversion
+                ?? sourceProduct.eci_conversion ?? sourceProduct.eciConversion ?? null,
             rendering: sourceSp3.rendering ?? entry.rendering ?? sourceProduct.rendering ?? null
         }
     };

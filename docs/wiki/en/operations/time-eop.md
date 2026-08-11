@@ -27,6 +27,15 @@ and versioned EOP — at minimum DUT1, `xp`, `yp`, and `dX`/`dY` in the CIO
 reduction. Without them the interface can present only an **approximate
 Earth-fixed view**, never relabel it as ITRF.
 
+For an imported GNSS product, the ERP selected with SP3 is the product contract
+for requesting ITRF-to-ECI. It supplies UT1 and polar motion, but does not by
+itself create an IGS-to-ITRF datum operation: the applicable realization route
+must also exist and be applied. Only then does the UI show **ITRF (con ERP
+aplicado)**. When ERP is absent, it must show **Marco terrestre aproximado (sin
+ERP)** and reject any request declaring `require_eci`. The global C04 snapshot
+is not silently adopted as an ERP for an SP3 revision: both sources retain
+their own version and provenance.
+
 ## Operational guides
 
 | Theme | Content |

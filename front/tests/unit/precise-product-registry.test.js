@@ -119,7 +119,7 @@ test("native-only precise products expose their native frame to every UI consume
 
     const telemetry = getSatelliteTelemetry(id);
     assert.equal(telemetry.position_frame, "IGC20");
-    assert.equal(telemetry.position_frame_display, "IGC20");
+    assert.equal(telemetry.position_frame_display, "Marco terrestre aproximado (sin ERP)");
     assert.equal(telemetry.rendering_available, false);
     assert.equal(telemetry.runtime_state, "UNAVAILABLE");
 });

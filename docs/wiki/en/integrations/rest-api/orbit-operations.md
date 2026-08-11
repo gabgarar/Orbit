@@ -45,7 +45,7 @@ credential.
 | Method and route | Operation | Main limit |
 | --- | --- | --- |
 | `GET /api/precise-products` | Lists persisted products, rehydration diagnostics, and runtime IDs per satellite. | It does not download sources again. |
-| `POST /api/precise-products/import` | Validates, decompresses, persists, and registers SP3 with optional CLK. | One logical SP3 and optional CLK; local files encoded as base64. |
+| `POST /api/precise-products/import` | Validates, persists, and registers a GNSS product. | One required SP3 and at most one of every ancillary file: CLK, ERP, SUM, ATT, and OSB. |
 
 The canonical import body is:
 
@@ -62,10 +62,15 @@ Content-Type: application/json
     {
       "name": "IGS0OPSFIN_20262230000_01D_05M_CLK.CLK.gz",
       "content_base64": "<base64-of-local-file>"
+    },
+    {
+      "name": "IGS0OPSFIN_20262230000_01D_ERP.ERP.gz",
+      "content_base64": "<base64-of-local-file>"
     }
   ],
   "provider_hint": "cddis-igs",
-  "product_class": "final"
+  "product_class": "final",
+  "require_eci": true
 }
 ~~~
 
@@ -75,16 +80,26 @@ Content-Type: application/json
 `ultra-rapid`. With `auto`, Orbit proposes a classification from the file name
 and records `custom`/`unknown` when it cannot substantiate one.
 
-The route accepts at most eight uploaded files, 32 MiB per file, and 64 MiB in
-total before decompression. It accepts uncompressed SP3/CLK, `gzip`, ZIP, and
-UNIX `.Z`; expanded content is capped at 256 MiB. Encrypted or nested ZIP
-files, unsafe members, and pairs with more than one SP3 or CLK are rejected
-with `422`.
+Every input is classified from its window field and extension: required SP3
+`.SP3`/`.SP3.gz`; optional CLK `.CLK`/`.CLK.gz`; conditional ERP
+`.ERP`/`.ERP.gz`; optional SUM `.SUM`; optional ATT `.ATT.OBX`/`.ATT.OBX.gz`;
+and optional OSB `.OSB.BIA`/`.OSB.BIA.gz`. The service rejects an upload with
+no SP3 using `422` and the exact text **“Debe proporcionar un fichero SP3.”**.
+
+`require_eci` expresses that the caller needs an ITRF-to-ECI conversion. When
+`true`, ERP is required and its absence produces `422` with the exact text
+**“Debe proporcionar un fichero ERP para convertir a ECI.”**. When `false` or
+omitted, ERP remains optional and output is labelled **Marco terrestre
+aproximado (sin ERP)**. When ERP is supplied and applied, frame metadata says
+**ITRF (con ERP aplicado)**. ERP supplies UT1 and polar motion; when SP3
+declares an IGS realization, a registered and applied realization transform is
+also required. ERP does not invent that transformation, so the capability
+contract keeps ECI unavailable until both conditions are met.
 
 A successful response contains `product`, `satellites`, and `importedIds`.
-`product` declares provider, class, family, detection, frame, time scale,
-coverage, clock summary, and SHA-256 checksums of its sources. Each registered
-satellite ID has the form
+`product` declares provider, class, family, detection, native frame,
+operational frame label, time scale, coverage, ancillary products, and
+SHA-256 checksums of its sources. Each registered satellite ID has the form
 `precise:<product_id>:<gnss_identifier>`, for example
 `precise:precise-0123456789abcdef0123:G01`. That ID can be used as `sat_id` in
 ephemeris, orbital-parameter, propagation, and AOS/LOS routes, but a query
@@ -94,7 +109,7 @@ The service stores the product and its verified manifest under the
 `config/precise-products/` volume; the runtime loads it again at startup. A
 project can retain the stable ID, but it does not embed a binary copy. See
 [Precise GNSS products](../../formats/precise-products.md) for providers,
-quality, CLK, realizations, and scientific limitations.
+quality, ancillary products, realizations, and scientific limitations.
 
 ## Manual orbit
 

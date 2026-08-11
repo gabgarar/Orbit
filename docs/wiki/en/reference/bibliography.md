@@ -42,7 +42,7 @@ general.
 | International GNSS Service. [IGS20 and product transition](https://igs.org/news/igs20/). | Context of IGS20, igs20.atx and its relationship with ITRF2020. |
 | International GNSS Service. [Reference Frame Working Group](https://igs.org/wg/reference-frame/). | Information on IGS achievements, stations and reference products. |
 | International GNSS Service. [ITRF2020→IGS20 parameters](https://files.igs.org/pub/station/coord/IGS20/ITRF2020_to_IGS20.txt). | Source of published parameters for Orbit's optional global alignment. |
-| International GNSS Service. [IGS products](https://igs.org/products/). | Reference for ERP products associated with GNSS series; Orbit does not yet import or pair ERP with SP3. |
+| International GNSS Service. [IGS products](https://igs.org/products/). | Reference for ERP products associated with GNSS series; Orbit retains the ERP explicitly selected with SP3 and never downloads or pairs it automatically. |
 | ISO. [ISO 8601 — date and time formats](https://www.iso.org/iso-8601-date-and-time-format.html). | Sharing convention for moments sent to the API. |
 
 ## Repository implementation sources

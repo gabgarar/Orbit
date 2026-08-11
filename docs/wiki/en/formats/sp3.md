@@ -9,8 +9,8 @@ states by epoch and satellite, not as a set of Keplerian elements, a TLE, or a
 configurable force model.
 
 An imported SP3 creates an ephemeris source for each satellite identifier in
-the file. It can be accompanied by a RINEX CLK file to retain clock
-information, but coordinates and velocity always come exclusively from SP3.
+the file. It can be accompanied by CLK, ERP, SUM, ATT, and OSB; coordinates
+and velocity always come exclusively from SP3.
 
 For providers, Final/Rapid/Ultra-Rapid classes, MGEX, compression, and import
 workflow, see [Precise GNSS products](precise-products.md).
@@ -105,17 +105,22 @@ Earth-fixed (without EOP)**, not ITRF. Reproducible ITRF output requires the
 explicit route, leap seconds, and versioned EOP — DUT1, `xp`, `yp`, and, for
 modern reduction, `dX`/`dY`.
 
-## Associated clock
+## Associated products
 
-A RINEX CLK file can be imported alongside the SP3 from the same series. It
-provides clock biases and, where published, rates and precisions by epoch and
-GNSS identifier. In Orbit its current role is product provenance and metadata:
+The **Import GNSS product** window accepts ancillary products associated with
+one SP3. CLK supplies clock biases; SUM supplies metadata; ATT retains
+published attitude; and OSB retains observable-specific biases. None creates
+an orbit or changes SP3 positions and velocities.
 
-- it cannot create an orbit without a valid SP3;
-- it is not interpolated as a Cartesian state;
-- it does not shift SP3 epochs;
-- it does not calculate PPP, pseudorange corrections, or a navigation
-  solution.
+ERP is different: it supplies UT1 and polar motion for an inertial request.
+ITRF-to-ECI and the **ITRF (con ERP aplicado)** label also require an applied
+realization route; ERP does not invent IGS-to-ITRF. Without ERP, Orbit does not
+claim a complete terrestrial transformation and labels output **Marco terrestre
+aproximado (sin ERP)**. Requesting ECI without that ERP is rejected with
+`Debe proporcionar un fichero ERP para convertir a ECI.`
+
+For each field's file formats and required-SP3 validation, see [Precise GNSS
+products](precise-products.md).
 
 ## Limitations
 

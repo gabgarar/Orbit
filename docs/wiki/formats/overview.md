@@ -9,7 +9,7 @@
 | [TLE](tle.md) | Sí. | Carga de catálogo TLE. | Sí, SGP4. | TLE; efemérides CSV/JSON/OEM muestreadas con SGP4. |
 | [OMM](omm.md) | Sí, JSON/XML cuando contiene TLE. | No hay lector OMM de estado general. | Sí, como TLE extraído. | OMM JSON/XML mínimo. |
 | [OEM](oem.md) | El visor puede cargar un track local temporal; no crea un objeto de catálogo. El gateway solo extrae TLE embebido. | Sí, segmentado e interpolado. | No integrado en `OrbitRuntime`. | Cabecera OEM de catálogo y OEM de efemérides SGP4. |
-| [SP3](sp3.md) y [productos GNSS precisos](precise-products.md) | Sí, como importación local de SP3, con CLK opcional. | Sí, por satélite e interpolado. | Sí, como efeméride tabulada de runtime. | No. |
+| [SP3](sp3.md) y [productos GNSS precisos](precise-products.md) | Sí, con SP3 obligatorio; CLK, ERP, SUM, ATT y OSB opcionales/condicionales. | Sí, por satélite e interpolado. | Sí, como efeméride tabulada de runtime; ECI requiere ERP y una ruta de realización válida. | No. |
 | [OPM](opm.md), [CPF](cpf.md) y RINEX de observaciones | No. | No. | No. | No. |
 
 ## Fronteras de producto
@@ -18,7 +18,7 @@
 flowchart LR
     U[UI / Gateway] --> C[Catálogo TLE u OMM con TLE]
     C --> R[OrbitRuntime / SGP4]
-    U --> P[Importación local SP3 + CLK opcional]
+    U --> P[Importación GNSS: SP3 + auxiliares]
     P --> T[Proveedor tabulado por satélite]
     T --> R
     V[Visor web] --> L[Track OEM local y transitorio]
@@ -32,10 +32,12 @@ El visor web dispone de una ruta local y transitoria para visualizar un OEM
 puro. Esa ruta no registra un objeto de catálogo, no pasa por Gateway/FastAPI
 ni entrega una fuente de efemérides a `OrbitRuntime`. En cambio, la importación
 de producto GNSS preciso registra una fuente SP3 tabulada por satélite, con
-reloj CLK opcional y metadatos de procedencia. El registro se conserva en el
-almacén local de productos precisos y el runtime lo rehidrata al iniciar. No
-convierte el producto en un objeto TLE ni descarga archivos desde el proveedor.
-Consulte [Productos GNSS precisos](precise-products.md).
+CLK, ERP, SUM, ATT y OSB asociados cuando se aportan. El registro se conserva
+en el almacén local de productos precisos y el runtime lo rehidrata al iniciar.
+ERP es requisito para ITRF → ECI y, junto a una ruta de realización válida,
+habilita esa conversión; sin él, la salida se muestra como **Marco terrestre
+aproximado (sin ERP)**. No convierte el producto en un objeto TLE ni descarga
+archivos desde el proveedor. Consulte [Productos GNSS precisos](precise-products.md).
 
 ## Contrato tabulado común
 

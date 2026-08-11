@@ -105,16 +105,16 @@ flowchart TD
 | Módulo | Responsabilidad |
 | --- | --- |
 | `api/routes/` | Adaptadores HTTP y WebSocket; no contienen la lógica numérica principal. |
-| `application/` | Casos de uso de runtime, órbitas manuales, productos precisos SP3/CLK, parámetros orbitales y exportadores. |
+| `application/` | Casos de uso de runtime, órbitas manuales, productos GNSS SP3 con auxiliares, parámetros orbitales y exportadores. |
 | `domain/requests.py` | Modelos Pydantic y normalización de solicitudes. |
 | `orbits/propagators/` | Contratos y motores SGP4, dos cuerpos, Cowell/RK4 y rutas heredadas. |
 | `frames/` | `StateVector`, identificadores de marco, transformaciones y realizaciones terrestres. |
 | `timekeeping/` | Escalas temporales, tablas de segundos intercalares y proveedores EOP C04 locales. |
-| `formats/` | Lectores tabulares SP3, RINEX CLK y OEM con metadatos de marco/tiempo. |
+| `formats/` | Lectores tabulares SP3, CLK, ERP y OEM con metadatos de marco/tiempo. |
 | `ground_stations/` | Elevación y extracción muestreada de ventanas AOS/LOS. |
 | `infrastructure/` | Caché TTL/LRU y observador del directorio de configuración. |
 
-El ciclo de vida FastAPI carga la constelación, incluidos los productos SP3/CLK
+El ciclo de vida FastAPI carga la constelación, incluidos los productos GNSS
 verificados bajo `config/precise-products/`, y activa un observador no
 recursivo de `config/`. El observador solicita una recarga cuando cambia la
 configuración del sistema o el archivo de catálogo configurado.

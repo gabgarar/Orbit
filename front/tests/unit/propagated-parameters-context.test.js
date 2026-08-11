@@ -44,7 +44,7 @@ test("precise-product contexts retain the actual vector frame but expose a quali
     const context = createBuilder({
         getCompositeLayerTelemetry: () => ({
             position_frame: "ITRF",
-            position_frame_display: "Terrestre aproximado (sin EOP)"
+            position_frame_display: "Marco terrestre aproximado (sin ERP)"
         }),
         getCompositeLayerMeta: () => ({
             sourceFormat: "SP3",
@@ -53,7 +53,7 @@ test("precise-product contexts retain the actual vector frame but expose a quali
                 renderer_reference: {
                     status: "approximate_earth_fixed",
                     reference_frame: "ITRF",
-                    display_label: "Terrestre aproximado (sin EOP)",
+                    display_label: "Marco terrestre aproximado (sin ERP)",
                     earth_orientation: { quality: "approximate" }
                 }
             }
@@ -61,7 +61,7 @@ test("precise-product contexts retain the actual vector frame but expose a quali
     })({ id: "layer:precise:demo:G01" });
 
     assert.equal(context.referenceFrame, "ITRF");
-    assert.equal(context.displayReferenceFrame, "Terrestre aproximado (sin EOP)");
+    assert.equal(context.displayReferenceFrame, "Marco terrestre aproximado (sin ERP)");
     assert.equal(context.preciseRendering.nativeFrame, "IGC20");
     assert.equal(context.preciseRendering.approximate, true);
 });

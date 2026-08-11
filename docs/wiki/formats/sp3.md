@@ -9,9 +9,8 @@ fuente de estados por época y satélite, no como un conjunto de elementos
 keplerianos, un TLE ni un modelo de fuerzas configurable.
 
 Un SP3 importado crea una fuente de efeméride para cada identificador de
-satélite contenido en el archivo. Puede acompañarse de un CLK RINEX para
-conservar información de reloj, pero las coordenadas y la velocidad siguen
-procediendo exclusivamente de SP3.
+satélite contenido en el archivo. Puede acompañarse de CLK, ERP, SUM, ATT y
+OSB; las coordenadas y la velocidad siguen procediendo exclusivamente de SP3.
 
 Para proveedores, clases Final/Rapid/Ultra-Rapid, MGEX, compresión y flujo de
 importación, consulte [Productos GNSS precisos](precise-products.md).
@@ -108,18 +107,22 @@ aproximada (sin EOP)**, no ITRF. Una salida ITRF reproducible requiere la ruta
 explícita, segundos intercalares y EOP versionados —DUT1, `xp`, `yp` y, para la
 reducción moderna, `dX`/`dY`—.
 
-## Reloj asociado
+## Productos asociados
 
-Un archivo RINEX CLK puede importarse junto al SP3 de la misma serie. Aporta
-sesgos de reloj y, cuando los publica, tasas y precisiones por época e
-identificador GNSS. En Orbit su papel actual es de procedencia y metadato de
-producto:
+La ventana **Importar producto GNSS** acepta productos auxiliares asociados a
+un único SP3. CLK aporta sesgos de reloj; SUM aporta metadatos; ATT conserva la
+actitud publicada; y OSB conserva sesgos específicos de observable. Ninguno
+crea una órbita ni modifica las posiciones y velocidades de SP3.
 
-- no crea una órbita sin un SP3 válido;
-- no se interpola como estado cartesiano;
-- no desplaza la época del SP3;
-- no calcula PPP, correcciones de pseudodistancia ni una solución de
-  navegación.
+ERP es distinto: aporta UT1 y movimiento polar para una solicitud inercial. La
+conversión ITRF → ECI y la etiqueta **ITRF (con ERP aplicado)** exigen además
+una ruta de realización aplicada; ERP no inventa IGS→ITRF. Sin ERP, no se
+afirma una transformación terrestre completa y se etiqueta **Marco terrestre
+aproximado (sin ERP)**. Solicitar ECI sin ese ERP se rechaza con `Debe
+proporcionar un fichero ERP para convertir a ECI.`
+
+Para los formatos de cada campo y la validación del SP3 obligatorio, consulte
+[Productos GNSS precisos](precise-products.md).
 
 ## Límites
 

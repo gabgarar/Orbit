@@ -193,6 +193,33 @@ class FrameTransformService:
 
         return self._leap_second_table if self._leap_second_table is not None else default_leap_second_table()
 
+    def with_earth_orientation_provider(
+        self,
+        provider: EarthOrientationProvider,
+        *,
+        strict_eop: bool | None = None,
+    ) -> "FrameTransformService":
+        """Return an isolated transform service using ``provider``.
+
+        A precise GNSS product may carry the ERP snapshot that belongs to its
+        SP3.  That snapshot must not replace the process-wide IERS provider:
+        two imported products can legitimately have different operational
+        revisions and coverage.  The clone preserves the selected terrestrial
+        realization and every explicitly registered datum operation, while
+        keeping EOP provenance local to the product that supplied it.
+        """
+
+        if not hasattr(provider, "at") or not callable(provider.at):
+            raise TypeError("provider debe implementar EarthOrientationProvider.at")
+        clone = FrameTransformService(
+            provider,
+            default_terrestrial_realization=self.default_terrestrial_realization,
+            strict_eop=self.strict_eop if strict_eop is None else bool(strict_eop),
+            leap_second_table=self._leap_second_table,
+        )
+        clone._terrestrial_transforms = dict(self._terrestrial_transforms)
+        return clone
+
     def register_terrestrial_realization_transform(
         self,
         source_realization: str,

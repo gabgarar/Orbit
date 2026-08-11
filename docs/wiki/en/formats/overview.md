@@ -9,7 +9,7 @@
 | [TLE](tle.md) | Yes. | TLE catalog upload. | Yes, SGP4. | TLE; CSV/JSON/OEM ephemeris sampled with SGP4. |
 | [WMO](omm.md) | Yes, JSON/XML when it contains TLE. | There is no general status OMM reader. | Yes, like TLE extracted. | OMM JSON/XML minimal. |
 | [OEM](oem.md) | The viewer can load a temporary local track; does not create a catalog object. The gateway only extracts embedded TLE. | Yes, segmented and interpolated. | Not integrated into `OrbitRuntime`. | OEM catalog header and OEM SGP4 anniversaries. |
-| [SP3](sp3.md) and [precise GNSS products](precise-products.md) | Yes, through local SP3 import with optional CLK. | Yes, by satellite and interpolated. | Yes, as a runtime tabulated ephemeris. | No. |
+| [SP3](sp3.md) and [precise GNSS products](precise-products.md) | Yes, with required SP3; CLK, ERP, SUM, ATT, and OSB optional/conditional. | Yes, by satellite and interpolated. | Yes, as a runtime tabulated ephemeris; ECI requires ERP and a valid realization route. | No. |
 | [OPM](opm.md), [CPF](cpf.md), and observation RINEX | No. | No. | No. | No. |
 
 ## Product boundaries
@@ -18,7 +18,7 @@
 flowchart LR
     U[UI / Gateway] --> C[TLE or OMM-with-TLE catalogue]
     C --> R[OrbitRuntime / SGP4]
-    U --> P[Local SP3 + optional CLK import]
+    U --> P[GNSS import: SP3 + ancillary products]
     P --> T[Tabulated provider per satellite]
     T --> R
     V[Visor web] --> L[Track OEM local y transitorio]
@@ -31,11 +31,13 @@ flowchart LR
 The web viewer has a local and temporary route to view a pure OEM. That route
 does not register a catalogue object, go through Gateway/FastAPI, or supply an
 ephemeris source to `OrbitRuntime`. By contrast, precise GNSS product import
-registers a tabulated SP3 source per satellite with optional CLK clock data and
-provenance metadata. The registration is retained in the local precise-product
-store and rehydrated by the runtime on startup. It does not turn the product
-into a TLE object or download files from a provider. See [Precise GNSS
-products](precise-products.md).
+registers a tabulated SP3 source per satellite with CLK, ERP, SUM, ATT, and OSB
+when supplied. The registration is retained in the local precise-product store
+and rehydrated by the runtime on startup. ERP is required for ITRF-to-ECI and,
+together with a valid realization route, enables that conversion; without it,
+output is shown as **Marco terrestre aproximado (sin ERP)**. It does not turn
+the product into a TLE object or download files from a provider. See [Precise
+GNSS products](precise-products.md).
 
 ## Common tabulated contract
 

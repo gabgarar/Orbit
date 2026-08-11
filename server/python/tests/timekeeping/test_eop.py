@@ -11,6 +11,7 @@ from orbit_api.timekeeping import (
     EarthOrientationCoverageError,
     EopSnapshotValidationError,
     IersC04EarthOrientationProvider,
+    IgsErpEarthOrientationProvider,
     StaticEarthOrientationProvider,
     TabularEarthOrientationProvider,
 )
@@ -90,6 +91,44 @@ def test_eop_extrapolation_is_visible_in_the_quality_metadata():
     assert extrapolated.quality == "extrapolated"
     assert extrapolated.sampled_at == _START + timedelta(days=2)
     assert extrapolated.cache_token == ("IERS test table", "fixture-r1", "extrapolated")
+
+
+def test_igs_erp_v2_parser_converts_published_units_and_keeps_snapshot_identity():
+    contents = """
+        version 2
+        MJD Xpole Ypole UT1-UTC LOD Xsig Ysig UTsig LODsig Nr Nf Nt Xrt Yrt
+        61247.00000 1000000 -2000000 2500000 10000 0 0 0 0 0 0 0 0 0
+        61248.00000 3000000  2000000 4500000 30000 0 0 0 0 0 0 0 0 0
+    """.strip()
+
+    provider = IgsErpEarthOrientationProvider.from_text(
+        contents,
+        filename="IGS0OPSFIN_20262070000_01D_ERP.ERP",
+        source="IGS ERP test",
+        version="fixture-erp-v2",
+        quality="final",
+    )
+
+    start = datetime(2026, 7, 26, tzinfo=UTC)
+    sample = provider.at(start)
+    midpoint = provider.at(start + timedelta(hours=12))
+    identity = provider.snapshot_identity
+
+    assert sample.dut1_seconds == pytest.approx(0.25)
+    assert sample.lod_seconds == pytest.approx(0.001)
+    assert sample.xp_radians == pytest.approx(1.0 * ARCSECOND_TO_RADIAN)
+    assert sample.yp_radians == pytest.approx(-2.0 * ARCSECOND_TO_RADIAN)
+    assert sample.dx_radians == 0.0
+    assert sample.dy_radians == 0.0
+    assert sample.source == "IGS ERP test"
+    assert sample.version == "fixture-erp-v2"
+    assert midpoint.dut1_seconds == pytest.approx(0.35)
+    assert midpoint.xp_radians == pytest.approx(2.0 * ARCSECOND_TO_RADIAN)
+    assert identity is not None
+    assert identity.filename == "IGS0OPSFIN_20262070000_01D_ERP.ERP"
+    assert identity.coverage_start == start
+    assert identity.coverage_end == start + timedelta(days=1)
+    assert sample.snapshot_id == f"sha256:{hashlib.sha256(contents.encode('utf-8')).hexdigest()}"
 
 
 def test_iers_c04_14_parser_converts_arcseconds_and_keeps_a_pinned_version():

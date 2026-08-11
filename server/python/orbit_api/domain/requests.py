@@ -377,6 +377,10 @@ class PreciseProductFileUpload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str = Field(min_length=1, max_length=180)
+    kind: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("kind", "file_kind", "fileKind"),
+    )
     content_base64: str = Field(
         validation_alias=AliasChoices("content_base64", "contentBase64"),
         min_length=1,
@@ -392,13 +396,66 @@ class PreciseProductFileUpload(BaseModel):
             raise ValueError("El nombre del fichero preciso no es válido")
         return cleaned
 
+    @field_validator("kind", mode="before")
+    @classmethod
+    def validate_upload_kind(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        if not normalized:
+            return None
+        if normalized not in _PRECISE_PRODUCT_UPLOAD_KINDS:
+            raise ValueError("El tipo de fichero GNSS no es válido")
+        return normalized
+
 
 class PreciseProductImportRequest(BaseModel):
-    """Local precise-product import: one SP3 and an optional RINEX CLK."""
+    """Local GNSS product import with typed optional companion slots.
+
+    ``files`` remains the compatibility transport for existing browser
+    clients and archive imports.  New import dialogs can send the named slots
+    directly.  They may send both during a staged rollout: ``uploads``
+    deduplicates byte-identical entries before the authoritative backend
+    parser validates the product.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
-    files: list[PreciseProductFileUpload] = Field(min_length=1, max_length=8)
+    files: list[PreciseProductFileUpload] = Field(default_factory=list, max_length=8)
+    sp3: PreciseProductFileUpload | None = Field(
+        default=None,
+        validation_alias=AliasChoices("sp3", "sp3File", "sp3_file", "SP3"),
+    )
+    clk: PreciseProductFileUpload | None = Field(
+        default=None,
+        validation_alias=AliasChoices("clk", "clkFile", "clk_file", "CLK"),
+    )
+    erp: PreciseProductFileUpload | None = Field(
+        default=None,
+        validation_alias=AliasChoices("erp", "erpFile", "erp_file", "ERP"),
+    )
+    sum: PreciseProductFileUpload | None = Field(
+        default=None,
+        validation_alias=AliasChoices("sum", "sumFile", "sum_file", "SUM"),
+    )
+    att: PreciseProductFileUpload | None = Field(
+        default=None,
+        validation_alias=AliasChoices("att", "attFile", "att_file", "ATT"),
+    )
+    osb: PreciseProductFileUpload | None = Field(
+        default=None,
+        validation_alias=AliasChoices("osb", "osbFile", "osb_file", "OSB"),
+    )
+    require_eci: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "require_eci",
+            "requireEci",
+            "requireEciConversion",
+            "enable_eci_conversion",
+            "enableEciConversion",
+        ),
+    )
     provider_hint: str = Field(
         default="auto",
         validation_alias=AliasChoices("provider_hint", "providerHint", "provider"),
@@ -409,6 +466,114 @@ class PreciseProductImportRequest(BaseModel):
         validation_alias=AliasChoices("product_class", "productClass", "class"),
         max_length=40,
     )
+
+    @model_validator(mode="after")
+    def validate_declared_product_file_kinds(self) -> "PreciseProductImportRequest":
+        """Reject a browser-declared kind that contradicts its filename.
+
+        The importer remains the authority for archive inspection and content
+        parsing.  This check only prevents a client from presenting a CLK as
+        an ERP (or a named ``sp3`` slot as a different product member) before
+        it reaches that boundary.
+        """
+
+        for upload in self.files:
+            _validate_precise_upload_kind(upload)
+        for slot, upload in (
+            ("sp3", self.sp3),
+            ("clk", self.clk),
+            ("erp", self.erp),
+            ("sum", self.sum),
+            ("att", self.att),
+            ("osb", self.osb),
+        ):
+            if upload is None:
+                continue
+            _validate_precise_upload_kind(upload, expected_slot=slot)
+        return self
+
+    def uploads(self) -> list[PreciseProductFileUpload]:
+        """Return every logical upload once, preserving slot identity.
+
+        ``name`` plus base64 bytes is the appropriate deduplication key at
+        the request boundary: two identical slot/list entries are one file,
+        while different bytes under the same name are deliberately kept so
+        the application service can reject unsafe duplicate sources.
+        """
+
+        candidates = [*self.files, self.sp3, self.clk, self.erp, self.sum, self.att, self.osb]
+        resolved: list[PreciseProductFileUpload] = []
+        seen: set[tuple[str, str]] = set()
+        for upload in candidates:
+            if upload is None:
+                continue
+            key = (upload.name.casefold(), upload.content_base64)
+            if key in seen:
+                continue
+            seen.add(key)
+            resolved.append(upload)
+        return resolved
+
+
+_PRECISE_PRODUCT_UPLOAD_KINDS = frozenset({"sp3", "clk", "erp", "sum", "att", "osb", "archive"})
+_PRECISE_PRODUCT_NAMED_SLOT_SUFFIXES = {
+    "sp3": (".sp3", ".sp3.gz"),
+    "clk": (".clk", ".clk.gz"),
+    "erp": (".erp", ".erp.gz"),
+    "sum": (".sum",),
+    "att": (".att.obx", ".att.obx.gz"),
+    "osb": (".osb.bia", ".osb.bia.gz"),
+}
+
+
+def _precise_product_filename_kind(name: str) -> str | None:
+    """Classify the published GNSS filename suffix without reading bytes."""
+
+    lowered = str(name or "").strip().casefold()
+    if lowered.endswith(".zip"):
+        return "archive"
+    if lowered.endswith((".gz", ".z")):
+        lowered = lowered.rsplit(".", 1)[0]
+    if lowered.endswith((".sp3", ".sp3c", ".sp3d")):
+        return "sp3"
+    if lowered.endswith((".clk", ".clk_30s", ".clk_05s")):
+        return "clk"
+    if lowered.endswith(".erp"):
+        return "erp"
+    if lowered.endswith(".sum"):
+        return "sum"
+    if lowered.endswith(".att.obx"):
+        return "att"
+    if lowered.endswith(".osb.bia"):
+        return "osb"
+    return None
+
+
+def _validate_precise_upload_kind(
+    upload: PreciseProductFileUpload,
+    *,
+    expected_slot: str | None = None,
+) -> None:
+    """Ensure optional browser ``kind`` agrees with suffix and slot."""
+
+    inferred = _precise_product_filename_kind(upload.name)
+    if expected_slot is not None and upload.kind not in {None, expected_slot}:
+        raise ValueError(
+            f"El campo {expected_slot.upper()} no puede declarar el tipo {upload.kind.upper()}"
+        )
+    if expected_slot is not None:
+        canonical_suffixes = _PRECISE_PRODUCT_NAMED_SLOT_SUFFIXES[expected_slot]
+        if not upload.name.casefold().endswith(canonical_suffixes):
+            readable = " o ".join(suffix.upper() for suffix in canonical_suffixes)
+            raise ValueError(
+                f"El campo {expected_slot.upper()} solo admite ficheros {readable}"
+            )
+    if inferred is None:
+        raise ValueError(f"{upload.name} no tiene una extensión GNSS reconocida")
+    if upload.kind is not None and upload.kind != inferred:
+        raise ValueError(
+            f"El tipo declarado {upload.kind.upper()} no coincide con la extensión de {upload.name}"
+        )
 
 
 def _azimuth_within_limits(azimuth_deg: float, minimum_deg: float, maximum_deg: float) -> bool:

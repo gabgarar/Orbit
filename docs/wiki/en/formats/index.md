@@ -14,7 +14,7 @@ it is not equivalent to a function exposed by the interface, gateway, or public 
 | [WMO](omm.md) | JSON/XML catalog limited to embedded TLE elements. |
 | [OEM](oem.md) | Segmented Python Reader; catalog import only if it contains TLE. |
 | [SP3](sp3.md) | Tabulated precise-ephemeris contract. |
-| [Precise GNSS products](precise-products.md) | Local IGS/CDDIS, MGEX, and ESA NSO import; SP3 with optional CLK and provenance. |
+| [Precise GNSS products](precise-products.md) | Local IGS/CDDIS, MGEX, and ESA NSO import; required SP3, associated CLK/ERP/SUM/ATT/OSB, and provenance. |
 | [OPM](opm.md) | Not available. |
 | [Unsupported formats](unsupported-formats.md) | Product limits and alternatives. |
 

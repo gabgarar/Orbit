@@ -26,7 +26,7 @@ import shutil
 import tempfile
 import zipfile
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
@@ -38,8 +38,12 @@ from orbit_api.formats import (
     parse_rinex_clock_product,
     parse_sp3_state_provider,
 )
-from orbit_api.frames import FrameTransformService
-from orbit_api.timekeeping import TimeScale, to_utc
+from orbit_api.frames import FrameId, FrameTransformService, StateVector
+from orbit_api.timekeeping import (
+    IgsErpEarthOrientationProvider,
+    TimeScale,
+    to_utc,
+)
 
 MAX_PRECISE_PRODUCT_FILES = 8
 MAX_PRECISE_PRODUCT_UPLOAD_BYTES = 64 * 1024 * 1024
@@ -116,7 +120,7 @@ class DecodedProductFile:
 
 @dataclass(frozen=True, slots=True)
 class ProductSourceFile:
-    """Persisted provenance for one SP3/CLK logical source."""
+    """Persisted provenance for one logical precise-GNSS source."""
 
     name: str
     kind: str
@@ -143,7 +147,13 @@ class ProductSourceFile:
 
 @dataclass(frozen=True, slots=True)
 class PreciseProduct:
-    """An SP3 orbit product, its optional CLK companion and provenance."""
+    """An SP3 product with optional GNSS companions and provenance.
+
+    The ERP companion is special: it owns the Earth-orientation values used
+    for this product's terrestrial-to-inertial conversion.  CLK, SUM, ATT and
+    OSB are retained as immutable source companions even when Orbit does not
+    yet evaluate their domain-specific payloads.
+    """
 
     product_id: str
     name: str
@@ -155,6 +165,7 @@ class PreciseProduct:
     detected_product_family: str
     sp3: Sp3StateProvider
     clock: RinexClockProduct | None
+    erp: IgsErpEarthOrientationProvider | None
     source_files: tuple[ProductSourceFile, ...]
     decoded_files: tuple[DecodedProductFile, ...] = field(repr=False, compare=False)
 
@@ -171,6 +182,8 @@ class PreciseProduct:
             raise PreciseProductImportError("La familia detectada del producto preciso no es válida")
         if not self.source_files or not self.decoded_files:
             raise PreciseProductImportError("El producto preciso no contiene ficheros de origen")
+        if self.erp is not None and not isinstance(self.erp, IgsErpEarthOrientationProvider):
+            raise PreciseProductImportError("El proveedor ERP del producto preciso no es válido")
 
     @property
     def satellite_ids(self) -> tuple[str, ...]:
@@ -184,12 +197,84 @@ class PreciseProduct:
     def clock_file(self) -> ProductSourceFile | None:
         return next((source for source in self.source_files if source.kind == "clk"), None)
 
+    @property
+    def erp_file(self) -> ProductSourceFile | None:
+        return next((source for source in self.source_files if source.kind == "erp"), None)
+
+    @property
+    def sum_file(self) -> ProductSourceFile | None:
+        return next((source for source in self.source_files if source.kind == "sum"), None)
+
+    @property
+    def attitude_file(self) -> ProductSourceFile | None:
+        return next((source for source in self.source_files if source.kind == "att"), None)
+
+    @property
+    def osb_file(self) -> ProductSourceFile | None:
+        return next((source for source in self.source_files if source.kind == "osb"), None)
+
     def runtime_id(self, satellite_id: str) -> str:
         identifier = _satellite_id(satellite_id)
         return f"precise:{self.product_id}:{identifier}"
 
     def provider_for_satellite(self, satellite_id: str) -> TabularStateProvider:
         return self.sp3.for_satellite(satellite_id)
+
+    def eci_state_at(
+        self,
+        satellite_id: str,
+        instant: datetime.datetime,
+        *,
+        target_frame: FrameId | str = FrameId.EME2000,
+    ) -> StateVector:
+        """Return a product state in an inertial frame using its ERP.
+
+        The method deliberately does not fall back to the process-wide visual
+        EOP provider.  An operator asking for an ECI/EME2000 view of a
+        precise GNSS product must supply its ERP companion, otherwise the
+        result could look precise while being tied to a different Earth
+        rotation solution.
+        """
+
+        capability = self.eci_conversion_summary()
+        if self.erp is None:
+            raise PreciseProductImportError(
+                "Debe proporcionar un fichero ERP para convertir a ECI."
+            )
+        if not capability["route_available"]:
+            raise PreciseProductImportError(str(capability["reason"]))
+        identity = self.erp.snapshot_identity
+        erp_start = identity.coverage_start if identity is not None else self.erp.samples[0].sampled_at
+        erp_end = identity.coverage_end if identity is not None else self.erp.samples[-1].sampled_at
+        assert erp_start is not None and erp_end is not None
+        try:
+            requested_utc = to_utc(instant, TimeScale.UTC)
+        except ValueError as exc:
+            raise PreciseProductImportError(
+                "La época solicitada debe poder expresarse en UTC para convertir a ECI."
+            ) from exc
+        if not erp_start <= requested_utc <= erp_end:
+            raise PreciseProductImportError(
+                "El ERP importado no cubre la época solicitada para convertir a ECI."
+            )
+        provider = self.provider_for_satellite(satellite_id)
+        reference = self.sp3.metadata.reference_frame
+        transformer = self.sp3.frame_transformer
+        # FrameTransformService intentionally refuses to jump from an
+        # external terrestrial realization (for example IGc20) directly to
+        # EME2000.  When, and only when, the capability above found a
+        # registered datum operation, make that physical two-step path
+        # explicit: source realization -> selected ITRF realization -> ECI.
+        if reference.family != "ITRF":
+            if transformer is None or transformer.default_terrestrial_realization is None:
+                raise PreciseProductImportError(str(capability["reason"]))
+            terrestrial = transformer.transform(
+                provider.native_state_at(instant),
+                target_frame=FrameId.ITRF,
+                target_realization=transformer.default_terrestrial_realization,
+            )
+            return transformer.transform(terrestrial, target_frame=target_frame)
+        return provider.state_at(instant, target_frame=target_frame)
 
     def coverage_utc(self, satellite_id: str | None = None) -> tuple[datetime.datetime | None, datetime.datetime | None]:
         providers: Iterable[TabularStateProvider]
@@ -249,15 +334,48 @@ class PreciseProduct:
             },
         }
 
-    def rendering_summary(self) -> dict[str, object]:
-        """Describe whether Orbit can presently produce an Earth-fixed view.
+    def erp_summary(self) -> dict[str, object]:
+        """Return the explicit ERP availability and immutable provenance."""
 
-        Import always preserves the native SP3 realization.  A state declared
-        as IGS14, or an IGS20-family product without its explicit policy, may
-        not be silently painted as ITRF: the operator must register an
-        explicit datum operation.  The opt-in IGS20-family policy is
-        available for the published IGS20/IGb20/IGc20 relationships.
+        if self.erp is None:
+            return {
+                "present": False,
+                "file": None,
+                "sample_count": 0,
+                "coverage_start": None,
+                "coverage_end": None,
+                "source": None,
+                "version": None,
+                "quality": None,
+                "snapshot_id": None,
+            }
+        identity = self.erp.snapshot_identity
+        samples = self.erp.samples
+        first = samples[0]
+        return {
+            "present": True,
+            "file": self.erp_file.name if self.erp_file is not None else None,
+            "sample_count": len(samples),
+            "coverage_start": _iso_or_none(identity.coverage_start if identity is not None else first.sampled_at),
+            "coverage_end": _iso_or_none(identity.coverage_end if identity is not None else samples[-1].sampled_at),
+            "source": first.source,
+            "version": first.version,
+            "quality": first.quality,
+            "snapshot_id": identity.content_id if identity is not None else first.snapshot_id,
+        }
+
+    def eci_conversion_summary(self) -> dict[str, object]:
+        """Describe whether this source can make a product-bound ECI view.
+
+        ERP supplies Earth rotation; it does *not* turn an IGS realization
+        into an ITRF realization. That independent datum operation remains an
+        explicit FrameTransformService requirement.
         """
+
+        return _eci_conversion_contract(self.sp3, self.erp)
+
+    def rendering_summary(self) -> dict[str, object]:
+        """Describe the Earth-fixed view without claiming absent ERP data."""
 
         reference = self.sp3.metadata.reference_frame
         transformer = self.sp3.frame_transformer
@@ -290,27 +408,40 @@ class PreciseProduct:
                     f"El frame de origen {reference.label} no tiene una ruta ITRF activa. "
                     "Importa o registra una transformación de realización explícita."
                 )
-        if not available:
+
+        eci = self.eci_conversion_summary()
+        erp = self.erp_summary()
+        if self.erp is None:
+            status = "approximate_earth_fixed"
+            display_label = "Marco terrestre aproximado (sin ERP)"
+            no_erp_reason = (
+                "El SP3 se conserva en su marco nativo y puede visualizarse en "
+                "la Tierra, pero no hay ERP asociado para una conversión ITRF→ECI."
+            )
+            # Keep a missing terrestrial-realization operation visible too:
+            # the mandated display label must not erase the independent IGS
+            # datum warning an operator needs before an Earth-fixed output.
+            reason = f"{no_erp_reason} {reason}" if not available and reason else no_erp_reason
+        elif not available:
             status = "unavailable"
             display_label = reference.label
+        elif eci["route_available"] and eci["available_within_erp_coverage"]:
+            status = "earth_orientation_transform"
+            display_label = "ITRF (con ERP aplicado)"
+            reason = str(eci["reason"])
         elif reference.family == "ITRF":
-            # A declared ITRF/ITRF20xx SP3 state is already terrestrial. No
-            # EOP/ERP rotation or datum operation is implied by a renderer
-            # requesting an Earth-fixed coordinate array.
             status = "native"
             display_label = reference.label
+            reason = str(eci["reason"])
         else:
             status = "terrestrial_realization_transform"
             display_label = target_realization or "ITRF"
-        terrestrial_source = reference.family in {"ITRF", "IGS", "ITRS", "WGS84", "PZ90"}
+            reason = str(eci["reason"])
         return {
             "available": available,
             "target_frame": "ITRF",
             "target_realization": target_realization,
             "source_frame": reference.label,
-            # Additive native/render split. Existing clients may continue to
-            # read ``source_frame``; new clients must not infer ITRF from the
-            # renderer target when no realization operation is registered.
             "native_reference_frame": reference.label,
             "native_frame": {
                 "name": reference.family,
@@ -321,16 +452,14 @@ class PreciseProduct:
             "status": status,
             "display_label": display_label,
             "earth_orientation": {
-                # Typical SP3 coordinates are already terrestrial. Neither a
-                # native ITRF state nor an explicit IGS->ITRF datum operation
-                # uses EOP/ERP, so do not advertise a nonexistent solution.
-                "required": not terrestrial_source,
-                "applied": False,
-                "source": None,
-                "version": None,
-                "quality": None,
-                "snapshot_id": None,
+                "required": True,
+                "applied": bool(eci["available_within_erp_coverage"]),
+                "source": erp["source"],
+                "version": erp["version"],
+                "quality": erp["quality"],
+                "snapshot_id": erp["snapshot_id"],
             },
+            "eci_conversion": eci,
             "terrestrial_realization_operation": None,
             "reason": reason,
         }
@@ -371,6 +500,8 @@ class PreciseProduct:
                 "start_time": _iso_or_none(start),
                 "end_time": _iso_or_none(end),
                 "clock": clock,
+                "erp": self.erp_summary(),
+                "eci_conversion": rendering["eci_conversion"],
                 "rendering": rendering,
             },
         }
@@ -395,6 +526,10 @@ class PreciseProduct:
             },
             "orbit_file": self.orbit_file.name,
             "clock_file": self.clock_file.name if self.clock_file is not None else None,
+            "erp_file": self.erp_file.name if self.erp_file is not None else None,
+            "sum_file": self.sum_file.name if self.sum_file is not None else None,
+            "attitude_file": self.attitude_file.name if self.attitude_file is not None else None,
+            "osb_file": self.osb_file.name if self.osb_file is not None else None,
             "source_files": [source.payload() for source in self.source_files],
             "checksums": {source.name: source.sha256 for source in self.source_files},
             "frame": self.sp3.metadata.reference_frame.label,
@@ -407,6 +542,13 @@ class PreciseProduct:
             "start_time_ms": _epoch_millis(start),
             "end_time_ms": _epoch_millis(end),
             "clock": self.clock_summary(),
+            "erp": self.erp_summary(),
+            "companions": {
+                "sum": self.sum_file.name if self.sum_file is not None else None,
+                "att": self.attitude_file.name if self.attitude_file is not None else None,
+                "osb": self.osb_file.name if self.osb_file is not None else None,
+            },
+            "eci_conversion": rendering["eci_conversion"],
             "renderer_reference": rendering,
             "rendering": rendering,
             "satellite_count": len(self.satellite_ids),
@@ -442,6 +584,7 @@ def import_precise_product(
     *,
     provider_hint: object = "auto",
     product_class: object = "auto",
+    require_eci: bool = False,
     frame_transformer: FrameTransformService | None = None,
 ) -> PreciseProduct:
     """Decode, validate and parse one local SP3 product plus optional CLK."""
@@ -451,6 +594,7 @@ def import_precise_product(
         decoded_files,
         provider_hint=provider_hint,
         product_class=product_class,
+        require_eci=require_eci,
         frame_transformer=frame_transformer,
     )
 
@@ -460,6 +604,7 @@ def build_precise_product(
     *,
     provider_hint: object = "auto",
     product_class: object = "auto",
+    require_eci: bool = False,
     frame_transformer: FrameTransformService | None = None,
     product_id: str | None = None,
     product_name: str | None = None,
@@ -476,7 +621,7 @@ def build_precise_product(
     """
 
     if not files:
-        raise PreciseProductImportError("Debes seleccionar al menos un fichero SP3")
+        raise PreciseProductImportError("Debe proporcionar un fichero SP3.")
     if len(files) > MAX_PRECISE_PRODUCT_FILES:
         raise PreciseProductImportError("El producto preciso contiene demasiados ficheros")
     recognized: dict[str, DecodedProductFile] = {}
@@ -484,15 +629,17 @@ def build_precise_product(
         kind = _detect_format(file)
         if kind is None:
             raise PreciseProductImportError(
-                f"No se reconoce {file.name} como SP3 o RINEX CLK"
+                f"No se reconoce {file.name} como SP3, CLK, ERP, SUM, ATT u OSB"
             )
         if kind in recognized:
             raise PreciseProductImportError(
-                f"Un producto preciso admite un SP3 y, opcionalmente, un CLK; se repite {kind.upper()}"
+                f"Un producto GNSS admite un solo fichero {kind.upper()}"
             )
         recognized[kind] = file
     if "sp3" not in recognized:
-        raise PreciseProductImportError("El producto preciso requiere un fichero SP3 de órbita")
+        raise PreciseProductImportError("Debe proporcionar un fichero SP3.")
+    if require_eci and "erp" not in recognized:
+        raise PreciseProductImportError("Debe proporcionar un fichero ERP para convertir a ECI.")
 
     provider_hint_id = normalize_provider_hint(provider_hint)
     requested_class = normalize_product_class(product_class)
@@ -512,16 +659,34 @@ def build_precise_product(
     selected_family = _selected_product_family(selected_provider, detected_family)
 
     try:
+        erp = (
+            IgsErpEarthOrientationProvider.from_text(
+                _decode_text(recognized["erp"]),
+                filename=recognized["erp"].name,
+                source=f"IGS ERP · {recognized['erp'].name}",
+                version=recognized["erp"].sha256[:16],
+                quality=_erp_quality(selected_class),
+            )
+            if "erp" in recognized
+            else None
+        )
+        base_transformer = frame_transformer or FrameTransformService()
+        product_transformer = (
+            base_transformer.with_earth_orientation_provider(erp, strict_eop=False)
+            if erp is not None
+            else base_transformer
+        )
         sp3 = parse_sp3_state_provider(
             _decode_text(recognized["sp3"]),
-            frame_transformer=frame_transformer,
+            frame_transformer=product_transformer,
         )
+        sp3 = _annotate_precise_gnss_frame_contract(sp3, erp)
         clock = (
             parse_rinex_clock_product(_decode_text(recognized["clk"]))
             if "clk" in recognized
             else None
         )
-    except EphemerisFormatError as exc:
+    except (EphemerisFormatError, ValueError) as exc:
         raise PreciseProductImportError(str(exc)) from exc
 
     sources = tuple(source_files or _source_metadata(files))
@@ -548,6 +713,7 @@ def build_precise_product(
         detected_product_family=detected_family or "unknown",
         sp3=sp3,
         clock=clock,
+        erp=erp,
         source_files=sources,
         decoded_files=tuple(files),
     )
@@ -557,7 +723,7 @@ def decode_precise_product_upload(files: Sequence[tuple[str, str]]) -> tuple[Dec
     """Decode base64 uploads with archive and decompression safety limits."""
 
     if not files:
-        raise PreciseProductImportError("Debes adjuntar un SP3 y, opcionalmente, un CLK")
+        raise PreciseProductImportError("Debe proporcionar un fichero SP3.")
     if len(files) > MAX_PRECISE_PRODUCT_FILES:
         raise PreciseProductImportError(
             f"Se permiten como máximo {MAX_PRECISE_PRODUCT_FILES} ficheros por producto preciso"
@@ -769,11 +935,204 @@ def _source_metadata(files: Sequence[DecodedProductFile]) -> tuple[ProductSource
     return tuple(sources)
 
 
+def _erp_quality(product_class: str) -> str:
+    """Map the product class to a non-fictional ERP quality label."""
+
+    if product_class in {"final", "rapid"}:
+        return product_class
+    if product_class == "ultra_rapid":
+        return "ultra_rapid"
+    return "unknown"
+
+
+def _sp3_coverage_utc(
+    sp3: Sp3StateProvider,
+) -> tuple[datetime.datetime | None, datetime.datetime | None]:
+    """Return the finite SP3 coverage in UTC without assuming its scale.
+
+    The ERP table is indexed in UTC.  Comparing it with raw SP3 calendar
+    values would be wrong for GPS/TAI products, so this helper uses the same
+    explicit scale conversion as the public product coverage method.
+    """
+
+    values: list[datetime.datetime] = []
+    for provider in sp3.satellites.values():
+        for sample in provider.samples:
+            try:
+                values.append(to_utc(sample.epoch, sample.time_scale))
+            except ValueError as exc:
+                raise PreciseProductImportError(
+                    "No se puede convertir la cobertura temporal SP3 a UTC"
+                ) from exc
+    return min(values, default=None), max(values, default=None)
+
+
+def _eci_conversion_contract(
+    sp3: Sp3StateProvider,
+    erp: IgsErpEarthOrientationProvider | None,
+) -> dict[str, object]:
+    """Describe route and ERP-coverage capability for product-bound ECI.
+
+    ``available`` deliberately means that the entire imported SP3 coverage
+    can be transformed.  A product may still have a valid route for a subset
+    of epochs; ``available_within_erp_coverage`` and ``coverage`` expose that
+    distinction so callers do not advertise an ECI comparison for an epoch
+    that the selected ERP cannot support.
+    """
+
+    product_start, product_end = _sp3_coverage_utc(sp3)
+    reference = sp3.metadata.reference_frame
+    transformer = sp3.frame_transformer
+    target_realization = (
+        transformer.default_terrestrial_realization if transformer is not None else None
+    )
+    source_realization = reference.realization or reference.label
+    if erp is None:
+        return {
+            "required": True,
+            "available": False,
+            "route_available": False,
+            "available_within_erp_coverage": False,
+            "target_frame": "EME2000",
+            "erp_applied": False,
+            "coverage": {
+                "sp3_start": _iso_or_none(product_start),
+                "sp3_end": _iso_or_none(product_end),
+                "erp_start": None,
+                "erp_end": None,
+                "overlaps_product": False,
+                "covers_product": False,
+            },
+            "reason": "Debe proporcionar un fichero ERP para convertir a ECI.",
+        }
+
+    # An SP3 that already declares an ITRF-family frame has a physical
+    # terrestrial→celestial route using its own declared realization plus the
+    # product ERP.  The runtime's *renderer* realization is irrelevant to
+    # that ECI conversion; requiring it to match would incorrectly disable a
+    # valid plain ``ITRF``/ITRF20xx source merely because the UI targets a
+    # different terrestrial realization.
+    terrestrial_route = reference.family == "ITRF"
+    realization_route = bool(
+        transformer is not None
+        and target_realization is not None
+        and transformer.has_terrestrial_realization_transform(
+            source_realization,
+            target_realization,
+        )
+    )
+    route_available = terrestrial_route or realization_route
+    identity = erp.snapshot_identity
+    erp_start = identity.coverage_start if identity is not None else erp.samples[0].sampled_at
+    erp_end = identity.coverage_end if identity is not None else erp.samples[-1].sampled_at
+    assert erp_start is not None and erp_end is not None
+    overlaps_product = bool(
+        product_start is not None
+        and product_end is not None
+        and product_start <= erp_end
+        and erp_start <= product_end
+    )
+    covers_product = bool(
+        product_start is not None
+        and product_end is not None
+        and erp_start <= product_start
+        and product_end <= erp_end
+    )
+    coverage = {
+        "sp3_start": _iso_or_none(product_start),
+        "sp3_end": _iso_or_none(product_end),
+        "erp_start": _iso_or_none(erp_start),
+        "erp_end": _iso_or_none(erp_end),
+        "overlaps_product": overlaps_product,
+        "covers_product": covers_product,
+    }
+    if not route_available:
+        if reference.family == "IGS":
+            reason = (
+                f"El ERP está disponible, pero {reference.label} requiere además una "
+                "transformación de realización terrestre registrada antes de convertir a ECI."
+            )
+        else:
+            reason = (
+                f"El ERP está disponible, pero {reference.label} no tiene una ruta terrestre "
+                "registrada para convertir a ECI."
+            )
+    elif covers_product:
+        reason = (
+            "La conversión terrestre→EME2000 usa el ERP importado y conserva "
+            "la realización terrestre declarada por el SP3."
+        )
+    elif overlaps_product:
+        reason = (
+            "La conversión terrestre→EME2000 está disponible solo dentro de la cobertura "
+            "temporal del ERP importado; no cubre toda la ventana SP3."
+        )
+    else:
+        reason = (
+            "El ERP importado no cubre ninguna época del SP3; no se puede solicitar una "
+            "conversión a ECI hasta importar un ERP con cobertura coincidente."
+        )
+    return {
+        "required": True,
+        "available": route_available and covers_product,
+        "route_available": route_available,
+        "available_within_erp_coverage": route_available and overlaps_product,
+        "target_frame": "EME2000",
+        "erp_applied": route_available and overlaps_product,
+        "coverage": coverage,
+        "reason": reason,
+    }
+
+
+def _annotate_precise_gnss_frame_contract(
+    sp3: Sp3StateProvider,
+    erp: IgsErpEarthOrientationProvider | None,
+) -> Sp3StateProvider:
+    """Attach product ERP semantics to native and interpolated SP3 states.
+
+    OrbitRuntime serialises a generic StateVector and cannot otherwise know
+    whether a terrestrial SP3 arrived with the ERP that enables its ECI
+    conversion.  The compact provenance marker is copied by the tabular
+    interpolation adapter, so realtime, ephemerides and AOS/LOS present the
+    same qualified frame language as the import payload.
+    """
+
+    identity = erp.snapshot_identity if erp is not None else None
+    eci = _eci_conversion_contract(sp3, erp)
+    contract = {
+        "erp_present": erp is not None,
+        "erp_source": erp.samples[0].source if erp is not None else None,
+        "erp_version": erp.samples[0].version if erp is not None else None,
+        "erp_quality": erp.samples[0].quality if erp is not None else None,
+        "erp_snapshot_id": identity.content_id if identity is not None else None,
+        "eci_target_frame": "EME2000",
+        "eci_route_available": eci["route_available"],
+        "eci_available": eci["available"],
+        "eci_available_within_erp_coverage": eci["available_within_erp_coverage"],
+        "eci_coverage": eci["coverage"],
+        "eci_reason": eci["reason"],
+    }
+    providers: dict[str, TabularStateProvider] = {}
+    for satellite_id, provider in sp3.satellites.items():
+        samples = tuple(
+            replace(
+                sample,
+                provenance={
+                    **sample.provenance,
+                    "precise_gnss_frame_contract": contract,
+                },
+            )
+            for sample in provider.samples
+        )
+        providers[satellite_id] = replace(provider, samples=samples)
+    return replace(sp3, satellites=providers)
+
+
 def _source_from_manifest(value: Mapping[str, Any]) -> ProductSourceFile:
     try:
         name = _safe_file_name(value.get("name"))
         kind = str(value.get("kind") or "").strip().lower()
-        if kind not in {"sp3", "clk"}:
+        if kind not in {"sp3", "clk", "erp", "sum", "att", "osb"}:
             raise ValueError
         sha256 = _checksum(value.get("sha256"))
         uploaded_name = _safe_file_name(value.get("uploaded_name"))
@@ -1100,6 +1459,14 @@ def _detect_format(file: DecodedProductFile) -> str | None:
         return "sp3"
     if name.endswith((".clk", ".clk_30s", ".clk_05s")):
         return "clk"
+    if name.endswith(".erp"):
+        return "erp"
+    if name.endswith(".sum"):
+        return "sum"
+    if name.endswith(".att.obx"):
+        return "att"
+    if name.endswith(".osb.bia"):
+        return "osb"
     prefix = file.data[:2_048].decode("ascii", errors="ignore")
     if prefix.lstrip("\ufeff").startswith("#") and "%c" in file.data[:8_192].decode("ascii", errors="ignore"):
         return "sp3"
@@ -1255,7 +1622,9 @@ def _clean_product_name(value: object) -> str:
     # filename token intact (for example IGS0OPSFIN_..._ORB).
     while True:
         stem, extension = os.path.splitext(name)
-        if extension.casefold() in {".gz", ".z", ".zip", ".sp3", ".sp3c", ".sp3d", ".clk"} and stem:
+        if extension.casefold() in {
+            ".gz", ".z", ".zip", ".sp3", ".sp3c", ".sp3d", ".clk", ".erp", ".sum", ".obx", ".bia", ".att", ".osb",
+        } and stem:
             name = stem
             continue
         break

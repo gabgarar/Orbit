@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadChartPng } from "../../../front/js/runtime/chartPngExport.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
 import { openGroundStationExportMenu } from "./GroundStationExportMenu.jsx";
+import { resolvePreciseProductFrameStatus } from "../../../front/js/features/preciseProducts/frameStatus.js";
 
 const initialState = { stations: [], satellites: [], activeStationId: "", activeSatelliteId: "", now: null };
 const inputClass = "min-h-8 w-full rounded-md border border-[#284465] bg-[#091323] px-2 text-[11px] font-semibold text-[#d9e6fa] outline-none focus:border-[#5d86ff]";
@@ -131,7 +132,19 @@ function exportPasses(result) {
     anchor.href = url; anchor.download = "orbit-ground-station-passes.csv"; anchor.click(); URL.revokeObjectURL(url);
 }
 
-function resultFrameLabel(result) {
+function resultFrameStatus(result) {
+    const rendererReference = result?.rendererReference ?? result?.renderer_reference;
+    const sourceFormat = String(result?.sourceFormat ?? result?.source_format ?? "").toUpperCase();
+    if (!rendererReference && sourceFormat !== "SP3") return null;
+    return resolvePreciseProductFrameStatus({
+        sp3: result?.sp3 ?? result?.preciseProduct ?? result?.precise_product ?? null,
+        renderer_reference: rendererReference,
+        earth_orientation: result?.earthOrientation ?? result?.earth_orientation ?? null
+    }, { runtimeFrame: result?.referenceFrame ?? result?.reference_frame ?? "" });
+}
+
+function resultFrameLabel(result, frameStatus = resultFrameStatus(result)) {
+    if (frameStatus) return frameStatus.displayFrame;
     const label = result?.referenceFrameLabel ?? result?.reference_frame_label
         ?? result?.referenceFrame ?? result?.reference_frame;
     const normalized = String(label || "").trim();
@@ -362,6 +375,7 @@ export default function GroundStationsPanel() {
     const stationDownlinkReceivedPowerDbm = Number(result?.satelliteReceivedPowerDbm);
     const stationDownlinkSnrDb = Number(result?.satelliteSnrDb);
     const satelliteProfileAvailable = result?.satelliteLinkAvailable === true;
+    const passFrameStatus = resultFrameStatus(result);
 
     if (!open) return null;
     const cancelPendingAnalysis = () => window.dispatchEvent(new Event("orbit:ground-stations-analysis-cancel"));
@@ -421,10 +435,10 @@ export default function GroundStationsPanel() {
             <section className="rounded-lg border border-[#203956] bg-[rgba(13,29,51,.7)] p-2.5"><strong className="text-[11px]">Analizar pases</strong><label className="mt-2 grid gap-1 text-[10px] text-[#9fb3d0]">Satélite<select className={inputClass} value={satelliteId} onChange={(event) => { cancelPendingAnalysis(); setSatelliteId(event.target.value); setResult(null); }} disabled={!state.satellites.length}><option value="">Selecciona una capa</option>{state.satellites.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>{!state.satellites.length && <p className="mb-0 text-[10px] text-[#d8aa67]">No hay satélites disponibles en Layers.</p>}{station && <p className="mb-0 text-[10px] text-[#8ea4c4]">Usa la máscara de {station.name}: {station.min_elevation_deg}°.</p>}<button type="button" disabled={!stationId || !satelliteId || loading} onClick={analyze} className="mt-3 w-full rounded-md border border-[#597dff] bg-[#304dc0] py-2 text-[11px] font-bold text-white disabled:opacity-45">{loading ? "Calculando…" : "Analizar pases"}</button></section>
             {result && <section className="rounded-lg border border-[#2b5b4a] bg-[rgba(11,46,37,.5)] p-2.5">
                 <div className="flex justify-between"><strong className="text-[11px]">Resultado</strong><span className="text-[10px] text-[#8fe7b7]">{result.visibleNow ? "IN VIEW" : "OUT OF VIEW"}</span></div>
-                <p className="my-1 text-[10px] text-[#b8d6c7]">{result.error || `${result.satellite} · ${resultFrameLabel(result)} · ${result.timeScale || "UTC"} · ${result.passes?.length || 0} pases`}</p>
-                {result.rendererReference?.available === false && <p className="mt-1 mb-2 rounded border border-[#8b642a] bg-[rgba(101,66,21,.22)] px-2 py-1.5 text-[9px] leading-snug text-[#f0ca78]">Marco nativo: {result.rendererReference.nativeFrame || result.referenceFrame || "no declarado"}. AOS/LOS y la representación terrestre quedan bloqueados hasta disponer de la operación de realización/EOP. {result.rendererReference.reason || ""}</p>}
-                {result.rendererReference?.approximate === true && <p className="mt-1 mb-2 rounded border border-[#61779b] bg-[rgba(39,63,97,.28)] px-2 py-1.5 text-[9px] leading-snug text-[#bed4f5]">{resultFrameLabel(result)}: la escena usa un respaldo visual Earth-fixed; no equivale a una transformación precisa con EOP/ERP.</p>}
-                {result.rendererReference?.unverifiedTerrestrialTransform === true && <p className="mt-1 mb-2 rounded border border-[#8b642a] bg-[rgba(101,66,21,.22)] px-2 py-1.5 text-[9px] leading-snug text-[#f0ca78]">Marco nativo: {result.rendererReference.nativeFrame || "no declarado"}. La procedencia de la transformación terrestre no fue declarada; AOS/LOS se muestra sólo como compatibilidad visual, no como transformación precisa.</p>}
+                <p className="my-1 text-[10px] text-[#b8d6c7]">{result.error || `${result.satellite} · ${resultFrameLabel(result, passFrameStatus)} · ${result.timeScale || "UTC"} · ${result.passes?.length || 0} pases`}</p>
+                {passFrameStatus?.available === false && <p className="mt-1 mb-2 rounded border border-[#8b642a] bg-[rgba(101,66,21,.22)] px-2 py-1.5 text-[9px] leading-snug text-[#f0ca78]">Marco nativo: {passFrameStatus.nativeFrame || result.referenceFrame || "no declarado"}. AOS/LOS y la representación terrestre quedan bloqueados hasta disponer de la operación de realización/EOP. {passFrameStatus.reason || ""}</p>}
+                {passFrameStatus?.approximate === true && passFrameStatus?.available !== false && <p className="mt-1 mb-2 rounded border border-[#61779b] bg-[rgba(39,63,97,.28)] px-2 py-1.5 text-[9px] leading-snug text-[#bed4f5]"><strong>{passFrameStatus.displayFrame}.</strong> AOS/LOS se evalúa en el marco terrestre disponible; la comparación o conversión a ECI requiere un ERP aplicable y una ruta de realización terrestre registrada.</p>}
+                {passFrameStatus?.erpApplied === true && <p className="mt-1 mb-2 rounded border border-[#426f91] bg-[rgba(24,59,92,.22)] px-2 py-1.5 text-[9px] leading-snug text-[#c5e3ff]"><strong>ITRF (con ERP aplicado).</strong> Los parámetros de rotación terrestre del producto están activos para la conversión a ECI.</p>}
                 {!result.error && result.linkContract ? <p className="mt-0 mb-2 text-[9px] leading-snug text-[#90b9a4]">Base del acceso: {result.linkContract === "actual-downlink" ? "enlace real de bajada satélite → estación" : "envolvente RF de planificación recíproca"}.</p> : null}
                 {result.analysisWindow?.startTime && !result.error ? <div className="mb-2 text-[9px] leading-snug text-[#90b9a4]">
                     <p className="m-0">Ventana de cálculo (UTC): {utc(result.analysisWindow.startTime)} → {utc(result.analysisWindow.endTime)}{result.analysisWindow.source === "simulation-range" ? " · rango de simulación" : result.analysisWindow.source === "manual-design" ? " · ventana de diseño de la órbita manual" : " · próximas 24 h"}</p>

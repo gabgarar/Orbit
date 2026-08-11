@@ -61,10 +61,12 @@ to the project JSON and reload it. See [Projects](../user-guide/projects.md).
 
 ## Can I import SP3, OPM, CPF, or RINEX from the interface?
 
-Yes for local precise GNSS SP3 products, with an optional associated RINEX CLK.
-The product route accepts IGS/CDDIS, MGEX, and ESA NSO series when SP3/CLK
-content is valid; it retains provider, frame, and time scale and registers a
-tabulated ephemeris. It does not sign in to or download files from a provider.
+Yes for local precise GNSS products: required SP3 and optional/conditional
+associated CLK, ERP, SUM, ATT, or OSB. The product route accepts IGS/CDDIS,
+MGEX, and ESA NSO series when content is valid; it retains provider, frame,
+time scale, and provenance and registers a tabulated ephemeris. ERP is
+required if ECI is requested. It does not sign in to or download files from a
+provider.
 
 OPM, CPF, and observation RINEX remain unavailable. A RINEX CLK alone is not
 an orbit either. See [Import](../user-guide/import.md) and [Precise GNSS

@@ -66,8 +66,8 @@ caracteres de control y system_config.json.
 
 ## Productos GNSS precisos persistentes
 
-Cada importación SP3, con CLK opcional, se guarda bajo
-`config/precise-products/<product_id>/`. El directorio contiene las fuentes
+Cada importación GNSS, con SP3 obligatorio y CLK/ERP/SUM/ATT/OSB asociados si
+se aportan, se guarda bajo `config/precise-products/<product_id>/`. El directorio contiene las fuentes
 lógicas ya descomprimidas y un `manifest.json` con proveedor, clase, nombre
 original, compresión, miembro ZIP si aplica y checksums SHA-256. El runtime
 verifica los checksums y vuelve a analizar las fuentes al iniciar; una entrada

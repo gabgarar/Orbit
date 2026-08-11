@@ -32,21 +32,29 @@ Los datos importados se validan antes de incorporarse al catálogo. Un OEM que
 no contiene un TLE embebido no puede convertirse en un objeto de catálogo
 nativo y se rechaza en esa ruta.
 
-## Productos GNSS precisos: SP3 y CLK
+## Productos GNSS precisos
 
-La opción **Import precise GNSS (SP3 / CLK)**, disponible en **Layers → + →
-Add layer → Add satellite**, carga efemérides GNSS locales como fuentes
-tabuladas. No usa el importador de catálogo TLE/OMM: un SP3 conserva sus
-identificadores GNSS, su marco y su escala temporal nativos, y no se convierte
-en un TLE.
+La opción **Importar producto GNSS**, disponible en **Layers → + → Add layer →
+Add satellite**, carga efemérides GNSS locales como fuentes tabuladas. No usa
+el importador de catálogo TLE/OMM: un SP3 conserva sus identificadores GNSS,
+su marco y su escala temporal nativos, y no se convierte en un TLE.
 
-Seleccione al menos un SP3 y, opcionalmente, el CLK RINEX correspondiente de
-la misma serie. Se pueden proporcionar archivos sin comprimir, `gzip`, ZIP o
-la compresión histórica `.Z` admitida por el importador. Orbit identifica el
-contenido y rechaza un archivo de reloj aislado como trayectoria, porque un CLK
-no contiene posiciones. Un producto admite un único SP3 y, como máximo, un CLK
-después de descomprimir; no mezcle productos de fechas o centros distintos en
-la misma carga.
+El campo **SP3** es obligatorio y acepta `.SP3` o `.SP3.gz`. Si está vacío,
+Orbit muestra exactamente **“Debe proporcionar un fichero SP3.”**. Los demás
+campos son opcionales mientras no se active una operación inercial:
+
+| Campo | Extensiones aceptadas | Uso |
+| --- | --- | --- |
+| CLK | `.CLK`, `.CLK.gz` | Relojes precisos asociados. |
+| ERP | `.ERP`, `.ERP.gz` | Parámetros de rotación terrestre asociados. |
+| SUM | `.SUM` | Metadatos/resumen del producto. |
+| ATT | `.ATT.OBX`, `.ATT.OBX.gz` | Actitud publicada del satélite. |
+| OSB | `.OSB.BIA`, `.OSB.BIA.gz` | Sesgos específicos de observable. |
+
+Si el usuario activa una conversión ITRF → ECI, ERP deja de ser opcional. Sin
+ese archivo Orbit bloquea la operación con **“Debe proporcionar un fichero ERP
+para convertir a ECI.”**. CLK, SUM, ATT y OSB no crean una órbita sin el SP3;
+quedan asociados al mismo producto y su procedencia se conserva.
 
 | Producto descargado localmente | Ejemplo de uso |
 | --- | --- |
@@ -59,11 +67,14 @@ Revise antes de importar la clase de producto, la fecha, el marco y
 esa cobertura no debe interpretarse como uniformemente observada. La entrada
 se registra de forma durable en el almacén local de productos precisos y se
 rehidrata al arrancar. Un proyecto referencia el producto estable, pero no
-incluye una copia de su binario fuente.
+incluye una copia de sus binarios fuente.
 
-La interfaz permite hasta ocho archivos, 32 MiB por archivo y 64 MiB en total
-antes de descomprimir. Los ZIP cifrados o anidados se rechazan, al igual que
-los archivos que excedan el límite de seguridad descomprimido.
+Tras la importación, el marco mostrado depende de ERP y de la ruta de
+realización: con un ERP y una transformación de datum aplicados, Orbit indica
+**ITRF (con ERP aplicado)** y permite la conversión a ECI; sin ERP indica
+**Marco terrestre aproximado (sin ERP)**. ERP aporta UT1 y movimiento polar,
+pero no convierte por sí solo una realización IGS en ITRF. La cabecera SP3
+sigue mostrándose como el marco nativo del archivo.
 
 !!! warning "No es una descarga remota"
 

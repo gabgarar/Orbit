@@ -285,6 +285,53 @@ class OrbitRuntime:
             "earth_orientation": earth_orientation,
             "terrestrial_realization_operation": operation_payload,
         }
+        # Product-bound SP3 states carry an explicit marker installed by the
+        # precise GNSS importer.  A generic renderer otherwise sees an ITRF
+        # coordinate vector and would incorrectly present it as a fully
+        # transformable ITRF product even when its ERP companion is absent.
+        precise_contract = state.provenance.get("precise_gnss_frame_contract")
+        if isinstance(precise_contract, Mapping):
+            erp_present = bool(precise_contract.get("erp_present"))
+            route_available = bool(precise_contract.get("eci_route_available"))
+            within_coverage = bool(
+                precise_contract.get("eci_available_within_erp_coverage")
+            )
+            conversion = {
+                "required": True,
+                "available": bool(precise_contract.get("eci_available")),
+                "route_available": route_available,
+                "available_within_erp_coverage": within_coverage,
+                "target_frame": precise_contract.get("eci_target_frame", "EME2000"),
+                "erp_applied": route_available and within_coverage,
+                "coverage": (
+                    dict(precise_contract["eci_coverage"])
+                    if isinstance(precise_contract.get("eci_coverage"), Mapping)
+                    else None
+                ),
+                "reason": precise_contract.get("eci_reason")
+                or "Debe proporcionar un fichero ERP para convertir a ECI.",
+            }
+            payload["eci_conversion"] = conversion
+            payload["earth_orientation"] = {
+                "required": True,
+                "applied": route_available and within_coverage,
+                "source": precise_contract.get("erp_source"),
+                "version": precise_contract.get("erp_version"),
+                "quality": precise_contract.get("erp_quality"),
+                "snapshot_id": precise_contract.get("erp_snapshot_id"),
+            }
+            if not erp_present:
+                payload.update({
+                    "status": "approximate_earth_fixed",
+                    "display_label": "Marco terrestre aproximado (sin ERP)",
+                    "reason": "Debe proporcionar un fichero ERP para convertir a ECI.",
+                })
+            elif route_available and within_coverage:
+                payload.update({
+                    "status": "earth_orientation_transform",
+                    "display_label": "ITRF (con ERP aplicado)",
+                    "reason": str(conversion["reason"]),
+                })
         if native_reference is not None:
             payload["native_reference_frame"] = native_reference["reference_frame"]
             payload["source_frame"] = native_reference["reference_frame"]
@@ -492,6 +539,7 @@ class OrbitRuntime:
         *,
         provider_hint: object = "auto",
         product_class: object = "auto",
+        require_eci: bool = False,
     ) -> PreciseProduct:
         """Persist and register a local SP3/CLK precise product.
 
@@ -505,6 +553,7 @@ class OrbitRuntime:
             files,
             provider_hint=provider_hint,
             product_class=product_class,
+            require_eci=require_eci,
             frame_transformer=self._frame_transformer,
         )
         self._precise_product_repository.save(product)

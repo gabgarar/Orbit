@@ -85,7 +85,9 @@ flowchart LR
 | **OCM** | Orbit Comprehensive Message. Orbit generates simplified JSON output; does not declare complete coverage of the standard. |
 | **SP3** | Tabulated precise GNSS-orbit format, with a per-record clock correction when present. Orbit imports local SP3 products as tabulated ephemerides and retains frame, time scale, realization, and provenance. |
 | **CLK** | RINEX clock product. In Orbit it can accompany SP3; it retains satellite `AS` records and does not create or modify a Cartesian orbit. |
-| **Precise GNSS product** | Durable local registration of SP3 with optional CLK, with declared provider/class/file and coverage. It accepts IGS/CDDIS, MGEX, ESA NSO, and equivalent-provider products with valid content. |
+| **ERP** | Earth Rotation Parameters associated with a GNSS product. In Orbit they provide UT1 and polar motion for ITRF-to-ECI and also need an applied realization route; without ERP the shown frame is approximate terrestrial. |
+| **SUM / ATT / OSB** | GNSS ancillary products: metadata, attitude, and observable biases. They are retained with provenance and do not change SP3 position. |
+| **Precise GNSS product** | Durable local registration of required SP3 with associated CLK/ERP/SUM/ATT/OSB, with declared provider/class/file and coverage. It accepts IGS/CDDIS, MGEX, ESA NSO, and equivalent-provider products with valid content. |
 | **Covariance** | 6×6 Cartesian uncertainty matrix when provided by the source. Orbit preserves Cartesian OEM covariance; does not accept RTN/RSW/TNW blocks. |
 | **Lagrange interpolation** | Polynomial interpolation over tabular samples. The grade requires a corresponding number of points. |
 | **Hermite Interpolation** | Interpolation using position and velocity; The OEM reader requires odd grade and compatible number of samples. |

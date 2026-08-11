@@ -55,7 +55,7 @@ the build of the image.
 | System Settings | Normalization of values ​​and catalog name contained within config/. |
 | Project | The importer requires the orbit-project format and version 1. |
 | Catalog | TLE, OMM and OEM formats are analyzed before being incorporated; Pure OEM does not become a catalog object. |
-| Precise GNSS product | Required SP3, optional CLK, file/archive limits, checksums, frame, time scale, and duplicate epochs are validated. The manifest is verified again at startup. |
+| Precise GNSS product | Required SP3; per-field CLK, ERP, SUM, ATT, and OSB; `require_eci`, extensions, checksums, frame, time scale, and duplicate epochs are validated. The manifest is verified again at startup. |
 | local C04 | Reading, encoding, temporal order, MJD/date consistency, columns and hashing are validated if required. |
 | leap-seconds.list | Identity, coverage and, when configured, #@ expiration are validated. |
 | EOP Window | In strict mode, the declared limits must be covered by C04 and UTC–TAI. |
@@ -66,7 +66,7 @@ hash configuration and coverage.
 
 ## Validation before a reproducible operation
 
-1. Keep the source file and SHA-256 for every TLE, OMM, OEM, or SP3/CLK product.
+1. Keep the source file and SHA-256 for every TLE, OMM, OEM, or GNSS SP3/CLK/ERP/SUM/ATT/OSB product.
 2. Run the appropriate suite after updating code or configuration.
 3. Check the healthcheck and the logs of the runtime started.
 4. Record time range, step, propagator, frame and scale of any

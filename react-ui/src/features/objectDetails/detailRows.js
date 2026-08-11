@@ -353,7 +353,7 @@ export function buildObjectDetails(detail) {
     const velocityFrame = frameLabel(telemetry.velocity_frame) || positionFrame;
     const stateFrame = positionFrame || velocityFrame;
     const displayStateFrame = preciseFrameStatus
-        ? (frameLabel(telemetry.position_frame_display) || preciseFrameStatus.displayFrame || stateFrame)
+        ? (preciseFrameStatus.displayFrame || frameLabel(telemetry.position_frame_display) || stateFrame)
         : stateFrame;
     const earthFixed = !preciseRenderingUnavailable && /(?:ITRF|ECEF|PEF|TIRS)/i.test(stateFrame || "");
     const unavailableGeography = preciseRenderingUnavailable
@@ -519,6 +519,7 @@ export function buildObjectDetails(detail) {
             ["Producto", metadataValue(metadataSources, ["productId", "product_id", "productName", "product_name"], INPUT_UNAVAILABLE)],
             ["Archivo SP3", metadataValue(metadataSources, ["fileName", "file_name", "orbitFile", "orbit_file", "sp3_file"], INPUT_UNAVAILABLE)],
             ["Archivo CLK", metadataValue(metadataSources, ["clockFile", "clock_file", "clk_file"], "No incluido")],
+            ["Archivo ERP", metadataValue(metadataSources, ["erpFile", "erp_file"], "No incluido")],
             ["Época", inputEpoch],
             ["Inicio de cobertura", utcDate(metadataValue(metadataSources, ["startTimeMs", "start_time_ms", "startTime", "start_time", "coverageStart", "coverage_start"], ""))],
             ["Fin de cobertura", utcDate(metadataValue(metadataSources, ["endTimeMs", "end_time_ms", "endTime", "end_time", "coverageEnd", "coverage_end", "stop_time"], ""))],
@@ -526,6 +527,7 @@ export function buildObjectDetails(detail) {
             ["Sistema de tiempo", metadataValue(metadataSources, ["timeSystem", "time_system", "timeScale", "time_scale"], INPUT_UNAVAILABLE)],
             ["Marco de representación", preciseFrameStatus?.displayFrame || INPUT_UNAVAILABLE],
             ["Estado de representación", preciseRenderingStatus(preciseFrameStatus)],
+            ["Conversión a ECI", preciseFrameStatus?.eciAvailable ? "Disponible con ERP aplicado" : "Requiere ERP"],
             ["Operación de realización", preciseFrameStatus?.operation || "No aplicada"],
             ["Efeméride precisa", metadataPresence(metadataSources, ["states", "samples", "preciseEphemeris", "precise_ephemeris"])],
             ["Correcciones de reloj", metadataPresence(metadataSources, ["clockCorrections", "clock_corrections", "clocks"])],

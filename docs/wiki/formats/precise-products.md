@@ -5,8 +5,9 @@
 ## Visión general
 
 Orbit importa productos GNSS precisos **descargados previamente por el
-operador**. Una importación puede contener una efeméride SP3 y, de forma
-opcional, su producto RINEX CLK asociado. El resultado es una fuente de estado
+operador** mediante la ventana **Importar producto GNSS**. Un SP3 es siempre
+la fuente orbital obligatoria. CLK, ERP, SUM, ATT y OSB pueden acompañarlo
+como productos auxiliares versionados. El resultado es una fuente de estado
 tabulada con marco, realización terrestre, escala temporal y procedencia
 explícitos.
 
@@ -62,42 +63,65 @@ y [productos IGS](https://www.igs.org/products/). En Ultra-Rapid, el hecho de
 que una muestra esté dentro de la cobertura del archivo no implica que sea una
 observación: consulte la marca y documentación del producto fuente.
 
-## Archivos y empaquetado
+## Ventana de importación y archivos
 
-La importación local admite los archivos de órbita SP3 y, opcionalmente, los
-archivos de reloj RINEX CLK. Los nombres pueden pertenecer al esquema largo
-actual de IGS/ESA o a la nomenclatura histórica semanal de CDDIS; el nombre se
-usa como ayuda de clasificación y se conserva como procedencia, pero no
-sustituye a la cabecera.
+Los seis campos de **Importar producto GNSS** son independientes. El nombre de
+archivo se conserva como procedencia, pero no sustituye a la cabecera del
+producto. Las extensiones de la tabla son las que acepta cada campo con nombre
+de la ventana. El flujo heredado de arrastrar o seleccionar varios archivos
+mantiene ZIP como compatibilidad para un conjunto SP3/CLK; el backend inspecciona
+sus miembros bajo límites de seguridad. Un ZIP no sustituye ninguno de los
+campos auxiliares con nombre ni evita su asociación explícita.
 
-| Archivo | Papel | Puede crear una capa orbital |
-| --- | --- | --- |
-| `*.sp3`, `*.sp3c` o `*.sp3d` (o variante reconocida por cabecera) | Posición, y velocidad cuando el producto la contiene, por época y satélite. | Sí. |
-| `*.clk`, `*.clk_30s` o `*.clk_05s` | Sesgo de reloj y, si existe, tasa/precisión del reloj por época y satélite. | No; se asocia al producto SP3 de la misma importación. |
-| `*.erp` | Parámetros de orientación terrestre publicados junto a algunos productos GNSS. | No; ERP no se importa ni se empareja con SP3 actualmente. |
-| Cualquiera de esas extensiones con `.gz` | Variante comprimida GNU gzip. | Sí, una vez descomprimida localmente. |
-| `*.zip` | Contenedor local de uno o varios SP3/CLK. | Sí, si contiene un SP3 válido. |
-| `*.Z` | Compresión UNIX histórica usada por ficheros CDDIS legados. | Sí, si su contenido se descomprime y valida correctamente. |
+Por compatibilidad de API con cargas históricas, el flujo genérico también puede
+reconocer SP3c/SP3d y contenedores/compresión heredados. No aparecen en los
+campos con nombre ni amplían el contrato canónico de extensiones de esta
+ventana.
 
-Un CLK sin SP3 no crea una trayectoria: no contiene posiciones. Cada producto
-admite exactamente **un** SP3 y, como máximo, **un** CLK lógico después de
-descomprimir. Un ZIP puede transportarlos juntos, pero un ZIP que contenga dos
-SP3 o dos CLK no forma una pareja ambigua: Orbit lo rechaza.
+| Campo | Obligatorio | Extensiones válidas | Papel en Orbit |
+| --- | --- | --- | --- |
+| **SP3 — órbitas precisas** | Sí | `.SP3`, `.SP3.gz` | Posición y, si existe, velocidad por época y satélite. Es la única fuente que crea las capas orbitales. |
+| **CLK — relojes precisos** | No | `.CLK`, `.CLK.gz` | Sesgos, tasas y precisión de reloj cuando el archivo los publica. Se conserva con el SP3, sin alterar su geometría. |
+| **ERP — parámetros de rotación terrestre** | Condicional | `.ERP`, `.ERP.gz` | EOP asociados al producto. Es obligatorio cuando se solicita una conversión ITRF → ECI. |
+| **SUM — metadatos** | No | `.SUM` | Resumen o metadatos del producto; se conserva para auditoría. |
+| **ATT — actitud satelital** | No | `.ATT.OBX`, `.ATT.OBX.gz` | Producto de actitud asociado; se conserva como procedencia, no modifica una órbita SP3. |
+| **OSB — sesgos específicos de observable** | No | `.OSB.BIA`, `.OSB.BIA.gz` | Sesgos de observables asociados; se conservan como producto auxiliar, no como corrección de posición. |
 
-### Límites de carga y seguridad
+El flujo rechaza una importación que no tenga SP3 con el mensaje exacto:
 
-La ruta limita la carga a ocho archivos subidos, 32 MiB por archivo y 64 MiB
-en total antes de descomprimir. El conjunto descomprimido no puede superar 256
-MiB. Un ZIP admite hasta 16 miembros no cifrados; no se aceptan ZIP anidados ni
-rutas de archivo que salgan del archivo. Estos límites protegen el servicio de
-archivos malformados o bombas de descompresión, no son una indicación de la
-calidad científica del producto.
+```text
+Debe proporcionar un fichero SP3.
+```
+
+CLK, SUM, ATT y OSB nunca crean una trayectoria por sí solos. ERP tampoco crea
+una trayectoria: completa la trazabilidad de orientación terrestre de la
+misma importación. Una carga contiene un único SP3 lógico y, como máximo, un
+archivo de cada tipo auxiliar; no mezcle revisiones, fechas o centros de
+análisis distintos.
+
+### Validación dependiente de ECI
+
+ERP es opcional mientras solo se consume la serie terrestre aproximada. Pasa a
+ser obligatorio al activar una función que solicite convertir el producto de
+ITRF a ECI, incluida una comparación que exija un marco inercial común. En ese
+caso Orbit detiene la operación antes de calcular y muestra:
+
+```text
+Debe proporcionar un fichero ERP para convertir a ECI.
+```
+
+No existe todavía una interfaz ni una ruta independiente de comparación de
+propagadores. El contrato de capacidad `require_eci` es el guard que deberá
+usar esa futura función: con ERP permite comparación en ECI; sin ERP la
+bloquea con el mensaje anterior. No se debe interpretar esta documentación
+como una pantalla de comparación ya disponible.
 
 !!! warning "No confundir el reloj con la escala temporal"
 
     Un producto CLK describe correcciones de reloj de satélite. `TIME_SYSTEM`
     de SP3/CLK describe cómo interpretar las épocas. El reloj no convierte GPS
-    en UTC ni reemplaza la tabla local de segundos intercalares o los EOP.
+    en UTC ni reemplaza la tabla local de segundos intercalares o el ERP usado
+    para una transformación ITRF → ECI.
 
 ## Qué conserva Orbit
 
@@ -110,8 +134,10 @@ metadatos publicados por el formato:
 - agencia, tipo orbital y cobertura de épocas cuando están disponibles;
 - identificador del satélite fuente y la presencia de posiciones, velocidades
   y muestras de reloj;
+- presencia, nombre, tipo y checksum de CLK, ERP, SUM, ATT y OSB cuando se
+  aportan;
 - nombre/origen seleccionado por el operador, clase de calidad declarada o
-  inferida del nombre, y nombres de miembro de archivo comprimido si aplica;
+  inferida del nombre;
 - SHA-256 del archivo subido y de cada fuente lógica descomprimida.
 
 La procedencia acompaña a la capa y a las respuestas de importación. Orbit
@@ -129,10 +155,26 @@ accidental de los binarios cargados.
 
 ## Tiempo, marcos y realización
 
-SP3 define su propio sistema de coordenadas y escala temporal. Orbit mantiene
-esas etiquetas al registrar la serie y sólo transforma un estado cuando existe
-una ruta explícita en el servicio de marcos. No renombra de forma silenciosa
-`IGS20`, `IGb20` ni `IGc20` como `ITRF`.
+SP3 define su propio sistema de coordenadas y escala temporal. Orbit conserva
+esa declaración nativa en la procedencia y sólo transforma un estado cuando
+existe una ruta explícita en el servicio de marcos. No renombra de forma
+silenciosa `IGS20`, `IGb20` ni `IGc20` como `ITRF`.
+
+La ventana de importación separa el **marco nativo del archivo** de la
+**capacidad de salida terrestre/inercial**. La segunda se decide por el ERP
+asociado a ese producto:
+
+| Estado de ERP y realización | Etiqueta operacional | Capacidades |
+| --- | --- | --- |
+| ERP asociado, usado y ruta de realización aplicada | **ITRF (con ERP aplicado)** | Se habilita SP3/ITRF → ECI; la procedencia incluye UT1, movimiento polar y los parámetros de rotación terrestre usados. |
+| No | **Marco terrestre aproximado (sin ERP)** | Puede inspeccionarse la serie terrestre aproximada, pero no se afirma ITRF ni se habilita la conversión a ECI. |
+| ERP asociado, pero falta una ruta de realización | Marco nativo declarado | ERP no inventa IGS→ITRF. Se conserva el diagnóstico y se bloquea ECI hasta registrar la transformación de datum correspondiente. |
+
+Todos los módulos que muestran el marco —ficha de objeto, efemérides,
+telemetría, AOS/LOS, exportación y comparación futura— deben usar la etiqueta
+operacional, además de conservar el marco declarado en la cabecera SP3. La
+ausencia de ERP no se oculta detrás de `ECEF`, `ITRF` ni de un nombre genérico
+de escena.
 
 Existe una operación global publicada de datum nulo, pero es **optativa y no
 predeterminada**, para estados orbitales de satélite declarados `IGS20`,
@@ -150,40 +192,39 @@ realizaciones IGS históricas, incluido `IGS14`, permanecen diagnósticas hasta
 que se registre una operación publicada explícita. Consulte [Marcos de
 referencia](../engineering/reference-frames.md).
 
-La importación no disfraza este límite. Si no hay una ruta desde la realización
-del SP3 hasta la ITRF de salida activa, la ficha de producto informa que el
-renderizado terrestre no está disponible y expone el diagnóstico de marco; las
-operaciones que necesitan ese estado terrestre, como una vista ITRF o AOS/LOS,
-deben configurarse con una ruta válida en lugar de asumir una conversión.
-
-Un estado SP3 declarado en una realización terrestre sigue siendo un estado
-nativo de esa realización. Que una escena Earth-fixed pueda dibujarlo no
-autoriza a cambiar, por ejemplo, `IGS20` por `ITRF2020`. Una transformación de
+Un estado SP3 declarado en una realización terrestre sigue siendo nativo de
+esa realización. Que una escena Earth-fixed pueda dibujarlo no autoriza a
+cambiar, por ejemplo, `IGS20` por `ITRF2020`. Una transformación de
 realización registrada es una operación de datum distinta de la orientación de
-la Tierra. Si Orbit crea desde una ruta inercial una vista con UTC≈UT1 y EOP
-nulos, la UI debe mostrar **terrestre aproximada (sin EOP)**; no es una salida
-ITRF rigurosa ni un resultado de precisión para AOS/LOS o exportación.
+la Tierra; el ERP tampoco la sustituye. Sin ERP, Orbit no intenta presentar
+una rotación terrestre completa y usa exactamente la etiqueta **Marco
+terrestre aproximado (sin ERP)**. ERP aporta orientación terrestre —UT1 y
+movimiento polar, entre otros valores publicados—, pero no inventa por sí solo
+una transformación de realización IGS→ITRF: esa operación de datum debe estar
+registrada y aplicada antes de mostrar **ITRF (con ERP aplicado)**.
 
 Las consultas se convierten desde la escala solicitada a la escala nativa antes
-de buscar una muestra. Para una transformación terrestre reproducible hacen
-falta, además del SP3/CLK, los datos de tiempo y orientación terrestre
-apropiados: consulte [Tiempo, EOP e ITRF](../operations/time-eop.md).
+de buscar una muestra. Para una transformación ITRF → ECI reproducible hacen
+falta, además de SP3/CLK, el ERP asociado, segundos intercalares y la ruta de
+realización aplicable: consulte [Tiempo, EOP e ITRF](../operations/time-eop.md).
 
-Los productos ERP y los EOP rápidos no se infieren del nombre de un SP3. La
-referencia operativa actual es un snapshot local de [IERS EOP 20u24 C04](time/iers-c04.md)
-con su versión y hash. [IERS Bulletin A](time/bulletins.md) y ERP IGS son rutas
-futuras: no hay lector, descarga ni emparejamiento automático en esta
-importación.
+Los productos ERP no se infieren del nombre de un SP3. El operador selecciona
+el archivo ERP de la misma revisión de producto y Orbit registra su hash y
+cobertura. Un snapshot local de [IERS EOP 20u24 C04](time/iers-c04.md) sigue
+siendo la referencia operativa independiente para el servicio general de
+marcos. [IERS Bulletin A](time/bulletins.md) puede cubrir operaciones rápidas;
+no se descarga ni se empareja automáticamente ninguna fuente remota.
 
 ## Flujo de importación
 
-1. Descargue un SP3 y, si es necesario para su análisis, el CLK de la misma
-   serie desde CDDIS/IGS/ESA.
+1. Descargue el SP3 y, cuando vaya a solicitar ECI, el ERP de la misma revisión
+   de producto desde CDDIS/IGS/ESA. Añada CLK, SUM, ATT u OSB solo si necesita
+   conservar esos productos auxiliares.
 2. Compruebe proveedor, fecha, clase (Final/Rapid/Ultra-Rapid), marco,
    `TIME_SYSTEM` y si Ultra-Rapid contiene un tramo predicho.
-3. En **Layers → + → Add layer → Add satellite → Import precise GNSS (SP3 /
-   CLK)**, seleccione el SP3, SP3c o SP3d y añada el CLK opcional en la misma
-   operación. Puede aportar los ficheros comprimidos admitidos directamente.
+3. En **Layers → + → Add layer → Add satellite → Importar producto GNSS**,
+   seleccione el SP3 obligatorio y rellene los campos opcionales que
+   correspondan. Si activa una función ECI, el campo ERP deja de ser opcional.
    El diálogo permite aceptar la detección o declarar proveedor y clase.
 4. Revise el resumen de procedencia y las capas creadas por identificador de
    satélite. Una capa representa la efeméride tabulada, no un objeto TLE.
@@ -197,9 +238,10 @@ binario fuente no se copia dentro de cada documento de proyecto. Esta ruta no
 es una sincronización automática del catálogo remoto.
 
 En el panel de objeto, la pestaña de entrada del producto muestra proveedor,
-clase, SP3/CLK, cobertura, marco, `TIME_SYSTEM`, número de muestras y resumen
-de reloj. Esa información es la ficha de procedencia del archivo, no una
-estimación independiente de precisión.
+clase, SP3, productos auxiliares, cobertura, marco declarado, etiqueta
+operacional, `TIME_SYSTEM`, número de muestras y resumen de reloj. Esa
+información es la ficha de procedencia del archivo, no una estimación
+independiente de precisión.
 
 ## Límites explícitos
 
@@ -211,9 +253,11 @@ estimación independiente de precisión.
   automática entre Final, Rapid y Ultra-Rapid.
 - Las muestras de CLK se conservan como metadatos de reloj; no cambian la
   posición/velocidad SP3 ni se transforman en una solución de navegación.
-- No se aceptan ni se emparejan ficheros ERP, Bulletin A o Bulletin B con el
-  SP3. Esos productos requieren una futura ruta de EOP local, versionada y
-  auditable.
+- SUM, ATT y OSB se conservan como productos auxiliares y procedencia. No
+  activan PPP, navegación, determinación de órbita, dinámica de actitud ni una
+  corrección de la posición SP3.
+- ERP se usa solo cuando la operación solicita ITRF → ECI. No se descarga ni
+  se sustituye automáticamente por Bulletin A/B, C04 u otra revisión.
 - Orbit interpola cada serie SP3 con una ventana Lagrange local de hasta diez
   muestras (grado 9); con menos registros degrada explícitamente al mayor
   grado disponible. Esa política acotada no sustituye la estrategia de

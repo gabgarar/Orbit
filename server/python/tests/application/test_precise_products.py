@@ -22,7 +22,7 @@ from orbit_api.application.precise_products import (
     import_precise_product,
 )
 from orbit_api.domain.requests import AosLosRequest, StationInput
-from orbit_api.frames import FrameId, build_frame_transformer_from_environment
+from orbit_api.frames import FrameId, FrameTransformService, build_frame_transformer_from_environment
 
 
 def _sp3_header(*, frame: str = "ITRF", epochs: int = 2) -> str:
@@ -80,6 +80,21 @@ def _clk_text() -> str:
     )
 
 
+def _erp_text(mjds: tuple[float, ...] = (61247.0, 61248.0)) -> str:
+    """Small valid IGS ERP v2 fixture covering the SP3 test epoch."""
+
+    rows = [
+        "version 2",
+        "MJD Xpole Ypole UT1-UTC LOD Xsig Ysig UTsig LODsig Nr Nf Nt Xrt Yrt",
+    ]
+    for index, mjd in enumerate(mjds):
+        rows.append(
+            f"{mjd:.8f} {1000000 + index * 1000000} {-2000000 + index * 1000000} "
+            f"{2500000 + index * 1000000} {10000 + index * 10000} 0 0 0 0 0 0 0 0 0"
+        )
+    return "\n".join(rows)
+
+
 def _upload(name: str, content: str | bytes) -> tuple[str, str]:
     raw = content.encode("utf-8") if isinstance(content, str) else content
     return name, base64.b64encode(raw).decode("ascii")
@@ -124,10 +139,154 @@ def test_import_classifies_current_igs_final_and_associates_optional_rinex_clock
     payload = product.payload()
     assert payload["frame"] == "ITRF"
     assert payload["native_reference_frame"] == "ITRF"
-    assert payload["renderer_reference"]["status"] == "native"
+    assert payload["renderer_reference"]["status"] == "approximate_earth_fixed"
+    assert payload["renderer_reference"]["display_label"] == "Marco terrestre aproximado (sin ERP)"
     assert payload["renderer_reference"]["earth_orientation"]["applied"] is False
+    assert payload["eci_conversion"]["available"] is False
     assert payload["time_system"] == "UTC"
     assert payload["clock"]["sp3_embedded"]["sample_count"] == 2
+
+
+def test_precise_product_requires_sp3_with_the_public_exact_error():
+    with pytest.raises(PreciseProductImportError) as raised:
+        import_precise_product([_upload("IGS0OPSFIN_20262070000_01D_ERP.ERP", _erp_text())])
+
+    assert str(raised.value) == "Debe proporcionar un fichero SP3."
+
+
+def test_precise_product_requires_erp_when_eci_is_requested_with_the_public_exact_error():
+    with pytest.raises(PreciseProductImportError) as raised:
+        import_precise_product(
+            [_upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text())],
+            require_eci=True,
+        )
+
+    assert str(raised.value) == "Debe proporcionar un fichero ERP para convertir a ECI."
+
+
+def test_gnss_companions_and_erp_are_persisted_and_bind_an_isolated_transformer(tmp_path):
+    base_transformer = FrameTransformService()
+    product = import_precise_product(
+        [
+            _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),
+            _upload("IGS0OPSFIN_20262070000_01D_30S_CLK.CLK", _clk_text()),
+            _upload("IGS0OPSFIN_20262070000_01D_ERP.ERP.gz", gzip.compress(_erp_text().encode("utf-8"))),
+            _upload("IGS0OPSFIN_20262070000_01D_SUM.SUM", "summary metadata"),
+            _upload("IGS0OPSFIN_20262070000_01D_ATT.ATT.OBX.gz", gzip.compress(b"attitude metadata")),
+            _upload("IGS0OPSFIN_20262070000_01D_OSB.OSB.BIA.gz", gzip.compress(b"bias metadata")),
+        ],
+        require_eci=True,
+        frame_transformer=base_transformer,
+    )
+
+    assert product.sp3.frame_transformer is not base_transformer
+    assert product.erp is not None
+    assert product.erp_file is not None
+    assert product.erp_file.compression == "gzip"
+    assert {source.kind for source in product.source_files} == {"sp3", "clk", "erp", "sum", "att", "osb"}
+    erp = product.erp.at(datetime(2026, 7, 26, tzinfo=UTC))
+    assert erp.dut1_seconds == pytest.approx(0.25)
+    assert erp.lod_seconds == pytest.approx(0.001)
+    assert erp.xp_radians > 0.0
+    assert erp.yp_radians < 0.0
+
+    payload = product.payload()
+    assert payload["erp_file"] == "IGS0OPSFIN_20262070000_01D_ERP.ERP"
+    assert payload["companions"] == {
+        "sum": "IGS0OPSFIN_20262070000_01D_SUM.SUM",
+        "att": "IGS0OPSFIN_20262070000_01D_ATT.ATT.OBX",
+        "osb": "IGS0OPSFIN_20262070000_01D_OSB.OSB.BIA",
+    }
+    assert payload["erp"]["present"] is True
+    assert payload["erp"]["sample_count"] == 2
+    assert payload["eci_conversion"]["available"] is True
+    assert payload["renderer_reference"]["display_label"] == "ITRF (con ERP aplicado)"
+    assert payload["renderer_reference"]["earth_orientation"]["applied"] is True
+
+    state = product.eci_state_at(
+        "G01",
+        datetime(2026, 7, 26, 0, 0, 18, tzinfo=UTC),
+    )
+    assert state.frame is FrameId.EME2000
+    assert state.earth_orientation_source == "IGS ERP · IGS0OPSFIN_20262070000_01D_ERP.ERP"
+    assert state.earth_orientation_snapshot_id == product.erp.snapshot_identity.content_id
+
+    repository = PreciseProductRepository(tmp_path / "precise-products")
+    repository.save(product)
+    loaded = repository.load(product.product_id, frame_transformer=base_transformer)
+    assert loaded.sp3.frame_transformer is not base_transformer
+    assert loaded.erp is not None
+    assert loaded.erp.at(datetime(2026, 7, 26, tzinfo=UTC)).dut1_seconds == pytest.approx(0.25)
+    assert {source.kind for source in loaded.source_files} == {"sp3", "clk", "erp", "sum", "att", "osb"}
+    assert loaded.payload()["eci_conversion"]["available"] is True
+
+
+def test_eci_capability_requires_a_physical_route_and_erp_coverage_at_requested_epoch():
+    product = import_precise_product([
+        _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),
+        # The product spans 00:00:18–00:01:18 UTC. This ERP overlaps only
+        # its first 25 seconds, so a capability summary must not advertise a
+        # whole-product ECI comparison.
+        _upload("IGS0OPSFIN_20262070000_01D_ERP.ERP", _erp_text((61247.0, 61247.0005))),
+    ])
+
+    capability = product.eci_conversion_summary()
+    assert capability["route_available"] is True
+    assert capability["available"] is False
+    assert capability["available_within_erp_coverage"] is True
+    assert capability["coverage"]["overlaps_product"] is True
+    assert capability["coverage"]["covers_product"] is False
+    assert product.eci_state_at("G01", datetime(2026, 7, 26, 0, 0, 18, tzinfo=UTC)).frame is FrameId.EME2000
+    with pytest.raises(PreciseProductImportError, match="no cubre la época solicitada"):
+        product.eci_state_at("G01", datetime(2026, 7, 26, 0, 1, 18, tzinfo=UTC))
+
+    igs_without_datum_route = import_precise_product([
+        _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text(frame="IGc20")),
+        _upload("IGS0OPSFIN_20262070000_01D_ERP.ERP", _erp_text()),
+    ])
+    assert igs_without_datum_route.eci_conversion_summary()["route_available"] is False
+    with pytest.raises(PreciseProductImportError, match="transformación de realización terrestre"):
+        igs_without_datum_route.eci_state_at("G01", datetime(2026, 7, 26, tzinfo=UTC))
+
+    transformer = build_frame_transformer_from_environment({
+        "ORBIT_TERRESTRIAL_REALIZATION": "ITRF2020",
+        "ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT": "true",
+    })
+    plain_itrf_with_renderer_realization = import_precise_product(
+        [
+            _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),
+            _upload("IGS0OPSFIN_20262070000_01D_ERP.ERP", _erp_text()),
+        ],
+        require_eci=True,
+        frame_transformer=transformer,
+    )
+    assert plain_itrf_with_renderer_realization.eci_conversion_summary()["available"] is True
+    igs_with_registered_datum = import_precise_product(
+        [
+            _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text(frame="IGc20")),
+            _upload("IGS0OPSFIN_20262070000_01D_ERP.ERP", _erp_text()),
+        ],
+        require_eci=True,
+        frame_transformer=transformer,
+    )
+    assert igs_with_registered_datum.eci_conversion_summary()["available"] is True
+    assert igs_with_registered_datum.eci_state_at(
+        "G01", datetime(2026, 7, 26, 0, 0, 18, tzinfo=UTC)
+    ).frame is FrameId.EME2000
+
+
+def test_no_erp_keeps_a_terrestrial_series_renderable_but_blocks_eci_state():
+    product = import_precise_product([
+        _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),
+    ])
+
+    rendering = product.rendering_summary()
+    assert rendering["available"] is True
+    assert rendering["display_label"] == "Marco terrestre aproximado (sin ERP)"
+    assert rendering["eci_conversion"]["available"] is False
+    with pytest.raises(PreciseProductImportError) as raised:
+        product.eci_state_at("G01", datetime(2026, 7, 26, tzinfo=UTC))
+    assert str(raised.value) == "Debe proporcionar un fichero ERP para convertir a ECI."
 
 
 @pytest.mark.parametrize(
@@ -222,12 +381,13 @@ def test_sp3_frame_contract_preserves_native_realization_and_marks_only_register
     assert native_provider.ephemeris_reference_realization == "IGC20"
     rendering = unavailable.satellite_payload("G01")["renderer_reference"]
     assert rendering["native_reference_frame"] == "IGC20"
-    assert rendering["status"] == "unavailable"
+    assert rendering["status"] == "approximate_earth_fixed"
     assert rendering["available"] is False
     # A terrestrial SP3 realization is not rotated with EOP/ERP merely to
     # call it ITRF. It needs a separate, explicit datum operation.
-    assert rendering["earth_orientation"]["required"] is False
+    assert rendering["earth_orientation"]["required"] is True
     assert rendering["earth_orientation"]["applied"] is False
+    assert rendering["display_label"] == "Marco terrestre aproximado (sin ERP)"
 
     transformer = build_frame_transformer_from_environment({
         "ORBIT_TERRESTRIAL_REALIZATION": "ITRF2020",
@@ -252,10 +412,11 @@ def test_sp3_frame_contract_preserves_native_realization_and_marks_only_register
     }
     assert ephemeris["reference_frame"] == "ITRF2020"
     renderer = ephemeris["renderer_reference"]
-    assert renderer["status"] == "terrestrial_realization_transform"
+    assert renderer["status"] == "approximate_earth_fixed"
+    assert renderer["display_label"] == "Marco terrestre aproximado (sin ERP)"
     assert renderer["target_frame"] == "ITRF"
     assert renderer["target_realization"] == "ITRF2020"
-    assert renderer["earth_orientation"]["required"] is False
+    assert renderer["earth_orientation"]["required"] is True
     assert renderer["earth_orientation"]["applied"] is False
     operation = renderer["terrestrial_realization_operation"]
     assert operation["source_realization"] == "IGC20"
@@ -277,9 +438,11 @@ def test_sp3_frame_contract_preserves_native_realization_and_marks_only_register
 
     assert state_payload["reference_frame"] == "ITRF2020"
     assert state_payload["native_reference_frame"] == "IGC20"
-    assert state_payload["renderer_reference"]["status"] == "terrestrial_realization_transform"
+    assert state_payload["renderer_reference"]["status"] == "approximate_earth_fixed"
+    assert state_payload["renderer_reference"]["display_label"] == "Marco terrestre aproximado (sin ERP)"
     assert orbit_payload["native_reference_frame"] == "IGC20"
-    assert orbit_payload["renderer_reference"]["status"] == "terrestrial_realization_transform"
+    assert orbit_payload["renderer_reference"]["status"] == "approximate_earth_fixed"
+    assert orbit_payload["renderer_reference"]["display_label"] == "Marco terrestre aproximado (sin ERP)"
 
 
 def test_zip_is_safely_inspected_and_must_contain_one_sp3_plus_optional_clk():
@@ -450,7 +613,8 @@ def test_precise_runtime_id_is_usable_by_the_shared_aos_los_route(tmp_path):
     assert response["satellite"] == runtime_id
     assert response["reference_frame"] == "ITRF"
     assert response["native_reference_frame"] == "ITRF"
-    assert response["renderer_reference"]["status"] == "native"
+    assert response["renderer_reference"]["status"] == "approximate_earth_fixed"
+    assert response["renderer_reference"]["display_label"] == "Marco terrestre aproximado (sin ERP)"
     assert response["count"] == 3
     assert response["passes"]
 

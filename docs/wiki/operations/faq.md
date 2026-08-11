@@ -62,11 +62,12 @@ al JSON de proyecto y vuelva a cargarlo. Véase [Proyectos](../user-guide/projec
 
 ## ¿Puedo importar SP3, OPM, CPF o RINEX desde la interfaz?
 
-Sí para productos GNSS precisos SP3 locales, con CLK RINEX opcional asociado.
-La ruta de producto admite las series IGS/CDDIS, MGEX y ESA NSO cuando el
-contenido SP3/CLK es válido; conserva el proveedor, marco y escala temporal y
-registra una efeméride tabulada. No inicia sesión ni descarga archivos desde el
-proveedor.
+Sí para productos GNSS precisos locales: SP3 obligatorio y CLK, ERP, SUM, ATT
+u OSB asociados de forma opcional/condicional. La ruta de producto admite las
+series IGS/CDDIS, MGEX y ESA NSO cuando el contenido es válido; conserva el
+proveedor, marco, escala temporal y procedencia y registra una efeméride
+tabulada. ERP es obligatorio si se solicita ECI. No inicia sesión ni descarga
+archivos desde el proveedor.
 
 OPM, CPF y RINEX de observaciones siguen sin estar disponibles. Un CLK RINEX
 por sí solo tampoco es una órbita. Consulte [Importar](../user-guide/import.md)

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadChartPng } from "../../../front/js/runtime/chartPngExport.js";
 import { formatReferenceFrame } from "../../../front/js/features/frames/referenceFrame.js";
+import { resolvePreciseProductFrameStatus } from "../../../front/js/features/preciseProducts/frameStatus.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
 
 /*
@@ -511,7 +512,7 @@ function InformationTab({
             <strong>Representación terrestre no disponible.</strong> El producto conserva su marco nativo {formatReferenceFrame(rendererNativeFrame)} y no se calculan elementos ni una visualización terrestre hasta configurar la transformación requerida{rendererReference.reason ? `: ${rendererReference.reason}` : "."}
         </div>}
         {rendererApproximate && !rendererUnavailable && <div className="shrink-0 rounded-[7px] border border-[rgba(84,142,201,.58)] bg-[rgba(25,69,111,.2)] px-3 py-2 text-[10px] leading-[1.45] text-[#c9e4ff]" role="status">
-            <strong>Terrestre aproximado (sin EOP).</strong> La escena usa una referencia fija para visualizar el producto, pero no representa una transformación terrestre precisa ni una realización EOP/ERP.
+            <strong>{displayFrame || "Marco terrestre aproximado (sin ERP)"}.</strong> La escena puede mostrar el producto en coordenadas terrestres, pero la conversión o comparación en ECI queda bloqueada hasta disponer de un ERP aplicable y la ruta de realización terrestre necesaria.
         </div>}
         {rendererReference?.unverifiedTerrestrialTransform === true && !rendererUnavailable && !rendererApproximate && <div className="shrink-0 rounded-[7px] border border-[rgba(218,154,51,.62)] bg-[rgba(96,62,16,.2)] px-3 py-2 text-[10px] leading-[1.45] text-[#ffdca0]" role="status">
             <strong>Transformación terrestre sin procedencia.</strong> Se conserva el marco nativo {formatReferenceFrame(rendererNativeFrame)}; la referencia terrestre recibida no declara EOP/ERP ni una operación de realización verificable.
@@ -1008,19 +1009,39 @@ export default function PropagatedOrbitParametersPanel() {
     const referenceFrame = firstDefined(result, ["reference_frame", "referenceFrame", "frame"])
         ?? firstDefined(panel.range, ["referenceFrame", "reference_frame", "frame"])
         ?? firstDefined(panel.target, ["referenceFrame", "reference_frame", "frame"]);
-    const displayFrame = firstDefined(result, [
-        "position_frame_display", "positionFrameDisplay", "reference_frame_display", "referenceFrameDisplay", "display_frame", "displayFrame"
-    ]) ?? firstDefined(panel.target, [
-        "displayReferenceFrame",
-        "display_reference_frame",
-        "previewReferenceFrame",
-        "preview_reference_frame"
-    ]) ?? firstDefined(panel.target, ["referenceFrame", "reference_frame", "frame"]);
-    const rendererReference = firstDefined(result, ["renderer_reference", "rendererReference", "rendering"])
+    const rawRendererReference = firstDefined(result, ["renderer_reference", "rendererReference", "rendering"])
         ?? firstDefined(panel.target, ["rendererReference", "renderer_reference", "rendering"]);
+    const targetInputMetadata = panel.target?.catalogMeta?.inputMetadata
+        ?? panel.target?.catalogMeta?.input_metadata
+        ?? panel.target?.inputMetadata
+        ?? panel.target?.input_metadata
+        ?? null;
+    const isPreciseProduct = String(
+        result?.source_format
+        ?? result?.sourceFormat
+        ?? panel.target?.sourceFormat
+        ?? panel.target?.source_format
+        ?? ""
+    ).toUpperCase() === "SP3" || Boolean(rawRendererReference);
+    const rendererReference = isPreciseProduct
+        ? resolvePreciseProductFrameStatus({
+            sp3: result?.sp3 ?? targetInputMetadata,
+            renderer_reference: rawRendererReference,
+            earth_orientation: result?.earth_orientation ?? result?.earthOrientation ?? null
+        }, { runtimeFrame: referenceFrame || "" })
+        : rawRendererReference;
+    const displayFrame = (isPreciseProduct ? rendererReference?.displayFrame : null)
+        ?? firstDefined(result, [
+            "position_frame_display", "positionFrameDisplay", "reference_frame_display", "referenceFrameDisplay", "display_frame", "displayFrame"
+        ]) ?? firstDefined(panel.target, [
+            "displayReferenceFrame",
+            "display_reference_frame",
+            "previewReferenceFrame",
+            "preview_reference_frame"
+        ]) ?? firstDefined(panel.target, ["referenceFrame", "reference_frame", "frame"]);
     // Keep the raw result frame for numerical provenance and CSV data, but
     // every visible Ephemerides label must carry the product's qualified
-    // display frame (for example "Terrestre aproximado (sin EOP)").
+    // display frame (for example "Marco terrestre aproximado (sin ERP)").
     const visibleReferenceFrame = displayFrame || referenceFrame;
     const errorText = errorMessage(panel.error);
     const [statusLabel, statusClass, statusText] = statusDescriptor(panel.status, errorText, hasTarget, samples.length);

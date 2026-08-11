@@ -210,7 +210,7 @@ test("OMM, OEM and SP3 retain their own input vocabulary without masquerading as
     assert.equal(sp3["Archivo SP3"], "IGS0OPSFIN_20262220000_01D_05M_ORB.SP3.gz");
     assert.equal(sp3["Archivo CLK"], "IGS0OPSFIN_20262220000_01D_30S_CLK.CLK.gz");
     assert.equal(sp3["Marco nativo"], "IGS14");
-    assert.equal(sp3["Marco de representación"], "IGS14");
+    assert.equal(sp3["Marco de representación"], "Marco terrestre aproximado (sin ERP)");
     assert.match(sp3["Estado de representación"], /^No disponible: IGS14 requires/);
     assert.equal(sp3["Visualización ITRF"], undefined);
     assert.equal(sp3.Estado, "Registrado en el runtime de efemérides precisas");
@@ -239,9 +239,9 @@ test("SP3 object details expose native or qualified terrestrial frames without f
     });
     const unavailableOrbit = asObject(unavailable.rows.orbit);
     const unavailableTelemetry = asObject(unavailable.rows.telemetry);
-    assert.equal(unavailableOrbit["Marco de referencia"], "IGS20");
+    assert.equal(unavailableOrbit["Marco de referencia"], "Marco terrestre aproximado (sin ERP)");
     assert.match(unavailableOrbit["Estado cartesiano"], /^No disponible:/);
-    assert.equal(unavailableTelemetry["Marco del estado"], "IGS20");
+    assert.equal(unavailableTelemetry["Marco del estado"], "Marco terrestre aproximado (sin ERP)");
     assert.match(unavailableTelemetry["Estado de representación"], /^No disponible:/);
 
     const approximate = buildObjectDetails({
@@ -250,7 +250,7 @@ test("SP3 object details expose native or qualified terrestrial frames without f
         telemetry: {
             id: "precise:igs20:G02",
             position_frame: "ITRF",
-            position_frame_display: "Terrestre aproximado (sin EOP)",
+            position_frame_display: "Marco terrestre aproximado (sin ERP)",
             geo: { latitude_deg: 10, longitude_deg: 20, altitude_m: 500000 }
         },
         catalogMeta: {
@@ -267,7 +267,7 @@ test("SP3 object details expose native or qualified terrestrial frames without f
         }
     });
     const approximateOrbit = asObject(approximate.rows.orbit);
-    assert.equal(approximateOrbit["Marco de referencia"], "Terrestre aproximado (sin EOP)");
+    assert.equal(approximateOrbit["Marco de referencia"], "Marco terrestre aproximado (sin ERP)");
 
     const legacyUnverified = buildObjectDetails({
         id: "precise:igs14:legacy",
@@ -280,9 +280,9 @@ test("SP3 object details expose native or qualified terrestrial frames without f
     });
     const legacyInput = asObject(legacyUnverified.rows.input);
     const legacyOrbit = asObject(legacyUnverified.rows.orbit);
-    assert.equal(legacyInput["Marco de representación"], "IGS14");
-    assert.match(legacyInput["Estado de representación"], /^No verificado:/);
-    assert.equal(legacyOrbit["Marco de referencia"], "IGS14");
+    assert.equal(legacyInput["Marco de representación"], "Marco terrestre aproximado (sin ERP)");
+    assert.match(legacyInput["Estado de representación"], /^Marco terrestre aproximado/);
+    assert.equal(legacyOrbit["Marco de referencia"], "Marco terrestre aproximado (sin ERP)");
 });
 
 test("celestial bodies retain the common tabs without a fictional TLE engine", () => {

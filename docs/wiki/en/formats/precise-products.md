@@ -4,9 +4,10 @@
 
 ## Overview
 
-Orbit imports precise GNSS products **previously downloaded by the operator**.
-An import can contain an SP3 ephemeris and, optionally, its associated RINEX
-CLK product. The result is a tabulated state source with explicit frame,
+Orbit imports precise GNSS products **previously downloaded by the operator**
+through the **Import GNSS product** window. An SP3 is always the required
+orbit source. CLK, ERP, SUM, ATT, and OSB can accompany it as versioned
+ancillary products. The result is a tabulated state source with explicit frame,
 terrestrial realization, time scale, and provenance.
 
 This route is for inspecting and visualising published precise orbits; it does
@@ -58,41 +59,62 @@ and [IGS products](https://www.igs.org/products/) pages. For Ultra-Rapid,
 coverage by the file does not mean that a sample is observed: consult the
 marking and documentation of the source product.
 
-## Files and packaging
+## Import window and files
 
-Local import accepts SP3 orbit files and, optionally, RINEX CLK clock files.
-Names may use the current IGS/ESA long-name scheme or the historical weekly
-CDDIS scheme. The name helps classification and is retained as provenance, but
-it never replaces the header.
+The six fields in **Import GNSS product** are independent. The file name is
+retained as provenance, but it never replaces product-header metadata. The
+extensions in this table are accepted by each named window field. The legacy
+drag-and-drop or multi-file flow retains ZIP compatibility for an SP3/CLK set;
+the backend inspects its members under safety limits. A ZIP does not replace
+any named ancillary field or bypass explicit product association.
 
-| File | Role | Can create an orbital layer |
-| --- | --- | --- |
-| `*.sp3`, `*.sp3c`, or `*.sp3d` (or a variant recognised by header) | Position, and velocity when the product carries it, by epoch and satellite. | Yes. |
-| `*.clk`, `*.clk_30s`, or `*.clk_05s` | Clock bias and, when present, clock rate/precision by epoch and satellite. | No; it is associated with the SP3 product from the same import. |
-| `*.erp` | Earth-orientation parameters published alongside some GNSS products. | No; ERP is not currently imported or paired with SP3. |
-| Any of those extensions with `.gz` | GNU gzip-compressed variant. | Yes, after local decompression. |
-| `*.zip` | Local container for one or more SP3/CLK files. | Yes, when it contains a valid SP3. |
-| `*.Z` | Historical UNIX compression used by legacy CDDIS files. | Yes, when its content decompresses and validates correctly. |
+For API compatibility with historical uploads, the generic flow can also
+recognise SP3c/SP3d and legacy containers/compression. They do not appear in
+the named fields or extend this window's canonical extension contract.
 
-A CLK file without SP3 cannot create a trajectory because it contains no
-positions. Each product accepts exactly **one** logical SP3 and at most **one**
-logical CLK after decompression. A ZIP can carry them together, but a ZIP with
-two SP3 or two CLK files does not make an ambiguous pair: Orbit rejects it.
+| Field | Required | Valid extensions | Role in Orbit |
+| --- | --- | --- | --- |
+| **SP3 — precise orbits** | Yes | `.SP3`, `.SP3.gz` | Position and, when present, velocity by epoch and satellite. It is the only source that creates orbital layers. |
+| **CLK — precise clocks** | No | `.CLK`, `.CLK.gz` | Clock bias, rate, and precision when published. Retained with the SP3 without altering geometry. |
+| **ERP — Earth rotation parameters** | Conditional | `.ERP`, `.ERP.gz` | Product-associated EOP. Required whenever an ITRF → ECI conversion is requested. |
+| **SUM — metadata** | No | `.SUM` | Product summary or metadata retained for audit. |
+| **ATT — satellite attitude** | No | `.ATT.OBX`, `.ATT.OBX.gz` | Associated attitude product; retained as provenance and does not alter an SP3 orbit. |
+| **OSB — observable-specific biases** | No | `.OSB.BIA`, `.OSB.BIA.gz` | Associated observable biases; retained as ancillary product, not as a position correction. |
 
-### Upload and safety limits
+An import without an SP3 is rejected with the exact message:
 
-The route limits uploads to eight files, 32 MiB per file, and 64 MiB in total
-before decompression. The decompressed set cannot exceed 256 MiB. A ZIP can
-contain up to 16 unencrypted members; nested ZIP files and file paths that
-leave the archive are rejected. These limits protect the service from malformed
-files and decompression bombs; they do not indicate a product's scientific
-quality.
+```text
+Debe proporcionar un fichero SP3.
+```
+
+CLK, SUM, ATT, and OSB cannot create a trajectory by themselves. ERP cannot
+create one either: it completes the terrestrial-orientation traceability of the
+same import. A load contains one logical SP3 and at most one file of every
+ancillary type; do not mix revisions, dates, or analysis centres.
+
+### ECI-dependent validation
+
+ERP is optional while only the approximate terrestrial series is consumed. It
+becomes required when a function requests an ITRF-to-ECI conversion, including
+a comparison that needs a common inertial frame. In that case Orbit stops the
+operation before calculating and displays:
+
+```text
+Debe proporcionar un fichero ERP para convertir a ECI.
+```
+
+There is no live propagator-comparison UI or dedicated route yet. The
+`require_eci` capability contract is the guard that a future comparison must
+use: with ERP it permits comparison in ECI; without ERP it blocks it with the
+message above. This page does not claim that a comparison screen already
+exists.
 
 !!! warning "Do not confuse clock with time scale"
 
     A CLK product describes satellite clock corrections. SP3/CLK
     `TIME_SYSTEM` defines how epochs are interpreted. Clock data does not
-    convert GPS to UTC or replace the local leap-second table or EOP.
+    convert GPS to UTC or replace the local leap-second table or ERP used for
+    an ITRF-to-ECI transformation.
 
 ## What Orbit retains
 
@@ -105,8 +127,10 @@ format:
 - agency, orbit type, and epoch coverage when available;
 - source satellite identifier and the presence of positions, velocities, and
   clock samples;
+- presence, name, type, and checksum of CLK, ERP, SUM, ATT, and OSB when
+  supplied;
 - name/origin selected by the operator, product class declared or inferred
-  from the name, and compressed archive member names where applicable;
+  from the name;
 - SHA-256 of the uploaded file and of every decompressed logical source.
 
 Provenance follows the layer and import response. Orbit stores verified sources
@@ -123,10 +147,25 @@ uploaded binaries.
 
 ## Time, frames, and realization
 
-SP3 defines its own coordinate system and time scale. Orbit retains those
-labels when registering the series and transforms a state only where the frame
-service has an explicit route. It does not silently rename `IGS20`, `IGb20`,
-or `IGc20` as `ITRF`.
+SP3 defines its own coordinate system and time scale. Orbit retains that native
+declaration in provenance and transforms a state only where the frame service
+has an explicit route. It does not silently rename `IGS20`, `IGb20`, or `IGc20`
+as `ITRF`.
+
+The import window separates the **file's native frame** from its **terrestrial /
+inertial output capability**. The latter is decided by the ERP associated with
+the product:
+
+| ERP and realization state | Operational label | Capabilities |
+| --- | --- | --- |
+| ERP associated, used, and realization route applied | **ITRF (con ERP aplicado)** | SP3/ITRF → ECI is enabled; provenance includes UT1, polar motion, and the Earth-rotation parameters used. |
+| No | **Marco terrestre aproximado (sin ERP)** | The approximate terrestrial series can be inspected, but Orbit does not claim ITRF or enable conversion to ECI. |
+| ERP associated, but realization route absent | Declared native frame | ERP does not invent IGS→ITRF. The diagnostic is retained and ECI remains blocked until the corresponding datum transformation is registered. |
+
+Every module that displays a frame —object details, ephemerides, telemetry,
+AOS/LOS, export, and a future comparison—must use the operational label while
+also retaining the frame declared by the SP3 header. An absent ERP is not
+hidden behind `ECEF`, `ITRF`, or a generic scene name.
 
 There is a published zero-datum global operation, but it is **optional and
 disabled by default**, for satellite-orbit states declared as `IGS20`, `IGb20`,
@@ -144,41 +183,40 @@ Historical IGS realizations, including `IGS14`, remain diagnostic-only until
 an explicit published operation is registered. See [Reference
 frames](../engineering/reference-frames.md).
 
-Import does not hide this boundary. If no route exists from the SP3 realization
-to the active output ITRF, the product card reports terrestrial rendering as
-unavailable and exposes the frame diagnostic; operations needing that
-terrestrial state, such as an ITRF view or AOS/LOS, must be configured with a
-valid route instead of assuming a conversion.
-
 An SP3 state declared in a terrestrial realization remains native to that
 realization. The fact that an Earth-fixed scene can draw it does not authorize
 renaming, for example, `IGS20` as `ITRF2020`. A registered realization
-transformation is a datum operation distinct from Earth orientation. If Orbit
-creates a view from an inertial route with UTC≈UT1 and null EOP, the UI must
-show **approximate Earth-fixed (without EOP)**; it is not a rigorous ITRF
-output or a precision result for AOS/LOS or export.
+transformation is a datum operation distinct from Earth orientation; ERP does
+not replace it. Without ERP, Orbit does not present a complete terrestrial
+rotation and uses the exact label **Marco terrestre aproximado (sin ERP)**.
+ERP supplies Earth orientation —UT1 and polar motion among other published
+values—but does not itself invent an IGS-to-ITRF realization transformation:
+that datum operation must be registered and applied before Orbit shows
+**ITRF (con ERP aplicado)**.
 
 Queries convert from the requested scale to the native scale before looking up
-a sample. A reproducible terrestrial transformation also needs the relevant
-time and Earth-orientation data in addition to SP3/CLK; see [Time, EOP, and
-ITRF](../operations/time-eop.md).
+a sample. A reproducible ITRF-to-ECI transformation needs the associated ERP,
+leap seconds, and any applicable realization route in addition to SP3/CLK; see
+[Time, EOP, and ITRF](../operations/time-eop.md).
 
-ERP products and rapid EOP are not inferred from an SP3 name. The current
-operational reference is a local [IERS EOP 20u24 C04](time/iers-c04.md)
-snapshot with its version and hash. [IERS Bulletin A](time/bulletins.md) and
-IGS ERP are future routes: this import has no reader, download, or automatic
-pairing for them.
+ERP products are not inferred from an SP3 name. The operator selects the ERP
+file from the same product revision and Orbit records its hash and coverage. A
+local [IERS EOP 20u24 C04](time/iers-c04.md) snapshot remains the independent
+operational reference for the common frame service. [IERS Bulletin A](time/bulletins.md)
+can cover rapid operations; no remote source is downloaded or paired
+automatically.
 
 ## Import workflow
 
-1. Download an SP3 and, if needed for the analysis, the CLK from the same
-   series from CDDIS/IGS/ESA.
+1. Download the SP3 and, when ECI will be requested, the ERP from the same
+   product revision from CDDIS/IGS/ESA. Add CLK, SUM, ATT, or OSB only when
+   those ancillary products need to be retained.
 2. Check provider, date, class (Final/Rapid/Ultra-Rapid), frame,
    `TIME_SYSTEM`, and whether Ultra-Rapid contains a predicted segment.
-3. In **Layers → + → Add layer → Add satellite → Import precise GNSS (SP3 /
-   CLK)**, select SP3, SP3c, or SP3d and add the optional CLK in the same operation.
-   Supported compressed files can be supplied directly. The dialog can accept
-   detection or declare provider and class.
+3. In **Layers → + → Add layer → Add satellite → Import GNSS product**, select
+   the required SP3 and fill in the relevant optional fields. If an ECI function
+   is activated, ERP ceases to be optional. The dialog can accept detection or
+   declare provider and class.
 4. Review the provenance summary and layers created by source satellite ID. A
    layer represents a tabulated ephemeris, not a TLE object.
 5. Orbit aligns the simulated timeline to the published common coverage. Keep
@@ -189,9 +227,10 @@ The runtime rehydrates it after restart, and a project can reference stable
 product identifiers; the source binary is not copied into every project
 document. This route is not an automatic remote-catalog synchronisation.
 
-In the object panel, the product input tab shows provider, class, SP3/CLK,
-coverage, frame, `TIME_SYSTEM`, sample count, and clock summary. This is the
-file's provenance card, not an independent accuracy estimate.
+In the object panel, the product input tab shows provider, class, SP3,
+ancillary products, coverage, declared frame, operational label, `TIME_SYSTEM`,
+sample count, and clock summary. This is the file's provenance card, not an
+independent accuracy estimate.
 
 ## Explicit limitations
 
@@ -204,8 +243,11 @@ file's provenance card, not an independent accuracy estimate.
   between Final, Rapid, and Ultra-Rapid.
 - CLK samples are retained as clock metadata; they do not change SP3
   position/velocity or become a navigation solution.
-- ERP, Bulletin A, and Bulletin B files are not accepted or paired with SP3.
-  Those products require a future local, versioned, and auditable EOP route.
+- SUM, ATT, and OSB are retained as ancillary products and provenance. They do
+  not enable PPP, navigation, orbit determination, attitude dynamics, or an
+  SP3-position correction.
+- ERP is used only when the operation requests ITRF-to-ECI. It is never
+  downloaded or silently replaced by Bulletin A/B, C04, or another revision.
 - Orbit interpolates each SP3 series through a local Lagrange window of up to
   ten samples (degree 9); with fewer records it explicitly degrades to the
   highest available degree. This bounded policy does not replace the

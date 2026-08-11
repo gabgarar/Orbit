@@ -25,6 +25,7 @@ from .scales import ensure_utc
 ARCSECOND_TO_RADIAN = math.pi / (180.0 * 3_600.0)
 _MJD_UNIX_EPOCH = 40_587.0
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_IGS_ERP_MJD_EPOCH = datetime.datetime(1858, 11, 17, tzinfo=datetime.UTC)
 
 
 class EarthOrientationCoverageError(ValueError):
@@ -311,6 +312,179 @@ class TabularEarthOrientationProvider:
             sampled_at=instant,
             snapshot_id=lower.snapshot_id if same_snapshot else None,
         )
+
+
+class IgsErpEarthOrientationProvider(TabularEarthOrientationProvider):
+    """Read a version-2 IGS ERP product as a local EOP provider.
+
+    IGS ERP version 2 stores ``Xpole``/``Ypole`` in :math:`10^{-6}`
+    arcseconds and ``UT1-UTC``/``LOD`` in :math:`10^{-7}` seconds.  The
+    product does not carry the IERS celestial-pole offsets ``dX``/``dY``;
+    Orbit therefore records those values as zero rather than inventing an
+    IERS C04 correction.  This is enough for the terrestrial-to-inertial
+    rotation used by an SP3 product, while the source and checksum remain
+    attached to every transformed state.
+
+    The parser intentionally requires the standard column heading.  A loose
+    numeric-table guess can silently interchange ``UT1-UTC`` and a formal
+    uncertainty column, which would rotate an orbit into a physically wrong
+    inertial position.
+    """
+
+    _MICROARCSECONDS_TO_RADIAN = 1.0e-6 * ARCSECOND_TO_RADIAN
+    _TENTH_MICROSECONDS_TO_SECONDS = 1.0e-7
+
+    @property
+    def snapshot_identity(self) -> EopSnapshotIdentity | None:
+        """Return the immutable content identity of the imported ERP."""
+
+        return getattr(self, "_snapshot_identity", None)
+
+    @classmethod
+    def from_text(
+        cls,
+        source_text: str,
+        *,
+        filename: str = "product.erp",
+        source: str = "IGS ERP",
+        version: str | None = None,
+        quality: str = "final",
+        allow_extrapolation: bool = False,
+    ) -> "IgsErpEarthOrientationProvider":
+        """Parse a text IGS ERP v2 table and retain its SHA-256 identity."""
+
+        if not isinstance(source_text, str) or not source_text.strip():
+            raise EopSnapshotValidationError("El fichero ERP está vacío")
+        raw = source_text.encode("utf-8")
+        lines = source_text.splitlines()
+        header_index, columns = cls._header(lines)
+        samples: list[EarthOrientation] = []
+        for line_number, line in enumerate(lines[header_index + 1:], start=header_index + 2):
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("#", "*", "+", "-", "_")):
+                continue
+            values = stripped.split()
+            # ERP reports often carry a second units heading immediately
+            # below the column labels.  It cannot start with a valid MJD.
+            if not values or not _looks_like_mjd(values[0]):
+                continue
+            try:
+                mjd = float(values[columns["mjd"]])
+                xp = float(values[columns["xp"]])
+                yp = float(values[columns["yp"]])
+                dut1 = float(values[columns["dut1"]])
+                lod = float(values[columns["lod"]])
+            except (IndexError, TypeError, ValueError) as exc:
+                raise EopSnapshotValidationError(
+                    f"El ERP contiene una fila incompleta o no numérica en la línea {line_number}"
+                ) from exc
+            if not all(math.isfinite(value) for value in (mjd, xp, yp, dut1, lod)):
+                raise EopSnapshotValidationError(
+                    f"El ERP contiene valores no finitos en la línea {line_number}"
+                )
+            if mjd < 30_000.0:
+                raise EopSnapshotValidationError(
+                    f"El MJD ERP no es válido en la línea {line_number}"
+                )
+            samples.append(EarthOrientation(
+                dut1_seconds=dut1 * cls._TENTH_MICROSECONDS_TO_SECONDS,
+                xp_radians=xp * cls._MICROARCSECONDS_TO_RADIAN,
+                yp_radians=yp * cls._MICROARCSECONDS_TO_RADIAN,
+                # The IGS ERP v2 core layout has no dX/dY columns. Keeping
+                # zeros explicit prevents it being confused with an IERS C04
+                # 2000A correction product.
+                dx_radians=0.0,
+                dy_radians=0.0,
+                lod_seconds=lod * cls._TENTH_MICROSECONDS_TO_SECONDS,
+                source=str(source or "IGS ERP").strip() or "IGS ERP",
+                version=str(version or filename).strip() or None,
+                quality=str(quality or "unknown").strip().lower() or "unknown",
+                sampled_at=cls._datetime_from_mjd(mjd),
+            ))
+        if not samples:
+            raise EopSnapshotValidationError("El fichero ERP no contiene registros ERP v2 utilizables")
+        ordered = tuple(sorted(samples, key=lambda sample: sample.sampled_at))
+        if len({sample.sampled_at for sample in ordered}) != len(ordered):
+            raise EopSnapshotValidationError("El ERP contiene épocas MJD duplicadas")
+        provider = cls(ordered, allow_extrapolation=allow_extrapolation)
+        provider._snapshot_identity = EopSnapshotIdentity(
+            filename=str(filename or "product.erp").strip() or "product.erp",
+            sha256=hashlib.sha256(raw).hexdigest(),
+            byte_size=len(raw),
+            record_count=len(ordered),
+            coverage_start=ordered[0].sampled_at,  # type: ignore[arg-type]
+            coverage_end=ordered[-1].sampled_at,  # type: ignore[arg-type]
+        )
+        # Rebuild the samples with the portable identity.  The `at` method
+        # returns those exact source/version/quality values or their
+        # deterministic interpolation.
+        provider._samples = tuple(
+            EarthOrientation(
+                dut1_seconds=sample.dut1_seconds,
+                xp_radians=sample.xp_radians,
+                yp_radians=sample.yp_radians,
+                dx_radians=sample.dx_radians,
+                dy_radians=sample.dy_radians,
+                lod_seconds=sample.lod_seconds,
+                source=sample.source,
+                version=sample.version,
+                quality=sample.quality,
+                sampled_at=sample.sampled_at,
+                snapshot_id=provider._snapshot_identity.content_id,
+            )
+            for sample in ordered
+        )
+        provider._timestamps = tuple(sample.sampled_at for sample in provider._samples)
+        return provider
+
+    @staticmethod
+    def _datetime_from_mjd(mjd: float) -> datetime.datetime:
+        return _IGS_ERP_MJD_EPOCH + datetime.timedelta(days=mjd)
+
+    @staticmethod
+    def _header(lines: list[str]) -> tuple[int, dict[str, int]]:
+        for index, line in enumerate(lines):
+            values = line.strip().split()
+            if not values:
+                continue
+            normalized = [_normalise_erp_column(value) for value in values]
+            columns: dict[str, int] = {}
+            for column_index, value in enumerate(normalized):
+                if value == "MJD":
+                    columns.setdefault("mjd", column_index)
+                elif value in {"XPOLE", "XP", "X"}:
+                    columns.setdefault("xp", column_index)
+                elif value in {"YPOLE", "YP", "Y"}:
+                    columns.setdefault("yp", column_index)
+                elif value in {"UT1UTC", "UT1RUTC"}:
+                    # Prefer the conventional UT1-UTC solution if both are
+                    # present; UT1R-UTC is the conventional fallback.
+                    if value == "UT1UTC" or "dut1" not in columns:
+                        columns["dut1"] = column_index
+                elif value in {"LOD", "LODR"}:
+                    if value == "LOD" or "lod" not in columns:
+                        columns["lod"] = column_index
+            if {"mjd", "xp", "yp", "dut1", "lod"} <= columns.keys():
+                return index, columns
+        raise EopSnapshotValidationError(
+            "El ERP debe declarar las columnas MJD, Xpole, Ypole, UT1-UTC y LOD"
+        )
+
+
+def _normalise_erp_column(value: object) -> str:
+    """Normalize a published ERP heading without guessing its meaning."""
+
+    return "".join(character for character in str(value or "").upper() if character.isalnum())
+
+
+def _looks_like_mjd(value: object) -> bool:
+    """Return whether a token can safely begin a modern MJD ERP record."""
+
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(numeric) and numeric >= 30_000.0
 
 
 class IersC04EarthOrientationProvider(TabularEarthOrientationProvider):
