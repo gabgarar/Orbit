@@ -47,7 +47,7 @@ Examples of rules:
 | Manual AOS/LOS | `source.kind: manual` requires `manualOrbit` and cannot include `sat_id` or TLE lines; the access window still uses UTC `start_time < end_time`. |
 | Orbital parameters | 2…2000 samples; RK4 models are rejected if they exceed their internal step budget. |
 | Manual orbit | Requires Keplerian elements or state vector; Force options are normalized to the chosen engine. |
-| Precise GNSS product | Required SP3; associated CLK, ERP, SUM, ATT, and OSB; field extensions, `require_eci`, normalized provider/class, and upload/file/expansion limits. |
+| Precise GNSS product | Required SP3; associated CLK, ERP, SUM, ATT, and OSB; field extensions and upload/file/expansion limits. Provider and class are derived from the SP3; `require_eci` remains an internal guard for a future comparison. |
 
 Canonical forms and compatibility aliases are described in
 [REST API](../integrations/rest-api.md) and in the OpenAPI of the instance.

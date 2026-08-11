@@ -41,21 +41,22 @@ and time scale, and is not converted into a TLE.
 
 The **SP3** field is required and accepts `.SP3` or `.SP3.gz`. When it is
 empty, Orbit displays exactly **“Debe proporcionar un fichero SP3.”**. The
-remaining fields are optional while no inertial operation is enabled:
+remaining fields are optional during import:
 
 | Field | Accepted extensions | Use |
 | --- | --- | --- |
 | CLK | `.CLK`, `.CLK.gz` | Associated precise clocks. |
 | ERP | `.ERP`, `.ERP.gz` | Associated Earth-rotation parameters. |
-| SUM | `.SUM` | Product metadata/summary. |
-| ATT | `.ATT.OBX`, `.ATT.OBX.gz` | Published satellite attitude. |
-| OSB | `.OSB.BIA`, `.OSB.BIA.gz` | Observable-specific biases. |
+| SUM | `.SUM`, `.SUM.gz` | Product metadata/summary. |
+| ATT | `.ATT.OBX`, `.ATT.OBX.gz`; `.OBX`/`.ATT` aliases and `.gz` | Published satellite attitude. |
+| OSB | `.OSB.BIA`, `.OSB.BIA.gz`; `.BIA` alias and `.gz` | Observable-specific biases. |
 
-If the user enables an ITRF-to-ECI conversion, ERP ceases to be optional.
-Without it, Orbit blocks the operation with **“Debe proporcionar un fichero
-ERP para convertir a ECI.”**. CLK, SUM, ATT, and OSB cannot create an orbit
-without SP3; they are associated with the same product and their provenance is
-retained.
+Every field except SP3 is optional during import. Provider, family, and class
+are detected from the files; they are not entered manually. CLK, SUM, ATT, and
+OSB cannot create an orbit without SP3; they remain associated with the same
+product and their provenance is retained. ERP is likewise associated, but
+ITRF-to-ECI comparison is future tooling: when implemented, it will require
+ERP, a realization route, and valid temporal coverage.
 
 | Locally downloaded product | Example use |
 | --- | --- |
@@ -63,11 +64,12 @@ retained.
 | [IGS MGEX](https://igs.org/mgex/data-products/) SP3 + CLK | Import a multi-GNSS constellation while retaining IDs such as `G01`, `E11`, or `C19`. |
 | [ESA NSO](https://navigation-office.esa.int/GNSS_based_products.html) Final/Rapid/Ultra-Rapid | Load files downloaded from the corresponding ESA series. |
 
-Before importing, check the product class, date, frame, and `TIME_SYSTEM`. An
-Ultra-Rapid product can mix observed and predicted intervals; its coverage must
-not be read as uniformly observed. The input is durably registered in the local
-precise-product store and rehydrated at startup. A project references the
-stable product, but does not include copies of its source binaries.
+Before importing, check the date, frame, and `TIME_SYSTEM`; after loading,
+Orbit shows the detected product class. An Ultra-Rapid product can mix observed
+and predicted intervals; its coverage must not be read as uniformly observed.
+The input is durably registered in the local precise-product store and
+rehydrated at startup. A project references the stable product, but does not
+include copies of its source binaries.
 
 After import, the displayed frame depends on ERP and the realization route:
 with ERP and a datum transformation applied, Orbit shows **ITRF (con ERP

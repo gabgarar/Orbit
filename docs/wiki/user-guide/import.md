@@ -41,20 +41,22 @@ su marco y su escala temporal nativos, y no se convierte en un TLE.
 
 El campo **SP3** es obligatorio y acepta `.SP3` o `.SP3.gz`. Si está vacío,
 Orbit muestra exactamente **“Debe proporcionar un fichero SP3.”**. Los demás
-campos son opcionales mientras no se active una operación inercial:
+campos son opcionales durante la importación:
 
 | Campo | Extensiones aceptadas | Uso |
 | --- | --- | --- |
 | CLK | `.CLK`, `.CLK.gz` | Relojes precisos asociados. |
 | ERP | `.ERP`, `.ERP.gz` | Parámetros de rotación terrestre asociados. |
-| SUM | `.SUM` | Metadatos/resumen del producto. |
-| ATT | `.ATT.OBX`, `.ATT.OBX.gz` | Actitud publicada del satélite. |
-| OSB | `.OSB.BIA`, `.OSB.BIA.gz` | Sesgos específicos de observable. |
+| SUM | `.SUM`, `.SUM.gz` | Metadatos/resumen del producto. |
+| ATT | `.ATT.OBX`, `.ATT.OBX.gz`; alias `.OBX`/`.ATT` y `.gz` | Actitud publicada del satélite. |
+| OSB | `.OSB.BIA`, `.OSB.BIA.gz`; alias `.BIA` y `.gz` | Sesgos específicos de observable. |
 
-Si el usuario activa una conversión ITRF → ECI, ERP deja de ser opcional. Sin
-ese archivo Orbit bloquea la operación con **“Debe proporcionar un fichero ERP
-para convertir a ECI.”**. CLK, SUM, ATT y OSB no crean una órbita sin el SP3;
-quedan asociados al mismo producto y su procedencia se conserva.
+Todos los campos salvo SP3 son opcionales durante la importación. La
+procedencia, familia y clase se detectan desde los ficheros; no se introducen
+manualmente. CLK, SUM, ATT y OSB no crean una órbita sin el SP3; quedan
+asociados al mismo producto y su procedencia se conserva. ERP queda igualmente
+asociado, pero la comparación ITRF → ECI es una herramienta futura: cuando se
+implemente, exigirá ERP, ruta de realización y cobertura temporal válida.
 
 | Producto descargado localmente | Ejemplo de uso |
 | --- | --- |
@@ -62,12 +64,12 @@ quedan asociados al mismo producto y su procedencia se conserva.
 | [IGS MGEX](https://igs.org/mgex/data-products/) SP3 + CLK | Importar una constelación multi-GNSS conservando IDs como `G01`, `E11` o `C19`. |
 | [ESA NSO](https://navigation-office.esa.int/GNSS_based_products.html) Final/Rapid/Ultra-Rapid | Cargar los ficheros descargados de la serie ESA correspondiente. |
 
-Revise antes de importar la clase de producto, la fecha, el marco y
-`TIME_SYSTEM`. Un Ultra-Rapid puede mezclar intervalos observados y predichos;
-esa cobertura no debe interpretarse como uniformemente observada. La entrada
-se registra de forma durable en el almacén local de productos precisos y se
-rehidrata al arrancar. Un proyecto referencia el producto estable, pero no
-incluye una copia de sus binarios fuente.
+Revise antes de importar la fecha, el marco y `TIME_SYSTEM`; tras la carga,
+Orbit muestra la clase detectada. Un Ultra-Rapid puede mezclar intervalos
+observados y predichos; esa cobertura no debe interpretarse como uniformemente
+observada. La entrada se registra de forma durable en el almacén local de
+productos precisos y se rehidrata al arrancar. Un proyecto referencia el
+producto estable, pero no incluye una copia de sus binarios fuente.
 
 Tras la importación, el marco mostrado depende de ERP y de la ruta de
 realización: con un ERP y una transformación de datum aplicados, Orbit indica

@@ -467,6 +467,26 @@ class PreciseProductImportRequest(BaseModel):
         max_length=40,
     )
 
+    @field_validator("provider_hint", "product_class", mode="before")
+    @classmethod
+    def require_automatic_product_metadata(cls, value: object) -> str:
+        """Keep provenance and class derived from the imported product.
+
+        Older browser builds still send these fields with the value ``auto``.
+        Retaining that one value avoids a rollout break, but accepting a
+        provider or class chosen by the client would let a local filename be
+        misrepresented as an IGS, MGEX or ESA product.  The application
+        service is the sole authority and derives both values from the source
+        members.
+        """
+
+        normalized = str(value or "auto").strip().lower()
+        if normalized in {"", "auto"}:
+            return "auto"
+        raise ValueError(
+            "La procedencia y la clase del producto se determinan automáticamente a partir de los ficheros."
+        )
+
     @model_validator(mode="after")
     def validate_declared_product_file_kinds(self) -> "PreciseProductImportRequest":
         """Reject a browser-declared kind that contradicts its filename.
@@ -520,9 +540,15 @@ _PRECISE_PRODUCT_NAMED_SLOT_SUFFIXES = {
     "sp3": (".sp3", ".sp3.gz"),
     "clk": (".clk", ".clk.gz"),
     "erp": (".erp", ".erp.gz"),
-    "sum": (".sum",),
-    "att": (".att.obx", ".att.obx.gz"),
-    "osb": (".osb.bia", ".osb.bia.gz"),
+    # Published summaries are commonly compressed with the rest of the
+    # GNSS bundle.  Treat ``.SUM.gz`` as the same logical SUM member rather
+    # than making the browser unpack it first.
+    "sum": (".sum", ".sum.gz"),
+    # Most IGS long filenames use ATT.OBX / OSB.BIA.  Some providers expose
+    # the same logical payload with an ATT, OBX or BIA final suffix; accept
+    # those compatible aliases while preserving the explicit ATT/OSB identity.
+    "att": (".att.obx", ".att.obx.gz", ".att", ".att.gz", ".obx", ".obx.gz"),
+    "osb": (".osb.bia", ".osb.bia.gz", ".bia", ".bia.gz"),
 }
 
 
@@ -542,9 +568,9 @@ def _precise_product_filename_kind(name: str) -> str | None:
         return "erp"
     if lowered.endswith(".sum"):
         return "sum"
-    if lowered.endswith(".att.obx"):
+    if lowered.endswith((".att.obx", ".att", ".obx")):
         return "att"
-    if lowered.endswith(".osb.bia"):
+    if lowered.endswith((".osb.bia", ".bia")):
         return "osb"
     return None
 

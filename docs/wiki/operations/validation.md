@@ -55,7 +55,7 @@ el build de la imagen.
 | Configuración del sistema | Normalización de valores y nombre de catálogo contenido dentro de config/. |
 | Proyecto | El importador exige el formato orbit-project y versión 1. |
 | Catálogo | Los formatos TLE, OMM y OEM se analizan antes de incorporarse; OEM puro no se convierte en objeto de catálogo. |
-| Producto GNSS preciso | Se validan SP3 obligatorio; CLK, ERP, SUM, ATT y OSB por campo; `require_eci`, extensiones, checksums, marco, escala temporal y duplicados por época. El manifest se vuelve a verificar al arrancar. |
+| Producto GNSS preciso | Se validan SP3 obligatorio; CLK, ERP, SUM, ATT y OSB por campo; extensiones, checksums, marco, escala temporal y duplicados por época. El proveedor y la clase se derivan del SP3. `require_eci` es un guard interno para una futura comparación, no un control de importación. El manifest se vuelve a verificar al arrancar. |
 | C04 local | Se valida lectura, codificación, orden temporal, coherencia MJD/fecha, columnas y hash si se exige. |
 | leap-seconds.list | Se valida la identidad, cobertura y, cuando se configura, la expiración #@. |
 | Ventana EOP | En modo estricto, los límites declarados deben estar cubiertos por C04 y UTC–TAI. |

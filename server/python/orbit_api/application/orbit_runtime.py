@@ -537,8 +537,6 @@ class OrbitRuntime:
         self,
         files,
         *,
-        provider_hint: object = "auto",
-        product_class: object = "auto",
         require_eci: bool = False,
     ) -> PreciseProduct:
         """Persist and register a local SP3/CLK precise product.
@@ -551,8 +549,6 @@ class OrbitRuntime:
 
         product = import_precise_product(
             files,
-            provider_hint=provider_hint,
-            product_class=product_class,
             require_eci=require_eci,
             frame_transformer=self._frame_transformer,
         )

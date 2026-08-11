@@ -52,34 +52,6 @@ MAX_PRECISE_PRODUCT_EXPANDED_BYTES = 256 * 1024 * 1024
 MAX_PRECISE_PRODUCT_ZIP_MEMBERS = 16
 _PRODUCT_ID_PATTERN = re.compile(r"^precise-[0-9a-f]{20}$")
 
-_PROVIDER_ALIASES = {
-    "": "auto",
-    "auto": "auto",
-    "cddis-igs": "cddis_igs",
-    "cddis_igs": "cddis_igs",
-    "cddis": "cddis_igs",
-    "nasa-cddis": "cddis_igs",
-    "nasa_cddis": "cddis_igs",
-    "igs": "cddis_igs",
-    "igs-mgex": "igs_mgex",
-    "igs_mgex": "igs_mgex",
-    "mgex": "igs_mgex",
-    "esa-nso": "esa_nso",
-    "esa_nso": "esa_nso",
-    "esa": "esa_nso",
-    "custom": "custom",
-}
-_PRODUCT_CLASS_ALIASES = {
-    "": "auto",
-    "auto": "auto",
-    "final": "final",
-    "rapid": "rapid",
-    "ultra": "ultra_rapid",
-    "ultra-rapid": "ultra_rapid",
-    "ultra_rapid": "ultra_rapid",
-    "ultrarapid": "ultra_rapid",
-    "unknown": "unknown",
-}
 _PROVIDER_LABELS = {
     "cddis_igs": "NASA CDDIS / IGS",
     "igs_mgex": "IGS MGEX",
@@ -557,43 +529,24 @@ class PreciseProduct:
         }
 
 
-def normalize_provider_hint(value: object) -> str:
-    """Normalize public provider spellings without inventing provenance."""
-
-    compact = str(value or "").strip().lower().replace(" ", "-")
-    canonical = _PROVIDER_ALIASES.get(compact)
-    if canonical is None:
-        available = "auto, cddis-igs, igs-mgex, esa-nso, custom"
-        raise PreciseProductImportError(f"Proveedor de producto preciso no admitido: {value!s}. Usa {available}.")
-    return canonical
-
-
-def normalize_product_class(value: object) -> str:
-    """Normalize public Final/Rapid/Ultra-Rapid labels."""
-
-    compact = str(value or "").strip().lower().replace(" ", "-")
-    canonical = _PRODUCT_CLASS_ALIASES.get(compact)
-    if canonical is None:
-        available = "auto, final, rapid, ultra-rapid"
-        raise PreciseProductImportError(f"Clase de producto preciso no admitida: {value!s}. Usa {available}.")
-    return canonical
-
-
 def import_precise_product(
     files: Sequence[tuple[str, str]],
     *,
-    provider_hint: object = "auto",
-    product_class: object = "auto",
     require_eci: bool = False,
     frame_transformer: FrameTransformService | None = None,
 ) -> PreciseProduct:
-    """Decode, validate and parse one local SP3 product plus optional CLK."""
+    """Decode, validate and parse one local SP3 product and its companions.
+
+    Provider, product class and family are intentionally derived from the
+    supplied source members.  They are not caller-controlled import options.
+    ``require_eci`` is retained as an explicit capability guard for a future
+    inertial comparison operation; ordinary product imports leave it false,
+    so an ERP remains optional.
+    """
 
     decoded_files = decode_precise_product_upload(files)
     return build_precise_product(
         decoded_files,
-        provider_hint=provider_hint,
-        product_class=product_class,
         require_eci=require_eci,
         frame_transformer=frame_transformer,
     )
@@ -602,15 +555,10 @@ def import_precise_product(
 def build_precise_product(
     files: Sequence[DecodedProductFile],
     *,
-    provider_hint: object = "auto",
-    product_class: object = "auto",
     require_eci: bool = False,
     frame_transformer: FrameTransformService | None = None,
     product_id: str | None = None,
     product_name: str | None = None,
-    detected_provider_id: str | None = None,
-    detected_product_class: str | None = None,
-    detected_product_family: str | None = None,
     source_files: Sequence[ProductSourceFile] | None = None,
 ) -> PreciseProduct:
     """Build a precise product from already safe, logical source files.
@@ -641,22 +589,20 @@ def build_precise_product(
     if require_eci and "erp" not in recognized:
         raise PreciseProductImportError("Debe proporcionar un fichero ERP para convertir a ECI.")
 
-    provider_hint_id = normalize_provider_hint(provider_hint)
-    requested_class = normalize_product_class(product_class)
+    # SP3 is the required orbit product and therefore the authoritative
+    # source for product-level provenance/class.  Optional CLK, ERP, SUM,
+    # ATT and OSB companions must not be able to relabel a mismatched orbit
+    # file merely because their filename happens to contain another provider
+    # token.
     detected_provider, detected_class, detected_family = _detect_profile(
-        tuple(file.name for file in files)
+        (recognized["sp3"].name,)
     )
-    selected_provider = detected_provider if provider_hint_id == "auto" else provider_hint_id
-    selected_provider = selected_provider or "custom"
-    selected_class = detected_class if requested_class == "auto" else requested_class
-    selected_class = selected_class or "unknown"
-    if detected_provider_id is not None:
-        detected_provider = _provider_or_none(detected_provider_id)
-    if detected_product_class is not None:
-        detected_class = _normalize_detected_class(detected_product_class)
-    if detected_product_family is not None:
-        detected_family = _normalize_detected_family(detected_product_family)
-    selected_family = _selected_product_family(selected_provider, detected_family)
+    # Provenance is a property of the product files, never an operator
+    # override.  Unknown filenames remain explicitly local/custom rather
+    # than being relabelled as a public provider or class.
+    selected_provider = detected_provider or "custom"
+    selected_class = detected_class or "unknown"
+    selected_family = detected_family or _PRODUCT_FAMILIES[selected_provider]
 
     try:
         erp = (
@@ -880,14 +826,9 @@ class PreciseProductRepository:
             sources.append(source)
         return build_precise_product(
             decoded,
-            provider_hint=manifest.get("provider_id"),
-            product_class=manifest.get("product_class"),
             frame_transformer=frame_transformer,
             product_id=product_id,
             product_name=manifest.get("name"),
-            detected_provider_id=manifest.get("detected_provider_id"),
-            detected_product_class=manifest.get("detected_product_class"),
-            detected_product_family=manifest.get("detected_product_family"),
             source_files=sources,
         )
 
@@ -1463,9 +1404,9 @@ def _detect_format(file: DecodedProductFile) -> str | None:
         return "erp"
     if name.endswith(".sum"):
         return "sum"
-    if name.endswith(".att.obx"):
+    if name.endswith((".att.obx", ".att", ".obx")):
         return "att"
-    if name.endswith(".osb.bia"):
+    if name.endswith((".osb.bia", ".bia")):
         return "osb"
     prefix = file.data[:2_048].decode("ascii", errors="ignore")
     if prefix.lstrip("\ufeff").startswith("#") and "%c" in file.data[:8_192].decode("ascii", errors="ignore"):
@@ -1530,28 +1471,6 @@ def _detect_profile(file_names: tuple[str, ...]) -> tuple[str | None, str | None
     else:
         family = None
     return provider, product_class, family
-
-
-def _selected_product_family(provider_id: str, detected_family: str | None) -> str:
-    """Choose the public family while retaining source-derived semantics.
-
-    An explicit ``custom`` provider is a deliberate provenance override, so
-    it receives the custom family.  Other provider overrides do not erase an
-    unambiguous MGEX/IGS/ESA product family detected from the source names.
-    """
-
-    if provider_id == "custom":
-        return "custom"
-    return detected_family or _PRODUCT_FAMILIES[provider_id]
-
-
-def _normalize_detected_family(value: object) -> str | None:
-    family = str(value or "").strip().lower()
-    if not family or family == "unknown":
-        return None
-    if family not in {"igs", "mgex", "esa_ops", "custom"}:
-        raise PreciseProductImportError("El manifest contiene una familia de producto precisa no válida")
-    return family
 
 
 def _product_id(
@@ -1636,16 +1555,6 @@ def _satellite_id(value: object) -> str:
     if not identifier or not re.fullmatch(r"[A-Z0-9]{1,12}", identifier):
         raise PreciseProductImportError("El identificador de satélite preciso no es válido")
     return identifier
-
-
-def _provider_or_none(value: object) -> str | None:
-    normalized = normalize_provider_hint(value)
-    return None if normalized == "auto" else normalized
-
-
-def _normalize_detected_class(value: object) -> str:
-    normalized = normalize_product_class(value)
-    return "unknown" if normalized == "auto" else normalized
 
 
 def _sha256(value: bytes) -> str:

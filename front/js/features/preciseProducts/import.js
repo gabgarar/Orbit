@@ -3,13 +3,15 @@
  *
  * The browser never parses or transforms a precise product.  It only keeps
  * the logical product members separate enough for the Python service to
- * validate and persist their provenance.  This matters because an ERP is not
- * an interchangeable attachment: it is the explicit prerequisite for an
- * operator-requested terrestrial-to-inertial conversion.
+ * validate and persist their provenance.  Provider and product class are
+ * deliberately derived by the service from the files themselves: importing a
+ * precise product must not let an operator rewrite its provenance.
  */
 
 export const PRECISE_PRODUCT_IMPORT_ERRORS = Object.freeze({
     missingSp3: "Debe proporcionar un fichero SP3.",
+    // Retained for the future ECI comparison capability guard.  The GNSS
+    // import dialog intentionally does not expose or request that operation.
     missingErpForEci: "Debe proporcionar un fichero ERP para convertir a ECI."
 });
 
@@ -19,37 +21,47 @@ export const PRECISE_PRODUCT_FILE_SLOTS = Object.freeze([
         label: "SP3 · órbitas precisas",
         description: "Obligatorio. Contiene las efemérides precisas.",
         accept: ".sp3,.sp3.gz",
+        // Chromium on Windows does not consistently expose compound
+        // extensions in its native picker.  The broader picker filter is
+        // advisory only; `classifyPreciseProductSlotFile` still validates the
+        // complete filename before the file can enter this slot.
+        pickerAccept: ".sp3,.sp3.gz,.gz",
         required: true
     },
     {
         kind: "clk",
         label: "CLK · relojes precisos",
         description: "Opcional. Correcciones de reloj asociadas al producto.",
-        accept: ".clk,.clk.gz"
+        accept: ".clk,.clk.gz",
+        pickerAccept: ".clk,.clk.gz,.gz"
     },
     {
         kind: "erp",
         label: "ERP · parámetros de rotación terrestre",
-        description: "Opcional, salvo para preparar una conversión a ECI.",
-        accept: ".erp,.erp.gz"
+        description: "Opcional. Aporta los parámetros de orientación terrestre del producto.",
+        accept: ".erp,.erp.gz",
+        pickerAccept: ".erp,.erp.gz,.gz"
     },
     {
         kind: "sum",
         label: "SUM · metadatos del producto",
         description: "Opcional. Resumen y metadatos publicados por el proveedor.",
-        accept: ".sum"
+        accept: ".sum,.sum.gz",
+        pickerAccept: ".sum,.sum.gz,.gz"
     },
     {
         kind: "att",
-        label: "ATT · actitud satelital",
-        description: "Opcional. Producto de actitud en formato ATT.OBX.",
-        accept: ".att.obx,.att.obx.gz"
+        label: "ATT / OBX · actitud satelital",
+        description: "Opcional. Producto de actitud ATT.OBX; también admite ficheros OBX o ATT del proveedor.",
+        accept: ".att.obx,.att.obx.gz,.obx,.obx.gz,.att,.att.gz",
+        pickerAccept: ".att.obx,.att.obx.gz,.obx,.obx.gz,.att,.att.gz,.gz"
     },
     {
         kind: "osb",
-        label: "OSB · sesgos por observable",
-        description: "Opcional. Sesgos en formato OSB.BIA.",
-        accept: ".osb.bia,.osb.bia.gz"
+        label: "OSB / BIA · sesgos por observable",
+        description: "Opcional. Sesgos OSB.BIA; también admite ficheros BIA del proveedor.",
+        accept: ".osb.bia,.osb.bia.gz,.bia,.bia.gz",
+        pickerAccept: ".osb.bia,.osb.bia.gz,.bia,.bia.gz,.gz"
     }
 ]);
 
@@ -81,18 +93,19 @@ const SLOT_PATTERNS = Object.freeze({
     sp3: /\.sp3(?:\.gz)?$/i,
     clk: /\.clk(?:\.gz)?$/i,
     erp: /\.erp(?:\.gz)?$/i,
-    sum: /\.sum$/i,
-    att: /\.att\.obx(?:\.gz)?$/i,
-    osb: /\.osb\.bia(?:\.gz)?$/i
+    sum: /\.sum(?:\.gz)?$/i,
+    // Official IGS products use ATT.OBX and OSB.BIA.  Some providers expose
+    // the terminal product extension only, so accept those practical forms in
+    // the corresponding explicit slot too.  The semantic slot still prevents
+    // an OBX file from being mistaken for an OSB product (or vice versa).
+    att: /(?:\.att\.obx|\.obx|\.att)(?:\.gz)?$/i,
+    osb: /(?:\.osb\.bia|\.bia)(?:\.gz)?$/i
 });
 const LEGACY_SLOT_PATTERNS = Object.freeze({
     sp3: new RegExp(`\\.sp3(?:c|d)?${ARCHIVE_SUFFIX}$`, "i"),
     clk: new RegExp(`\\.clk(?:_(?:30s|05s))?${ARCHIVE_SUFFIX}$`, "i")
 });
 const ZIP_CONTAINER_PATTERN = /\.zip$/i;
-
-const KNOWN_PROVIDER_HINTS = new Set(["auto", "cddis-igs", "igs-mgex", "esa-nso", "custom"]);
-const KNOWN_PRODUCT_CLASSES = new Set(["auto", "final", "rapid", "ultra-rapid"]);
 
 function text(value) {
     return String(value ?? "").trim();
@@ -107,13 +120,6 @@ function requestedKind(selection) {
     if (!selection || typeof selection !== "object") return "";
     const value = text(selection.kind ?? selection.slot ?? selection.file_kind ?? selection.fileKind).toLowerCase();
     return SLOT_BY_KIND.has(value) || value === "archive" ? value : "";
-}
-
-function normalizeRequireEci(options = {}) {
-    return options.require_eci === true
-        || options.requireEci === true
-        || options.prepare_eci === true
-        || options.prepareEci === true;
 }
 
 /**
@@ -164,21 +170,11 @@ export function preciseProductSlotForKind(kind) {
     return SLOT_BY_KIND.get(text(kind).toLowerCase()) || null;
 }
 
-export function normalizePreciseProductImportOptions(options = {}) {
-    const providerHint = text(options.provider_hint ?? options.providerHint ?? "auto").toLowerCase();
-    const productClass = text(options.product_class ?? options.productClass ?? "auto").toLowerCase();
-    return {
-        provider_hint: KNOWN_PROVIDER_HINTS.has(providerHint) ? providerHint : "auto",
-        product_class: KNOWN_PRODUCT_CLASSES.has(productClass) ? productClass : "auto",
-        require_eci: normalizeRequireEci(options)
-    };
-}
-
 /**
  * Validate only browser-known invariants. Product decoding, archive safety and
  * ERP parsing deliberately remain in the Python service.
  */
-export function validatePreciseProductFiles(files, options = {}) {
+export function validatePreciseProductFiles(files) {
     const selections = normalizePreciseProductFileSelections(files);
     if (selections.length > PRECISE_PRODUCT_MAX_FILES) {
         throw new Error(`Se admiten como máximo ${PRECISE_PRODUCT_MAX_FILES} archivos por importación.`);
@@ -186,7 +182,6 @@ export function validatePreciseProductFiles(files, options = {}) {
 
     const seenSlots = new Set();
     let hasSp3 = false;
-    let hasErp = false;
     let totalBytes = 0;
     for (const { file, kind } of selections) {
         const name = text(file?.name);
@@ -208,13 +203,9 @@ export function validatePreciseProductFiles(files, options = {}) {
         }
         totalBytes += size;
         hasSp3 ||= kind === "sp3" || kind === "archive";
-        hasErp ||= kind === "erp";
     }
     if (!hasSp3) {
         throw new Error(PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3);
-    }
-    if (normalizeRequireEci(options) && !hasErp) {
-        throw new Error(PRECISE_PRODUCT_IMPORT_ERRORS.missingErpForEci);
     }
     if (totalBytes > PRECISE_PRODUCT_MAX_TOTAL_BYTES) {
         throw new Error("Los archivos superan el máximo total de 64 MiB antes de descomprimir.");
@@ -240,9 +231,17 @@ export function arrayBufferToBase64(buffer) {
     return btoa(binary);
 }
 
-/** Build the compatible `files` array plus the explicit ECI intent. */
-export async function buildPreciseProductImportPayload(files, options = {}) {
-    validatePreciseProductFiles(files, options);
+/** Build typed companion slots without duplicating upload bytes.
+ *
+ * Provenance, class and frame capabilities are determined server-side from
+ * the uploaded data.  Importing does not request an ECI conversion; a future
+ * comparison tool will ask for that capability at the time it needs it. The
+ * legacy `files` transport is emitted only for legacy/archive selections;
+ * sending modern files both there and in named slots doubles large ATT/CLK
+ * uploads and can make an otherwise valid product appear unresponsive.
+ */
+export async function buildPreciseProductImportPayload(files) {
+    validatePreciseProductFiles(files);
     const selected = normalizePreciseProductFileSelections(files);
     const encodedFiles = await Promise.all(selected.map(async ({ file, kind }) => ({
         name: text(file?.name),
@@ -257,9 +256,12 @@ export async function buildPreciseProductImportPayload(files, options = {}) {
             file.kind === kind && classifyPreciseProductSlotFile(file.name) === kind
         ))])
         .filter(([, file]) => Boolean(file)));
+    const legacyFiles = encodedFiles.filter((file) => !(
+        file.kind !== "archive"
+        && classifyPreciseProductSlotFile(file.name) === file.kind
+    ));
     return {
-        files: encodedFiles,
         ...namedSlots,
-        ...normalizePreciseProductImportOptions(options)
+        ...(legacyFiles.length ? { files: legacyFiles } : {})
     };
 }

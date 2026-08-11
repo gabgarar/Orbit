@@ -9,7 +9,6 @@ import {
     classifyPreciseProductFile,
     classifyPreciseProductSlotFile,
     isPreciseProductFileName,
-    normalizePreciseProductImportOptions,
     validatePreciseProductFiles
 } from "../../js/features/preciseProducts/import.js";
 
@@ -38,20 +37,7 @@ test("precise GNSS importer does not mistake arbitrary gzip or UNIX-compress fil
     }
 });
 
-test("precise import options are constrained to the provider and class contract", () => {
-    assert.deepEqual(normalizePreciseProductImportOptions({ providerHint: "ESA-NSO", productClass: "rapid" }), {
-        provider_hint: "esa-nso",
-        product_class: "rapid",
-        require_eci: false
-    });
-    assert.deepEqual(normalizePreciseProductImportOptions({ provider_hint: "untrusted", product_class: "reprocessed" }), {
-        provider_hint: "auto",
-        product_class: "auto",
-        require_eci: false
-    });
-});
-
-test("precise import payload preserves binary bytes through chunked base64", async () => {
+test("precise import payload preserves binary bytes without manual provenance or ECI intent", async () => {
     const bytes = new Uint8Array([0x00, 0xff, 0x53, 0x50, 0x33]);
     assert.equal(arrayBufferToBase64(bytes), "AP9TUDM=");
 
@@ -60,15 +46,8 @@ test("precise import payload preserves binary bytes through chunked base64", asy
         size: bytes.byteLength,
         arrayBuffer: async () => bytes.buffer
     };
-    assert.deepEqual(await buildPreciseProductImportPayload([file], {
-        provider_hint: "cddis-igs",
-        product_class: "final"
-    }), {
-        files: [{ name: file.name, kind: "sp3", content_base64: "AP9TUDM=" }],
-        sp3: { name: file.name, kind: "sp3", content_base64: "AP9TUDM=" },
-        provider_hint: "cddis-igs",
-        product_class: "final",
-        require_eci: false
+    assert.deepEqual(await buildPreciseProductImportPayload([file]), {
+        sp3: { name: file.name, kind: "sp3", content_base64: "AP9TUDM=" }
     });
 });
 
@@ -77,13 +56,23 @@ test("GNSS slots identify ERP, product metadata, attitude and observable biases"
     assert.equal(classifyPreciseProductFile("final.CLK"), "clk");
     assert.equal(classifyPreciseProductFile("final.ERP.gz"), "erp");
     assert.equal(classifyPreciseProductFile("final.SUM"), "sum");
+    assert.equal(classifyPreciseProductFile("final.SUM.gz"), "sum");
     assert.equal(classifyPreciseProductFile("final.ATT.OBX.gz"), "att");
+    assert.equal(classifyPreciseProductFile("provider-attitude.OBX.gz"), "att");
+    assert.equal(classifyPreciseProductFile("provider-attitude.ATT"), "att");
     assert.equal(classifyPreciseProductFile("final.OSB.BIA.gz"), "osb");
+    assert.equal(classifyPreciseProductFile("provider-bias.BIA.gz"), "osb");
 });
 
-test("named GNSS slots keep their documented canonical suffix contract", () => {
+test("named GNSS slots accept documented and provider-practical suffixes", () => {
     assert.equal(classifyPreciseProductSlotFile("final.SP3.gz"), "sp3");
     assert.equal(classifyPreciseProductSlotFile("final.CLK"), "clk");
+    assert.equal(classifyPreciseProductSlotFile("final.SUM.gz"), "sum");
+    assert.equal(classifyPreciseProductSlotFile("final.ATT.OBX.gz"), "att");
+    assert.equal(classifyPreciseProductSlotFile("provider.OBX"), "att");
+    assert.equal(classifyPreciseProductSlotFile("provider.ATT.gz"), "att");
+    assert.equal(classifyPreciseProductSlotFile("final.OSB.BIA.gz"), "osb");
+    assert.equal(classifyPreciseProductSlotFile("provider.BIA"), "osb");
     assert.equal(classifyPreciseProductSlotFile("final.SP3c"), "");
     assert.equal(classifyPreciseProductSlotFile("final.CLK_30S.gz"), "");
     // The generic legacy path remains deliberately broader.
@@ -91,7 +80,7 @@ test("named GNSS slots keep their documented canonical suffix contract", () => {
     assert.equal(classifyPreciseProductFile("final.CLK_30S.gz"), "clk");
 });
 
-test("GNSS import requires SP3 and requires ERP only when ECI is requested", () => {
+test("GNSS import requires SP3 while ERP remains an optional product member", () => {
     const sp3 = { name: "IGS_ORB.SP3", size: 5, arrayBuffer: async () => new ArrayBuffer(5) };
     const erp = { name: "IGS_ERP.ERP", size: 5, arrayBuffer: async () => new ArrayBuffer(5) };
 
@@ -99,23 +88,45 @@ test("GNSS import requires SP3 and requires ERP only when ECI is requested", () 
         () => validatePreciseProductFiles([]),
         (error) => error?.message === PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3
     );
-    assert.throws(
-        () => validatePreciseProductFiles([sp3], { require_eci: true }),
-        (error) => error?.message === PRECISE_PRODUCT_IMPORT_ERRORS.missingErpForEci
-    );
-    assert.doesNotThrow(() => validatePreciseProductFiles([sp3, erp], { requireEci: true }));
+    assert.doesNotThrow(() => validatePreciseProductFiles([sp3]));
+    assert.doesNotThrow(() => validatePreciseProductFiles([sp3, erp]));
 });
 
-test("GNSS import sends named product slots and an explicit ECI intent", async () => {
+test("GNSS import sends named product slots without requesting an ECI conversion", async () => {
     const bytes = new Uint8Array([0x53, 0x50, 0x33]);
     const sp3 = { name: "IGS_ORB.SP3", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer };
     const erp = { name: "IGS_ERP.ERP.gz", size: bytes.byteLength, arrayBuffer: async () => bytes.buffer };
-    const payload = await buildPreciseProductImportPayload([sp3, erp], { requireEci: true });
+    const payload = await buildPreciseProductImportPayload([sp3, erp]);
 
-    assert.equal(payload.require_eci, true);
     assert.equal(payload.sp3.kind, "sp3");
     assert.equal(payload.erp.kind, "erp");
-    assert.deepEqual(payload.files.map((file) => file.kind), ["sp3", "erp"]);
+    assert.equal("files" in payload, false);
+    assert.equal("require_eci" in payload, false);
+    assert.equal("provider_hint" in payload, false);
+    assert.equal("product_class" in payload, false);
+});
+
+test("GNSS import serializes every named companion slot in one request", async () => {
+    const bytes = new Uint8Array([0x53, 0x50, 0x33]);
+    const makeFile = (name) => ({
+        name,
+        size: bytes.byteLength,
+        arrayBuffer: async () => bytes.buffer
+    });
+    const files = [
+        makeFile("COD0MGXFIN_20251310000_01D_05M_ORB.SP3.gz"),
+        makeFile("COD0MGXFIN_20251310000_01D_30S_CLK.CLK.gz"),
+        makeFile("COD0MGXFIN_20251310000_01D_12H_ERP.ERP.gz"),
+        makeFile("COD0MGXFIN_20251310000_01D.SUM.gz"),
+        makeFile("COD0MGXFIN_20251310000_01D_30S_ATT.OBX.gz"),
+        makeFile("COD0MGXFIN_20251310000_01D_01D_OSB.BIA.gz")
+    ];
+
+    const payload = await buildPreciseProductImportPayload(files);
+    for (const kind of ["sp3", "clk", "erp", "sum", "att", "osb"]) {
+        assert.equal(payload[kind]?.kind, kind, kind);
+    }
+    assert.equal("files" in payload, false, "modern slot uploads are not duplicated into legacy files");
 });
 
 test("legacy SP3c/CLK files remain in the generic transport rather than violating named slots", async () => {

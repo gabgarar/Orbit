@@ -47,7 +47,7 @@ Ejemplos de reglas:
 | AOS/LOS manual | `source.kind: manual` requiere `manualOrbit` y no admite `sat_id` ni líneas TLE; la ventana de acceso sigue usando `start_time < end_time` en UTC. |
 | Parámetros orbitales | 2…2000 muestras; los modelos RK4 se rechazan si exceden su presupuesto interno de pasos. |
 | Órbita manual | Requiere elementos keplerianos o vector de estado; las opciones de fuerzas se normalizan al motor elegido. |
-| Producto GNSS preciso | SP3 obligatorio; CLK, ERP, SUM, ATT y OSB asociados; extensiones por campo, `require_eci`, proveedor/clase normalizados y límites de carga/archivo/expansión. |
+| Producto GNSS preciso | SP3 obligatorio; CLK, ERP, SUM, ATT y OSB asociados; extensiones por campo y límites de carga/archivo/expansión. El proveedor y la clase se derivan del SP3; `require_eci` queda como guard interno para una futura comparación. |
 
 Las formas canónicas y los alias de compatibilidad se describen en
 [REST API](../integrations/rest-api.md) y en OpenAPI de la instancia.

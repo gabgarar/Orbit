@@ -903,6 +903,7 @@ export function setupObjectSidebar({
     let catalogLoadingPage = false;
     let pendingPreciseProductFiles = [];
     let pendingPreciseProductFolderAssignment = null;
+    let preciseProductImportBusy = false;
     // Project ownership will provide persistence later; UI grouping is session-only.
     const layerTree = createLayerTree(null);
     // Bodies are a permanent workspace group rather than user folders, but
@@ -1485,7 +1486,7 @@ export function setupObjectSidebar({
             <div class="precise-product-file-slot-selection">
                 <span class="precise-product-file-slot-name" data-precise-product-slot-name="${slot.kind}">Sin seleccionar</span>
                 <div class="precise-product-file-slot-actions">
-                    <input id="preciseProductSlotInput-${slot.kind}" data-precise-product-slot-input="${slot.kind}" type="file" accept="${slot.accept}" hidden />
+                    <input id="preciseProductSlotInput-${slot.kind}" data-precise-product-slot-input="${slot.kind}" type="file" accept="${slot.pickerAccept || slot.accept}" hidden />
                     <button class="catalog-header-btn precise-product-slot-select" data-precise-product-slot-select="${slot.kind}" type="button">Seleccionar</button>
                     <button class="catalog-header-btn precise-product-slot-clear" data-precise-product-slot-clear="${slot.kind}" type="button" hidden>Quitar</button>
                 </div>
@@ -1499,7 +1500,7 @@ export function setupObjectSidebar({
             <header class="catalog-filter-header">
                 <div>
                     <h3 id="preciseProductImportTitle">Importar producto GNSS</h3>
-                    <p class="precise-product-import-lead">SP3 es obligatorio. Adjunta los productos GNSS auxiliares que correspondan para conservar su procedencia y habilitar capacidades adicionales.</p>
+                    <p class="precise-product-import-lead">SP3 es obligatorio. Adjunta los productos GNSS auxiliares disponibles; Orbit identificará la procedencia y la clase del producto a partir de sus ficheros.</p>
                 </div>
                 <button class="catalog-close-btn" id="preciseProductImportCloseBtn" type="button" aria-label="Cerrar importación de producto GNSS" title="Cerrar">×</button>
             </header>
@@ -1510,33 +1511,9 @@ export function setupObjectSidebar({
                 <button class="catalog-header-btn" id="preciseProductArchiveSelectBtn" type="button">Adjuntar paquete compatible (.zip)</button>
                 <span>Compatibilidad con paquetes SP3/CLK anteriores; el servicio valida sus miembros.</span>
             </div>
-            <div class="catalog-filter-grid">
-                <label class="catalog-filter-field">
-                    <span>Procedencia del producto</span>
-                    <select id="preciseProductProviderInput">
-                        <option value="auto">Detectar desde el archivo</option>
-                        <option value="cddis-igs">NASA CDDIS / IGS</option>
-                        <option value="igs-mgex">IGS MGEX</option>
-                        <option value="esa-nso">ESA Navigation Support Office</option>
-                        <option value="custom">Proveedor personalizado</option>
-                    </select>
-                </label>
-                <label class="catalog-filter-field">
-                    <span>Clase de producto</span>
-                    <select id="preciseProductClassInput">
-                        <option value="auto">Detectar desde el archivo</option>
-                        <option value="final">Final</option>
-                        <option value="rapid">Rapid</option>
-                        <option value="ultra-rapid">Ultra-rapid</option>
-                    </select>
-                </label>
-            </div>
-            <label class="precise-product-eci-option" for="preciseProductRequireEciInput">
-                <input id="preciseProductRequireEciInput" type="checkbox" />
-                <span><strong>Preparar conversión a ECI y comparación ECI</strong><small>Requiere un fichero ERP. No se calcula ninguna conversión científica en el navegador.</small></span>
-            </label>
-            <p class="precise-product-eci-status" id="preciseProductEciStatus" role="status" aria-live="polite">Sin ERP, el producto se mostrará como marco terrestre aproximado y la comparación en ECI permanecerá bloqueada.</p>
-            <p class="precise-product-import-note">Se admiten SP3/SP3c/SP3d y CLK compatibles anteriores, además de <code>.ERP</code>, <code>.SUM</code>, <code>.ATT.OBX</code> y <code>.OSB.BIA</code> según su campo. Los ficheros indicados como <code>.gz</code> se aceptan comprimidos. El límite es 32 MiB por archivo y 64 MiB en total antes de descomprimir.</p>
+            <p class="precise-product-detection-note">La procedencia y la clase se deducen de las cabeceras y los nombres publicados por el proveedor. El ERP es opcional durante la importación; una futura herramienta de comparación solicitará los datos de orientación terrestre cuando realmente los necesite.</p>
+            <p class="precise-product-import-note">Se admiten los productos oficiales <code>.SP3</code>, <code>.CLK</code>, <code>.ERP</code>, <code>.SUM</code>, <code>.ATT.OBX</code> y <code>.OSB.BIA</code>, también comprimidos con <code>.gz</code> cuando corresponda. Los campos ATT y OSB aceptan asimismo ficheros de proveedor <code>.ATT</code>, <code>.OBX</code> y <code>.BIA</code>. El límite es 32 MiB por archivo y 64 MiB en total antes de descomprimir.</p>
+            <p class="precise-product-import-status" id="preciseProductImportStatus" role="status" aria-live="polite">Selecciona un SP3 para empezar.</p>
             <footer class="catalog-filter-actions precise-product-import-actions">
                 <button class="catalog-header-btn" id="preciseProductImportCancelBtn" type="button">Cancelar</button>
                 <button class="catalog-header-btn precise-product-import-confirm" id="preciseProductImportConfirmBtn" type="button">Importar producto</button>
@@ -1789,14 +1766,11 @@ export function setupObjectSidebar({
     const preciseProductImportCloseBtn = preciseProductImportModal.querySelector("#preciseProductImportCloseBtn");
     const preciseProductImportCancelBtn = preciseProductImportModal.querySelector("#preciseProductImportCancelBtn");
     const preciseProductImportConfirmBtn = preciseProductImportModal.querySelector("#preciseProductImportConfirmBtn");
-    const preciseProductProviderInput = preciseProductImportModal.querySelector("#preciseProductProviderInput");
-    const preciseProductClassInput = preciseProductImportModal.querySelector("#preciseProductClassInput");
     const preciseProductFileList = preciseProductImportModal.querySelector("#preciseProductFileList");
     const preciseProductExtraFileList = preciseProductImportModal.querySelector("#preciseProductExtraFileList");
     const preciseProductArchiveInput = preciseProductImportModal.querySelector("#preciseProductArchiveInput");
     const preciseProductArchiveSelectBtn = preciseProductImportModal.querySelector("#preciseProductArchiveSelectBtn");
-    const preciseProductRequireEciInput = preciseProductImportModal.querySelector("#preciseProductRequireEciInput");
-    const preciseProductEciStatus = preciseProductImportModal.querySelector("#preciseProductEciStatus");
+    const preciseProductImportStatus = preciseProductImportModal.querySelector("#preciseProductImportStatus");
     const preciseProductSlotInputs = new Map([...preciseProductImportModal.querySelectorAll("[data-precise-product-slot-input]")]
         .map((input) => [input.dataset.preciseProductSlotInput, input]));
     const preciseProductSlotNames = new Map([...preciseProductImportModal.querySelectorAll("[data-precise-product-slot-name]")]
@@ -3025,22 +2999,26 @@ export function setupObjectSidebar({
         return Boolean(pendingPreciseProductFileForSlot(kind));
     }
 
-    function syncPreciseProductEciRequirement() {
-        const requireEci = Boolean(preciseProductRequireEciInput?.checked);
-        const hasErp = pendingPreciseProductHasSlot("erp");
-        const missingErp = requireEci && !hasErp;
-        preciseProductRequireEciInput?.setAttribute("aria-invalid", missingErp ? "true" : "false");
-        preciseProductEciStatus?.classList.toggle("is-error", missingErp);
-        preciseProductEciStatus?.classList.toggle("is-ready", requireEci && hasErp);
-        if (missingErp) {
-            preciseProductEciStatus.textContent = PRECISE_PRODUCT_IMPORT_ERRORS.missingErpForEci;
-        } else if (requireEci) {
-            preciseProductEciStatus.textContent = "ERP adjunto: el servicio validará la cobertura y preparará la conversión a ECI con parámetros de rotación terrestre trazables.";
-        } else if (hasErp) {
-            preciseProductEciStatus.textContent = "ERP adjunto. Activa la conversión a ECI sólo si vas a usar comparación o resultados inerciales.";
-        } else {
-            preciseProductEciStatus.textContent = "Sin ERP, el producto se mostrará como marco terrestre aproximado y la comparación en ECI permanecerá bloqueada.";
+    function setPreciseProductImportStatus(message, state = "") {
+        if (!preciseProductImportStatus) return;
+        preciseProductImportStatus.textContent = String(message || "");
+        preciseProductImportStatus.classList.toggle("is-error", state === "error");
+        preciseProductImportStatus.classList.toggle("is-busy", state === "busy");
+        preciseProductImportStatus.classList.toggle("is-ready", state === "ready");
+    }
+
+    function syncPreciseProductImportStatus() {
+        const selectedCount = pendingPreciseProductFiles.length;
+        if (!pendingPreciseProductHasSlot("sp3")) {
+            setPreciseProductImportStatus(PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3, "error");
+            return;
         }
+        setPreciseProductImportStatus(
+            selectedCount === 1
+                ? "SP3 seleccionado. Puedes importarlo o adjuntar productos auxiliares."
+                : `${selectedCount} ficheros seleccionados. Listos para importar.`,
+            "ready"
+        );
     }
 
     function preciseProductRenderingWarning(payload, entries = []) {
@@ -3100,7 +3078,7 @@ export function setupObjectSidebar({
             preciseProductExtraFileList.appendChild(row);
         }
         preciseProductExtraFileList.hidden = archives.length === 0;
-        syncPreciseProductEciRequirement();
+        syncPreciseProductImportStatus();
     }
 
     function replacePendingPreciseProductSlotFile(kind, file) {
@@ -3141,7 +3119,6 @@ export function setupObjectSidebar({
         if (discard) {
             pendingPreciseProductFiles = [];
             pendingPreciseProductFolderAssignment = null;
-            if (preciseProductRequireEciInput) preciseProductRequireEciInput.checked = false;
             renderPreciseProductFileList([]);
         }
     }
@@ -3149,25 +3126,26 @@ export function setupObjectSidebar({
     function openPreciseProductImportModal(files = []) {
         pendingPreciseProductFiles = preparePendingPreciseProductFiles(files);
         renderPreciseProductFileList(pendingPreciseProductFiles);
-        preciseProductProviderInput.value = "auto";
-        preciseProductClassInput.value = "auto";
-        if (preciseProductRequireEciInput) preciseProductRequireEciInput.checked = false;
-        syncPreciseProductEciRequirement();
         preciseProductImportModal.classList.add("open");
         (pendingPreciseProductHasSlot("sp3") ? preciseProductImportConfirmBtn : preciseProductSlotInputs.get("sp3"))?.focus({ preventScroll: true });
     }
 
     async function importPreciseProductFiles({ autoAddToView = true, announce = true } = {}) {
+        if (preciseProductImportBusy) return;
+        preciseProductImportBusy = true;
         const files = [...pendingPreciseProductFiles];
+        const initialButtonLabel = preciseProductImportConfirmBtn.textContent;
 
         try {
-            const requestPayload = await buildPreciseProductImportPayload(files, {
-                provider_hint: preciseProductProviderInput.value,
-                product_class: preciseProductClassInput.value,
-                require_eci: Boolean(preciseProductRequireEciInput?.checked)
-            });
-            setCatalogBusyState(true, "Importando producto preciso...");
+            setPreciseProductImportStatus(
+                `Importando ${files.length} ${files.length === 1 ? "fichero" : "ficheros"} GNSS…`,
+                "busy"
+            );
             preciseProductImportConfirmBtn.disabled = true;
+            preciseProductImportConfirmBtn.textContent = "Importando…";
+            preciseProductImportConfirmBtn.setAttribute("aria-busy", "true");
+            const requestPayload = await buildPreciseProductImportPayload(files);
+            setCatalogBusyState(true, "Importando producto preciso...");
             const response = await fetch("/api/precise-products/import", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -3205,6 +3183,7 @@ export function setupObjectSidebar({
             renderList();
             renderInfo();
             renderCatalogList();
+            setPreciseProductImportStatus("Producto GNSS importado correctamente.", "ready");
             closePreciseProductImportModal({ discard: true });
             if (announce) {
                 const productName = String(
@@ -3228,14 +3207,22 @@ export function setupObjectSidebar({
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            setPreciseProductImportStatus(
+                message === PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3
+                    ? message
+                    : `No se pudo importar: ${message}`,
+                "error"
+            );
             showErrorPopup(
                 message === PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3
-                || message === PRECISE_PRODUCT_IMPORT_ERRORS.missingErpForEci
                     ? message
                     : `No se pudo importar el producto preciso: ${message}`
             );
         } finally {
+            preciseProductImportBusy = false;
             preciseProductImportConfirmBtn.disabled = false;
+            preciseProductImportConfirmBtn.textContent = initialButtonLabel;
+            preciseProductImportConfirmBtn.removeAttribute("aria-busy");
             setCatalogBusyState(false, "");
             // Do not leak a target folder to a later, unrelated import after
             // a failed product validation or network response.
@@ -3266,7 +3253,6 @@ export function setupObjectSidebar({
     preciseProductImportCloseBtn?.addEventListener("click", () => closePreciseProductImportModal());
     preciseProductImportCancelBtn?.addEventListener("click", () => closePreciseProductImportModal());
     preciseProductImportConfirmBtn?.addEventListener("click", () => { void importPreciseProductFiles(); });
-    preciseProductRequireEciInput?.addEventListener("change", syncPreciseProductEciRequirement);
     preciseProductImportModal.querySelectorAll("[data-precise-product-slot-select]").forEach((button) => {
         button.addEventListener("click", () => {
             const kind = button.dataset.preciseProductSlotSelect;

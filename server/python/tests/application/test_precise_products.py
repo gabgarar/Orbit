@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import gzip
 import io
+import json
 import zipfile
 from datetime import UTC, datetime, timedelta
 
@@ -22,7 +23,11 @@ from orbit_api.application.precise_products import (
     import_precise_product,
 )
 from orbit_api.domain.requests import AosLosRequest, StationInput
-from orbit_api.frames import FrameId, FrameTransformService, build_frame_transformer_from_environment
+from orbit_api.frames import (
+    FrameId,
+    FrameTransformService,
+    build_frame_transformer_from_environment,
+)
 
 
 def _sp3_header(*, frame: str = "ITRF", epochs: int = 2) -> str:
@@ -315,19 +320,58 @@ def test_import_detects_esa_mgex_and_legacy_product_profiles(
     assert product.payload()["detected"]["product_family"] == product_family
 
 
-def test_explicit_provider_and_class_override_filename_detection_without_erasing_it():
-    product = import_precise_product(
-        [_upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text())],
-        provider_hint="custom",
-        product_class="rapid",
-    )
+def test_persisted_product_metadata_is_rederived_from_its_source_members(tmp_path):
+    """A manifest cannot relabel an IGS product after it has been imported."""
+
+    product = import_precise_product([
+        _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),
+    ])
+    repository = PreciseProductRepository(tmp_path / "precise-products")
+    repository.save(product)
+    manifest_path = repository.root / product.product_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update({
+        "provider_id": "custom",
+        "product_class": "rapid",
+        "detected_provider_id": None,
+        "detected_product_class": "unknown",
+        "detected_product_family": "custom",
+    })
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    loaded = repository.load(product.product_id)
+
+    assert loaded.provider_id == "cddis_igs"
+    assert loaded.product_class == "final"
+    assert loaded.product_family == "igs"
+    assert loaded.detected_provider_id == "cddis_igs"
+    assert loaded.detected_product_class == "final"
+    assert loaded.detected_product_family == "igs"
+
+
+def test_companion_aliases_accept_compressed_sum_and_standalone_att_bia_suffixes():
+    product = import_precise_product([
+        _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),
+        _upload("summary.SUM.gz", gzip.compress(b"summary")),
+        _upload("attitude.ATT.gz", gzip.compress(b"attitude")),
+        _upload("bias.BIA.gz", gzip.compress(b"bias")),
+    ])
+
+    assert product.sum_file is not None
+    assert product.attitude_file is not None
+    assert product.osb_file is not None
+    assert {source.kind for source in product.source_files} == {"sp3", "sum", "att", "osb"}
+
+
+def test_optional_companion_filename_cannot_relabel_the_required_sp3_product():
+    product = import_precise_product([
+        _upload("local-orbit.SP3", _sp3_text()),
+        _upload("IGS0OPSFIN_20262070000_01D_SUM.SUM", b"summary"),
+    ])
 
     assert product.provider_id == "custom"
-    assert product.product_class == "rapid"
+    assert product.product_class == "unknown"
     assert product.product_family == "custom"
-    assert product.detected_provider_id == "cddis_igs"
-    assert product.detected_product_class == "final"
-    assert product.detected_product_family == "igs"
 
 
 def test_persistence_keeps_esa_provider_separate_from_mgex_product_family(tmp_path):

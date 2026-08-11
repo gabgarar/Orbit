@@ -54,47 +54,44 @@ POST /api/precise-products/import
 Content-Type: application/json
 
 {
-  "files": [
-    {
-      "name": "IGS0OPSFIN_20262230000_01D_15M_ORB.SP3.gz",
-      "content_base64": "<base64-of-local-file>"
-    },
-    {
-      "name": "IGS0OPSFIN_20262230000_01D_05M_CLK.CLK.gz",
-      "content_base64": "<base64-of-local-file>"
-    },
-    {
-      "name": "IGS0OPSFIN_20262230000_01D_ERP.ERP.gz",
-      "content_base64": "<base64-of-local-file>"
-    }
-  ],
-  "provider_hint": "cddis-igs",
-  "product_class": "final",
-  "require_eci": true
+  "sp3": {
+    "name": "IGS0OPSFIN_20262230000_01D_15M_ORB.SP3.gz",
+    "kind": "sp3",
+    "content_base64": "<base64-of-local-file>"
+  },
+  "clk": {
+    "name": "IGS0OPSFIN_20262230000_01D_05M_CLK.CLK.gz",
+    "kind": "clk",
+    "content_base64": "<base64-of-local-file>"
+  },
+  "erp": {
+    "name": "IGS0OPSFIN_20262230000_01D_ERP.ERP.gz",
+    "kind": "erp",
+    "content_base64": "<base64-of-local-file>"
+  }
 }
 ~~~
 
-`content_base64` carries the binary without a `data:` prefix. Canonical
-`provider_hint` values are `auto`, `cddis-igs`, `igs-mgex`, `esa-nso`, and
-`custom`; `product_class` values are `auto`, `final`, `rapid`, and
-`ultra-rapid`. With `auto`, Orbit proposes a classification from the file name
-and records `custom`/`unknown` when it cannot substantiate one.
+`content_base64` carries the binary without a `data:` prefix. Provider, family,
+and class are determined exclusively from the sources: requests must not assign
+`provider_hint` or `product_class` manually. For compatibility, the service
+accepts only `auto`; a manual override is rejected. When evidence is
+insufficient, it records `custom`/`unknown`.
 
 Every input is classified from its window field and extension: required SP3
-`.SP3`/`.SP3.gz`; optional CLK `.CLK`/`.CLK.gz`; conditional ERP
-`.ERP`/`.ERP.gz`; optional SUM `.SUM`; optional ATT `.ATT.OBX`/`.ATT.OBX.gz`;
-and optional OSB `.OSB.BIA`/`.OSB.BIA.gz`. The service rejects an upload with
-no SP3 using `422` and the exact text **“Debe proporcionar un fichero SP3.”**.
+`.SP3`/`.SP3.gz`; optional CLK `.CLK`/`.CLK.gz`; optional ERP
+`.ERP`/`.ERP.gz`; SUM `.SUM`/`.SUM.gz`; ATT `.ATT.OBX`/`.ATT.OBX.gz` or the
+`.ATT`/`.OBX` aliases and their `.gz` variants; and OSB
+`.OSB.BIA`/`.OSB.BIA.gz` or `.BIA`/`.BIA.gz`. The service rejects an upload
+with no SP3 using `422` and the exact text **“Debe proporcionar un fichero SP3.”**.
 
-`require_eci` expresses that the caller needs an ITRF-to-ECI conversion. When
-`true`, ERP is required and its absence produces `422` with the exact text
-**“Debe proporcionar un fichero ERP para convertir a ECI.”**. When `false` or
-omitted, ERP remains optional and output is labelled **Marco terrestre
-aproximado (sin ERP)**. When ERP is supplied and applied, frame metadata says
-**ITRF (con ERP aplicado)**. ERP supplies UT1 and polar motion; when SP3
-declares an IGS realization, a registered and applied realization transform is
-also required. ERP does not invent that transformation, so the capability
-contract keeps ECI unavailable until both conditions are met.
+The current UI does not request ECI at import time. `require_eci` is reserved
+for a future feature that needs an ITRF-to-ECI conversion; with `true`, ERP
+will be required and its absence will produce `422` with the exact text
+**“Debe proporcionar un fichero ERP para convertir a ECI.”**. ERP supplies UT1
+and polar motion; when SP3 declares an IGS realization, a registered and
+applied realization transform is also required. ERP does not invent that
+transformation, so ECI remains blocked until both conditions are met.
 
 A successful response contains `product`, `satellites`, and `importedIds`.
 `product` declares provider, class, family, detection, native frame,

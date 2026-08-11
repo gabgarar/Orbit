@@ -30,20 +30,19 @@ del formato.
 
 | Distribuidor / serie | Órbita | Reloj | Uso y procedencia que conserva Orbit |
 | --- | --- | --- | --- |
-| [NASA CDDIS — IGS](https://cddis.nasa.gov/Data_and_Derived_Products/GNSS/orbit_and_clock_products.html) | IGS Final, Rapid y Ultra-Rapid SP3. | CLK IGS asociado cuando se aporta. | ID de proveedor `cddis_igs`, familia IGS y clase detectada o declarada. |
+| [NASA CDDIS — IGS](https://cddis.nasa.gov/Data_and_Derived_Products/GNSS/orbit_and_clock_products.html) | IGS Final, Rapid y Ultra-Rapid SP3. | CLK IGS asociado cuando se aporta. | ID de proveedor `cddis_igs`, familia IGS y clase detectada. |
 | [IGS MGEX](https://igs.org/mgex/data-products/) | SP3 multi-GNSS. | CLK multi-GNSS asociado. | ID `igs_mgex`; se conservan los identificadores de constelación del archivo. |
-| [ESA Navigation Support Office](https://navigation-office.esa.int/GNSS_based_products.html) | Series operacionales y MGEX, por ejemplo Final, Rapid y Ultra-Rapid. | Productos CLK correspondientes cuando se aportan. | ID `esa_nso`, serie y clase indicadas por el nombre o por el operador. |
+| [ESA Navigation Support Office](https://navigation-office.esa.int/GNSS_based_products.html) | Series operacionales y MGEX, por ejemplo Final, Rapid y Ultra-Rapid. | Productos CLK correspondientes cuando se aportan. | ID `esa_nso`, serie y clase detectadas desde los archivos publicados. |
 
 Los identificadores de satélite permanecen en la forma del producto, por
 ejemplo `G01`, `E11`, `C19` o `R05`. Una entrada multi-GNSS no se reduce a GPS
 ni se reasigna a un NORAD.
 
-El selector de proveedor y clase permite conservar una procedencia declarada
-por el operador. En modo automático, Orbit usa patrones de nombre de archivo
-para proponer IGS/CDDIS, MGEX, ESA NSO y Final/Rapid/Ultra-Rapid; si no hay una
-coincidencia, registra `custom` y/o `unknown` en vez de afirmar una calidad no
-demostrada. La cabecera SP3 sigue siendo la autoridad para marco y escala
-temporal.
+La procedencia, la familia y la clase se determinan automáticamente a partir
+de los nombres y del contenido publicado en los archivos. La ventana no ofrece
+un selector manual: si no hay evidencia suficiente, Orbit registra `custom`
+y/o `unknown` en vez de atribuir una calidad o un proveedor no demostrados. La
+cabecera SP3 sigue siendo la autoridad para marco y escala temporal.
 
 ### Calidad y latencia
 
@@ -82,10 +81,10 @@ ventana.
 | --- | --- | --- | --- |
 | **SP3 — órbitas precisas** | Sí | `.SP3`, `.SP3.gz` | Posición y, si existe, velocidad por época y satélite. Es la única fuente que crea las capas orbitales. |
 | **CLK — relojes precisos** | No | `.CLK`, `.CLK.gz` | Sesgos, tasas y precisión de reloj cuando el archivo los publica. Se conserva con el SP3, sin alterar su geometría. |
-| **ERP — parámetros de rotación terrestre** | Condicional | `.ERP`, `.ERP.gz` | EOP asociados al producto. Es obligatorio cuando se solicita una conversión ITRF → ECI. |
-| **SUM — metadatos** | No | `.SUM` | Resumen o metadatos del producto; se conserva para auditoría. |
-| **ATT — actitud satelital** | No | `.ATT.OBX`, `.ATT.OBX.gz` | Producto de actitud asociado; se conserva como procedencia, no modifica una órbita SP3. |
-| **OSB — sesgos específicos de observable** | No | `.OSB.BIA`, `.OSB.BIA.gz` | Sesgos de observables asociados; se conservan como producto auxiliar, no como corrección de posición. |
+| **ERP — parámetros de rotación terrestre** | No | `.ERP`, `.ERP.gz` | EOP asociados al producto. Se conserva durante la importación y una capacidad inercial futura lo validará cuando lo necesite. |
+| **SUM — metadatos** | No | `.SUM`, `.SUM.gz` | Resumen o metadatos del producto; se conserva para auditoría. |
+| **ATT — actitud satelital** | No | `.ATT.OBX`, `.ATT.OBX.gz`; alias `.OBX`/`.ATT` y `.gz` | Producto de actitud asociado; se conserva como procedencia, no modifica una órbita SP3. |
+| **OSB — sesgos específicos de observable** | No | `.OSB.BIA`, `.OSB.BIA.gz`; alias `.BIA` y `.gz` | Sesgos de observables asociados; se conservan como producto auxiliar, no como corrección de posición. |
 
 El flujo rechaza una importación que no tenga SP3 con el mensaje exacto:
 
@@ -101,20 +100,20 @@ análisis distintos.
 
 ### Validación dependiente de ECI
 
-ERP es opcional mientras solo se consume la serie terrestre aproximada. Pasa a
-ser obligatorio al activar una función que solicite convertir el producto de
-ITRF a ECI, incluida una comparación que exija un marco inercial común. En ese
-caso Orbit detiene la operación antes de calcular y muestra:
+ERP es opcional en la ventana de importación actual. No hay todavía una
+herramienta de comparación de propagadores ni un control de ECI en esta
+ventana. Cuando exista una función que solicite convertir el producto a ECI,
+la capacidad correspondiente deberá exigir ERP, una ruta de realización y
+cobertura temporal válida. Si falta ERP, detendrá esa operación con:
 
 ```text
 Debe proporcionar un fichero ERP para convertir a ECI.
 ```
 
 No existe todavía una interfaz ni una ruta independiente de comparación de
-propagadores. El contrato de capacidad `require_eci` es el guard que deberá
-usar esa futura función: con ERP permite comparación en ECI; sin ERP la
-bloquea con el mensaje anterior. No se debe interpretar esta documentación
-como una pantalla de comparación ya disponible.
+propagadores. El contrato interno `require_eci` queda reservado como guard de
+esa futura función; no forma parte del formulario de importación ni habilita
+una comparación hoy.
 
 !!! warning "No confundir el reloj con la escala temporal"
 
@@ -136,8 +135,9 @@ metadatos publicados por el formato:
   y muestras de reloj;
 - presencia, nombre, tipo y checksum de CLK, ERP, SUM, ATT y OSB cuando se
   aportan;
-- nombre/origen seleccionado por el operador, clase de calidad declarada o
-  inferida del nombre;
+- proveedor, familia y clase inferidos automáticamente de las fuentes, junto
+  con la evidencia disponible o el valor `custom`/`unknown` si no se puede
+  demostrar una clasificación;
 - SHA-256 del archivo subido y de cada fuente lógica descomprimida.
 
 La procedencia acompaña a la capa y a las respuestas de importación. Orbit
@@ -217,15 +217,15 @@ no se descarga ni se empareja automáticamente ninguna fuente remota.
 
 ## Flujo de importación
 
-1. Descargue el SP3 y, cuando vaya a solicitar ECI, el ERP de la misma revisión
-   de producto desde CDDIS/IGS/ESA. Añada CLK, SUM, ATT u OSB solo si necesita
+1. Descargue el SP3 y, si está disponible, el ERP de la misma revisión de
+   producto desde CDDIS/IGS/ESA. Añada CLK, SUM, ATT u OSB solo si necesita
    conservar esos productos auxiliares.
-2. Compruebe proveedor, fecha, clase (Final/Rapid/Ultra-Rapid), marco,
-   `TIME_SYSTEM` y si Ultra-Rapid contiene un tramo predicho.
+2. Compruebe fecha, marco, `TIME_SYSTEM` y si Ultra-Rapid contiene un tramo
+   predicho; Orbit derivará proveedor y clase automáticamente tras la carga.
 3. En **Layers → + → Add layer → Add satellite → Importar producto GNSS**,
    seleccione el SP3 obligatorio y rellene los campos opcionales que
-   correspondan. Si activa una función ECI, el campo ERP deja de ser opcional.
-   El diálogo permite aceptar la detección o declarar proveedor y clase.
+   correspondan. El diálogo detecta proveedor y clase desde las fuentes; no
+   permite declararlos manualmente ni activa ECI durante la importación.
 4. Revise el resumen de procedencia y las capas creadas por identificador de
    satélite. Una capa representa la efeméride tabulada, no un objeto TLE.
 5. Orbit alinea la línea temporal simulada a la cobertura común publicada.

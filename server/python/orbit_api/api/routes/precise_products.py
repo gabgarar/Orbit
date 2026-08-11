@@ -29,14 +29,11 @@ def create_precise_products_router(
         """Persist one local precise product after strict archive validation."""
 
         try:
-            kwargs = {
-                "provider_hint": payload.provider_hint,
-                "product_class": payload.product_class,
-            }
             # ``create_precise_products_router`` is intentionally injectable
-            # for service hosts and tests.  Keep pre-GNSS adapters working if
-            # they only expose the historical two keyword arguments, while
-            # production OrbitRuntime receives the new explicit ECI intent.
+            # for service hosts and tests.  Provenance/class are always
+            # derived from the source files, so the only optional capability
+            # request forwarded here is the future ECI guard.
+            kwargs = {}
             if _accepts_keyword(import_product, "require_eci"):
                 kwargs["require_eci"] = payload.require_eci
             product = import_product(
