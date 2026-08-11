@@ -271,3 +271,30 @@ export async function buildPreciseProductImportPayload(files, options = {}) {
         ...(selectedSatelliteIds.length ? { selected_satellite_ids: selectedSatelliteIds } : {})
     };
 }
+
+/**
+ * Build the deliberately small request used to discover GNSS satellites
+ * before an import is committed.
+ *
+ * The SP3 is the authoritative source for the satellite inventory.  CLK,
+ * ERP, ATT and bias products cannot change that inventory, so uploading them
+ * during the preview only makes an otherwise quick, non-persistent operation
+ * depend on tens of MiB of unrelated data.  They remain in the pending file
+ * set and are sent exactly once with the confirmed import.
+ */
+export function preciseProductPreviewFiles(files) {
+    const selections = normalizePreciseProductFileSelections(files);
+    const sp3Files = selections.filter(({ kind }) => kind === "sp3");
+    if (sp3Files.length) return sp3Files.map(({ file }) => file);
+
+    // A legacy archive may be the only carrier for an SP3.  In that case the
+    // service must inspect the archive, so preserve that compatibility path.
+    const archiveFiles = selections.filter(({ kind }) => kind === "archive");
+    if (archiveFiles.length) return archiveFiles.map(({ file }) => file);
+
+    throw new Error(PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3);
+}
+
+export async function buildPreciseProductPreviewPayload(files) {
+    return buildPreciseProductImportPayload(preciseProductPreviewFiles(files));
+}

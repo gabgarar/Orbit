@@ -38,6 +38,27 @@ the [RK4](rk4.md) integrator solves the numerical system.
 The propagator record used by the catalog contains only `sgp4`. there is no
 Cowell selector, two bodies nor J2 for a TLE catalog object.
 
+## State query, not model interpolation
+
+The propagators in this section compute a state for the requested epoch; they
+do not query an intermediate position table.
+
+| Route | Method when an arbitrary instant is requested |
+| --- | --- |
+| SGP4 / TLE | A direct call to `Satrec.sgp4` at the UTC epoch. |
+| Two-body | Analytical mean-anomaly advance and a Kepler solution at that epoch. |
+| Cowell/RK4 | Fixed-step RK4 integration with a 60 s maximum step from the nearest cached state; when the target does not fall on the nominal step, it integrates one final shortened step. |
+| J2+J3+J4 | Compatibility preset using Cowell's same fixed-step RK4 core. |
+
+Therefore the Cowell cache is not interpolated, and neither SGP4 nor two-body
+uses RK4. Drawn orbits do request multiple epochs and Cesium joins those
+points; a marker can move linearly between vertices for continuous visual
+playback. That is not another propagator evaluation.
+
+For the matrix also covering SP3, OEM, ERP, and the distinction between the
+Python route and the viewer's local OEM import, see
+[Ephemerides and interpolation](../orbit-service.md).
+
 ## Frames and units
 
 | Origin | Native framework | Internal units | Contract exit |

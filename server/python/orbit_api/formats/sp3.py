@@ -507,6 +507,15 @@ def _sp3_record_vector(line: str) -> tuple[str, str, tuple[float, float, float] 
         # The SP3 sentinel means no position/velocity was supplied for that
         # satellite/epoch. It is not a real Earth-centred coordinate.
         return record_type, satellite_id, None
+    if record_type == "P" and vector == (0.0, 0.0, 0.0):
+        # Real multi-GNSS products also use an all-zero *position* record
+        # together with a missing clock sentinel for an unavailable satellite
+        # at an individual epoch, e.g. ``PC08 0 0 0 999999.999999``.  A point
+        # at the Earth's centre is not a satellite state and Cesium cannot
+        # project it to Cartographic coordinates.  Do not apply this rule to
+        # V records: a zero ECEF velocity can be legitimate for a stationary
+        # or geostationary object.
+        return record_type, satellite_id, None
     return record_type, satellite_id, vector  # type: ignore[return-value]
 
 

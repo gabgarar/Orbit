@@ -98,6 +98,120 @@ misma importación. Una carga contiene un único SP3 lógico y, como máximo, un
 archivo de cada tipo auxiliar; no mezcle revisiones, fechas o centros de
 análisis distintos.
 
+### Lectura técnica por fichero
+
+En esta sección, **leer** significa que Orbit interpreta los registros y los
+convierte a su contrato interno; **conservar** significa que almacena el
+archivo, su tipo, nombre, tamaño, compresión/origen de archivo y SHA-256 para
+procedencia, sin pretender que sus valores ya participen en el cálculo
+orbital. Esta distinción es importante: los seis campos pertenecen al mismo
+producto GNSS, pero sólo SP3 aporta una trayectoria cartesiana.
+
+#### SP3 — órbitas precisas (obligatorio)
+
+| Parte del SP3 | Parámetros y unidades de fuente que lee Orbit | Uso, persistencia y efecto visible |
+| --- | --- | --- |
+| Cabecera `#` y `%c` | Versión; tipo de registro `P`/`V`; época inicial; número de épocas; datos usados; sistema de coordenadas; tipo orbital; agencia; y `TIME_SYSTEM`. | Valida el producto y conserva todos esos metadatos como marco nativo, realización, agencia y escala temporal. Una escala no reconocida no se convierte silenciosamente a UTC: se rechaza al construir la fuente de estados. |
+| Época y posición | Línea `*` seguida de `P<id> X Y Z [clock]`. `X`, `Y`, `Z` están en **km**. | Cada posición no ausente crea una muestra del satélite GNSS indicado y, tras confirmar la selección, una capa SP3. Las posiciones se normalizan a **m**; son la fuente de la órbita, el globo 2D/3D, ground track, distancia y AOS/LOS. |
+| Velocidad | `V<id> VX VY VZ [clock-rate]`; `VX`, `VY`, `VZ` están en **dm/s**. | Si existe, se normaliza a **m/s** y acompaña al estado tabulado. No se inventa una velocidad cuando el fichero no la publica. |
+| Reloj embebido | Cuarta componente de `P`: sesgo de reloj en **µs**. Cuarta componente de `V`: tasa en **10⁻⁴ µs/s**. | Se convierte a segundos y segundos/segundo y aparece como resumen/procedencia de reloj. No cambia posición, velocidad, marco, escala de tiempo, distancia ni visibilidad. |
+
+El centinela SP3 de componente ausente (`abs(valor) >= 999999`) se descarta;
+una posición `P` completa `(0, 0, 0)` también se trata como estado ausente/no
+físico y no se dibuja como una coordenada terrestre. Los registros `P`/`V` duplicados
+para la misma época y satélite son un error. Los indicadores de precisión,
+correlación, eventos y registros extendidos que algunos SP3 publican no se
+convierten en una covarianza ni en una corrección de la órbita en esta ruta.
+
+Orbit interpola cada serie elegida con una ventana Lagrange local de hasta diez
+muestras (grado 9), degradando al máximo grado disponible si la serie es más
+corta. Nunca extrapola fuera de las épocas SP3. El archivo fuente, su cabecera,
+las muestras interpretadas y su checksum quedan vinculados al producto y a la
+ficha de cada satélite.
+
+#### CLK — relojes precisos (opcional)
+
+| Parte del CLK RINEX | Parámetros y unidades de fuente que lee Orbit | Uso, persistencia y efecto visible |
+| --- | --- | --- |
+| Cabecera | `RINEX VERSION / TYPE`, `TIME SYSTEM ID` y agencia de `PGM / RUN BY / DATE`. | Conserva versión, tipo, agencia y escala temporal declarada. Si no se declara una escala, no presupone UTC ni desplaza épocas SP3. |
+| Registro de satélite `AS` | Identificador GNSS, época, número de valores y, en orden: sesgo (**s**), sigma de sesgo (**s**), deriva (**s/s**), sigma de deriva (**s/s**), tasa de deriva (**s/s²**) y su sigma (**s/s²**) cuando están presentes. | Agrupa las muestras por satélite como información de reloj y muestra cobertura/resumen en la ficha de producto. Las conserva junto a SP3, pero no altera la geometría, la interpolación orbital, el render, AOS/LOS ni una conversión de escala temporal. |
+
+Los registros RINEX `AR`, `CR` y `DR`, así como continuaciones que sólo
+contengan diagnósticos adicionales, no se modelan todavía como datos de
+satélite. Un CLK no crea capas sin SP3 y no es una solución de navegación,
+PPP ni *clock steering*.
+
+#### ERP — parámetros de rotación terrestre (opcional; condicional para ECI)
+
+Orbit interpreta tablas **IGS ERP v2** que declaren las cinco columnas
+obligatorias siguientes. Puede reconocer las grafías habituales de cada
+cabecera (`Xpole`/`Xp`, `Ypole`/`Yp`, `UT1-UTC`/`UT1R-UTC` y `LOD`/`LODR`).
+
+| Columna ERP | Unidad esperada en el ERP IGS v2 | Conversión y uso en Orbit |
+| --- | --- | --- |
+| `MJD` | días | Se convierte a la época UTC de cada muestra y define la cobertura finita del ERP. |
+| `Xpole`, `Ypole` | microsegundos de arco (**µas**) | Se convierten a radianes como `xp` e `yp` para la orientación polar de la Tierra. |
+| `UT1-UTC` o `UT1R-UTC` | décimas de microsegundo (**0,1 µs**) | Se convierte a segundos como DUT1. Es necesario para la rotación terrestre reproducible. |
+| `LOD` o `LODR` | décimas de microsegundo (**0,1 µs**) | Se convierte a segundos y se conserva como longitud del día. |
+
+El ERP se persiste con su cobertura, número de muestras, origen, versión y
+snapshot/checksum. Orbit interpola linealmente sus muestras dentro de esa
+cobertura y no las extrapola. El lector ERP v2 actual no toma `dX`/`dY` de un
+archivo ERP: los deja explícitamente a cero, por lo que no sustituye un
+producto IERS C04 de correcciones celestes.
+
+Para una consulta SP3 terrestre → ECI hacen falta **a la vez**: ERP con
+cobertura en la época solicitada, tabla de segundos intercalares y una ruta de
+realización terrestre válida. Si se cumplen, la interfaz declara **ITRF (con
+ERP aplicado)**; ERP no crea por sí solo una transformación de datum como
+IGS20 → ITRF2020. Sin ERP, la capa puede inspeccionarse en su marco terrestre
+nativo, pero se etiqueta **Marco terrestre aproximado (sin ERP)** y se bloquea
+la conversión a ECI. Adjuntar ERP no cambia por sí mismo la posición SP3 ni
+crea una nueva órbita; habilita y documenta la orientación terrestre usada.
+
+#### SUM — resumen y metadatos (opcional)
+
+Orbit **no interpreta todavía campos internos de SUM**. Conserva el fichero
+como compañero inmutable del SP3 —nombre, tipo, tamaño, procedencia y SHA-256—
+y expone su presencia en la ficha y el manifest. No se derivan de él posición,
+velocidad, reloj, calidad numérica, marco, render ni capacidad ECI. Por ello,
+un SUM sirve hoy para auditoría y para mantener juntos los metadatos publicados
+por el proveedor, no para sobrescribir la cabecera SP3.
+
+#### ATT / OBX — actitud satelital (opcional)
+
+El campo acepta productos de actitud publicados como `ATT.OBX`, `OBX` o `ATT`
+compatibles. Orbit identifica y conserva el archivo asociado, pero **no decodifica
+aún sus parámetros de actitud**: cuaterniones, ángulos *yaw/pitch/roll*,
+maniobras, centro de fase de antena o banderas de actitud no pasan a un estado
+de actitud interno. Por tanto, no modifica el dibujo de la órbita ni genera
+un cono de apuntado, una huella de antena o una corrección de enlace. Su valor
+actual es trazabilidad del producto exacto utilizado.
+
+#### OSB / BIA — sesgos por observable (opcional)
+
+El campo acepta `OSB.BIA` y alias BIA compatibles. Orbit conserva su presencia
+y checksum, pero **no interpreta todavía** códigos de observable, intervalos de
+validez, sesgos, desviaciones estándar o unidades de fase/código del BIA. No
+aplica los sesgos al CLK, SP3, rango, AOS/LOS, SNR ni a una solución PPP. Como
+SUM y ATT, se mantiene para procedencia y para que una futura cadena de
+observaciones pueda usar exactamente el producto auxiliar seleccionado.
+
+#### Límites comunes de carga y conservación
+
+- Un producto lógico admite un SP3 obligatorio y, como máximo, un CLK, ERP,
+  SUM, ATT y OSB; el backend mantiene un límite absoluto de ocho ficheros para
+  compatibilidad con cargas archivadas.
+- Cada fichero cargado está limitado a **32 MiB** y el conjunto binario a
+  **64 MiB**; el servicio HTTP reserva **90 MiB** para el JSON codificado en
+  base64. Tras descomprimir, el total no puede superar **256 MiB**.
+- `.gz` se descomprime bajo ese límite. Los ZIP son una compatibilidad para
+  conjuntos heredados: máximo 16 miembros, sin ZIP cifrado ni ZIP anidado, y
+  cada miembro conserva su nombre de archivo seguro y su hash.
+- SP3, CLK y ERP se vuelven a interpretar al rehidratar el producto. SUM, ATT
+  y OSB se vuelven a verificar como fuentes persistidas, pero no adquieren una
+  semántica nueva sólo por reiniciar Orbit.
+
 ### Validación dependiente de ECI
 
 ERP es opcional en la ventana de importación actual. No hay todavía una

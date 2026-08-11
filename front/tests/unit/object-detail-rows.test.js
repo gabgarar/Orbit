@@ -287,6 +287,7 @@ test("SP3 details stay per-satellite and expose only source-backed GNSS metadata
     assert.equal(overview["Identificador GNSS"], "C06");
     assert.equal(overview.Constelación, "BeiDou");
     assert.equal(overview.NORAD, undefined);
+    assert.equal(details.noradId, "", "an SP3 member must never inherit a generic NORAD placeholder");
     assert.equal(overview.COSPAR, undefined);
     assert.equal(overview.Proveedor, "IGS MGEX");
     assert.equal(overview["Clase de producto"], "Final");
@@ -309,6 +310,36 @@ test("SP3 details stay per-satellite and expose only source-backed GNSS metadata
     assert.equal(propagation.Motor, "Reproducción de efeméride precisa SP3");
     assert.equal(propagation.Integrador, "No aplica; estados tabulados");
     assert.equal(propagation["Modelo de fuerzas"], "No aplica; el SP3 contiene estados publicados");
+});
+
+test("SP3 identity rejects even a stale generic NORAD value and remains GNSS-only", () => {
+    const details = buildObjectDetails({
+        id: "precise:demo-product:G01",
+        sourceFormat: "SP3",
+        telemetry: {
+            id: "G01",
+            source_format: "SP3",
+            // Imported product payloads must not leak an unrelated catalogue
+            // number into the GNSS identity shown by the inspector header.
+            norad_id: "25544",
+            sp3: {
+                satellite_id: "G01",
+                product_id: "demo-product",
+                native_reference_frame: "IGS20",
+                time_system: "GPS"
+            }
+        },
+        catalogMeta: { sourceFormat: "SP3" }
+    });
+
+    const overview = asObject(details.rows.overview);
+    assert.equal(details.noradId, "");
+    assert.equal(overview.NORAD, undefined);
+    assert.equal(overview["Identificador GNSS"], "G01");
+    assert.ok(
+        Object.entries(overview).some(([label, fieldValue]) => label.startsWith("Constelaci") && fieldValue === "GPS"),
+        "the GNSS prefix remains represented as the GPS constellation"
+    );
 });
 
 test("SP3 inspector never fabricates a position or velocity outside a valid rendered state", () => {

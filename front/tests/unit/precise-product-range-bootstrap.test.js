@@ -43,6 +43,12 @@ function createCesiumTestDouble() {
             }
         },
         Quaternion: { IDENTITY: {} },
+        ArcType: { NONE: "none", GEODESIC: "geodesic" },
+        PolylineGlowMaterialProperty: class PolylineGlowMaterialProperty {
+            constructor(options) {
+                Object.assign(this, options);
+            }
+        },
         ModelGraphics: class ModelGraphics {
             constructor(options) {
                 Object.assign(this, options);
@@ -344,6 +350,140 @@ test("a multi-satellite SP3 import bounds exact-range requests while every layer
         assert.equal(maxInFlight, 4, "the queue never floods the ephemeris endpoint");
     } finally {
         ids.forEach((id) => setSatelliteLayerActive(id, false));
+        setSimulationTimelineProvider(null);
+        setOrbitConfig({
+            satellite_use_3d_model: true,
+            orbit_future_show: true,
+            orbit_ground_track_show: true,
+            propagation_hours: 12
+        });
+        for (const [name, value] of Object.entries(previous)) {
+            if (value === undefined) delete globalThis[name];
+            else globalThis[name] = value;
+        }
+    }
+});
+
+test("an SP3 Earth-centre missing-state record never reaches Cesium orbit geometry", async () => {
+    const previous = {
+        Cesium: globalThis.Cesium,
+        window: globalThis.window,
+        WebSocket: globalThis.WebSocket,
+        fetch: globalThis.fetch,
+        requestAnimationFrame: globalThis.requestAnimationFrame
+    };
+    const stationId = "precise:missing-state:C08";
+    const entities = [];
+    let socket = null;
+
+    class TestWebSocket {
+        static OPEN = 1;
+        constructor() {
+            socket = this;
+            this.readyState = TestWebSocket.OPEN;
+        }
+        close() {}
+        send() {}
+    }
+
+    const viewer = {
+        entities: {
+            add(entity) {
+                // This mimics Cesium's 2D geometry worker: an Earth-centre
+                // sample has no Cartographic longitude and must be rejected
+                // before a polyline reaches the renderer.
+                const positions = entity?.polyline?.positions;
+                if (Array.isArray(positions) && positions.some((position) => (
+                    Math.hypot(position.x, position.y, position.z) < 1_000
+                ))) {
+                    throw new TypeError("Cannot read properties of undefined (reading 'longitude')");
+                }
+                entities.push(entity);
+                return entity;
+            },
+            remove(entity) {
+                const index = entities.indexOf(entity);
+                if (index >= 0) entities.splice(index, 1);
+                return true;
+            }
+        }
+    };
+
+    try {
+        globalThis.Cesium = createCesiumTestDouble();
+        globalThis.window = { location: { protocol: "http:", host: "orbit.test" } };
+        globalThis.WebSocket = TestWebSocket;
+        globalThis.requestAnimationFrame = () => 0;
+        globalThis.fetch = async () => ({
+            ok: true,
+            json: async () => ({
+                reference_frame: "ITRF",
+                points: [
+                    { time: "2026-08-10T12:00:00.000Z", position: { x: 7_000_000, y: 0, z: 0 } },
+                    // This is the real-world missing-state spelling found in
+                    // the supplied CODE MGEX SP3 for C08.
+                    { time: "2026-08-10T12:01:00.000Z", position: { x: 0, y: 0, z: 0 } },
+                    { time: "2026-08-10T12:02:00.000Z", position: { x: 7_200_000, y: 120_000, z: 0 } }
+                ]
+            })
+        });
+
+        setOrbitConfig({
+            satellite_use_3d_model: false,
+            orbit_future_show: true,
+            orbit_ground_track_show: false,
+            propagation_hours: 1
+        });
+        setSimulationTimelineProvider(() => ({
+            mode: "range",
+            date: new Date("2026-08-10T12:01:00.000Z"),
+            rangeStart: new Date("2026-08-10T12:00:00.000Z"),
+            rangeEnd: new Date("2026-08-10T12:02:00.000Z")
+        }));
+        registerPreciseProductSatelliteEntries([{
+            id: stationId,
+            name: "BeiDou C08",
+            sourceFormat: "SP3",
+            satellite_id: "C08",
+            product_id: "missing-state",
+            sp3: { reference_frame: "ITRF", time_scale: "GPS" }
+        }]);
+        initSatelliteReceiver(viewer);
+        assert.equal(setSatelliteLayerActive(stationId, true), true);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const orbit = entities.find((entity) => entity.id === `${stationId}-orbit`);
+        assert.ok(orbit, "the valid surrounding samples still render an orbit");
+        assert.equal(orbit.polyline.positions.length, 2);
+        assert.ok(orbit.polyline.positions.every((position) => (
+            Math.hypot(position.x, position.y, position.z) >= 1_000
+        )));
+        assert.doesNotThrow(() => refreshSatelliteOverlays(viewer));
+
+        // Older persisted runtimes can also send a rolling orbit without
+        // passing through /api/ephemeris. Keep the same final renderer guard
+        // for that compatibility path.
+        setSimulationTimelineProvider(null);
+        await socket.onmessage({
+            data: JSON.stringify({
+                type: "orbits",
+                data: [{
+                    satellite: stationId,
+                    orbit: [
+                        { x: 7_000_000, y: 0, z: 0 },
+                        { x: 0, y: 0, z: 0 },
+                        { x: 7_200_000, y: 120_000, z: 0 }
+                    ]
+                }]
+            })
+        });
+        assert.equal(orbit.polyline.positions.length, 2);
+        assert.ok(orbit.polyline.positions.every((position) => (
+            Math.hypot(position.x, position.y, position.z) >= 1_000
+        )));
+    } finally {
+        setSatelliteLayerActive(stationId, false);
         setSimulationTimelineProvider(null);
         setOrbitConfig({
             satellite_use_3d_model: true,

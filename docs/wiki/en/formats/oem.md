@@ -68,6 +68,20 @@ polynomial. Lagrange and linear preserve acceleration only when the samples
 corresponding ones contain it. Any out-of-coverage query fails; there is not
 extrapolation.
 
+## Viewer OEM: a separate route
+
+The OEM load available in the web viewer does not yet use
+`OemStateProvider`. It reads a local, transient point track, draws it as a
+polyline, and moves the marker with piecewise-linear interpolation between
+sample times. Therefore an OEM `INTERPOLATION = LAGRANGE` or `HERMITE` is not
+applied on that visual route; it must not be interpreted as validation of the
+producer-declared method.
+
+The Python route in the table above does honour the segment declaration, but
+it is not currently connected to catalogue OEM import or the runtime. For the
+general distinction between state evaluation, sampling, and visual playback,
+see [Ephemerides and interpolation](../orbit-service.md).
+
 ## OEM Covariance
 
 For OEM 2.0 or later it reads `COVARIANCE_START`/`COVARIANCE_STOP` with:

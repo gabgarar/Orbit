@@ -27,7 +27,7 @@ TLE / OEM / definición manual → StateVector nativo → transformación solici
 | [Ingeniería](engineering/index.md) | Estados, elementos, marcos, tiempo y modelos terrestres. |
 | [Tiempo, EOP e ITRF](time.md) | Escalas, UT1, GMST, reducción terrestre y covarianzas. |
 | [Propagación](propagation/index.md) | Propagadores, fuerzas, integración y caché. |
-| [Servicio orbital](orbit-service.md) | Formatos, catálogo, análisis y exportación. |
+| [Efemérides e interpolación](orbit-service.md) | Fuentes tabuladas, métodos de evaluación, catálogo, análisis y exportación. |
 | [Gateway](gateway.md) | Runtime Node, rutas, persistencia y supervisión. |
 | [Espacio de trabajo](workspace.md) | Proyectos, capas, cuerpos, tiempo y vista 3D. |
 | [Referencia API](api.md) | HTTP, WebSocket y contratos de integración. |

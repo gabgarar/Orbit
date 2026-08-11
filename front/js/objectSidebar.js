@@ -10,6 +10,7 @@ import {
     PRECISE_PRODUCT_FILE_SLOTS,
     PRECISE_PRODUCT_IMPORT_ERRORS,
     buildPreciseProductImportPayload,
+    buildPreciseProductPreviewPayload,
     classifyPreciseProductFile,
     classifyPreciseProductSlotFile,
     isPreciseProductFileName,
@@ -19,6 +20,7 @@ import {
     normalizePreciseProductPreview,
     normalizeSelectedPreciseProductSatelliteIds
 } from "./features/preciseProducts/preview.js";
+import { fetchPreciseProductPreview } from "./features/preciseProducts/previewRequest.js";
 import { preciseProductSatelliteEntriesFromPayload } from "./satellites.js";
 
 function visibilityIconMarkup(isVisible) {
@@ -1037,6 +1039,7 @@ export function setupObjectSidebar({
     let preciseProductImportBusy = false;
     let preciseProductPreviewBusy = false;
     let preciseProductPreviewRequestId = 0;
+    let preciseProductPreviewAbortController = null;
     let pendingPreciseProductPreview = null;
     const selectedPreciseProductSatelliteIds = new Set();
     let preciseProductPreviewFilter = "";
@@ -3507,7 +3510,14 @@ export function setupObjectSidebar({
         syncPreciseProductImportStatus();
     }
 
+    function abortPreciseProductPreviewRequest() {
+        const controller = preciseProductPreviewAbortController;
+        preciseProductPreviewAbortController = null;
+        if (controller && !controller.signal.aborted) controller.abort();
+    }
+
     function replacePendingPreciseProductSlotFile(kind, file) {
+        abortPreciseProductPreviewRequest();
         preciseProductPreviewRequestId += 1;
         const detectedKind = classifyPreciseProductSlotFile(file?.name);
         if (!file || !detectedKind) {
@@ -3524,6 +3534,7 @@ export function setupObjectSidebar({
     }
 
     function clearPendingPreciseProductSlotFile(kind) {
+        abortPreciseProductPreviewRequest();
         preciseProductPreviewRequestId += 1;
         pendingPreciseProductFiles = pendingPreciseProductFiles.filter((entry) => entry.kind !== kind);
         const input = preciseProductSlotInputs.get(kind);
@@ -3532,6 +3543,7 @@ export function setupObjectSidebar({
     }
 
     function appendPendingPreciseProductArchive(file) {
+        abortPreciseProductPreviewRequest();
         preciseProductPreviewRequestId += 1;
         if (classifyPreciseProductFile(file?.name) !== "archive") {
             throw new Error("El paquete compatible debe tener extensión .zip.");
@@ -3544,6 +3556,7 @@ export function setupObjectSidebar({
     }
 
     function closePreciseProductImportModal({ discard = true } = {}) {
+        abortPreciseProductPreviewRequest();
         preciseProductPreviewRequestId += 1;
         preciseProductImportModal.classList.remove("open");
         preciseProductPreviewModal.classList.remove("open");
@@ -3556,6 +3569,7 @@ export function setupObjectSidebar({
     }
 
     function openPreciseProductImportModal(files = []) {
+        abortPreciseProductPreviewRequest();
         preciseProductPreviewRequestId += 1;
         pendingPreciseProductFiles = preparePendingPreciseProductFiles(files);
         resetPreciseProductPreview();
@@ -3569,27 +3583,21 @@ export function setupObjectSidebar({
         const files = [...pendingPreciseProductFiles];
         const initialButtonLabel = preciseProductImportConfirmBtn.textContent;
         const requestId = ++preciseProductPreviewRequestId;
+        const abortController = new AbortController();
+        preciseProductPreviewAbortController = abortController;
         preciseProductPreviewBusy = true;
 
         try {
-            const requestPayload = await buildPreciseProductImportPayload(files);
+            // Satellite discovery only needs the SP3. Large CLK/ATT
+            // companions stay queued for the final import instead of making
+            // this non-persistent preview exhaust the proxy body budget.
+            const requestPayload = await buildPreciseProductPreviewPayload(files);
             setPreciseProductImportStatus("Analizando el producto GNSS sin importarlo…", "busy");
             preciseProductImportConfirmBtn.disabled = true;
             preciseProductImportConfirmBtn.textContent = "Analizando…";
             preciseProductImportConfirmBtn.setAttribute("aria-busy", "true");
             setCatalogBusyState(true, "Previsualizando producto preciso...");
-            const response = await fetch("/api/precise-products/preview", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(requestPayload)
-            });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok || payload?.ok === false) {
-                if (response.status === 404) {
-                    throw new Error("Este runtime todavía no ofrece la previsualización GNSS. Actualiza Orbit antes de importar productos SP3.");
-                }
-                throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
-            }
+            const payload = await fetchPreciseProductPreview(requestPayload, { signal: abortController.signal });
             if (requestId !== preciseProductPreviewRequestId || !preciseProductImportModal.classList.contains("open")) {
                 return;
             }
@@ -3611,6 +3619,9 @@ export function setupObjectSidebar({
                     : `No se pudo previsualizar el producto preciso: ${message}`
             );
         } finally {
+            if (preciseProductPreviewAbortController === abortController) {
+                preciseProductPreviewAbortController = null;
+            }
             preciseProductPreviewBusy = false;
             if (requestId !== preciseProductPreviewRequestId || !preciseProductImportModal.classList.contains("open")) {
                 setCatalogBusyState(false, "");

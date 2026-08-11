@@ -39,20 +39,38 @@ habilita esa conversión; sin él, la salida se muestra como **Marco terrestre
 aproximado (sin ERP)**. No convierte el producto en un objeto TLE ni descarga
 archivos desde el proveedor. Consulte [Productos GNSS precisos](precise-products.md).
 
+## Método de evaluación por formato
+
+Esta tabla es un resumen de consulta de estado, no de la apariencia de una
+línea dibujada. La explicación completa de la diferencia entre modelo,
+muestreo y reproducción del navegador está en
+[Efemérides e interpolación](../orbit-service.md).
+
+| Origen | Método que obtiene el estado | Qué hace el visor con una trayectoria ya muestreada |
+| --- | --- | --- |
+| TLE / OMM con TLE | SGP4 evalúa directamente cada época. | Une muestras SGP4 con segmentos; el suavizado de tiempo real es sólo visual. |
+| SP3 | Lagrange local acotado de grado `min(9, n-1)`, hasta diez nodos, sin extrapolación. | Reproduce linealmente entre las muestras que ya devolvió el backend; no ejecuta Lagrange en el navegador. |
+| OEM Python | Respeta `LINEAR`, `LAGRANGE` o `HERMITE` declarados; sin declaración usa lineal. | La carga OEM local del visor es distinta y actualmente reproduce puntos linealmente, sin interpretar la declaración OEM. |
+| ERP de un producto GNSS | Interpolación lineal acotada de los parámetros de orientación terrestre. | No es una trayectoria ni mueve por sí solo un satélite. |
+| CLK, SUM, ATT/OBX, OSB/BIA | No existe una interpolación orbital implementada. | No generan una trayectoria. |
+| OPM | No está soportado. | No aplica. |
+
 ## Contrato tabulado común
 
 OEM y SP3 se convierten en `TabularStateProvider`. Sus muestras deben compartir
 marco, realización, centro y escala temporal dentro de una serie/segmento; las
 épocas son estrictamente crecientes y no pueden duplicarse.
 
-| Interpolación | Disponibilidad |
+| Interpolación de backend | Disponibilidad |
 | --- | --- |
-| Lineal | Predeterminada cuando no existe declaración OEM. |
-| Lagrange | OEM declarado, con grado y suficientes muestras. |
-| Hermite | OEM declarado, grado impar y velocidad en todas las muestras elegidas. |
+| Lineal | Predeterminada en OEM cuando no existe declaración. |
+| Lagrange | OEM declarado, con grado y suficientes muestras; SP3 lo impone localmente con un máximo de grado 9. |
+| Hermite | Sólo OEM declarado, grado impar y velocidad en todas las muestras elegidas. |
 
-Las consultas fuera de la cobertura se rechazan. La covarianza OEM no se
-interpola; solo se adjunta a su época de solución exacta.
+Las consultas tabuladas fuera de cobertura se rechazan. La covarianza OEM no
+se interpola; solo se adjunta a su época de solución exacta. El track OEM
+local del navegador no es el `OemStateProvider` Python y no debe anunciarse
+como soporte de Hermite o Lagrange.
 
 ## Marcos y escalas
 

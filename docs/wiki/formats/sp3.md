@@ -78,6 +78,24 @@ sus metadatos aunque una petición se formule en UTC.
     cobertura y documente los EOP, leap seconds y la transformación empleada
     antes de atribuir precisión geodésica al resultado.
 
+## Muestreo y reproducción del visor
+
+La interpolación Lagrange anterior ocurre en el proveedor Python cuando se
+consulta una época SP3. Para mostrar una simulación de rango, el frontend pide
+primero una efeméride de puntos ya evaluados al backend. La línea temporal
+recorre después esos puntos con interpolación lineal por tramos; Cesium dibuja
+la trayectoria uniendo vértices con segmentos rectos.
+
+Esto reduce trabajo de renderizado, pero no es una segunda interpolación SP3
+de precisión: JavaScript no ejecuta Lagrange. Para orientar el modelo puede
+estimar cinemática local por diferencias finitas de esos vértices, pero esa
+estimación visual no sustituye los registros `V` del SP3 ni crea una nueva
+efeméride. Si la época queda fuera de la cobertura de esa pista, el objeto se
+muestra fuera de tiempo en vez de prolongar los últimos puntos.
+
+Para comparar esta reproducción visual con TLE/SGP4, OEM y los propagadores
+manuales, consulte [Efemérides e interpolación](../orbit-service.md).
+
 ## Tiempo, marco y realización
 
 `native_state_at` devuelve el estado en el marco y escala declarados por el

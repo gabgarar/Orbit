@@ -38,6 +38,28 @@ compone y el integrador [RK4](rk4.md) resuelve el sistema numérico.
 El registro de propagadores usado por el catálogo contiene solo `sgp4`. No hay
 selector de Cowell, dos cuerpos ni J2 para un objeto de catálogo TLE.
 
+## Consulta de estado, no interpolación de modelo
+
+Los propagadores de esta sección calculan un estado para la época solicitada;
+no consultan una tabla de posiciones intermedia.
+
+| Ruta | Método al pedir un instante arbitrario |
+| --- | --- |
+| SGP4 / TLE | Llamada directa al modelo `Satrec.sgp4` en la época UTC. |
+| Dos cuerpos | Avance analítico de la anomalía media y solución de Kepler en esa época. |
+| Cowell/RK4 | Integración RK4 de paso máximo fijo de 60 s desde el estado cacheado más cercano; si el objetivo no coincide con el paso nominal, se integra un último paso reducido. |
+| J2+J3+J4 | Preset de compatibilidad que usa el mismo núcleo RK4 de paso fijo de Cowell. |
+
+Por tanto, el caché de Cowell no se interpola y ni SGP4 ni dos cuerpos usan
+RK4. Las órbitas dibujadas sí se obtienen solicitando varias épocas y Cesium
+une esos puntos; el movimiento de un marcador entre vértices puede ser lineal
+para una visualización continua. Eso no es una evaluación adicional del
+propagador.
+
+Para la matriz que también cubre SP3, OEM, ERP y la diferencia entre la ruta
+Python y la carga OEM local del visor, consulte
+[Efemérides e interpolación](../orbit-service.md).
+
 ## Marcos y unidades
 
 | Origen | Marco nativo | Unidades internas | Salida de contrato |

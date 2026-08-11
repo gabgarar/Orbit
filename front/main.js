@@ -100,6 +100,7 @@ import { createSatelliteSourceIdResolver, isGroundStationLayerId, isSatelliteDup
 import { createCompositeLayerManager } from "./js/features/layers/compositeLayerManager.js";
 import { createAdaptiveDisplayController } from "./js/runtime/adaptiveDisplayController.js";
 import { bindProjectLifecycleEvents } from "./js/runtime/projectEventBridge.js";
+import { startNonBlockingStartupTask } from "./js/runtime/nonBlockingStartupTask.js";
 import { markOrbitRuntimeFailed } from "./js/runtime/runtimeStatus.js";
 import { emitObjectStateChanged } from "./js/runtime/objectDetailsEvents.js";
 import {
@@ -6407,11 +6408,6 @@ function setupPropagatedParametersInspector() {
         logger.warn("No se pudo precargar el catalogo:", e);
     }
 
-    // Precise SP3 products live in the Python runtime, not in the paginated
-    // TLE catalogue. Hydrate their persisted metadata before restoring or
-    // activating workspace layers so `precise:*` ids are immediately valid.
-    await hydratePreciseProductSatelliteEntries();
-
     initSatelliteReceiver(viewer);
     
     // Obtener los contenedores de los paneles de la sidebar izquierda
@@ -6651,6 +6647,33 @@ function setupPropagatedParametersInspector() {
         getAlertTitle: () => uiText("alertTitle"),
         logger: console
     });
+
+    // Precise SP3 products live in the Python runtime, not in the paginated
+    // TLE catalogue. Their persisted metadata can be comparatively large
+    // (one entry per GNSS member), and is optional for opening an empty
+    // workspace. Start this only after the project runtime is ready: a slow
+    // registry must never keep Welcome visible or queue New project.
+    startNonBlockingStartupTask(
+        () => hydratePreciseProductSatelliteEntries(),
+        {
+            // Layers can absorb product metadata after the normal workspace
+            // is usable. A late result refreshes the tree without changing
+            // the project, active layers or the New/Open command path.
+            onFulfilled: (ids) => {
+                if (!Array.isArray(ids) || !ids.length) {
+                    return;
+                }
+                objectSidebar?.renderList?.();
+                emitObjectStateChanged({ scope: "precise-products", reason: "hydration" });
+            },
+            onRejected: (error) => {
+                // The hydration function already handles endpoint failures;
+                // retain this final boundary for future callback failures
+                // without allowing optional metadata to affect startup.
+                logger.warn("No se pudo aplicar la hidratación diferida de productos precisos:", error);
+            }
+        }
+    );
 
     const resolvePickedLayerId = (picked) => {
         const pickedEntity = picked?.id;

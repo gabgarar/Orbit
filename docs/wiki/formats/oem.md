@@ -68,6 +68,21 @@ polinomio. Lagrange y lineal preservan aceleración solo cuando las muestras
 correspondientes la contienen. Toda consulta fuera de cobertura falla; no hay
 extrapolación.
 
+## OEM del visor: ruta distinta
+
+La carga OEM disponible en el visor web no usa todavía `OemStateProvider`.
+Lee una pista local y transitoria de puntos, la dibuja como polilínea y mueve
+el marcador con interpolación lineal por tramos entre sus horas de muestra.
+Por ello un `INTERPOLATION = LAGRANGE` o `HERMITE` de un OEM no se aplica en
+esa ruta visual; no debe interpretarse como una validación del método
+declarado por el productor.
+
+La ruta Python de la tabla anterior sí honra la declaración del segmento,
+pero no está conectada actualmente a la importación OEM del catálogo ni al
+runtime. Para la diferencia general entre evaluación de estado, muestreo y
+reproducción visual, consulte
+[Efemérides e interpolación](../orbit-service.md).
+
 ## Covarianza OEM
 
 Para OEM 2.0 o posterior se lee `COVARIANCE_START`/`COVARIANCE_STOP` con:

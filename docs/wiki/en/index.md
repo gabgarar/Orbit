@@ -27,7 +27,7 @@ TLE / OEM / manual definition → native StateVector → requested transform
 | [Engineering](engineering/index.md) | States, elements, frames, time and Earth models. |
 | [Time, EOP and ITRF](time.md) | Scales, UT1, GMST, terrestrial reduction and covariance. |
 | [Propagation](propagation/index.md) | Propagators, forces, integration and cache. |
-| [Orbit service](orbit-service.md) | Formats, catalogue, analysis and export. |
+| [Ephemerides and interpolation](orbit-service.md) | Tabulated sources, evaluation methods, catalogue, analysis, and export. |
 | [Gateway](gateway.md) | Node runtime, routes, persistence and supervision. |
 | [Workspace](workspace.md) | Projects, layers, bodies, time and 3D view. |
 | [API reference](api.md) | HTTP, WebSocket and integration contracts. |

@@ -6,6 +6,7 @@ import {
     PRECISE_PRODUCT_MAX_FILE_BYTES,
     arrayBufferToBase64,
     buildPreciseProductImportPayload,
+    buildPreciseProductPreviewPayload,
     classifyPreciseProductFile,
     classifyPreciseProductSlotFile,
     isPreciseProductFileName,
@@ -65,6 +66,40 @@ test("precise import sends only the GNSS satellites selected in the preview", as
 
     assert.deepEqual(payload.selected_satellite_ids, ["G01", "E12"]);
     assert.equal(payload.sp3?.kind, "sp3");
+});
+
+test("GNSS preview uploads only the SP3 and never reads large companion products", async () => {
+    const bytes = new Uint8Array([0x53, 0x50, 0x33]);
+    let companionRead = false;
+    const sp3 = {
+        name: "COD0MGXFIN_20251310000_01D_05M_ORB.SP3",
+        size: bytes.byteLength,
+        arrayBuffer: async () => bytes.buffer
+    };
+    const clock = {
+        name: "COD0MGXFIN_20251310000_01D_30S_CLK.CLK",
+        // A real high-rate clock can be larger than the final import's old
+        // request budget. It must not affect satellite discovery.
+        size: 40 * 1024 * 1024,
+        arrayBuffer: async () => {
+            companionRead = true;
+            throw new Error("The preview must not read CLK");
+        }
+    };
+    const attitude = {
+        name: "COD0MGXFIN_20251310000_01D_30S_ATT.OBX",
+        size: 40 * 1024 * 1024,
+        arrayBuffer: async () => {
+            companionRead = true;
+            throw new Error("The preview must not read ATT");
+        }
+    };
+
+    const payload = await buildPreciseProductPreviewPayload([sp3, clock, attitude]);
+
+    assert.deepEqual(Object.keys(payload), ["sp3"]);
+    assert.equal(payload.sp3.name, sp3.name);
+    assert.equal(companionRead, false);
 });
 
 test("GNSS slots identify ERP, product metadata, attitude and observable biases", () => {

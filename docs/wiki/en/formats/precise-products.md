@@ -92,6 +92,119 @@ create one either: it completes the terrestrial-orientation traceability of the
 same import. A load contains one logical SP3 and at most one file of every
 ancillary type; do not mix revisions, dates, or analysis centres.
 
+### Technical interpretation by file
+
+In this section, **read** means that Orbit interprets records and converts them
+to its internal contract; **retain** means that it stores the file, type, name,
+size, compression/archive origin, and SHA-256 for provenance without claiming
+that its values already take part in orbital computation. The distinction
+matters: the six fields belong to one GNSS product, but only SP3 supplies a
+Cartesian trajectory.
+
+#### SP3 — precise orbits (required)
+
+| SP3 part | Source parameters and units read by Orbit | Use, persistence, and visible effect |
+| --- | --- | --- |
+| `#` and `%c` header | Version; `P`/`V` record type; initial epoch; epoch count; data used; coordinate system; orbit type; agency; and `TIME_SYSTEM`. | Validates the product and retains all of these as native frame, realization, agency, and time scale. An unknown scale is not silently treated as UTC: it is rejected when constructing the state source. |
+| Epoch and position | `*` line followed by `P<id> X Y Z [clock]`. `X`, `Y`, `Z` are in **km**. | Every non-missing position creates a sample for the identified GNSS satellite and, after selection is confirmed, an SP3 layer. Positions are normalized to **m**; they are the source for the orbit, 2D/3D globe, ground track, range, and AOS/LOS. |
+| Velocity | `V<id> VX VY VZ [clock-rate]`; `VX`, `VY`, `VZ` are in **dm/s**. | When present, it is normalized to **m/s** and accompanies the tabulated state. Orbit does not invent a velocity when the file does not publish one. |
+| Embedded clock | Fourth component of `P`: clock bias in **µs**. Fourth component of `V`: clock rate in **10⁻⁴ µs/s**. | Converted to seconds and seconds/second and exposed as clock summary/provenance. It does not change position, velocity, frame, time scale, range, or visibility. |
+
+The SP3 missing-component sentinel (`abs(value) >= 999999`) is discarded; a
+complete `(0, 0, 0)` `P` position is also treated as an absent/non-physical
+state and is never drawn as an Earth-centred coordinate. Duplicate `P`/`V` records for
+the same epoch and satellite are an error. Accuracy, correlation, event, and
+extended records published by some SP3 files are not converted into a
+covariance or an orbit correction in this route.
+
+Orbit interpolates each selected series with a local Lagrange window of up to
+ten samples (degree 9), falling back to the highest available degree for a
+shorter series. It never extrapolates beyond SP3 epochs. The source file, its
+header, interpreted samples, and checksum remain linked to the product and to
+each satellite's details card.
+
+#### CLK — precise clocks (optional)
+
+| RINEX CLK part | Source parameters and units read by Orbit | Use, persistence, and visible effect |
+| --- | --- | --- |
+| Header | `RINEX VERSION / TYPE`, `TIME SYSTEM ID`, and agency from `PGM / RUN BY / DATE`. | Retains version, type, agency, and declared time scale. If no scale is declared, it does not assume UTC or shift SP3 epochs. |
+| Satellite `AS` record | GNSS identifier, epoch, value count and, in order: bias (**s**), bias sigma (**s**), drift (**s/s**), drift sigma (**s/s**), drift rate (**s/s²**), and drift-rate sigma (**s/s²**) when present. | Groups samples by satellite as clock information and exposes coverage/summary in the product details. It is retained with SP3, but does not alter orbital geometry, orbital interpolation, rendering, AOS/LOS, or time-scale conversion. |
+
+RINEX `AR`, `CR`, and `DR` records, and continuations containing only extra
+diagnostics, are not yet modelled as satellite data. A CLK cannot create layers
+without SP3 and is not a navigation, PPP, or clock-steering solution.
+
+#### ERP — Earth rotation parameters (optional; conditional for ECI)
+
+Orbit interprets **IGS ERP v2** tables that declare the following five required
+columns. It accepts conventional header variants (`Xpole`/`Xp`, `Ypole`/`Yp`,
+`UT1-UTC`/`UT1R-UTC`, and `LOD`/`LODR`).
+
+| ERP column | Expected IGS ERP v2 unit | Conversion and use in Orbit |
+| --- | --- | --- |
+| `MJD` | days | Converted to the UTC epoch of every sample and defines finite ERP coverage. |
+| `Xpole`, `Ypole` | microarcseconds (**µas**) | Converted to radians as `xp` and `yp` for polar motion. |
+| `UT1-UTC` or `UT1R-UTC` | tenths of a microsecond (**0.1 µs**) | Converted to seconds as DUT1. Required for reproducible Earth rotation. |
+| `LOD` or `LODR` | tenths of a microsecond (**0.1 µs**) | Converted to seconds and retained as length of day. |
+
+ERP is persisted with its coverage, sample count, source, version, and
+snapshot/checksum. Orbit linearly interpolates its samples within coverage and
+never extrapolates them. The current ERP v2 reader does not take `dX`/`dY` from
+an ERP file: it explicitly sets them to zero, so it is not a replacement for an
+IERS C04 celestial-correction product.
+
+An SP3 terrestrial → ECI query needs **all** of: ERP covering the requested
+epoch, a leap-second table, and a valid terrestrial-realization route. When
+they exist, the UI declares **ITRF (con ERP aplicado)**. ERP alone does not
+create a datum transformation such as IGS20 → ITRF2020. Without ERP, the layer
+can still be inspected in its native terrestrial frame, but it is labelled
+**Marco terrestre aproximado (sin ERP)** and ECI conversion is blocked.
+Attaching ERP does not itself change an SP3 position or create a new orbit; it
+enables and documents the Earth orientation in use.
+
+#### SUM — summary and metadata (optional)
+
+Orbit **does not yet interpret internal SUM fields**. It retains the file as an
+immutable SP3 companion — name, type, size, provenance, and SHA-256 — and
+exposes its presence in the details card and manifest. It derives neither
+position, velocity, clock, numerical quality, frame, rendering, nor ECI
+capability from it. SUM is currently for audit and for keeping the provider's
+published metadata together, not for overriding the SP3 header.
+
+#### ATT / OBX — satellite attitude (optional)
+
+The field accepts published attitude products named `ATT.OBX`, `OBX`, or
+compatible `ATT`. Orbit identifies and retains the companion file, but **does
+not yet decode attitude parameters**: quaternions, yaw/pitch/roll angles,
+maneuvers, antenna phase centre, and attitude flags do not enter an internal
+attitude state. It therefore does not alter orbital rendering or generate a
+pointing cone, antenna footprint, or link correction. Its current value is
+traceability of the exact product used.
+
+#### OSB / BIA — observable-specific biases (optional)
+
+The field accepts `OSB.BIA` and compatible BIA aliases. Orbit retains its
+presence and checksum, but **does not yet interpret** observable codes,
+validity intervals, biases, standard deviations, or code/phase BIA units. It
+does not apply biases to CLK, SP3, range, AOS/LOS, SNR, or a PPP solution. Like
+SUM and ATT, it is kept for provenance and so that a future observations chain
+can use exactly the selected ancillary product.
+
+#### Common upload and retention limits
+
+- One logical product supports one required SP3 and at most one CLK, ERP, SUM,
+  ATT, and OSB; the backend has an absolute limit of eight files for archived
+  upload compatibility.
+- Every uploaded file is limited to **32 MiB** and the binary set to **64 MiB**;
+  the HTTP service reserves **90 MiB** for the base64-encoded JSON. After
+  decompression, the aggregate cannot exceed **256 MiB**.
+- `.gz` is decompressed under that limit. ZIP remains compatibility for legacy
+  sets: at most 16 members, no encrypted or nested ZIP, and every member keeps
+  its safe archive name and hash.
+- SP3, CLK, and ERP are interpreted again when a product is rehydrated. SUM,
+  ATT, and OSB are verified again as persisted sources, but do not gain new
+  semantics merely because Orbit restarts.
+
 ### ECI-dependent validation
 
 ERP is optional in the current import window. There is no propagator-comparison

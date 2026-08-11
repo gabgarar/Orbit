@@ -141,3 +141,32 @@ def test_sp3_keeps_embedded_clock_and_clock_rate_outside_cartesian_velocity():
     state = provider.native_state_at(datetime(2026, 7, 26, 0, 0, 30, tzinfo=UTC))
     assert state.velocity_m_s == pytest.approx((1_000.0, 0.0, 0.0))
     assert state.provenance["sp3_clock_bias_seconds"] == pytest.approx(0.0)
+
+
+def test_sp3_skips_real_world_all_zero_position_records_as_missing_states():
+    """CODE MGEX uses this spelling for one unavailable satellite epoch.
+
+    The production COD0MGXFIN file contains ``PC08 0 0 0 999999.999999``.
+    It must not turn into an Earth-centre state, because that value is neither
+    a valid tabular orbit sample nor a position Cesium can project.
+    """
+
+    source = "\n".join(
+        [
+            _sp3_header(frame="IGb20", epochs=3),
+            "%c M cc GPS ccc cccc",
+            "*  2026 07 26 00 00 18.00000000",
+            "PC08 12000.000000 13000.000000 14000.000000 0.000000",
+            "*  2026 07 26 00 05 18.00000000",
+            "PC08      0.000000      0.000000      0.000000 999999.999999",
+            "*  2026 07 26 00 10 18.00000000",
+            "PC08 12100.000000 13100.000000 14100.000000 0.000000",
+        ]
+    )
+
+    provider = Sp3StateProvider.from_text(source)
+    samples = provider.for_satellite("C08").samples
+
+    assert len(samples) == 2
+    assert samples[0].position_m == pytest.approx((12_000_000.0, 13_000_000.0, 14_000_000.0))
+    assert samples[1].position_m == pytest.approx((12_100_000.0, 13_100_000.0, 14_100_000.0))

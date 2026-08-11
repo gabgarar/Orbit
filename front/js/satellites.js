@@ -54,6 +54,11 @@ const FOOTPRINT_SURFACE_HEIGHT = 30000;
 // Altura a la que se eleva la traza de suelo (ground track) para evitar el
 // z-fighting con la textura del mapa. Se mantiene por debajo del footprint.
 const GROUND_TRACK_SURFACE_HEIGHT = 20000;
+// An all-zero SP3 P record is the conventional placeholder for a missing
+// state in a number of multi-GNSS products.  Cesium cannot project the Earth
+// centre to Cartographic coordinates in 2D, so retain a small physical floor
+// for every satellite trajectory before it can reach a geometry worker.
+const MINIMUM_RENDERABLE_EARTH_CENTER_DISTANCE_M = 1_000;
 const PROPAGATION_HOURS_MIN = 0;
 const PROPAGATION_HOURS_MAX = Number.POSITIVE_INFINITY;
 // The manual-orbit editor renders outside the normal layer runtime while a
@@ -745,6 +750,67 @@ function finiteVector(value) {
 }
 
 /**
+ * Return whether a Cartesian state is safe to hand to Cesium's Earth
+ * projection.  In particular, an SP3 missing-state sentinel can arrive as
+ * ``(0, 0, 0)`` from a persisted/older backend.  It is finite JavaScript
+ * data, but it has no Cartographic longitude and makes Cesium's asynchronous
+ * polyline projection worker stop rendering in 2D.
+ */
+function isRenderableEarthCenteredVector(value) {
+    const vector = finiteVector(value);
+    if (!vector) {
+        return false;
+    }
+    return Math.hypot(vector.x, vector.y, vector.z) >= MINIMUM_RENDERABLE_EARTH_CENTER_DISTANCE_M;
+}
+
+/**
+ * Keep position/timestamp pairs aligned while removing malformed state
+ * samples.  Rendering the remaining samples is preferable to handing one
+ * Earth-centre point to Cesium and losing the entire scene.  When timestamps
+ * are unavailable or malformed, callers retain their existing uniform-time
+ * fallback rather than pairing the wrong epoch with a valid point.
+ */
+function normalizeRenderableOrbitSamples(points, sampleTimes = null) {
+    if (!Array.isArray(points)) {
+        return { points: [], sampleTimesMs: null };
+    }
+
+    const hasAlignedTimes = Array.isArray(sampleTimes) && sampleTimes.length === points.length;
+    const normalizedPoints = [];
+    const normalizedTimes = [];
+    let validTimes = hasAlignedTimes;
+    let previousTimeMs = Number.NEGATIVE_INFINITY;
+
+    for (let index = 0; index < points.length; index += 1) {
+        const vector = finiteVector(points[index]);
+        if (!isRenderableEarthCenteredVector(vector)) {
+            continue;
+        }
+
+        normalizedPoints.push(vector);
+        if (!hasAlignedTimes) {
+            continue;
+        }
+
+        const timeMs = Number(sampleTimes[index]);
+        if (!Number.isFinite(timeMs) || timeMs <= previousTimeMs) {
+            validTimes = false;
+            continue;
+        }
+        normalizedTimes.push(timeMs);
+        previousTimeMs = timeMs;
+    }
+
+    return {
+        points: normalizedPoints,
+        sampleTimesMs: validTimes && normalizedTimes.length === normalizedPoints.length
+            ? normalizedTimes
+            : null
+    };
+}
+
+/**
  * Convert a runtime position into a valid Cartographic point, when possible.
  *
  * Range products are allowed to exist in Layers before an exact ephemeris has
@@ -928,11 +994,10 @@ function rangeEphemerisStepSeconds(ephemerisWindow) {
 function parseRangeEphemeris(payload, key, id = "") {
     const points = Array.isArray(payload?.points) ? payload.points : [];
     const parsed = points.map((point) => {
-        const position = point?.position || {};
+        const position = finiteVector(point?.position);
         const timeMs = Date.parse(point?.time || point?.epoch || "");
-        const x = Number(position.x); const y = Number(position.y); const z = Number(position.z);
-        return Number.isFinite(timeMs) && Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)
-            ? { timeMs, x, y, z }
+        return Number.isFinite(timeMs) && isRenderableEarthCenteredVector(position)
+            ? { timeMs, x: position.x, y: position.y, z: position.z }
             : null;
     }).filter(Boolean);
     if (parsed.length < 2) return null;
@@ -1666,15 +1731,13 @@ function toSurfaceGroundTrack(orbitPoints) {
     let previousLongitude = null;
     let previousLatitude = null;
     for (const point of orbitPoints) {
-        const x = Number(point?.x);
-        const y = Number(point?.y);
-        const z = Number(point?.z);
-        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+        const vector = finiteVector(point);
+        if (!isRenderableEarthCenteredVector(vector)) {
             continue;
         }
 
         try {
-            const cart = new Cesium.Cartesian3(x, y, z);
+            const cart = new Cesium.Cartesian3(vector.x, vector.y, vector.z);
             const cartographic = Cesium.Cartographic.fromCartesian(cart);
             if (!cartographic) {
                 continue;
@@ -2190,7 +2253,9 @@ function calculateOrientation(position, velocity) {
 }
 
 function toCartesianArray(points) {
-    return points.map((position) => new Cesium.Cartesian3(position.x, position.y, position.z));
+    return (Array.isArray(points) ? points : [])
+        .filter(isRenderableEarthCenteredVector)
+        .map((position) => new Cesium.Cartesian3(position.x, position.y, position.z));
 }
 
 function getColor(colorString, defaultColor) {
@@ -2381,10 +2446,10 @@ function updateSatelliteState(viewer, satData) {
         return;
     }
 
-    const pos = satData.position;
+    const pos = finiteVector(satData.position);
     const vel = finiteVector(satData.velocity);
 
-    if (!pos) {
+    if (!isRenderableEarthCenteredVector(pos)) {
         return;
     }
 
@@ -3075,7 +3140,18 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         state.awaitingRangeEphemeris = false;
     }
 
-    const orbit = orbitPayload?.orbit;
+    const rawOrbit = orbitPayload?.orbit;
+    const candidateSampleTimes = Array.isArray(orbitPayload?.sampleTimesMs)
+        ? orbitPayload.sampleTimesMs
+        : (isLocalEphemerisTrack(id) && Array.isArray(state.simTrackSampleTimesMs)
+            ? state.simTrackSampleTimesMs
+            : null);
+    // A persisted product created by an older backend can still contain an
+    // all-zero SP3 missing-state record.  Strip it here as the final client
+    // boundary before an orbit is passed to Cesium, keeping its timestamps in
+    // lockstep with the surviving Cartesian samples.
+    const normalizedOrbit = normalizeRenderableOrbitSamples(rawOrbit, candidateSampleTimes);
+    const orbit = normalizedOrbit.points;
     if (!Array.isArray(orbit) || orbit.length < 2) {
         if (state.orbitEntity) {
             viewer.entities.remove(state.orbitEntity);
@@ -3121,13 +3197,7 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
     }
 
     state.simOrbitPositions = toCartesianArray(horizonClippedOrbit);
-    const payloadSampleTimes = Array.isArray(orbitPayload?.sampleTimesMs)
-        ? orbitPayload.sampleTimesMs
-        : null;
-    const sourceSampleTimes = payloadSampleTimes
-        || (isLocalEphemerisTrack(id) && Array.isArray(state.simTrackSampleTimesMs)
-            ? state.simTrackSampleTimesMs
-            : null);
+    const sourceSampleTimes = normalizedOrbit.sampleTimesMs;
     // Preserve physical timestamps from exact range/static ephemerides and
     // imported OEM/manual tracks. A plain WebSocket preview has no per-point
     // epoch and therefore remains a realtime-only visual aid.

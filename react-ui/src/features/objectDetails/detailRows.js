@@ -549,6 +549,24 @@ export function buildObjectDetails(detail) {
     const preciseCadence = sourceFormat === "SP3"
         ? preciseCadenceText(preciseSources, preciseCoverageWindow, preciseSampleCount || 0)
         : INPUT_UNAVAILABLE;
+    // These companion summaries are deliberately evaluated per satellite.
+    // A multi-GNSS product can publish a clock/attitude companion for only a
+    // subset of its members, so product-wide counts would be misleading in
+    // the inspector for an individual layer.
+    const preciseClock = sourceFormat === "SP3"
+        ? metadataRecord(preciseSources, ["clock", "clock_summary", "clockSummary"])
+        : null;
+    const preciseEmbeddedClock = record(preciseClock?.sp3_embedded ?? preciseClock?.sp3Embedded);
+    const preciseRinexClock = record(preciseClock?.rinex_clk ?? preciseClock?.rinexClk);
+    const preciseEmbeddedClockSamples = metadataNumber([preciseEmbeddedClock], ["sample_count", "sampleCount"]);
+    const preciseRinexClockSamples = metadataNumber([preciseRinexClock], ["sample_count", "sampleCount"]);
+    const preciseErp = sourceFormat === "SP3"
+        ? metadataRecord(preciseSources, ["erp", "erp_summary", "erpSummary"])
+        : null;
+    const preciseErpSamples = metadataNumber([preciseErp], ["sample_count", "sampleCount"]);
+    const preciseInterpolationWindow = sourceFormat === "SP3"
+        ? metadataNumber([metadataRecord(preciseSources, ["interpolation", "tabular_interpolation", "tabularInterpolation"])], ["sample_count", "sampleCount", "window_size", "windowSize"])
+        : null;
     // Keep the legacy metadata precedence for existing workspaces. Input
     // metadata remains available in its dedicated tab, but must not rename an
     // already identified catalogue or manually authored object.
@@ -669,6 +687,9 @@ export function buildObjectDetails(detail) {
     const preciseProductName = sourceFormat === "SP3"
         ? metadataValue(preciseSources, ["product_name", "productName", "product_id", "productId", "name"], INPUT_UNAVAILABLE)
         : INPUT_UNAVAILABLE;
+    const preciseProductId = sourceFormat === "SP3"
+        ? metadataValue(preciseSources, ["product_id", "productId"], INPUT_UNAVAILABLE)
+        : INPUT_UNAVAILABLE;
     const preciseProductClass = sourceFormat === "SP3"
         ? compactProductLabel(metadataValue(preciseSources, ["product_class", "productClass", "detected_product_class", "detectedProductClass"], ""))
         : INPUT_UNAVAILABLE;
@@ -690,6 +711,7 @@ export function buildObjectDetails(detail) {
             ["Constelación", preciseConstellationLabel],
             ["Tipo de entrada", "SP3 · efeméride GNSS precisa"],
             ["Producto", preciseProductName],
+            ["ID de producto", preciseProductId],
             ["Proveedor", preciseProvider],
             ["Clase de producto", preciseProductClass],
             ["Familia de producto", preciseProductFamily],
@@ -871,12 +893,14 @@ export function buildObjectDetails(detail) {
             ["Identificador GNSS", preciseSatellite],
             ["Constelación", preciseConstellationLabel],
             ["Producto", preciseProductName],
+            ["ID de producto", preciseProductId],
             ["Proveedor", preciseProvider],
             ["Clase de producto", preciseProductClass],
             ["Familia de producto", preciseProductFamily],
             ["Archivo SP3", metadataValue(preciseSources, ["file_name", "fileName", "orbit_file", "orbitFile", "sp3_file"], INPUT_UNAVAILABLE)],
             ["Versión SP3", metadataValue(preciseSources, ["version", "sp3_version", "sp3Version"], INPUT_UNAVAILABLE)],
             ["Tipo de registros", preciseRecordDescription],
+            ["Velocidades publicadas", preciseRecordType === "V" ? "Sí · registros V" : preciseRecordType === "P" ? "No · sólo registros P" : INPUT_UNAVAILABLE],
             ["Época de cabecera", sourceEpochLabel(preciseHeaderEpoch, preciseHeaderTimeScale)],
             ["Épocas declaradas (cabecera)", Number.isFinite(preciseHeaderEpochCount) ? number(preciseHeaderEpochCount, 0) : INPUT_UNAVAILABLE],
             ["Conjunto de datos", metadataValue(preciseSources, ["data_used", "dataUsed"], INPUT_UNAVAILABLE)],
@@ -887,11 +911,23 @@ export function buildObjectDetails(detail) {
             ["Muestras del satélite", Number.isFinite(preciseSampleCount) ? number(preciseSampleCount, 0) : INPUT_UNAVAILABLE],
             ["Cadencia media", preciseCadence],
             ["Interpolación", preciseInterpolation],
+            ...(Number.isFinite(preciseInterpolationWindow)
+                ? [["Ventana de interpolación", `${number(preciseInterpolationWindow, 0)} épocas`]]
+                : []),
             ["Marco nativo", preciseNativeFrame],
             ["Escala temporal", metadataValue(preciseSources, ["time_system", "timeSystem", "time_scale", "timeScale"], INPUT_UNAVAILABLE)],
             ["Archivo CLK", metadataValue(preciseSources, ["clock_file", "clockFile", "clk_file"], "No incluido")],
             ["Correcciones de reloj", preciseClockText(preciseSources)],
+            ...(Number.isFinite(preciseEmbeddedClockSamples)
+                ? [["Muestras de reloj SP3", number(preciseEmbeddedClockSamples, 0)]]
+                : []),
+            ...(Number.isFinite(preciseRinexClockSamples)
+                ? [["Muestras de reloj CLK", number(preciseRinexClockSamples, 0)]]
+                : []),
             ["Archivo ERP", preciseErpText(preciseSources)],
+            ...(Number.isFinite(preciseErpSamples)
+                ? [["Muestras ERP", number(preciseErpSamples, 0)]]
+                : []),
             ["Archivo SUM", preciseCompanionText(preciseSources, ["sum_file", "sumFile"])],
             ["Archivo ATT / OBX", preciseCompanionText(preciseSources, ["attitude_file", "attitudeFile", "att_file", "attFile"])],
             ["Archivo OSB / BIA", preciseCompanionText(preciseSources, ["osb_file", "osbFile", "bias_file", "biasFile"])],
@@ -946,7 +982,11 @@ export function buildObjectDetails(detail) {
             ];
     return {
         title,
-        noradId: celestial ? "-" : value(noradId),
+        // A GNSS PRN in an SP3 file (for example G01) is not a NORAD
+        // catalogue number. Keep the inspector contract empty rather than
+        // emitting the generic placeholder that was previously rendered as
+        // "NORAD -" in the compact header.
+        noradId: sourceFormat === "SP3" ? "" : (celestial ? "-" : value(noradId)),
         visible,
         rows: {
             overview: overviewRows,

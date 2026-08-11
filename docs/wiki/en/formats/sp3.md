@@ -77,6 +77,24 @@ metadata even when a request is expressed in UTC.
     seconds, and the applied transformation before assigning geodetic
     precision to a result.
 
+## Viewer sampling and playback
+
+The Lagrange interpolation above occurs in the Python provider when an SP3
+epoch is queried. To show a range simulation, the frontend first requests an
+ephemeris of points already evaluated by the backend. The timeline then
+replays those points with piecewise-linear interpolation, while Cesium draws
+the path by joining vertices with straight segments.
+
+This reduces rendering work, but it is not a second precise SP3 interpolation:
+JavaScript does not run Lagrange. It can estimate local kinematics from finite
+differences of those vertices to orient a model, but that visual estimate does
+not replace SP3 `V` records or create a new ephemeris. If an epoch falls
+outside that track's coverage, the object is shown as out of time instead of
+extending the final points.
+
+To compare this visual playback with TLE/SGP4, OEM, and manual propagators,
+see [Ephemerides and interpolation](../orbit-service.md).
+
 ## Time, frame, and realization
 
 `native_state_at` returns the state in the frame and scale declared by the
