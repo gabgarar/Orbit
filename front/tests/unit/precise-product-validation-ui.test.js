@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-    PRECISE_PRODUCT_VALIDATION_DIALOG_EVENT,
     createPreciseProductValidationFailure,
     preciseProductValidationReport,
     summarizePreciseProductValidation

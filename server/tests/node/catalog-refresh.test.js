@@ -389,7 +389,7 @@ test("catalog refresh scheduling resumes from its persisted attempt timestamp an
             scheduled = { callback, delay };
             return "catalog-refresh-delay";
         },
-        setIntervalImpl: (callback, delay) => {
+        setIntervalImpl: (_callback, _delay) => {
             return "catalog-refresh-timer";
         },
         clearTimeoutImpl: (timer) => { clearedTimeouts.push(timer); },

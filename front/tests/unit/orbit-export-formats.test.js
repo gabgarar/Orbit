@@ -27,8 +27,6 @@ test("manual sources expose a disabled synthetic TLE rather than fabricating one
 });
 
 test("all sampled GIS formats explain their geometry policy", () => {
-    const formats = getOrbitExportFormats("TLE");
-
     for (const id of ["geojson", "kml", "kmz", "gpkg", "wkt", "wkb"]) {
         const format = getOrbitExportFormat("TLE", id);
         assert.equal(format.id, id);

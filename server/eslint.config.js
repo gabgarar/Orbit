@@ -1,5 +1,8 @@
 import unusedImports from "eslint-plugin-unused-imports";
 
+// Keep a package-local entry point for tools launched from `server` (including
+// Knip). The repository-level eslint.config.mjs is the canonical config for
+// the cross-package CI command.
 export default [
     {
         ignores: [

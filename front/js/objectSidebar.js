@@ -2122,7 +2122,6 @@ export function setupObjectSidebar({
     const groundStationCancelBtn = groundStationModal.querySelector("#groundStationCancelBtn");
     const groundStationCreateBtn = groundStationModal.querySelector("#groundStationCreateBtn");
     const groundStationTitle = groundStationModal.querySelector("#groundStationTitle");
-    const groundStationPanel = groundStationModal.querySelector("#groundStationPanel");
     const gsNameInput = groundStationModal.querySelector("#gsNameInput");
     const gsLatInput = groundStationModal.querySelector("#gsLatInput");
     const gsLonInput = groundStationModal.querySelector("#gsLonInput");
