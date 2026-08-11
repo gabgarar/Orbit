@@ -28,11 +28,17 @@ services:
       ORBIT_LEAP_SECONDS_VERSION: "${ORBIT_LEAP_SECONDS_VERSION:-}"
       ORBIT_LEAP_SECONDS_REQUIRED: "${ORBIT_LEAP_SECONDS_REQUIRED:-}"
       ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED: "${ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED:-}"
-      ORBIT_TERRESTRIAL_REALIZATION: "${ORBIT_TERRESTRIAL_REALIZATION:-}"
+      # Precise GNSS SP3 products from the current IGS20 family (IGS20,
+      # IGb20 and IGc20) publish a zero-parameter satellite-orbit datum
+      # relationship to ITRF2020.  Make that audited, satellite-only route
+      # available in the default local deployment so an SP3 accompanied by
+      # its ERP is actually renderable and convertible to EME2000.  An
+      # operator can still set the family flag to `false` to disable it.
+      ORBIT_TERRESTRIAL_REALIZATION: "${ORBIT_TERRESTRIAL_REALIZATION:-ITRF2020}"
       ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT: "${ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT:-}"
       # Explicit opt-in for the current IGS20/IGb20/IGc20 satellite-frame
       # family. It requires ORBIT_TERRESTRIAL_REALIZATION=ITRF2020.
-      ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT: "${ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT:-}"
+      ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT: "${ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT:-true}"
     volumes:
       # Conserva cambios de configuración y catálogos fuera de la imagen.
       - ./config:/app/config

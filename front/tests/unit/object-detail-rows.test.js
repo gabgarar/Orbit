@@ -206,7 +206,7 @@ test("OMM, OEM and SP3 retain their own input vocabulary without masquerading as
     }).rows.input);
     assert.equal(sp3["Tipo de entrada"], "SP3");
     assert.equal(sp3.Proveedor, "NASA CDDIS / IGS");
-    assert.equal(sp3["Clase de producto"], "final");
+    assert.equal(sp3["Clase de producto"], "Final");
     assert.equal(sp3["Archivo SP3"], "IGS0OPSFIN_20262220000_01D_05M_ORB.SP3.gz");
     assert.equal(sp3["Archivo CLK"], "IGS0OPSFIN_20262220000_01D_30S_CLK.CLK.gz");
     assert.equal(sp3["Marco nativo"], "IGS14");
@@ -214,6 +214,139 @@ test("OMM, OEM and SP3 retain their own input vocabulary without masquerading as
     assert.match(sp3["Estado de representación"], /^No disponible: IGS14 requires/);
     assert.equal(sp3["Visualización ITRF"], undefined);
     assert.equal(sp3.Estado, "Registrado en el runtime de efemérides precisas");
+});
+
+test("SP3 details stay per-satellite and expose only source-backed GNSS metadata and valid state", () => {
+    const details = buildObjectDetails({
+        id: "precise:demo-product:C06",
+        sourceFormat: "SP3",
+        referenceTimeMs: Date.parse("2026-08-10T00:10:00Z"),
+        telemetry: {
+            id: "C06",
+            source_format: "SP3",
+            timestamp_ms: Date.parse("2026-08-10T00:10:00Z"),
+            runtime_state: "ACTIVE",
+            position: { x: 21_000_000, y: -13_000_000, z: 9_000_000 },
+            velocity: { x: -1550, y: 2950, z: 2100 },
+            position_frame: "ITRF2020",
+            position_frame_display: "ITRF (con ERP aplicado)",
+            earth_center_distance_m: 26_359_000,
+            speed_m_s: 3925,
+            geo: { latitude_deg: 19.5, longitude_deg: 112.2, altitude_m: 20_100_000 },
+            simulation: { mode: "simulated", time_scale: 10 },
+            sp3: {
+                satellite_id: "C06",
+                product_id: "precise-demo-product",
+                product_name: "IGS MGEX final 2026-08-10",
+                provider: "igs_mgex",
+                product_class: "final",
+                product_family: "mgex",
+                file_name: "COD0MGXFIN_20262220000_01D_05M_ORB.SP3.gz",
+                clock_file: "COD0MGXFIN_20262220000_01D_30S_CLK.CLK.gz",
+                erp: { present: true, file: "COD0OPSFIN_20262220000_01D_ERP.ERP", sample_count: 96 },
+                sum_file: "COD0MGXFIN_20262220000_01D_SUM.SUM",
+                attitude_file: "COD0MGXFIN_20262220000_01D_ATT.ATT.OBX",
+                osb_file: "COD0MGXFIN_20262220000_01D_OSB.OSB.BIA",
+                version: "d",
+                record_type: "V",
+                header_epoch: "2026-08-10T00:00:00",
+                header_epoch_time_scale: "GPS",
+                number_of_epochs: 288,
+                data_used: "ORBIT",
+                agency: "COD",
+                orbit_type: "FIT",
+                native_reference_frame: "IGB20",
+                reference_frame: "IGB20",
+                time_system: "GPS",
+                start_time: "2026-08-10T00:00:00Z",
+                end_time: "2026-08-10T23:55:00Z",
+                sample_count: 288,
+                sample_cadence_seconds: 300,
+                interpolation: { method: "LAGRANGE", degree: 9, sample_count: 10 },
+                clock: {
+                    sp3_embedded: { present: true, sample_count: 288 },
+                    rinex_clk: { present: true, sample_count: 288 }
+                },
+                renderer_reference: {
+                    available: true,
+                    native_reference_frame: "IGB20",
+                    display_label: "ITRF (con ERP aplicado)",
+                    earth_orientation: { applied: true },
+                    eci_conversion: { available: true }
+                }
+            }
+        },
+        catalogMeta: { sourceFormat: "SP3" }
+    });
+    const overview = asObject(details.rows.overview);
+    const orbit = asObject(details.rows.orbit);
+    const telemetry = asObject(details.rows.telemetry);
+    const input = asObject(details.rows.input);
+    const propagation = asObject(details.rows.propagation);
+
+    assert.equal(overview["Identificador GNSS"], "C06");
+    assert.equal(overview.Constelación, "BeiDou");
+    assert.equal(overview.NORAD, undefined);
+    assert.equal(overview.COSPAR, undefined);
+    assert.equal(overview.Proveedor, "IGS MGEX");
+    assert.equal(overview["Clase de producto"], "Final");
+    assert.equal(input["Época de cabecera"], "2026-08-10 00:00:00 GPS");
+    assert.equal(input["Muestras del satélite"], "288");
+    assert.equal(input["Cadencia media"], "300 s (media por satélite)");
+    assert.equal(input.Interpolación, "LAGRANGE · grado 9");
+    assert.equal(input["Correcciones de reloj"], "SP3: 288 muestras · CLK: 288 muestras");
+    assert.equal(input["Archivo ERP"], "COD0OPSFIN_20262220000_01D_ERP.ERP · 96 muestras");
+    assert.equal(input["Archivo ATT / OBX"], "COD0MGXFIN_20262220000_01D_ATT.ATT.OBX");
+    assert.equal(orbit["Marco nativo"], "IGB20");
+    assert.equal(orbit["Marco de referencia"], "ITRF (con ERP aplicado)");
+    assert.equal(orbit["Posición ITRF (con ERP aplicado)"], "(21000.000, -13000.000, 9000.000) km");
+    assert.equal(orbit["Período orbital"], undefined);
+    assert.equal(orbit["Anomalía verdadera"], undefined);
+    assert.equal(orbit["Ground track"], undefined);
+    assert.equal(telemetry.Doppler, undefined);
+    assert.equal(telemetry["Pérdida de trayecto"], undefined);
+    assert.equal(telemetry.Interpolación, "LAGRANGE · grado 9");
+    assert.equal(propagation.Motor, "Reproducción de efeméride precisa SP3");
+    assert.equal(propagation.Integrador, "No aplica; estados tabulados");
+    assert.equal(propagation["Modelo de fuerzas"], "No aplica; el SP3 contiene estados publicados");
+});
+
+test("SP3 inspector never fabricates a position or velocity outside a valid rendered state", () => {
+    const details = buildObjectDetails({
+        id: "precise:demo-product:G01",
+        sourceFormat: "SP3",
+        referenceTimeMs: Date.parse("2026-08-12T00:00:00Z"),
+        telemetry: {
+            id: "G01",
+            source_format: "SP3",
+            runtime_state: "UNAVAILABLE",
+            position_frame: "IGB20",
+            sp3: {
+                satellite_id: "G01",
+                native_reference_frame: "IGB20",
+                time_system: "GPS",
+                start_time: "2026-08-10T00:00:00Z",
+                end_time: "2026-08-10T23:55:00Z",
+                sample_count: 288,
+                interpolation: { method: "LAGRANGE", degree: 9 },
+                renderer_reference: {
+                    available: false,
+                    native_reference_frame: "IGB20",
+                    reason: "IGB20 requiere una transformación de realización terrestre registrada."
+                }
+            }
+        },
+        catalogMeta: { sourceFormat: "SP3" }
+    });
+    const orbit = asObject(details.rows.orbit);
+    const telemetry = asObject(details.rows.telemetry);
+
+    assert.equal(orbit["Cobertura del producto"], "Fuera de cobertura");
+    assert.match(orbit["Estado cartesiano"], /^No disponible: /);
+    assert.equal(orbit["Posición Marco terrestre aproximado (sin ERP)"], undefined);
+    assert.equal(orbit["Velocidad Marco terrestre aproximado (sin ERP)"], undefined);
+    assert.equal(telemetry["Vector velocidad"], undefined);
+    assert.equal(telemetry.Doppler, undefined);
 });
 
 test("SP3 object details expose native or qualified terrestrial frames without fictional ITRF precision", () => {

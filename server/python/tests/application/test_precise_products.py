@@ -150,6 +150,20 @@ def test_import_classifies_current_igs_final_and_associates_optional_rinex_clock
     assert payload["eci_conversion"]["available"] is False
     assert payload["time_system"] == "UTC"
     assert payload["clock"]["sp3_embedded"]["sample_count"] == 2
+    satellite = product.satellite_payload("G01")
+    assert satellite["satellite_id"] == "G01"
+    assert satellite["sp3"]["header_epoch"] == "2026-07-26T00:00:18"
+    assert satellite["sp3"]["header_epoch_time_scale"] == "UTC"
+    assert satellite["sp3"]["number_of_epochs"] == 2
+    assert satellite["sp3"]["sample_count"] == 2
+    assert satellite["sp3"]["sample_cadence_seconds"] == 60.0
+    assert satellite["sp3"]["interpolation"] == {
+        "method": "LAGRANGE",
+        "declared_method": "LAGRANGE",
+        "degree": 1,
+        "sample_count": 2,
+        "mean_sample_cadence_seconds": 60.0,
+    }
 
 
 def test_precise_product_requires_sp3_with_the_public_exact_error():

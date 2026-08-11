@@ -4,14 +4,17 @@
 
 ## GNSS realizations
 
-By default, an `IGS20`, `IGb20`, or `IGc20` state retains its realization and
-is not rewritten as ITRF. The published global alignment of that family with
-ITRF2020 requires explicitly enabling:
+An `IGS20`, `IGb20`, or `IGc20` state always retains its source realization in
+provenance. The Compose deployment applies the published global alignment of
+that family with ITRF2020 by default to satellite-orbit states through:
 
 ```text
 ORBIT_TERRESTRIAL_REALIZATION=ITRF2020
 ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true
 ```
+
+Set `ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=false` if you need to
+disable that realization route.
 
 The policy applies only to geocentric satellite-orbit states and retains the
 source label in provenance. It does not apply station or antenna corrections.

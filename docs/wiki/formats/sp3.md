@@ -85,9 +85,11 @@ archivo. Solicitar ITRF para un SP3 de la familia IGS exige una transformación
 de realización registrada. Orbit no renombra implícitamente `IGS20`, `IGb20`
 ni `IGc20`.
 
-La alineación global publicada para esa familia es optativa: requiere
+La alineación global publicada para esa familia se habilita por defecto en
+Compose y usa:
 `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020` y
-`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true`. Sólo se aplica a estados
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true`. Puede desactivarse con
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=false`. Sólo se aplica a estados
 orbitales geocéntricos de satélite y conserva la etiqueta de realización
 fuente. No transforma estaciones ni antenas. La política histórica exacta
 `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` es incompatible con la política de

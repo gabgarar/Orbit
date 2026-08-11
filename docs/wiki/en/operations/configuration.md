@@ -91,11 +91,11 @@ provenance contract.
 | PYTHON_BACKEND_URL | Internal URL used by the gateway for the Python backend. |
 | ORBIT_EOP_* | Policy and origin of the local C04 snapshot. |
 | ORBIT_LEAP_SECONDS_* | Local UTC–TAI table policy. |
-| ORBIT_TERRESTRIAL_REALIZATION | Explicitly chosen output ground realization. |
-| ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT | Enables, together with `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`, the published IGS20/IGb20/IGc20→ITRF2020 operation for satellite-orbit states. |
+| ORBIT_TERRESTRIAL_REALIZATION | Output terrestrial realization; Compose defaults to `ITRF2020`. |
+| ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT | Enables, together with `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`, the published IGS20/IGb20/IGc20→ITRF2020 operation for satellite-orbit states; Compose defaults to `true`. |
 
-The family policy is disabled by default, retains the source realization, and
-does not correct stations or antennas. Do not enable it with the legacy exact
+The family policy retains the source realization and does not correct stations
+or antennas. Set it to `false` to disable it. Do not enable it with the legacy exact
 `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` variable; the two policies are
 mutually exclusive. See [Realizations and visual mode](time-eop/realizations.md)
 before enabling it.

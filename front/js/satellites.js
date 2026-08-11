@@ -252,6 +252,14 @@ const rangeEphemerisCache = new Map();
 const rangeEphemerisRequests = new Map();
 const RANGE_EPHEMERIS_CACHE_LIMIT = 24;
 const RANGE_EPHEMERIS_MAX_POINTS = 12_000;
+// A multi-constellation SP3 commonly carries more than one hundred spacecraft.
+// Activating those layers used to launch one /api/ephemeris request per member
+// immediately, which could starve the browser and the Python service before a
+// single track had a chance to render.  Keep the precise-range work bounded
+// while preserving every layer and its eventual exact track.
+const RANGE_EPHEMERIS_MAX_CONCURRENT_REQUESTS = 4;
+const rangeEphemerisQueue = [];
+let activeRangeEphemerisRequestCount = 0;
 let rangeEphemerisRevision = 0;
 const STATIC_EPHEMERIS_MIN_HORIZON_SECONDS = 24 * 60 * 60;
 // Manual tracks are generated locally from a user-authored definition. They
@@ -288,6 +296,37 @@ let manualOrbitPreviewState = {
     vectorForceTerms: ["central"],
     vectorVelocity: null
 };
+
+/**
+ * Run finite-range ephemeris requests with a small, shared concurrency cap.
+ *
+ * The queue deliberately owns only transport work. Cache identity,
+ * cancellation-by-staleness and Cesium state application remain at the call
+ * site, where the active layer and simulation-range contracts are known.
+ */
+function enqueueRangeEphemerisRequest(task) {
+    return new Promise((resolve, reject) => {
+        rangeEphemerisQueue.push({ task, resolve, reject });
+        drainRangeEphemerisQueue();
+    });
+}
+
+function drainRangeEphemerisQueue() {
+    while (
+        activeRangeEphemerisRequestCount < RANGE_EPHEMERIS_MAX_CONCURRENT_REQUESTS
+        && rangeEphemerisQueue.length
+    ) {
+        const next = rangeEphemerisQueue.shift();
+        activeRangeEphemerisRequestCount += 1;
+        Promise.resolve()
+            .then(next.task)
+            .then(next.resolve, next.reject)
+            .finally(() => {
+                activeRangeEphemerisRequestCount = Math.max(0, activeRangeEphemerisRequestCount - 1);
+                drainRangeEphemerisQueue();
+            });
+    }
+}
 
 function isLocalEphemerisTrack(id) {
     return oemEphemerisTrackById.has(id) || manualOrbitTrackById.has(id);
@@ -929,17 +968,25 @@ function requestRangeEphemeris(viewer, id, state, simulationCtx) {
 
     const startTime = new Date(ephemerisWindow.startMs).toISOString();
     const endTime = new Date(ephemerisWindow.endMs).toISOString();
-    const request = fetch("/api/ephemeris", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-            sat_id: id,
-            start_time: startTime,
-            end_time: endTime,
-            step_seconds: rangeEphemerisStepSeconds(ephemerisWindow),
-            include_velocity: false
-        })
-    }).then(async (response) => {
+    const request = enqueueRangeEphemerisRequest(async () => {
+        // A large product can remain queued while the operator changes the
+        // time range or removes the layer. Do not spend a request on that
+        // obsolete work.
+        if (!activeLayerSatelliteIds.has(id)
+            || rangeEphemerisKey(id, resolveSimulationTimelineContext()) !== key) {
+            return null;
+        }
+        const response = await fetch("/api/ephemeris", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+                sat_id: id,
+                start_time: startTime,
+                end_time: endTime,
+                step_seconds: rangeEphemerisStepSeconds(ephemerisWindow),
+                include_velocity: false
+            })
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const ephemeris = parseRangeEphemeris(await response.json(), key, id);
         if (!ephemeris) throw new Error("La efeméride de simulación no contiene muestras en un marco terrestre disponible.");
@@ -984,17 +1031,24 @@ function loadRangeEphemerisForBootstrap(id, simulationCtx) {
     const pending = rangeEphemerisRequests.get(key);
     if (pending) return pending;
 
-    const request = fetch("/api/ephemeris", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-            sat_id: id,
-            start_time: new Date(ephemerisWindow.startMs).toISOString(),
-            end_time: new Date(ephemerisWindow.endMs).toISOString(),
-            step_seconds: rangeEphemerisStepSeconds(ephemerisWindow),
-            include_velocity: false
-        })
-    }).then(async (response) => {
+    const request = enqueueRangeEphemerisRequest(async () => {
+        // Unlike realtime tracks, an SP3 only has a finite time domain. A
+        // queued bootstrap may become invalid before it reaches the network.
+        if (!activeLayerSatelliteIds.has(id)
+            || rangeEphemerisKey(id, resolveSimulationTimelineContext()) !== key) {
+            return null;
+        }
+        const response = await fetch("/api/ephemeris", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+                sat_id: id,
+                start_time: new Date(ephemerisWindow.startMs).toISOString(),
+                end_time: new Date(ephemerisWindow.endMs).toISOString(),
+                step_seconds: rangeEphemerisStepSeconds(ephemerisWindow),
+                include_velocity: false
+            })
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const ephemeris = parseRangeEphemeris(await response.json(), key, id);
         if (!ephemeris) throw new Error("The selected ephemeris has no samples in an available terrestrial frame.");
@@ -2543,6 +2597,23 @@ export function getCatalogEntryMeta(id) {
         return null;
     }
     return catalogEntryMetaBySatelliteId.get(String(id)) || null;
+}
+
+/**
+ * Resolve the presentation name for a source satellite identity.
+ *
+ * Precise-product runtime IDs deliberately include their product hash, for
+ * example ``precise:precise-…:C06``. They are stable machine identities, not
+ * names intended for operators. Keeping this resolver with the catalogue
+ * registry makes every Layers consumer able to show the SP3 member code
+ * (``C06``, ``G01``, …) while retaining the full ID for requests and saved
+ * projects.
+ */
+export function getSatelliteDisplayName(id, fallback = "") {
+    const normalizedId = String(id || "").trim();
+    const metadata = normalizedId ? catalogEntryMetaBySatelliteId.get(normalizedId) : null;
+    const name = catalogMetadataText(metadata, ["name", "catalogName", "catalog_name"]);
+    return name || String(fallback || normalizedId).trim();
 }
 
 export function getSatelliteTelemetry(id) {

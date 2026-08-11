@@ -85,10 +85,11 @@ ventana de cobertura y realización explícita siguiendo
 
 No. El acrónimo correcto es ITRF, International Terrestrial Reference Frame.
 Además, ITRF representa una familia de realizaciones. Orbit no reetiqueta
-implícitamente IGS20, IGb20 o IGc20 como ITRF. La alineación global publicada
-de esas tres realizaciones a ITRF2020 requiere una activación explícita de
-`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true` junto con
-`ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`; IGS14 necesita una operación propia.
+implícitamente IGS20, IGb20 o IGc20 como ITRF. Compose activa por defecto la
+alineación global publicada de esas tres realizaciones a ITRF2020 mediante
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true` y
+`ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`; la realización fuente y la operación
+permanecen auditables. IGS14 necesita una operación propia.
 
 ## ¿Orbit incluye usuarios, colaboración, API pública estable, SDK o CLI?
 

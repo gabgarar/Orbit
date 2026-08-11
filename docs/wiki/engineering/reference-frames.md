@@ -106,12 +106,16 @@ realización concreta sin una operación de datum registrada.
 
 La operación global publicada incluida como helper cubre la familia
 `IGS20 ↔ ITRF2020`, `IGb20 ↔ ITRF2020` e `IGc20 ↔ ITRF2020`, con parámetros de
-datum globales nulos. Está deshabilitada por defecto y requiere:
+datum globales nulos. Compose la habilita por defecto para estados orbitales de
+satélite y usa:
 
 ```text
 ORBIT_TERRESTRIAL_REALIZATION=ITRF2020
 ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true
 ```
+
+Puede desactivarse explícitamente con
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=false`.
 
 Se aplica solamente a estados orbitales geocéntricos declarados `IGS20`,
 `IGb20` o `IGc20`; no aplica correcciones de estación, antena ni convenciones

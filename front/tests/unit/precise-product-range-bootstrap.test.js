@@ -185,3 +185,124 @@ test("an active historical SP3 layer seeds Cesium from its aligned range instead
         }
     }
 });
+
+test("a multi-satellite SP3 import bounds exact-range requests while every layer remains activatable", async () => {
+    const previous = {
+        Cesium: globalThis.Cesium,
+        window: globalThis.window,
+        WebSocket: globalThis.WebSocket,
+        fetch: globalThis.fetch,
+        requestAnimationFrame: globalThis.requestAnimationFrame
+    };
+    const ids = Array.from({ length: 6 }, (_, index) => `precise:queue-test:G${String(index + 1).padStart(2, "0")}`);
+    const responseResolvers = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let requestCount = 0;
+
+    class TestWebSocket {
+        static OPEN = 1;
+
+        constructor() {
+            this.readyState = 0;
+        }
+
+        close() {}
+        send() {}
+    }
+
+    const viewer = {
+        entities: {
+            add(entity) { return entity; },
+            remove() { return true; }
+        }
+    };
+    const nextTask = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const response = {
+        ok: true,
+        json: async () => ({
+            reference_frame: "ITRF",
+            points: [
+                { time: "2026-08-10T12:00:00.000Z", position: { x: 7_000_000, y: 0, z: 0 } },
+                { time: "2026-08-10T12:01:00.000Z", position: { x: 7_100_000, y: 60_000, z: 0 } }
+            ]
+        })
+    };
+
+    try {
+        globalThis.Cesium = createCesiumTestDouble();
+        globalThis.window = { location: { protocol: "http:", host: "orbit.test" } };
+        globalThis.WebSocket = TestWebSocket;
+        // The bootstrap itself is promise-driven. Do not start the renderer's
+        // perpetual animation loop in this unit test.
+        globalThis.requestAnimationFrame = () => 0;
+        globalThis.fetch = () => {
+            requestCount += 1;
+            inFlight += 1;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            return new Promise((resolve) => {
+                responseResolvers.push(() => {
+                    inFlight -= 1;
+                    resolve(response);
+                });
+            });
+        };
+
+        setOrbitConfig({
+            satellite_use_3d_model: false,
+            orbit_future_show: false,
+            orbit_ground_track_show: false,
+            propagation_hours: 0
+        });
+        setSimulationTimelineProvider(() => ({
+            mode: "range",
+            date: new Date("2026-08-10T12:00:30.000Z"),
+            rangeStart: new Date("2026-08-10T12:00:00.000Z"),
+            rangeEnd: new Date("2026-08-10T12:01:00.000Z")
+        }));
+        registerPreciseProductSatelliteEntries(ids.map((id) => ({
+            id,
+            name: id.slice(-3),
+            sourceFormat: "SP3",
+            satellite_id: id.slice(-3),
+            product_id: "queue-test",
+            sp3: { reference_frame: "ITRF", time_scale: "GPS" }
+        })));
+        initSatelliteReceiver(viewer);
+
+        ids.forEach((id) => assert.equal(setSatelliteLayerActive(id, true), true));
+        await nextTask();
+        await nextTask();
+
+        assert.equal(inFlight, 4, "only four SP3 range requests start together");
+        assert.equal(maxInFlight, 4);
+
+        for (let attempt = 0; attempt < 32 && requestCount < ids.length; attempt += 1) {
+            const release = responseResolvers.shift();
+            if (release) release();
+            await nextTask();
+            await nextTask();
+        }
+        while (responseResolvers.length) {
+            responseResolvers.shift()();
+            await nextTask();
+            await nextTask();
+        }
+
+        assert.equal(requestCount, ids.length, "every selected SP3 member eventually receives its exact range");
+        assert.equal(maxInFlight, 4, "the queue never floods the ephemeris endpoint");
+    } finally {
+        ids.forEach((id) => setSatelliteLayerActive(id, false));
+        setSimulationTimelineProvider(null);
+        setOrbitConfig({
+            satellite_use_3d_model: true,
+            orbit_future_show: true,
+            orbit_ground_track_show: true,
+            propagation_hours: 12
+        });
+        for (const [name, value] of Object.entries(previous)) {
+            if (value === undefined) delete globalThis[name];
+            else globalThis[name] = value;
+        }
+    }
+});

@@ -167,14 +167,18 @@ AOS/LOS, export, and a future comparison—must use the operational label while
 also retaining the frame declared by the SP3 header. An absent ERP is not
 hidden behind `ECEF`, `ITRF`, or a generic scene name.
 
-There is a published zero-datum global operation, but it is **optional and
-disabled by default**, for satellite-orbit states declared as `IGS20`, `IGb20`,
-or `IGc20`. Enable it only by setting both:
+The Compose deployment enables the published zero-datum global operation by
+default for satellite-orbit states declared as `IGS20`, `IGb20`, or `IGc20`.
+The policy uses:
 
 ```text
 ORBIT_TERRESTRIAL_REALIZATION=ITRF2020
 ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true
 ```
+
+An operator can explicitly disable it with
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=false`. This is not relabelling:
+the operation and source realization remain in provenance.
 
 The operation retains the individual source realization in provenance; it is
 not a station or antenna-coordinate correction. The legacy exact policy

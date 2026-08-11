@@ -118,6 +118,222 @@ function metadataPresence(sources, keys, fallback = INPUT_UNAVAILABLE) {
     return fallback;
 }
 
+function record(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function uniqueRecords(values) {
+    const seen = new Set();
+    return values.filter((candidate) => {
+        const item = record(candidate);
+        if (!item || seen.has(item)) return false;
+        seen.add(item);
+        return true;
+    });
+}
+
+/**
+ * Flatten the SP3 product and selected-satellite metadata without assuming
+ * one particular API payload shape.  Product-level fields (files, provider,
+ * ERP) and satellite-level fields (GNSS ID, sample count, coverage) are both
+ * useful, but neither must be mistaken for a TLE summary.
+ */
+function preciseMetadataSources({ telemetry, inputMetadata, catalogMeta }) {
+    const roots = [
+        telemetry?.sp3,
+        telemetry?.preciseProduct,
+        telemetry?.precise_product,
+        inputMetadata?.sp3,
+        inputMetadata?.preciseProduct,
+        inputMetadata?.precise_product,
+        inputMetadata,
+        catalogMeta?.sp3,
+        catalogMeta?.preciseProduct,
+        catalogMeta?.precise_product,
+        catalogMeta,
+        telemetry
+    ];
+    const nested = roots.flatMap((source) => {
+        const item = record(source);
+        if (!item) return [];
+        return [item.product, item.preciseProduct, item.precise_product, item.metadata];
+    });
+    return uniqueRecords([...roots, ...nested]);
+}
+
+function metadataNumber(sources, keys) {
+    for (const source of sources) {
+        const item = record(source);
+        if (!item) continue;
+        for (const key of keys) {
+            const candidate = item[key];
+            if (hasNumber(candidate)) return Number(candidate);
+        }
+    }
+    return null;
+}
+
+function metadataRecord(sources, keys) {
+    for (const source of sources) {
+        const item = record(source);
+        if (!item) continue;
+        for (const key of keys) {
+            const candidate = record(item[key]);
+            if (candidate) return candidate;
+        }
+    }
+    return null;
+}
+
+function timeMillis(value) {
+    if (value instanceof Date) return value.getTime();
+    if (hasNumber(value)) {
+        const numeric = Number(value);
+        // API epoch fields with a small magnitude are seconds; normal JS/API
+        // timestamps use milliseconds.  This keeps persisted v1 metadata
+        // readable without turning a 2026 epoch into 1970.
+        return Math.abs(numeric) < 100_000_000_000 ? numeric * 1000 : numeric;
+    }
+    const parsed = Date.parse(String(value || ""));
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function utcMetadataDate(value, fallback = INPUT_UNAVAILABLE) {
+    const milliseconds = timeMillis(value);
+    if (!Number.isFinite(milliseconds)) return fallback;
+    return utcDate(milliseconds);
+}
+
+function sourceEpochLabel(value, timeScale) {
+    const raw = String(value || "").trim();
+    if (!raw) return INPUT_UNAVAILABLE;
+    // Header epochs in GPS/TAI are source-calendar values.  Show their
+    // declared scale rather than feeding a zone-less string to Date and
+    // accidentally relabelling it UTC.
+    const readable = raw.replace("T", " ").replace(/(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)?$/, "");
+    const scale = String(timeScale || "").trim();
+    return scale ? `${readable} ${scale}` : readable;
+}
+
+function compactProductLabel(value) {
+    const normalized = String(value || "").trim().replace(/[_-]+/g, " ");
+    return normalized ? normalized.replace(/\b\w/g, (letter) => letter.toUpperCase()) : INPUT_UNAVAILABLE;
+}
+
+function preciseProviderLabel(value) {
+    const provider = String(value || "").trim().toLowerCase();
+    const known = {
+        cddis_igs: "NASA CDDIS / IGS",
+        "cddis-igs": "NASA CDDIS / IGS",
+        igs_mgex: "IGS MGEX",
+        "igs-mgex": "IGS MGEX",
+        esa_nso: "ESA Navigation Support Office",
+        "esa-nso": "ESA Navigation Support Office",
+        custom: "Producto local"
+    };
+    return known[provider] || (provider ? String(value).trim() : INPUT_UNAVAILABLE);
+}
+
+function preciseSatelliteId(detail, sources) {
+    const declared = metadataValue(sources, ["satellite_id", "satelliteId", "gnss_id", "gnssId", "prn"], "");
+    if (declared) return declared.toUpperCase();
+    const runtimeId = String(detail?.id || "").trim();
+    const match = runtimeId.match(/^precise:[^:]+:([A-Za-z]\d{1,3})$/i);
+    return match ? match[1].toUpperCase() : INPUT_UNAVAILABLE;
+}
+
+function preciseConstellation(identifier) {
+    const prefix = String(identifier || "").trim().charAt(0).toUpperCase();
+    const labels = {
+        G: "GPS",
+        R: "GLONASS",
+        E: "Galileo",
+        C: "BeiDou",
+        J: "QZSS",
+        I: "NavIC / IRNSS",
+        S: "SBAS"
+    };
+    return labels[prefix] || INPUT_UNAVAILABLE;
+}
+
+function preciseCoverage(sources) {
+    const startRaw = metadataValue(sources, ["start_time_ms", "startTimeMs", "start_time", "startTime", "coverage_start", "coverageStart"], "");
+    const endRaw = metadataValue(sources, ["end_time_ms", "endTimeMs", "end_time", "endTime", "coverage_end", "coverageEnd", "stop_time", "stopTime"], "");
+    const startMs = timeMillis(startRaw);
+    const endMs = timeMillis(endRaw);
+    return {
+        startRaw,
+        endRaw,
+        startMs,
+        endMs,
+        start: utcMetadataDate(startRaw),
+        end: utcMetadataDate(endRaw)
+    };
+}
+
+function preciseCadenceText(sources, coverage, sampleCount) {
+    const declaredSeconds = metadataNumber(sources, [
+        "sample_cadence_seconds", "sampleCadenceSeconds", "sample_interval_seconds",
+        "sampleIntervalSeconds", "epoch_interval_seconds", "epochIntervalSeconds"
+    ]);
+    if (Number.isFinite(declaredSeconds) && declaredSeconds > 0) {
+        return `${numberWithUnit(declaredSeconds, "s", declaredSeconds < 60 ? 2 : 0)}${metadataValue(sources, ["sample_cadence_seconds", "sampleCadenceSeconds"], "") ? " (media por satélite)" : ""}`;
+    }
+    if (Number.isFinite(coverage.startMs) && Number.isFinite(coverage.endMs) && sampleCount >= 2 && coverage.endMs >= coverage.startMs) {
+        return `${numberWithUnit((coverage.endMs - coverage.startMs) / 1000 / (sampleCount - 1), "s", 2)} (derivada)`;
+    }
+    return INPUT_UNAVAILABLE;
+}
+
+function preciseInterpolationText(sources, sampleCount) {
+    const interpolation = metadataRecord(sources, ["interpolation", "tabular_interpolation", "tabularInterpolation"]);
+    const method = metadataValue(
+        interpolation ? [interpolation] : sources,
+        ["method", "declared_method", "declaredMethod", "interpolation_method", "interpolationMethod"],
+        ""
+    );
+    const degree = metadataNumber(
+        interpolation ? [interpolation] : sources,
+        ["degree", "declared_degree", "declaredDegree", "interpolation_degree", "interpolationDegree"]
+    );
+    if (method) {
+        const normalized = String(method).trim().toUpperCase();
+        if (normalized === "NONE") return "Sin interpolación; sólo muestra exacta";
+        return Number.isFinite(degree) ? `${normalized} · grado ${number(degree, 0)}` : normalized;
+    }
+    if (sampleCount < 2) return "Sin interpolación; sólo muestra exacta";
+    return INPUT_UNAVAILABLE;
+}
+
+function preciseClockText(sources) {
+    const clock = metadataRecord(sources, ["clock", "clock_summary", "clockSummary"]);
+    const embedded = record(clock?.sp3_embedded ?? clock?.sp3Embedded);
+    const rinex = record(clock?.rinex_clk ?? clock?.rinexClk);
+    const embeddedCount = metadataNumber([embedded], ["sample_count", "sampleCount"]);
+    const rinexCount = metadataNumber([rinex], ["sample_count", "sampleCount"]);
+    const segments = [];
+    if (embedded?.present === true || Number.isFinite(embeddedCount) && embeddedCount > 0) {
+        segments.push(`SP3: ${number(embeddedCount, 0)} muestras`);
+    }
+    if (rinex?.present === true || Number.isFinite(rinexCount) && rinexCount > 0) {
+        segments.push(`CLK: ${number(rinexCount, 0)} muestras`);
+    }
+    return segments.length ? segments.join(" · ") : "No incluido";
+}
+
+function preciseErpText(sources) {
+    const erp = metadataRecord(sources, ["erp", "erp_summary", "erpSummary"]);
+    const file = metadataValue([erp, ...sources], ["file", "erp_file", "erpFile"], "");
+    const count = metadataNumber([erp], ["sample_count", "sampleCount"]);
+    if (!file && erp?.present !== true) return "No incluido";
+    const label = file || "ERP adjunto";
+    return Number.isFinite(count) ? `${label} · ${number(count, 0)} muestras` : label;
+}
+
+function preciseCompanionText(sources, keys) {
+    return metadataValue(sources, keys, "No incluido");
+}
+
 function preciseRenderingStatus(status) {
     return status?.renderingLabel || INPUT_UNAVAILABLE;
 }
@@ -297,6 +513,9 @@ export function buildObjectDetails(detail) {
         || telemetry.sp3
         || {};
     const metadataSources = [manualObjectMetadata, inputMetadata, catalogMeta, telemetry];
+    const preciseSources = sourceFormat === "SP3"
+        ? preciseMetadataSources({ telemetry, inputMetadata, catalogMeta })
+        : [];
     const preciseFrameStatus = sourceFormat === "SP3"
         ? resolvePreciseProductFrameStatus({
             ...catalogMeta,
@@ -312,6 +531,24 @@ export function buildObjectDetails(detail) {
         })
         : null;
     const preciseRenderingUnavailable = preciseFrameStatus?.available === false;
+    const preciseSatellite = sourceFormat === "SP3"
+        ? preciseSatelliteId(detail, preciseSources)
+        : INPUT_UNAVAILABLE;
+    const preciseConstellationLabel = sourceFormat === "SP3"
+        ? preciseConstellation(preciseSatellite)
+        : INPUT_UNAVAILABLE;
+    const preciseCoverageWindow = sourceFormat === "SP3"
+        ? preciseCoverage(preciseSources)
+        : null;
+    const preciseSampleCount = sourceFormat === "SP3"
+        ? metadataNumber(preciseSources, ["sample_count", "sampleCount", "samples"])
+        : null;
+    const preciseInterpolation = sourceFormat === "SP3"
+        ? preciseInterpolationText(preciseSources, preciseSampleCount || 0)
+        : INPUT_UNAVAILABLE;
+    const preciseCadence = sourceFormat === "SP3"
+        ? preciseCadenceText(preciseSources, preciseCoverageWindow, preciseSampleCount || 0)
+        : INPUT_UNAVAILABLE;
     // Keep the legacy metadata precedence for existing workspaces. Input
     // metadata remains available in its dedicated tab, but must not rename an
     // already identified catalogue or manually authored object.
@@ -408,56 +645,164 @@ export function buildObjectDetails(detail) {
         ? (telemetry.ground_track_visible === false ? "Configurado, oculto" : "Activo")
         : "Desactivado";
 
-    const overviewRows = [
-        ["Nombre", title],
-        ["NORAD", celestial ? "-" : value(noradId)],
-        ["COSPAR", celestial ? "-" : cosparId],
-        ["Tipo de entrada", inputType],
-        ["Época de entrada", inputEpoch],
-        ["Fuente", source],
-        ["Estado del objeto", status, statusTone],
-        ["Fecha de lanzamiento", metadataDate(metadataSources, ["launchDate", "launch_date", "launchTimestamp", "launch_timestamp"])],
-        ["Edad del dato", inputAge],
-        ["Calidad del dato", quality],
-        ["Tipo de objeto", metadataValue([manualObjectMetadata, catalogMeta, telemetry], ["objectType", "object_type"], celestial ? "Cuerpo de referencia" : "-")],
-        ["Misión", metadataValue(metadataSources, ["missionType", "mission_type", "mission"])],
-        ["Operador / agencia", metadataValue(metadataSources, ["operatorLabel", "operator", "agency", "ownerLabel", "owner"])],
-        ["País", metadataValue(metadataSources, ["country", "countryCode", "country_code", "operatorCountry", "operator_country"])],
-        ["Última actualización", metadataDate(metadataSources, ["tleUpdatedAt", "tle_updated_at", "updatedAt", "updated_at", "lastUpdated", "last_updated"])]
+    const preciseHasPosition = sourceFormat === "SP3" && !preciseRenderingUnavailable && hasVector(positionVector);
+    const preciseHasVelocity = preciseHasPosition && hasVector(velocityVector);
+    const preciseStateMessage = preciseRenderingUnavailable
+        ? `No disponible: ${preciseRenderingStatus(preciseFrameStatus)}`
+        : preciseHasPosition
+            ? null
+            : "No hay un estado cartesiano válido en el instante mostrado.";
+    const preciseCoverageState = sourceFormat !== "SP3"
+        ? null
+        : (!Number.isFinite(preciseCoverageWindow?.startMs) || !Number.isFinite(preciseCoverageWindow?.endMs) || !Number.isFinite(timeMillis(referenceTimeMs)))
+            ? INPUT_UNAVAILABLE
+            : timeMillis(referenceTimeMs) >= preciseCoverageWindow.startMs && timeMillis(referenceTimeMs) <= preciseCoverageWindow.endMs
+                ? "En cobertura"
+                : "Fuera de cobertura";
+    const preciseHeaderEpoch = sourceFormat === "SP3"
+        ? metadataValue(preciseSources, ["header_epoch", "headerEpoch", "epoch"], "")
+        : "";
+    const preciseHeaderTimeScale = sourceFormat === "SP3"
+        ? metadataValue(preciseSources, ["header_epoch_time_scale", "headerEpochTimeScale", "time_system", "timeSystem", "time_scale", "timeScale"], "")
+        : "";
+
+    const preciseProductName = sourceFormat === "SP3"
+        ? metadataValue(preciseSources, ["product_name", "productName", "product_id", "productId", "name"], INPUT_UNAVAILABLE)
+        : INPUT_UNAVAILABLE;
+    const preciseProductClass = sourceFormat === "SP3"
+        ? compactProductLabel(metadataValue(preciseSources, ["product_class", "productClass", "detected_product_class", "detectedProductClass"], ""))
+        : INPUT_UNAVAILABLE;
+    const preciseProductFamily = sourceFormat === "SP3"
+        ? compactProductLabel(metadataValue(preciseSources, ["product_family", "productFamily", "detected_product_family", "detectedProductFamily"], ""))
+        : INPUT_UNAVAILABLE;
+    const preciseProvider = sourceFormat === "SP3"
+        ? preciseProviderLabel(metadataValue(preciseSources, ["provider_label", "providerLabel", "provider", "provider_id", "providerId"], ""))
+        : INPUT_UNAVAILABLE;
+    const preciseCoverageText = sourceFormat === "SP3"
+        ? preciseCoverageWindow.start !== INPUT_UNAVAILABLE && preciseCoverageWindow.end !== INPUT_UNAVAILABLE
+            ? `${preciseCoverageWindow.start} → ${preciseCoverageWindow.end}`
+            : INPUT_UNAVAILABLE
+        : INPUT_UNAVAILABLE;
+    const overviewRows = sourceFormat === "SP3"
+        ? [
+            ["Nombre", title],
+            ["Identificador GNSS", preciseSatellite],
+            ["Constelación", preciseConstellationLabel],
+            ["Tipo de entrada", "SP3 · efeméride GNSS precisa"],
+            ["Producto", preciseProductName],
+            ["Proveedor", preciseProvider],
+            ["Clase de producto", preciseProductClass],
+            ["Familia de producto", preciseProductFamily],
+            ["Cobertura UTC", preciseCoverageText],
+            ["Estado del objeto", status, statusTone],
+            ["Calidad del dato", preciseProductClass === INPUT_UNAVAILABLE ? "Efeméride precisa SP3" : `${preciseProductClass} · efeméride precisa`],
+            ["Estado de representación", preciseRenderingStatus(preciseFrameStatus)]
+        ]
+        : [
+            ["Nombre", title],
+            ["NORAD", celestial ? "-" : value(noradId)],
+            ["COSPAR", celestial ? "-" : cosparId],
+            ["Tipo de entrada", inputType],
+            ["Época de entrada", inputEpoch],
+            ["Fuente", source],
+            ["Estado del objeto", status, statusTone],
+            ["Fecha de lanzamiento", metadataDate(metadataSources, ["launchDate", "launch_date", "launchTimestamp", "launch_timestamp"])],
+            ["Edad del dato", inputAge],
+            ["Calidad del dato", quality],
+            ["Tipo de objeto", metadataValue([manualObjectMetadata, catalogMeta, telemetry], ["objectType", "object_type"], celestial ? "Cuerpo de referencia" : "-")],
+            ["Misión", metadataValue(metadataSources, ["missionType", "mission_type", "mission"])],
+            ["Operador / agencia", metadataValue(metadataSources, ["operatorLabel", "operator", "agency", "ownerLabel", "owner"])],
+            ["País", metadataValue(metadataSources, ["country", "countryCode", "country_code", "operatorCountry", "operator_country"])],
+            ["Última actualización", metadataDate(metadataSources, ["tleUpdatedAt", "tle_updated_at", "updatedAt", "updated_at", "lastUpdated", "last_updated"])]
+        ];
+    const preciseOrbitRows = [
+        ["Identificador GNSS", preciseSatellite],
+        ["Constelación", preciseConstellationLabel],
+        ["Instante mostrado", utcMetadataDate(referenceTimeMs, "Sin instante de consulta")],
+        ["Cobertura del producto", preciseCoverageState],
+        ["Marco nativo", preciseFrameStatus?.nativeFrame || INPUT_UNAVAILABLE],
+        ["Marco de referencia", displayStateFrame || INPUT_UNAVAILABLE],
+        ["Estado de representación", preciseRenderingStatus(preciseFrameStatus)]
     ];
-    const orbitRows = [
-        ["Tipo de órbita", value(orbit.label)],
-        ["Latitud", earthFixed ? numberWithUnit(geo.latitude_deg, "deg", 4) : unavailableGeography],
-        ["Longitud", earthFixed ? numberWithUnit(geo.longitude_deg, "deg", 4) : unavailableGeography],
-        ["Altitud", earthFixed ? convertedNumberWithUnit(geo.altitude_m, 1000, "km") : unavailableGeography],
-        [displayStateFrame ? `Velocidad instantánea (${displayStateFrame})` : "Velocidad instantánea", preciseRenderingUnavailable ? unavailableGeography : numberWithUnit(telemetry.speed_m_s, "m/s")],
-        ["Período orbital", numberWithUnit(orbitalPeriodMinutes, "min", 2)],
-        ["Anomalía verdadera", numberWithUnit(telemetry.true_anomaly_deg ?? telemetry.trueAnomalyDeg, "deg", 3)],
-        ["Argumento de latitud", numberWithUnit(telemetry.argument_of_latitude_deg ?? telemetry.argumentOfLatitudeDeg, "deg", 3)],
-        ["Distancia al centro de la Tierra", convertedNumberWithUnit(telemetry.earth_center_distance_m, 1000, "km")],
-        ["Marco de referencia", displayStateFrame || "-"],
-        [preciseRenderingUnavailable ? "Estado cartesiano" : (displayStateFrame ? `Posición ${displayStateFrame}` : "Posición"), preciseRenderingUnavailable ? unavailableGeography : vectorWithUnit(positionVector, "km", 1, 1000)],
-        [preciseRenderingUnavailable ? "Velocidad cartesiana" : ((displayStateFrame || velocityFrame || stateFrame) ? `Velocidad ${displayStateFrame || velocityFrame || stateFrame}` : "Velocidad"), preciseRenderingUnavailable ? unavailableGeography : vectorWithUnit(velocityVector, "m/s")],
-        ["Distancia a estación", hasNumber(telemetry.station_distance_m) ? convertedNumberWithUnit(telemetry.station_distance_m, 1000, "km") : "Sin estación seleccionada"],
-        ["AOS / LOS", aosLos],
-        ["Ground track", groundTrackState],
-        ["Radio de huella", telemetry.ground_track_enabled === true ? convertedNumberWithUnit(telemetry.footprint_radius_m, 1000, "km") : "No activo"]
-    ];
-    const telemetryRows = [
-        ["Velocidad", numberWithUnit(telemetry.speed_km_h, "km/h")],
-        ["Módulo de velocidad", numberWithUnit(telemetry.speed_m_s, "m/s")],
-        ["Vector velocidad", vectorWithUnit(velocityVector, "m/s")],
-        ["Aceleración", numberWithUnit(vectorMagnitude(accelerationVector), "m/s²", 3)],
-        ["Vector aceleración", vectorWithUnit(accelerationVector, "m/s²", 3)],
-        ["Doppler", numberWithUnit(telemetry.doppler_shift_hz, "Hz")],
-        ["Retardo de señal", numberWithUnit(telemetry.signal_delay_ms, "ms")],
-        ["Pérdida de trayecto", numberWithUnit(telemetry.path_loss_db, "dB")],
-        ["Estado del satélite", value(telemetry.runtime_state)],
+    if (preciseHasPosition) {
+        preciseOrbitRows.push(
+            ["Latitud", earthFixed ? numberWithUnit(geo.latitude_deg, "deg", 4) : unavailableGeography],
+            ["Longitud", earthFixed ? numberWithUnit(geo.longitude_deg, "deg", 4) : unavailableGeography],
+            ["Altitud", earthFixed ? convertedNumberWithUnit(geo.altitude_m, 1000, "km") : unavailableGeography],
+            ["Distancia geocéntrica", convertedNumberWithUnit(telemetry.earth_center_distance_m ?? vectorMagnitude(positionVector), 1000, "km")],
+            [`Posición ${displayStateFrame || stateFrame || "cartesiana"}`, vectorWithUnit(positionVector, "km", 3, 1000)]
+        );
+        if (preciseHasVelocity) {
+            preciseOrbitRows.push(
+                [`Velocidad ${displayStateFrame || velocityFrame || stateFrame || "cartesiana"}`, vectorWithUnit(velocityVector, "m/s", 3)],
+                ["Módulo de velocidad", numberWithUnit(telemetry.speed_m_s ?? vectorMagnitude(velocityVector), "m/s", 3)]
+            );
+        }
+    } else {
+        preciseOrbitRows.push(["Estado cartesiano", preciseStateMessage]);
+    }
+    const orbitRows = sourceFormat === "SP3"
+        ? preciseOrbitRows
+        : [
+            ["Tipo de órbita", value(orbit.label)],
+            ["Latitud", earthFixed ? numberWithUnit(geo.latitude_deg, "deg", 4) : unavailableGeography],
+            ["Longitud", earthFixed ? numberWithUnit(geo.longitude_deg, "deg", 4) : unavailableGeography],
+            ["Altitud", earthFixed ? convertedNumberWithUnit(geo.altitude_m, 1000, "km") : unavailableGeography],
+            [displayStateFrame ? `Velocidad instantánea (${displayStateFrame})` : "Velocidad instantánea", preciseRenderingUnavailable ? unavailableGeography : numberWithUnit(telemetry.speed_m_s, "m/s")],
+            ["Período orbital", numberWithUnit(orbitalPeriodMinutes, "min", 2)],
+            ["Anomalía verdadera", numberWithUnit(telemetry.true_anomaly_deg ?? telemetry.trueAnomalyDeg, "deg", 3)],
+            ["Argumento de latitud", numberWithUnit(telemetry.argument_of_latitude_deg ?? telemetry.argumentOfLatitudeDeg, "deg", 3)],
+            ["Distancia al centro de la Tierra", convertedNumberWithUnit(telemetry.earth_center_distance_m, 1000, "km")],
+            ["Marco de referencia", displayStateFrame || "-"],
+            [preciseRenderingUnavailable ? "Estado cartesiano" : (displayStateFrame ? `Posición ${displayStateFrame}` : "Posición"), preciseRenderingUnavailable ? unavailableGeography : vectorWithUnit(positionVector, "km", 1, 1000)],
+            [preciseRenderingUnavailable ? "Velocidad cartesiana" : ((displayStateFrame || velocityFrame || stateFrame) ? `Velocidad ${displayStateFrame || velocityFrame || stateFrame}` : "Velocidad"), preciseRenderingUnavailable ? unavailableGeography : vectorWithUnit(velocityVector, "m/s")],
+            ["Distancia a estación", hasNumber(telemetry.station_distance_m) ? convertedNumberWithUnit(telemetry.station_distance_m, 1000, "km") : "Sin estación seleccionada"],
+            ["AOS / LOS", aosLos],
+            ["Ground track", groundTrackState],
+            ["Radio de huella", telemetry.ground_track_enabled === true ? convertedNumberWithUnit(telemetry.footprint_radius_m, 1000, "km") : "No activo"]
+        ];
+    const preciseTelemetryRows = [
+        ["Instante de consulta", utcMetadataDate(referenceTimeMs, "Sin instante de consulta")],
+        ["Estado de reproducción", value(telemetry.runtime_state, preciseHasPosition ? "ACTIVE" : "SIN ESTADO")],
+        ["Cobertura del producto", preciseCoverageState],
+        ["Interpolación", preciseInterpolation],
+        ["Marco del estado", displayStateFrame || preciseFrameStatus?.nativeFrame || INPUT_UNAVAILABLE],
+        ["Estado de representación", preciseRenderingStatus(preciseFrameStatus)],
         ["Modo temporal", simulationMode(simulation.mode)],
-        ["Escala temporal", hasNumber(simulation.time_scale) ? `${number(simulation.time_scale, 0)}×` : "-"],
-        ["Edad de telemetría", numberWithUnit(telemetry.telemetry_age_ms, "ms", 0)]
+        ["Escala temporal", hasNumber(simulation.time_scale) ? `${number(simulation.time_scale, 0)}×` : "-"]
     ];
-    if (preciseFrameStatus) {
+    if (preciseHasVelocity) {
+        preciseTelemetryRows.push(
+            ["Módulo de velocidad", numberWithUnit(telemetry.speed_m_s ?? vectorMagnitude(velocityVector), "m/s", 3)],
+            ["Vector velocidad", vectorWithUnit(velocityVector, "m/s", 3)]
+        );
+    }
+    if (preciseHasPosition && hasVector(accelerationVector)) {
+        preciseTelemetryRows.push(
+            ["Aceleración", numberWithUnit(vectorMagnitude(accelerationVector), "m/s²", 3)],
+            ["Vector aceleración", vectorWithUnit(accelerationVector, "m/s²", 3)]
+        );
+    }
+    if (hasNumber(telemetry.telemetry_age_ms)) {
+        preciseTelemetryRows.push(["Edad de telemetría", numberWithUnit(telemetry.telemetry_age_ms, "ms", 0)]);
+    }
+    const telemetryRows = sourceFormat === "SP3"
+        ? preciseTelemetryRows
+        : [
+            ["Velocidad", numberWithUnit(telemetry.speed_km_h, "km/h")],
+            ["Módulo de velocidad", numberWithUnit(telemetry.speed_m_s, "m/s")],
+            ["Vector velocidad", vectorWithUnit(velocityVector, "m/s")],
+            ["Aceleración", numberWithUnit(vectorMagnitude(accelerationVector), "m/s²", 3)],
+            ["Vector aceleración", vectorWithUnit(accelerationVector, "m/s²", 3)],
+            ["Doppler", numberWithUnit(telemetry.doppler_shift_hz, "Hz")],
+            ["Retardo de señal", numberWithUnit(telemetry.signal_delay_ms, "ms")],
+            ["Pérdida de trayecto", numberWithUnit(telemetry.path_loss_db, "dB")],
+            ["Estado del satélite", value(telemetry.runtime_state)],
+            ["Modo temporal", simulationMode(simulation.mode)],
+            ["Escala temporal", hasNumber(simulation.time_scale) ? `${number(simulation.time_scale, 0)}×` : "-"],
+            ["Edad de telemetría", numberWithUnit(telemetry.telemetry_age_ms, "ms", 0)]
+        ];
+    if (preciseFrameStatus && sourceFormat !== "SP3") {
         telemetryRows.push(
             ["Marco del estado", displayStateFrame || preciseFrameStatus.nativeFrame],
             ["Estado de representación", preciseRenderingStatus(preciseFrameStatus)]
@@ -512,26 +857,46 @@ export function buildObjectDetails(detail) {
             ["Maniobras", metadataPresence(metadataSources, ["maneuvers", "maneuver_data", "maneuverData"])]
         ];
     } else if (sourceFormat === "SP3") {
+        const preciseRecordType = metadataValue(preciseSources, ["record_type", "recordType"], "").toUpperCase();
+        const preciseRecordDescription = preciseRecordType === "P"
+            ? "P · posiciones SP3"
+            : preciseRecordType === "V"
+                ? "V · posiciones y velocidades SP3"
+                : INPUT_UNAVAILABLE;
+        const preciseHeaderEpochCount = metadataNumber(preciseSources, ["number_of_epochs", "numberOfEpochs", "header_epoch_count", "headerEpochCount"]);
+        const preciseNativeFrame = preciseFrameStatus?.nativeFrame
+            || metadataValue(preciseSources, ["native_reference_frame", "nativeReferenceFrame", "reference_frame", "referenceFrame", "frame", "coord_system", "coordinate_system"], INPUT_UNAVAILABLE);
         inputRows = [
             ["Tipo de entrada", "SP3"],
-            ["Proveedor", metadataValue(metadataSources, ["provider", "agency", "orbitType", "orbit_type"], INPUT_UNAVAILABLE)],
-            ["Clase de producto", metadataValue(metadataSources, ["productClass", "product_class", "quality", "dataQuality", "data_quality"], INPUT_UNAVAILABLE)],
-            ["Producto", metadataValue(metadataSources, ["productId", "product_id", "productName", "product_name"], INPUT_UNAVAILABLE)],
-            ["Archivo SP3", metadataValue(metadataSources, ["fileName", "file_name", "orbitFile", "orbit_file", "sp3_file"], INPUT_UNAVAILABLE)],
-            ["Archivo CLK", metadataValue(metadataSources, ["clockFile", "clock_file", "clk_file"], "No incluido")],
-            ["Archivo ERP", metadataValue(metadataSources, ["erpFile", "erp_file"], "No incluido")],
-            ["Época", inputEpoch],
-            ["Inicio de cobertura", utcDate(metadataValue(metadataSources, ["startTimeMs", "start_time_ms", "startTime", "start_time", "coverageStart", "coverage_start"], ""))],
-            ["Fin de cobertura", utcDate(metadataValue(metadataSources, ["endTimeMs", "end_time_ms", "endTime", "end_time", "coverageEnd", "coverage_end", "stop_time"], ""))],
-            ["Marco nativo", preciseFrameStatus?.nativeFrame || metadataValue(metadataSources, ["nativeReferenceFrame", "native_reference_frame", "referenceFrame", "reference_frame", "frame", "coordSystem", "coordinate_system"], INPUT_UNAVAILABLE)],
-            ["Sistema de tiempo", metadataValue(metadataSources, ["timeSystem", "time_system", "timeScale", "time_scale"], INPUT_UNAVAILABLE)],
+            ["Identificador GNSS", preciseSatellite],
+            ["Constelación", preciseConstellationLabel],
+            ["Producto", preciseProductName],
+            ["Proveedor", preciseProvider],
+            ["Clase de producto", preciseProductClass],
+            ["Familia de producto", preciseProductFamily],
+            ["Archivo SP3", metadataValue(preciseSources, ["file_name", "fileName", "orbit_file", "orbitFile", "sp3_file"], INPUT_UNAVAILABLE)],
+            ["Versión SP3", metadataValue(preciseSources, ["version", "sp3_version", "sp3Version"], INPUT_UNAVAILABLE)],
+            ["Tipo de registros", preciseRecordDescription],
+            ["Época de cabecera", sourceEpochLabel(preciseHeaderEpoch, preciseHeaderTimeScale)],
+            ["Épocas declaradas (cabecera)", Number.isFinite(preciseHeaderEpochCount) ? number(preciseHeaderEpochCount, 0) : INPUT_UNAVAILABLE],
+            ["Conjunto de datos", metadataValue(preciseSources, ["data_used", "dataUsed"], INPUT_UNAVAILABLE)],
+            ["Agencia de cabecera", metadataValue(preciseSources, ["agency", "originator"], INPUT_UNAVAILABLE)],
+            ["Tipo de órbita de cabecera", metadataValue(preciseSources, ["orbit_type", "orbitType"], INPUT_UNAVAILABLE)],
+            ["Inicio de cobertura UTC", preciseCoverageWindow.start],
+            ["Fin de cobertura UTC", preciseCoverageWindow.end],
+            ["Muestras del satélite", Number.isFinite(preciseSampleCount) ? number(preciseSampleCount, 0) : INPUT_UNAVAILABLE],
+            ["Cadencia media", preciseCadence],
+            ["Interpolación", preciseInterpolation],
+            ["Marco nativo", preciseNativeFrame],
+            ["Escala temporal", metadataValue(preciseSources, ["time_system", "timeSystem", "time_scale", "timeScale"], INPUT_UNAVAILABLE)],
+            ["Archivo CLK", metadataValue(preciseSources, ["clock_file", "clockFile", "clk_file"], "No incluido")],
+            ["Correcciones de reloj", preciseClockText(preciseSources)],
+            ["Archivo ERP", preciseErpText(preciseSources)],
+            ["Archivo SUM", preciseCompanionText(preciseSources, ["sum_file", "sumFile"])],
+            ["Archivo ATT / OBX", preciseCompanionText(preciseSources, ["attitude_file", "attitudeFile", "att_file", "attFile"])],
+            ["Archivo OSB / BIA", preciseCompanionText(preciseSources, ["osb_file", "osbFile", "bias_file", "biasFile"])],
             ["Marco de representación", preciseFrameStatus?.displayFrame || INPUT_UNAVAILABLE],
             ["Estado de representación", preciseRenderingStatus(preciseFrameStatus)],
-            ["Conversión a ECI", preciseFrameStatus?.eciAvailable ? "Disponible con ERP aplicado" : "Requiere ERP"],
-            ["Operación de realización", preciseFrameStatus?.operation || "No aplicada"],
-            ["Efeméride precisa", metadataPresence(metadataSources, ["states", "samples", "preciseEphemeris", "precise_ephemeris"])],
-            ["Correcciones de reloj", metadataPresence(metadataSources, ["clockCorrections", "clock_corrections", "clocks"])],
-            ["RMS", metadataPresence(metadataSources, ["rms", "accuracy", "standardDeviation", "standard_deviation"])],
             ["Estado", "Registrado en el runtime de efemérides precisas"]
         ];
     } else {
@@ -544,7 +909,20 @@ export function buildObjectDetails(detail) {
                 : metadataValue(metadataSources, ["dynamicsFrame", "dynamics_frame", "referenceFrame", "reference_frame", "frame"], INPUT_UNAVAILABLE);
     const propagationRows = celestial
         ? [["Motor", "No aplica"], ["Marco mostrado", stateFrame || "-"]]
-        : [
+        : sourceFormat === "SP3"
+            ? [
+                ["Motor", "Reproducción de efeméride precisa SP3"],
+                ["Integrador", "No aplica; estados tabulados"],
+                ["Interpolación", preciseInterpolation],
+                ["Modelo de fuerzas", "No aplica; el SP3 contiene estados publicados"],
+                ["Marco nativo", preciseFrameStatus?.nativeFrame || INPUT_UNAVAILABLE],
+                ["Marco de representación", preciseFrameStatus?.displayFrame || INPUT_UNAVAILABLE],
+                ["Estado de representación", preciseRenderingStatus(preciseFrameStatus)],
+                ["ERP asociado", preciseErpText(preciseSources)],
+                ["Modo temporal", simulationMode(simulation.mode)],
+                ["Escala temporal", hasNumber(simulation.time_scale) ? `${number(simulation.time_scale, 0)}×` : "-"]
+            ]
+            : [
             ["Motor", manual ? manualPropagationEngineLabel(manualOrbit.propagator)
                 : sourceFormat === "TLE" ? "SGP4"
                     : sourceFormat === "OMM" ? "SGP4 (OMM/TLE compatible)"
@@ -565,7 +943,7 @@ export function buildObjectDetails(detail) {
             ...(preciseFrameStatus ? [["Estado de representación", preciseRenderingStatus(preciseFrameStatus)]] : []),
             ["Modo temporal", simulationMode(simulation.mode)],
             ["Escala temporal", hasNumber(simulation.time_scale) ? `${number(simulation.time_scale, 0)}×` : "-"]
-        ];
+            ];
     return {
         title,
         noradId: celestial ? "-" : value(noradId),

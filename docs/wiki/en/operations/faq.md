@@ -84,10 +84,11 @@ coverage window and explicit realization following
 
 No. The correct acronym is ITRF, International Terrestrial Reference Frame.
 Furthermore, ITRF represents a family of realizations. Orbit does not
-implicitly relabel IGS20, IGb20, or IGc20 as ITRF. The published global
-alignment of those three realizations to ITRF2020 requires explicitly setting
-`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true` together with
-`ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`; IGS14 needs its own operation.
+implicitly relabel IGS20, IGb20, or IGc20 as ITRF. Compose enables the
+published global alignment of those three realizations to ITRF2020 by default
+through `ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true` and
+`ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`; the source realization and operation
+remain auditable. IGS14 needs its own operation.
 
 ## Does Orbit include users, collaboration, stable public API, SDK or CLI?
 

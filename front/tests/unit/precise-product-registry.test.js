@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
     getCatalogEntryMeta,
+    getSatelliteDisplayName,
     getSatelliteTelemetry,
     getSatelliteIds,
     preciseProductSatelliteEntriesFromPayload,
@@ -36,6 +37,11 @@ test("precise product entries become layer-compatible SP3 catalogue identities",
     assert.equal(metadata.inputMetadata.provider, "NASA CDDIS / IGS");
     assert.equal(metadata.inputMetadata.product_class, "final");
     assert.equal(metadata.inputMetadata.satellite_id, "G01");
+    assert.equal(
+        getSatelliteDisplayName(id),
+        "GPS G01",
+        "Layers must not fall back to the opaque precise runtime identifier"
+    );
 });
 
 test("precise product response folds product provenance into every SP3 layer", () => {

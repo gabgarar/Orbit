@@ -176,14 +176,18 @@ operacional, además de conservar el marco declarado en la cabecera SP3. La
 ausencia de ERP no se oculta detrás de `ECEF`, `ITRF` ni de un nombre genérico
 de escena.
 
-Existe una operación global publicada de datum nulo, pero es **optativa y no
-predeterminada**, para estados orbitales de satélite declarados `IGS20`,
-`IGb20` o `IGc20`. Para habilitarla se deben configurar conjuntamente:
+Orbit habilita por defecto en el despliegue Compose la operación global
+publicada de datum nulo para estados orbitales de satélite declarados `IGS20`,
+`IGb20` o `IGc20`. La política usa:
 
 ```text
 ORBIT_TERRESTRIAL_REALIZATION=ITRF2020
 ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true
 ```
+
+Un operador puede desactivarla explícitamente con
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=false`. No es un relabelado:
+la operación y la realización fuente permanecen en la procedencia.
 
 La operación conserva la realización fuente individual en la procedencia; no
 es una corrección de coordenadas de estación o antena. La política histórica

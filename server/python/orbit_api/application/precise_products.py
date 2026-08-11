@@ -442,6 +442,7 @@ class PreciseProduct:
         start, end = self.coverage_utc(identifier)
         clock = self.clock_summary(identifier)
         rendering = self.rendering_summary()
+        interpolation = _tabular_interpolation_summary(provider)
         return {
             "id": self.runtime_id(identifier),
             "name": f"{identifier} · {self.name}",
@@ -464,11 +465,21 @@ class PreciseProduct:
             "sp3": {
                 "version": self.sp3.metadata.version,
                 "record_type": self.sp3.metadata.record_type,
+                # This is the raw calendar epoch carried by the SP3 header.
+                # It deliberately remains accompanied by ``time_scale``:
+                # GPS/TAI header epochs must not be presented as UTC merely
+                # because the product coverage below is also offered in UTC.
+                "header_epoch": _iso_or_none(self.sp3.metadata.epoch),
+                "header_epoch_time_scale": self.sp3.metadata.time_scale_label,
+                "number_of_epochs": self.sp3.metadata.number_of_epochs,
+                "data_used": self.sp3.metadata.data_used,
                 "reference_frame": self.sp3.metadata.reference_frame.label,
                 "time_scale": self.sp3.metadata.time_scale_label,
                 "agency": self.sp3.metadata.agency,
                 "orbit_type": self.sp3.metadata.orbit_type,
                 "sample_count": len(provider.samples),
+                "sample_cadence_seconds": interpolation["mean_sample_cadence_seconds"],
+                "interpolation": interpolation,
                 "start_time": _iso_or_none(start),
                 "end_time": _iso_or_none(end),
                 "clock": clock,
@@ -1555,6 +1566,39 @@ def _satellite_id(value: object) -> str:
     if not identifier or not re.fullmatch(r"[A-Z0-9]{1,12}", identifier):
         raise PreciseProductImportError("El identificador de satélite preciso no es válido")
     return identifier
+
+
+def _tabular_interpolation_summary(provider: TabularStateProvider) -> dict[str, object]:
+    """Expose the actual per-satellite sampling/interpolation contract.
+
+    SP3 products often contain a shared header but can still have missing
+    records for an individual GNSS satellite.  The inspector therefore must
+    describe the selected provider rather than echoing a product-level epoch
+    count as if it guaranteed an evenly sampled state history.
+    """
+
+    samples = provider.samples
+    cadence: float | None = None
+    if len(samples) >= 2:
+        span_seconds = (samples[-1].epoch - samples[0].epoch).total_seconds()
+        if span_seconds >= 0:
+            cadence = span_seconds / (len(samples) - 1)
+    method = provider.declared_interpolation
+    degree = provider.declared_interpolation_degree
+    if method is None:
+        # A single SP3 record can be retained for provenance and exact lookup
+        # but cannot support interpolation.  Do not call it linear merely
+        # because that is TabularStateProvider's compatibility default.
+        method_label = "NONE" if len(samples) < 2 else "LINEAR"
+    else:
+        method_label = method
+    return {
+        "method": method_label,
+        "declared_method": method,
+        "degree": degree,
+        "sample_count": len(samples),
+        "mean_sample_cadence_seconds": cadence,
+    }
 
 
 def _sha256(value: bytes) -> str:

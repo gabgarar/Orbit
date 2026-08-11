@@ -106,12 +106,15 @@ concrete realization without a recorded datum operation.
 
 The published global helper operation covers `IGS20 ↔ ITRF2020`,
 `IGb20 ↔ ITRF2020`, and `IGc20 ↔ ITRF2020`, using zero global datum
-parameters. It is disabled by default and requires:
+parameters. Compose enables it by default for satellite-orbit states and uses:
 
 ```text
 ORBIT_TERRESTRIAL_REALIZATION=ITRF2020
 ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true
 ```
+
+It can be explicitly disabled with
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=false`.
 
 It applies only to geocentric satellite-orbit states declared as `IGS20`,
 `IGb20`, or `IGc20`; it does not apply station, antenna, or product-convention

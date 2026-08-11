@@ -91,11 +91,12 @@ contrato de importación y procedencia.
 | PYTHON_BACKEND_URL | URL interna usada por el gateway para el backend Python. |
 | ORBIT_EOP_* | Política y procedencia del snapshot C04 local. |
 | ORBIT_LEAP_SECONDS_* | Política de la tabla UTC–TAI local. |
-| ORBIT_TERRESTRIAL_REALIZATION | Realización terrestre de salida elegida explícitamente. |
-| ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT | Activa, junto a `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`, la operación publicada IGS20/IGb20/IGc20→ITRF2020 para estados orbitales de satélite. |
+| ORBIT_TERRESTRIAL_REALIZATION | Realización terrestre de salida; Compose usa `ITRF2020` por defecto. |
+| ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT | Activa, junto a `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`, la operación publicada IGS20/IGb20/IGc20→ITRF2020 para estados orbitales de satélite; Compose usa `true` por defecto. |
 
-La política de familia está deshabilitada por defecto, conserva la realización
-fuente y no corrige estaciones ni antenas. No la active junto a la variable
+La política de familia conserva la realización fuente y no corrige estaciones
+ni antenas. Defina la variable como `false` para deshabilitarla. No la active
+junto a la variable
 histórica exacta `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT`; ambas políticas son
 mutuamente excluyentes. Consulte [Realizaciones y modo visual](time-eop/realizations.md)
 antes de habilitarla.

@@ -83,9 +83,11 @@ metadata even when a request is expressed in UTC.
 file. Requesting ITRF for an IGS-family SP3 requires a registered realization
 transformation. Orbit does not implicitly rename `IGS20`, `IGb20`, or `IGc20`.
 
-The published global alignment for that family is optional: it requires
+The Compose deployment enables the published global alignment for that family
+by default and uses:
 `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020` and
-`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true`. It applies only to
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true`. It can be disabled with
+`ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=false`. It applies only to
 geocentric satellite-orbit states and retains the source-realization label. It
 does not transform stations or antennas. The legacy exact
 `ORBIT_ENABLE_IGS20_ITRF2020_ALIGNMENT` policy is incompatible with the family

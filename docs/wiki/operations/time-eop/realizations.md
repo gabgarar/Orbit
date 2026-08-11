@@ -4,14 +4,17 @@
 
 ## Realizaciones GNSS
 
-Por defecto, un estado `IGS20`, `IGb20` o `IGc20` conserva su realización y no
-se reescribe a ITRF. El alineamiento global publicado de esa familia con
-ITRF2020 exige habilitar expresamente:
+Un estado `IGS20`, `IGb20` o `IGc20` conserva siempre su realización fuente en
+la procedencia. El despliegue Compose aplica por defecto el alineamiento global
+publicado de esa familia con ITRF2020 a estados orbitales de satélite mediante:
 
 ```text
 ORBIT_TERRESTRIAL_REALIZATION=ITRF2020
 ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=true
 ```
+
+Defina `ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT=false` si necesita
+deshabilitar esa ruta de realización.
 
 La política sólo se aplica a estados orbitales geocéntricos de satélite y
 conserva la etiqueta fuente en la procedencia. No aplica correcciones de

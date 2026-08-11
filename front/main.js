@@ -30,6 +30,7 @@ import {
     replaceManualOrbitTrack,
     registerPreciseProductSatelliteEntries,
     hydratePreciseProductSatelliteEntries,
+    getSatelliteDisplayName,
     getManualOrbitProjectEntries,
     getManualOrbitProjectEntry,
     renderManualOrbitPreview,
@@ -1053,7 +1054,17 @@ function getLayerDisplayName(layerId) {
     if (isEarthLayerId(layerId)) {
         return celestialBodyLayers.getName(layerId);
     }
-    return compositeLayers.getName(layerId);
+    const compositeName = compositeLayers.getName(layerId);
+    // A precise GNSS product uses a content-addressed runtime key such as
+    // `precise:<product-id>:C06`. That key must stay stable for requests and
+    // project persistence, but it is not an operator-facing layer name. An
+    // explicit rename (including duplicate-layer names) remains authoritative;
+    // otherwise fall back to the source catalogue name registered from SP3.
+    if (String(compositeName || "").trim() && String(compositeName).trim() !== String(layerId || "").trim()) {
+        return compositeName;
+    }
+    const sourceId = getSatelliteSourceIdFromLayerId(layerId);
+    return getSatelliteDisplayName(sourceId, compositeName || layerId);
 }
 
 function getLayerType(layerId) {

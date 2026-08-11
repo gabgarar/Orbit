@@ -179,6 +179,130 @@ function buildGroundStationInfoText(telemetry, sectionOpenState = {}) {
     `;
 }
 
+function preciseInfoText(value, fallback = "-") {
+    const text = String(value ?? "").trim();
+    return text ? escapeHtml(text) : fallback;
+}
+
+function preciseInfoNumber(value, decimals = 0) {
+    return Number.isFinite(Number(value)) ? formatNumber(value, decimals) : "-";
+}
+
+function preciseInfoTime(value) {
+    let milliseconds = Number(value);
+    if (!Number.isFinite(milliseconds)) milliseconds = Date.parse(String(value || ""));
+    if (!Number.isFinite(milliseconds)) return "-";
+    if (Math.abs(milliseconds) < 100_000_000_000) milliseconds *= 1000;
+    return formatUtcDateTime(milliseconds).replace(".000Z", " UTC");
+}
+
+function preciseInfoSatelliteId(telemetry, sp3) {
+    const declared = String(sp3?.satellite_id || sp3?.satelliteId || "").trim();
+    if (declared) return declared.toUpperCase();
+    const runtimeId = String(telemetry?.id || "").trim();
+    const match = runtimeId.match(/^precise:[^:]+:([A-Za-z]\d{1,3})$/i);
+    return match ? match[1].toUpperCase() : "-";
+}
+
+function preciseInfoConstellation(identifier) {
+    return ({
+        G: "GPS", R: "GLONASS", E: "Galileo", C: "BeiDou",
+        J: "QZSS", I: "NavIC / IRNSS", S: "SBAS"
+    })[String(identifier || "").charAt(0).toUpperCase()] || "-";
+}
+
+function preciseInfoProvider(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    return ({
+        cddis_igs: "NASA CDDIS / IGS",
+        "cddis-igs": "NASA CDDIS / IGS",
+        igs_mgex: "IGS MGEX",
+        "igs-mgex": "IGS MGEX",
+        esa_nso: "ESA Navigation Support Office",
+        "esa-nso": "ESA Navigation Support Office",
+        custom: "Producto local"
+    })[normalized] || preciseInfoText(value);
+}
+
+function preciseInfoVector(vector) {
+    if (!vector || ![vector.x, vector.y, vector.z].every((component) => Number.isFinite(Number(component)))) return null;
+    return `(${formatNumber(Number(vector.x) / 1000, 3)}, ${formatNumber(Number(vector.y) / 1000, 3)}, ${formatNumber(Number(vector.z) / 1000, 3)}) km`;
+}
+
+function buildPreciseProductInfoText(telemetry, sectionOpenState = {}) {
+    const sp3 = telemetry?.sp3 && typeof telemetry.sp3 === "object" ? telemetry.sp3 : {};
+    const rendering = telemetry?.renderer_reference || sp3?.renderer_reference || sp3?.rendering || {};
+    const identifier = preciseInfoSatelliteId(telemetry, sp3);
+    const constellation = preciseInfoConstellation(identifier);
+    const product = sp3.product_name || sp3.productName || sp3.product_id || sp3.productId || "-";
+    const coverageStart = sp3.start_time_ms ?? sp3.startTimeMs ?? sp3.start_time ?? sp3.startTime;
+    const coverageEnd = sp3.end_time_ms ?? sp3.endTimeMs ?? sp3.end_time ?? sp3.endTime;
+    const sampleCount = Number(sp3.sample_count ?? sp3.sampleCount);
+    let cadenceSeconds = Number(sp3.sample_cadence_seconds ?? sp3.sampleCadenceSeconds);
+    if (!Number.isFinite(cadenceSeconds) && sampleCount >= 2) {
+        const start = Date.parse(String(coverageStart || ""));
+        const end = Date.parse(String(coverageEnd || ""));
+        if (Number.isFinite(start) && Number.isFinite(end) && end >= start) cadenceSeconds = (end - start) / 1000 / (sampleCount - 1);
+    }
+    const interpolation = sp3.interpolation && typeof sp3.interpolation === "object" ? sp3.interpolation : {};
+    const method = String(interpolation.method || interpolation.declared_method || sp3.interpolation_method || "").trim().toUpperCase();
+    const degree = Number(interpolation.degree ?? interpolation.declared_degree ?? sp3.interpolation_degree);
+    const interpolationText = method === "NONE"
+        ? "Sin interpolación; sólo muestra exacta"
+        : method ? `${method}${Number.isFinite(degree) ? ` · grado ${formatNumber(degree, 0)}` : ""}` : "No declarado";
+    const position = preciseInfoVector(telemetry?.position || telemetry?.position_ecef_m);
+    const velocity = telemetry?.velocity;
+    const hasVelocity = velocity && [velocity.x, velocity.y, velocity.z].every((component) => Number.isFinite(Number(component)));
+    const stateAvailable = rendering?.available !== false && telemetry?.rendering_available !== false && Boolean(position);
+    const stateFrame = telemetry?.position_frame_display || rendering?.display_label || telemetry?.position_frame || sp3.native_reference_frame || sp3.reference_frame || "Marco no declarado";
+    const stateReason = rendering?.reason || rendering?.renderingLabel || "No hay estado cartesiano válido en el instante mostrado.";
+
+    const identityRows = [
+        row("Identificador GNSS", preciseInfoText(identifier)),
+        row("Constelación", preciseInfoText(constellation)),
+        row("Producto", preciseInfoText(product)),
+        row("Proveedor", preciseInfoProvider(sp3.provider_label || sp3.provider || sp3.provider_id)),
+        row("Clase", preciseInfoText(sp3.product_class || sp3.productClass)),
+        row("Fuente orbital", "SP3 · efeméride GNSS precisa")
+    ].join("");
+    const sourceRows = [
+        row("Archivo SP3", preciseInfoText(sp3.file_name || sp3.fileName || sp3.orbit_file || sp3.orbitFile)),
+        row("Marco nativo", preciseInfoText(sp3.native_reference_frame || sp3.nativeReferenceFrame || sp3.reference_frame || sp3.referenceFrame)),
+        row("Escala temporal", preciseInfoText(sp3.time_system || sp3.timeSystem || sp3.time_scale || sp3.timeScale)),
+        row("Inicio cobertura UTC", preciseInfoTime(coverageStart)),
+        row("Fin cobertura UTC", preciseInfoTime(coverageEnd)),
+        row("Muestras", preciseInfoNumber(sampleCount)),
+        row("Cadencia media", Number.isFinite(cadenceSeconds) ? `${formatNumber(cadenceSeconds, 2)} s` : "-"),
+        row("Interpolación", preciseInfoText(interpolationText)),
+        row("CLK", preciseInfoText(sp3.clock_file || sp3.clockFile, "No incluido")),
+        row("ERP", preciseInfoText(sp3.erp?.file || sp3.erp_file || sp3.erpFile, "No incluido"))
+    ].join("");
+    const stateRows = stateAvailable
+        ? [
+            row("Marco del estado", preciseInfoText(stateFrame)),
+            row("Posición", position),
+            ...(hasVelocity ? [
+                row("Velocidad X", formatNumber(velocity.x, 3), " m/s"),
+                row("Velocidad Y", formatNumber(velocity.y, 3), " m/s"),
+                row("Velocidad Z", formatNumber(velocity.z, 3), " m/s"),
+                row("Módulo velocidad", formatNumber(telemetry.speed_m_s, 3), " m/s")
+            ] : [row("Velocidad", "No incluida por el registro SP3")]),
+            row("Instante mostrado", preciseInfoTime(telemetry?.timestamp_ms))
+        ].join("")
+        : [
+            row("Marco nativo", preciseInfoText(sp3.native_reference_frame || sp3.reference_frame)),
+            row("Estado cartesiano", preciseInfoText(stateReason)),
+            row("Cobertura", `${preciseInfoTime(coverageStart)} → ${preciseInfoTime(coverageEnd)}`)
+        ].join("");
+
+    return `
+        <div class="object-info-title">${escapeHtml(identifier)} <span class="orbit-type-tag orbit-type-unknown">SP3</span></div>
+        ${section("precise-identity", "Producto GNSS", identityRows, sectionOpenState["precise-identity"] !== false)}
+        ${section("precise-source", "Fuente e interpolación", sourceRows, sectionOpenState["precise-source"] !== false)}
+        ${section("precise-state", "Estado instantáneo", stateRows, sectionOpenState["precise-state"] !== false)}
+    `;
+}
+
 export function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, sectionOpenState = {}, oemDomainActive = false) {
     if (!telemetry) {
         return "<div class=\"object-info-empty\">Selecciona un objeto para ver telemetria en tiempo real.</div>";
@@ -187,6 +311,9 @@ export function buildInfoText(telemetry, orbitInfo = null, tleSummary = null, se
     const sourceFormatForKind = String(telemetry.source_format || "TLE").toUpperCase();
     if (sourceFormatForKind === "GROUND_STATION") {
         return buildGroundStationInfoText(telemetry, sectionOpenState);
+    }
+    if (sourceFormatForKind === "SP3") {
+        return buildPreciseProductInfoText(telemetry, sectionOpenState);
     }
 
     const g = telemetry.geo || {};
