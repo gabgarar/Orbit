@@ -1596,36 +1596,142 @@ export function setupObjectSidebar({
 
     const addMenu = document.createElement("div");
     addMenu.id = "layerAddMenu";
+    addMenu.className = "orbit-action-menu orbit-action-menu--context orbit-layer-add-menu";
+    addMenu.setAttribute("role", "menu");
+    addMenu.setAttribute("aria-label", "Añadir a Layers");
+    addMenu.dataset.contextMenu = "true";
+    addMenu.dataset.layerAddMenu = "true";
     addMenu.innerHTML = `
         <input id="importSatelliteFileInput" type="file" accept=".tle,.txt,.json,.xml,.omm,.oem" hidden />
-        <button class="catalog-context-action" id="addFolderBtn" type="button">Nueva carpeta</button>
-    `;
-    const addLayerEntry = document.createElement("div");
-    addLayerEntry.className = "folder-add-menu";
-    addLayerEntry.innerHTML = `
-        <button class="catalog-context-action" type="button">Add layer <span>›</span></button>
-        <div class="folder-add-submenu">
-            <div class="folder-add-menu">
-                <button class="catalog-context-action" id="addSatelliteBtn" data-add-kind="satellite" type="button">Add satellite <span>›</span></button>
-                <div class="folder-add-submenu">
-                    <button class="catalog-context-action" id="addTleFromCatalogBtn" type="button">Add TLE from catalog</button>
-                    <button class="catalog-context-action" id="importSatelliteBtn" type="button">Import satellite</button>
-                    <button class="catalog-context-action" id="importPreciseProductBtn" type="button">Importar producto GNSS</button>
-                    <button class="catalog-context-action" id="generateOrbitBtn" type="button">Generate orbit</button>
+        <div class="orbit-action-menu__header orbit-layer-add-menu__header" data-context-menu-header="true">
+            <span class="orbit-action-menu__icon orbit-layer-add-menu__icon" data-context-menu-icon="true" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+            </span>
+            <span class="orbit-action-menu__title orbit-layer-add-menu__title" data-context-menu-title="true">Añadir a Layers</span>
+        </div>
+        <div class="orbit-action-menu__items orbit-layer-add-menu__items">
+            <div class="folder-add-menu orbit-layer-add-menu__branch">
+                <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" data-context-menu-action="true" data-layer-add-action="add-layer" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-layer-add-submenu-control="true">
+                    <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                        <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Añadir capa</span>
+                        <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Satélite, cuerpo o estación terrestre</span>
+                    </span>
+                    <span class="orbit-action-menu__chevron orbit-layer-add-menu__chevron" aria-hidden="true">›</span>
+                </button>
+                <div class="folder-add-submenu orbit-action-menu orbit-action-menu--context orbit-layer-add-menu orbit-layer-add-submenu" role="menu" aria-label="Tipos de capa">
+                    <div class="orbit-action-menu__header orbit-layer-add-menu__header" data-context-menu-header="true">
+                        <span class="orbit-action-menu__icon orbit-layer-add-menu__icon" data-context-menu-icon="true" aria-hidden="true">
+                            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+                        </span>
+                        <span class="orbit-action-menu__title orbit-layer-add-menu__title" data-context-menu-title="true">Añadir capa</span>
+                    </div>
+                    <div class="orbit-action-menu__items orbit-layer-add-menu__items">
+                        <div class="folder-add-menu orbit-layer-add-menu__branch">
+                            <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" id="addSatelliteBtn" data-add-kind="satellite" data-context-menu-action="true" data-layer-add-action="satellite" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-layer-add-submenu-control="true">
+                                <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                                    <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Satélite</span>
+                                    <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Catálogo, archivo o diseño manual</span>
+                                </span>
+                                <span class="orbit-action-menu__chevron orbit-layer-add-menu__chevron" aria-hidden="true">›</span>
+                            </button>
+                            <div class="folder-add-submenu orbit-action-menu orbit-action-menu--context orbit-layer-add-menu orbit-layer-add-submenu" role="menu" aria-label="Opciones de satélite">
+                                <div class="orbit-action-menu__header orbit-layer-add-menu__header" data-context-menu-header="true">
+                                    <span class="orbit-action-menu__icon orbit-layer-add-menu__icon" data-context-menu-icon="true" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24"><rect x="9" y="8" width="6" height="8" rx="1.1" /><path d="M9 10H4.5v4H9m6-4h4.5v4H15M11 8V5m2 0v3m-2 8v3m2-3v3" /></svg>
+                                    </span>
+                                    <span class="orbit-action-menu__title orbit-layer-add-menu__title" data-context-menu-title="true">Añadir satélite</span>
+                                </div>
+                                <div class="orbit-action-menu__items orbit-layer-add-menu__items">
+                                    <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" id="addTleFromCatalogBtn" data-context-menu-action="true" data-layer-add-action="catalog" type="button" role="menuitem">
+                                        <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                                            <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Desde el catálogo</span>
+                                            <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Explora satélites publicados</span>
+                                        </span>
+                                    </button>
+                                    <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" id="importSatelliteBtn" data-context-menu-action="true" data-layer-add-action="import-satellite" type="button" role="menuitem">
+                                        <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                                            <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Importar archivo</span>
+                                            <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Carga TLE, OMM u OEM</span>
+                                        </span>
+                                    </button>
+                                    <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" id="importPreciseProductBtn" data-context-menu-action="true" data-layer-add-action="import-gnss" type="button" role="menuitem">
+                                        <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                                            <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Producto GNSS</span>
+                                            <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Importa SP3 y ficheros auxiliares</span>
+                                        </span>
+                                    </button>
+                                    <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" id="generateOrbitBtn" data-context-menu-action="true" data-layer-add-action="manual-orbit" type="button" role="menuitem">
+                                        <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                                            <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Generar órbita</span>
+                                            <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Define una órbita manual</span>
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="folder-add-menu orbit-layer-add-menu__branch">
+                            <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" data-add-kind="body" data-context-menu-action="true" data-layer-add-action="body" type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-layer-add-submenu-control="true">
+                                <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                                    <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Cuerpo celeste</span>
+                                    <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Luna o Sol para el visor</span>
+                                </span>
+                                <span class="orbit-action-menu__chevron orbit-layer-add-menu__chevron" aria-hidden="true">›</span>
+                            </button>
+                            <div class="folder-add-submenu orbit-action-menu orbit-action-menu--context orbit-layer-add-menu orbit-layer-add-submenu" role="menu" aria-label="Opciones de cuerpo celeste">
+                                <div class="orbit-action-menu__header orbit-layer-add-menu__header" data-context-menu-header="true">
+                                    <span class="orbit-action-menu__icon orbit-layer-add-menu__icon" data-context-menu-icon="true" aria-hidden="true">
+                                        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.4" /><path d="M3 12c2.4-3.1 5.5-4.7 9-4.7 3.5 0 6.6 1.6 9 4.7-2.4 3.1-5.5 4.7-9 4.7-3.5 0-6.6-1.6-9-4.7Z" /></svg>
+                                    </span>
+                                    <span class="orbit-action-menu__title orbit-layer-add-menu__title" data-context-menu-title="true">Añadir cuerpo</span>
+                                </div>
+                                <div class="orbit-action-menu__items orbit-layer-add-menu__items">
+                                    <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" id="addMoonBtn" data-context-menu-action="true" data-layer-add-action="moon" type="button" role="menuitem">
+                                        <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                                            <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Luna</span>
+                                            <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Añade la Luna al visor</span>
+                                        </span>
+                                    </button>
+                                    <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" id="addSunBtn" data-context-menu-action="true" data-layer-add-action="sun" type="button" role="menuitem">
+                                        <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                                            <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Sol</span>
+                                            <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Añade el Sol al visor</span>
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" id="addGroundStationBtn" data-add-kind="station" data-context-menu-action="true" data-layer-add-action="station" type="button" role="menuitem">
+                            <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                                <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Estación terrestre</span>
+                                <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Diseña una estación y su cobertura</span>
+                            </span>
+                        </button>
+                    </div>
                 </div>
             </div>
-            <div class="folder-add-menu">
-                <button class="catalog-context-action" data-add-kind="body" type="button">Add body <span>›</span></button>
-                <div class="folder-add-submenu">
-                    <button class="catalog-context-action" id="addMoonBtn" type="button">Add Moon</button>
-                    <button class="catalog-context-action" id="addSunBtn" type="button">Add Sun</button>
-                </div>
-            </div>
-            <button class="catalog-context-action" id="addGroundStationBtn" data-add-kind="station" type="button">Ground station</button>
+            <button class="catalog-context-action orbit-action-menu__item orbit-layer-add-menu__item" id="addFolderBtn" data-context-menu-action="true" data-layer-add-action="folder" type="button" role="menuitem">
+                <span class="orbit-action-menu__copy orbit-layer-add-menu__copy">
+                    <span class="orbit-action-menu__item-title orbit-layer-add-menu__item-title" data-context-menu-action-title="true">Nueva carpeta</span>
+                    <span class="orbit-action-menu__item-description orbit-layer-add-menu__item-description" data-context-menu-action-description="true">Organiza las capas del proyecto</span>
+                </span>
+            </button>
         </div>
     `;
-    addMenu.prepend(addLayerEntry);
     document.body.appendChild(addMenu);
+    const addMenuSubmenuControls = [...addMenu.querySelectorAll("[data-layer-add-submenu-control='true']")];
+    for (const control of addMenuSubmenuControls) {
+        const branch = control.closest(".folder-add-menu");
+        if (!branch) continue;
+        const setExpanded = (expanded) => control.setAttribute("aria-expanded", String(expanded));
+        branch.addEventListener("pointerenter", () => setExpanded(true));
+        branch.addEventListener("pointerleave", () => {
+            if (!branch.matches(":focus-within")) setExpanded(false);
+        });
+        branch.addEventListener("focusin", () => setExpanded(true));
+        branch.addEventListener("focusout", (event) => {
+            if (!branch.contains(event.relatedTarget)) setExpanded(false);
+        });
+    }
     const preciseProductSlotsMarkup = PRECISE_PRODUCT_FILE_SLOTS.map((slot) => `
         <article class="precise-product-file-slot${slot.required ? " required" : ""}" data-precise-product-slot="${slot.kind}">
             <div class="precise-product-file-slot-heading">
@@ -2407,6 +2513,7 @@ export function setupObjectSidebar({
 
     function closeAddMenu() {
         addMenu.classList.remove("open");
+        addMenuSubmenuControls.forEach((control) => control.setAttribute("aria-expanded", "false"));
     }
 
     function openAddMenu(anchorElement) {

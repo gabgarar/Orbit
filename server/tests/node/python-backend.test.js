@@ -1,7 +1,13 @@
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createPythonBackend, PYTHON_RELOAD_TIMEOUT_MS } from "../../src/runtime/python-backend.js";
+import {
+    createPythonBackend,
+    PYTHON_RELOAD_TIMEOUT_MS,
+    PYTHON_STARTUP_ATTEMPTS,
+    PYTHON_STARTUP_POLL_INTERVAL_MS,
+    PYTHON_STARTUP_TIMEOUT_MS
+} from "../../src/runtime/python-backend.js";
 
 function childProcess() {
     const child = new EventEmitter();
@@ -71,6 +77,35 @@ test("Python supervisor reuses an already healthy backend", async () => {
     });
     await backend.ensureStarted();
     assert.equal(spawnCalls, 0);
+});
+
+test("Python supervisor allows strict precise-product hydration beyond the old 10-second window", async () => {
+    const child = childProcess();
+    let healthChecks = 0;
+    const backend = createPythonBackend({
+        client: {
+            // At the default 250 ms poll this represents a little over 17 s:
+            // a normal startup when persisted SP3/ERP products are strictly
+            // revalidated before FastAPI marks its lifespan ready.
+            isHealthy: async () => {
+                healthChecks += 1;
+                return healthChecks >= 70;
+            }
+        },
+        pythonDir: "/app/server/python",
+        logger,
+        platform: "linux",
+        sleep: async () => {},
+        spawnImpl: () => child
+    });
+
+    await backend.ensureStarted();
+
+    assert.equal(PYTHON_STARTUP_POLL_INTERVAL_MS, 250);
+    assert.equal(PYTHON_STARTUP_TIMEOUT_MS, 60_000);
+    assert.equal(PYTHON_STARTUP_ATTEMPTS, 240);
+    assert.ok(healthChecks >= 70);
+    assert.equal(child.killed, false);
 });
 
 test("Python supervisor waits for its owned process and stops it cleanly", async () => {

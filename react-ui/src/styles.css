@@ -299,6 +299,77 @@ html, body, #root { background: #000; overflow: hidden; }
     font-weight: 500;
 }
 
+/* The Layers “+” menu is still owned by the legacy tree runtime, but it uses
+   the same semantic rows and chrome as every React context menu.  Its
+   submenus are descendants (rather than sibling portals), so they need a
+   visible overflow boundary and explicit absolute positioning. */
+#layerAddMenu.orbit-action-menu {
+    z-index: 10320;
+    width: min(286px, calc(100vw - 16px));
+    min-width: 0;
+    gap: 4px;
+    overflow: visible;
+    border-color: #35557e;
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(13, 26, 45, .985), rgba(7, 15, 28, .985));
+    box-shadow: 0 16px 34px rgba(0, 0, 0, .46), inset 0 1px rgba(231, 242, 255, .05);
+}
+
+#layerAddMenu .folder-add-menu {
+    position: relative;
+}
+
+#layerAddMenu .folder-add-submenu.orbit-action-menu {
+    position: absolute;
+    z-index: 10321;
+    top: 0;
+    /* A small overlap keeps the hover/focus path continuous into a nested
+       surface; a visible gap would make the submenu collapse mid-pointer. */
+    left: calc(100% - 2px);
+    display: none;
+    width: min(286px, calc(100vw - 16px));
+    min-width: 0;
+    padding: 6px;
+    overflow: visible;
+    border-color: #35557e;
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(13, 26, 45, .985), rgba(7, 15, 28, .985));
+    box-shadow: 0 16px 34px rgba(0, 0, 0, .46), inset 0 1px rgba(231, 242, 255, .05);
+}
+
+#layerAddMenu .folder-add-menu:hover > .folder-add-submenu.orbit-action-menu,
+#layerAddMenu .folder-add-menu:focus-within > .folder-add-submenu.orbit-action-menu {
+    display: grid;
+}
+
+#layerAddMenu .orbit-action-menu__item {
+    border-color: transparent;
+}
+
+#layerAddMenu .orbit-action-menu__item + .orbit-action-menu__item {
+    border-top: 0;
+}
+
+#layerAddMenu .orbit-action-menu__item:hover,
+#layerAddMenu .orbit-action-menu__item:focus-visible {
+    border-color: transparent;
+    background: #173157;
+    color: #f3f7ff;
+    outline: none;
+}
+
+#layerAddMenu .orbit-action-menu__item:disabled {
+    cursor: not-allowed;
+    opacity: .58;
+}
+
+@media (max-width: 760px) {
+    #layerAddMenu .folder-add-submenu.orbit-action-menu {
+        left: auto;
+        right: calc(100% - 2px);
+    }
+}
+
 /* `#leftSatellitesPanel` is a flex container in the legacy theme, whose
    selector wins over the browser's default `[hidden] { display: none }` rule.
    Honour the semantic hidden state explicitly so the Layers workspace cannot

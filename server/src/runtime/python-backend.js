@@ -3,6 +3,14 @@ import { spawn } from "node:child_process";
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const DEFAULT_RECOVERY_DELAYS_MS = Object.freeze([1_000, 2_000, 5_000]);
 export const PYTHON_RELOAD_TIMEOUT_MS = 10_000;
+// Rehydrating a validated precise-GNSS product performs the same strict SP3,
+// ERP and checksum work as an import.  Give that deterministic local work a
+// realistic window rather than killing Uvicorn after the old 10-second poll.
+export const PYTHON_STARTUP_POLL_INTERVAL_MS = 250;
+export const PYTHON_STARTUP_TIMEOUT_MS = 60_000;
+export const PYTHON_STARTUP_ATTEMPTS = Math.ceil(
+    PYTHON_STARTUP_TIMEOUT_MS / PYTHON_STARTUP_POLL_INTERVAL_MS
+);
 
 function resolveRecoveryDelays(delays) {
     const configuredDelays = Array.isArray(delays) ? delays : DEFAULT_RECOVERY_DELAYS_MS;
@@ -21,8 +29,8 @@ export function createPythonBackend({
     platform = process.platform,
     environment = process.env,
     sleep = delay,
-    startupAttempts = 40,
-    startupDelayMs = 250,
+    startupAttempts = PYTHON_STARTUP_ATTEMPTS,
+    startupDelayMs = PYTHON_STARTUP_POLL_INTERVAL_MS,
     recoveryDelaysMs = DEFAULT_RECOVERY_DELAYS_MS,
     setTimeoutImpl = setTimeout,
     clearTimeoutImpl = clearTimeout
@@ -160,7 +168,10 @@ export function createPythonBackend({
         }
         stopOwnedProcess(processHandle, "SIGTERM");
         if (startupError) throw describeStartupError(executable, startupError);
-        throw new Error(`Python backend did not become healthy at ${backendUrl}/health`);
+        const startupWindowMs = startupAttempts * startupDelayMs;
+        throw new Error(
+            `Python backend did not become healthy at ${backendUrl}/health within ${startupWindowMs} ms`
+        );
     }
 
     async function ensureStarted({ recovery = false, generation = recoveryGeneration } = {}) {
