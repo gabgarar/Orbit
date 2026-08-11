@@ -105,23 +105,34 @@ Cartesian trajectory.
 
 | SP3 part | Source parameters and units read by Orbit | Use, persistence, and visible effect |
 | --- | --- | --- |
-| `#` and `%c` header | Version; `P`/`V` record type; initial epoch; epoch count; data used; coordinate system; orbit type; agency; and `TIME_SYSTEM`. | Validates the product and retains all of these as native frame, realization, agency, and time scale. An unknown scale is not silently treated as UTC: it is rejected when constructing the state source. |
+| `#`, `##`, `+`, and `%c` headers | Version; `P`/`V` record type; initial epoch; epoch count; nominal interval; satellite list and count; data used; coordinate system; orbit type; agency; and `TIME_SYSTEM`. | Validates the product and retains these as native frame, realization, agency, and time scale. An unknown scale is not silently treated as UTC: it is rejected when constructing the state source. |
 | Epoch and position | `*` line followed by `P<id> X Y Z [clock]`. `X`, `Y`, `Z` are in **km**. | Every non-missing position creates a sample for the identified GNSS satellite and, after selection is confirmed, an SP3 layer. Positions are normalized to **m**; they are the source for the orbit, 2D/3D globe, ground track, range, and AOS/LOS. |
 | Velocity | `V<id> VX VY VZ [clock-rate]`; `VX`, `VY`, `VZ` are in **dm/s**. | When present, it is normalized to **m/s** and accompanies the tabulated state. Orbit does not invent a velocity when the file does not publish one. |
 | Embedded clock | Fourth component of `P`: clock bias in **µs**. Fourth component of `V`: clock rate in **10⁻⁴ µs/s**. | Converted to seconds and seconds/second and exposed as clock summary/provenance. It does not change position, velocity, frame, time scale, range, or visibility. |
 
-The SP3 missing-component sentinel (`abs(value) >= 999999`) is discarded; a
-complete `(0, 0, 0)` `P` position is also treated as an absent/non-physical
-state and is never drawn as an Earth-centred coordinate. Duplicate `P`/`V` records for
-the same epoch and satellite are an error. Accuracy, correlation, event, and
-extended records published by some SP3 files are not converted into a
+The SP3 missing-component sentinel (`abs(value) >= 999999`) and a complete
+`(0, 0, 0)` `P` position are legal absent states: they count for structural
+validation, but never become a Cartesian sample or an Earth-centred
+coordinate. They must not be confused with a malformed file. A non-numeric,
+empty, `NaN`, or infinite position or velocity vector makes the import fail.
+The fourth clock component is optional; when it is published, it must be
+numeric and finite. Duplicate `P`/`V` records for the same epoch and satellite
+also fail. Accuracy, correlation, event,
+and extended records published by some SP3 files are not converted into a
 covariance or an orbit correction in this route.
 
 Orbit interpolates each selected series with a local Lagrange window of up to
 ten samples (degree 9), falling back to the highest available degree for a
-shorter series. It never extrapolates beyond SP3 epochs. The source file, its
-header, interpreted samples, and checksum remain linked to the product and to
-each satellite's details card.
+shorter series. It never extrapolates beyond SP3 epochs. During preflight it
+reconstructs every usable knot and requires a strictly less than **`1e-9 m`**
+per-component error; it also evaluates the midpoint of every usable interval
+to reject non-finite or poorly conditioned interpolation. At those points it
+requires a Lebesgue constant `≤ 512` and relative barycentric-denominator
+magnitude `≥ 1e-5`; these are numerical protection limits, not a provider
+accuracy bound. A one-epoch series is an exact lookup with no interpolable
+interval, so it does not claim to use degree 9. The source file, its header,
+interpreted samples, and checksum remain linked to the product and to each
+satellite's details card.
 
 #### CLK — precise clocks (optional)
 
@@ -154,13 +165,15 @@ an ERP file: it explicitly sets them to zero, so it is not a replacement for an
 IERS C04 celestial-correction product.
 
 An SP3 terrestrial → ECI query needs **all** of: ERP covering the requested
-epoch, a leap-second table, and a valid terrestrial-realization route. When
-they exist, the UI declares **ITRF (con ERP aplicado)**. ERP alone does not
-create a datum transformation such as IGS20 → ITRF2020. Without ERP, the layer
-can still be inspected in its native terrestrial frame, but it is labelled
-**Marco terrestre aproximado (sin ERP)** and ECI conversion is blocked.
-Attaching ERP does not itself change an SP3 position or create a new orbit; it
-enables and documents the Earth orientation in use.
+epoch, a leap-second table that can convert the declared time scale, a valid
+terrestrial-realization route, and ERFA/SOFA (`pyerfa`) with IAU 2006/2000A.
+If any is absent, Orbit blocks the conversion; the view's GMST fallback is not
+reused as a precise GNSS result. ERP alone does not create a datum
+transformation such as IGS20 → ITRF2020. Without ERP, the layer can still be
+inspected in its native terrestrial frame, but it is labelled **Marco terrestre
+aproximado (sin ERP)** and ECI conversion is blocked. Attaching ERP does not
+itself change an SP3 position or create a new orbit; it enables and documents
+the Earth orientation in use.
 
 #### SUM — summary and metadata (optional)
 
@@ -205,21 +218,83 @@ can use exactly the selected ancillary product.
   ATT, and OSB are verified again as persisted sources, but do not gain new
   semantics merely because Orbit restarts.
 
+### Safety gate before persistence
+
+**Preview satellites** and **Import** run the same strict SP3 preflight before
+creating a layer, runtime ID, manifest, or directory below
+`config/precise-products/`. Preview never persists; import can persist only
+after every check passes. A failure returns `422`, presents the detail in a
+dialog, and leaves no partially registered product.
+
+| Area | Checks that must pass |
+| --- | --- |
+| File and header | The content must decode within the upload limits; the main `#` header must be valid and declare an initial epoch and positive epoch count; exactly one `##` line must declare a positive finite cadence; and `+` lines must declare a unique member list whose size matches its count. |
+| Epoch table | The observed epoch count must equal the header count; the first epoch must match the header; epochs must be strictly increasing; and every interval must match `##` within a **2 µs** rounding tolerance. Every epoch must contain one `P` record for every declared satellite, with no unexpected members or duplicates. A legal absent state still counts as that member's record. |
+| Numeric values | Coordinate and velocity vectors must be complete, numeric, and finite. The fourth clock component is optional, but when published it must also be numeric and finite. Empty vectors, `NaN`, `Inf`, or an invalid satellite identifier are rejected instead of being turned into approximate geometry or time. |
+| Time | `TIME_SYSTEM` is retained and must be a recognised scale. Orbit converts SP3 coverage explicitly to UTC with its local leap-second table; it does not read a GPS, TAI, or other epoch as UTC. If the table cannot represent the epoch, the product is rejected rather than introducing a silent one-second offset. |
+| Interpolation | Every series with two or more samples uses local Lagrange of degree `min(9, N−1)`. Preflight reproduces every usable knot with error `< 1e-9 m`; at every interval midpoint it requires a finite position, Lebesgue constant `≤ 512`, and relative barycentric-denominator magnitude `≥ 1e-5`. These are numerical-stability limits, not a provider accuracy guarantee. There is no extrapolation outside coverage. |
+
+Official absent-state sentinels are reported separately from usable samples.
+For example, `P 0 0 0` or `999999…` never becomes an orbit at Earth's centre
+and does not make an otherwise valid SP3 look corrupt. The product needs at
+least one usable state before it can offer satellites for selection.
+
+A successful response exposes its passed report at `product.sp3_validation`:
+header counts and members, epoch count/cadence, usable/absent states, and the
+interpolation contract. It is not a provider accuracy estimate; it attests
+only to the parsing invariants that Orbit could check.
+
+!!! warning "Limit of temporal validation"
+
+    GPS/TAI/GAL/BDT ↔ UTC checking validates Orbit's configured conversion and
+    the coverage of its leap-second snapshot. That snapshot and its provenance
+    are part of the trust boundary: Orbit cannot independently prove that a
+    provider labelled `TIME_SYSTEM` correctly, nor detect a stale local table
+    that still covers the date. The operator must maintain and audit the
+    leap-second source; see [Time, EOP, and ITRF](../operations/time-eop.md).
+
+    A normal terrestrial import may use Orbit's bundled open-ended table. The
+    product is then accepted, but the response marks
+    `time_validation.leap_seconds.external_freshness` as `unverified`: it does
+    not claim that the UTC relation is externally verifiable for that date.
+
 ### ECI-dependent validation
 
-ERP is optional in the current import window. There is no propagator-comparison
-tool or ECI control in this window yet. When a future function requests an
-ECI conversion, its capability must require ERP, a realization route, and
-valid temporal coverage. If ERP is absent, that operation stops with:
+ERP remains optional for a normal terrestrial import, but **every attached ERP
+is validated** before it is persisted: finite, valid MJD; strictly chronological
+epochs without duplicates; and physically plausible values. Protection limits
+are `|xp|, |yp| ≤ 1 arcsec`, `|UT1−UTC| ≤ 0.5 s`, and `|LOD| ≤ 0.010 s`. These
+are sanity bounds that catch a corrupt file or misread unit; they are not an
+accuracy guarantee or a replacement for the analysis centre's quality control.
+
+The current UI does not activate ECI during import, but the service contract
+`require_eci=true` is already a strict gate for the capability that requests
+it. It requires ERP, full ERP coverage of the selected SP3 subset, a registered
+terrestrial-realization route, and `pyerfa`/SOFA for IAU 2006/2000A reduction.
+It also requires a **local** leap-second snapshot with a version, SHA-256, and
+publisher-provided validity horizon that has not expired and covers the full
+selected SP3 window. A bundled or open-ended table does not meet that
+high-rigor guarantee. If ERP is absent, that operation stops with:
 
 ```text
 Debe proporcionar un fichero ERP para convertir a ECI.
 ```
 
+For a point ECI query, the requested epoch must also be covered by ERP. The
+route applies `xp`/`yp` polar motion, `UT1−UTC` for UTC→UT1 and Earth rotation
+angle, and ERFA/SOFA IAU 2006/2000A precession/nutation. The verified local
+leap-second snapshot must cover that epoch as well. The visual GMST fallback is
+never presented as a precise GNSS conversion. A product-bound SP3 orbit also
+rejects a caller-supplied explicit `EarthOrientation`; it may use only the ERP
+registered with that product. As a mathematical check, the rotation matrix must
+be orthonormal (`RᵀR = I`), have determinant `+1`, and preserve the position
+norm (`|r_ITRF| ≈ |r_ECI|`); any failure blocks the conversion.
+
 There is no live propagator-comparison UI or dedicated route yet. The internal
-`require_eci` capability contract is reserved as the guard for that future
-feature; it is not part of the import form and does not enable comparison
-today.
+error-mean/threshold metrics do not exist yet either. This gate only prevents
+a future comparison from requesting ECI without the necessary data and model;
+it does not claim that Orbit already compares propagators or validates a
+product's scientific accuracy against another ephemeris.
 
 !!! warning "Do not confuse clock with time scale"
 
@@ -271,9 +346,9 @@ the product:
 
 | ERP and realization state | Operational label | Capabilities |
 | --- | --- | --- |
-| ERP associated, used, and realization route applied | **ITRF (con ERP aplicado)** | SP3/ITRF → ECI is enabled; provenance includes UT1, polar motion, and the Earth-rotation parameters used. |
+| ERP associated, realization route available, ERFA/SOFA available, and ERP coverage overlaps | **ITRF (con ERP aplicado)** | The label covers only overlapping epochs. Complete conversion of the selected SP3 subset requires ERP coverage for its entire window; provenance includes UT1, polar motion, and the IAU 2006/2000A model used. |
 | No | **Marco terrestre aproximado (sin ERP)** | The approximate terrestrial series can be inspected, but Orbit does not claim ITRF or enable conversion to ECI. |
-| ERP associated, but realization route absent | Declared native frame | ERP does not invent IGS→ITRF. The diagnostic is retained and ECI remains blocked until the corresponding datum transformation is registered. |
+| ERP associated, but coverage, realization route, or ERFA/SOFA is absent | Declared native frame | ERP does not invent IGS→ITRF and a visual model does not substitute IAU 2006/2000A. The diagnostic is retained and ECI remains blocked until all conditions are met. |
 
 Every module that displays a frame —object details, ephemerides, telemetry,
 AOS/LOS, export, and a future comparison—must use the operational label while

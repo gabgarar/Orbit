@@ -617,6 +617,17 @@ body.with-toolbars #objectSidebar.collapsed {
     white-space: nowrap;
 }
 
+/* A passed service-side safety report is visible in the selection step.  It
+   is intentionally factual rather than a green "trust me" badge: the exact
+   counts, cadence and interpolation check remain inspectable by the operator. */
+.precise-product-preview-summary .precise-product-preview-validation {
+    overflow: visible;
+    color: #9ce4bf;
+    font-weight: 600;
+    text-overflow: clip;
+    white-space: normal;
+}
+
 .precise-product-preview-toolbar,
 .precise-product-preview-controls,
 .precise-product-preview-actions {

@@ -21,6 +21,12 @@ import {
     normalizeSelectedPreciseProductSatelliteIds
 } from "./features/preciseProducts/preview.js";
 import { fetchPreciseProductPreview } from "./features/preciseProducts/previewRequest.js";
+import {
+    PRECISE_PRODUCT_VALIDATION_DIALOG_EVENT,
+    createPreciseProductValidationFailure,
+    preciseProductValidationReport,
+    summarizePreciseProductValidation
+} from "./features/preciseProducts/validationUi.js";
 import { preciseProductSatelliteEntriesFromPayload } from "./satellites.js";
 
 function visibilityIconMarkup(isVisible) {
@@ -1572,6 +1578,11 @@ export function setupObjectSidebar({
     });
     document.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;
+        // The GNSS safety alert deliberately sits above the file/selection
+        // dialog. Leave that work in place while it acknowledges Escape; its
+        // own handler closes only the alert and returns focus to the pending
+        // import control.
+        if (document.getElementById("preciseProductValidationDialog")) return;
         closeContextMenu();
         if (preciseProductPreviewModal?.classList.contains("open")) {
             closePreciseProductPreviewModal();
@@ -2842,6 +2853,23 @@ export function setupObjectSidebar({
         pushNotification(message, "error", { sticky: true });
     }
 
+    /**
+     * A precise-product validation failure is safety-critical: leave the
+     * pending files and satellite selection untouched, but make the stopped
+     * operation explicit instead of relying on a transient inline status or
+     * a notification centre the operator may not have opened.
+     */
+    function showPreciseProductValidationFailure(error, options = {}) {
+        const request = createPreciseProductValidationFailure(error, options);
+        window.dispatchEvent(new CustomEvent(PRECISE_PRODUCT_VALIDATION_DIALOG_EVENT, {
+            detail: request
+        }));
+        // Keep an audit trail in the application's notification centre too;
+        // the modal is the primary acknowledgement surface.
+        showErrorPopup(`${request.title}: ${request.message}`);
+        return request;
+    }
+
     function showInfoPopup(message) {
         pushNotification(message, "info", { sticky: false, autoHideMs: 6500 });
     }
@@ -3289,6 +3317,7 @@ export function setupObjectSidebar({
 
     function renderPreciseProductPreviewSummary() {
         const product = pendingPreciseProductPreview?.product || {};
+        const validationSummary = summarizePreciseProductValidation({ product });
         const productCoverage = product?.coverage && typeof product.coverage === "object" ? product.coverage : {};
         const productName = String(product?.name || product?.product_name || product?.id || "Producto GNSS").trim();
         const provider = String(product?.provider || product?.provider_id || product?.source || "Proveedor detectado automáticamente").trim();
@@ -3304,6 +3333,14 @@ export function setupObjectSidebar({
         const detail = document.createElement("span");
         detail.textContent = `${provider} · cobertura ${coverage}`;
         preciseProductPreviewSummary.append(title, detail);
+        if (validationSummary) {
+            const validation = document.createElement("span");
+            validation.className = "precise-product-preview-validation";
+            validation.setAttribute("role", "status");
+            validation.textContent = validationSummary.message;
+            validation.title = validationSummary.title;
+            preciseProductPreviewSummary.appendChild(validation);
+        }
     }
 
     function updatePreciseProductPreviewSelectionUi() {
@@ -3601,6 +3638,12 @@ export function setupObjectSidebar({
             if (requestId !== preciseProductPreviewRequestId || !preciseProductImportModal.classList.contains("open")) {
                 return;
             }
+            const validation = preciseProductValidationReport(payload);
+            if (validation && String(validation.status || "").trim().toLowerCase() !== "passed") {
+                throw new Error(
+                    String(validation.detail || validation.error || validation.message || "El servicio no confirmó la validación estructural del SP3.")
+                );
+            }
             openPreciseProductPreviewModal(payload);
         } catch (error) {
             if (requestId !== preciseProductPreviewRequestId || !preciseProductImportModal.classList.contains("open")) {
@@ -3613,11 +3656,10 @@ export function setupObjectSidebar({
                     : `No se pudo previsualizar: ${message}`,
                 "error"
             );
-            showErrorPopup(
-                message === PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3
-                    ? message
-                    : `No se pudo previsualizar el producto preciso: ${message}`
-            );
+            showPreciseProductValidationFailure(message, {
+                phase: "preview",
+                focusId: "preciseProductImportConfirmBtn"
+            });
         } finally {
             if (preciseProductPreviewAbortController === abortController) {
                 preciseProductPreviewAbortController = null;
@@ -3639,11 +3681,16 @@ export function setupObjectSidebar({
         const selectedIds = normalizeSelectedPreciseProductSatelliteIds(selectedSatelliteIds);
         if (!selectedIds.length) {
             setPreciseProductPreviewStatus("Selecciona al menos un satélite antes de confirmar la importación.", "error");
+            showPreciseProductValidationFailure("Selecciona al menos un satélite antes de confirmar la importación.", {
+                phase: "import",
+                focusId: "preciseProductPreviewSelectAllBtn"
+            });
             return;
         }
         preciseProductImportBusy = true;
         const files = [...pendingPreciseProductFiles];
         const initialButtonLabel = preciseProductPreviewConfirmBtn.textContent;
+        let responseAccepted = false;
 
         try {
             setPreciseProductPreviewStatus(
@@ -3665,6 +3712,13 @@ export function setupObjectSidebar({
             if (!response.ok || payload?.ok === false) {
                 throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
             }
+            const validation = preciseProductValidationReport(payload);
+            if (validation && String(validation.status || "").trim().toLowerCase() !== "passed") {
+                throw new Error(
+                    String(validation.detail || validation.error || validation.message || "El servicio no confirmó la validación estructural del SP3.")
+                );
+            }
+            responseAccepted = true;
 
             const returnedEntries = preciseProductSatelliteEntriesFromPayload(payload);
             const registeredIds = await onRegisterPreciseProductEntries(returnedEntries);
@@ -3723,11 +3777,14 @@ export function setupObjectSidebar({
                     : `No se pudo importar: ${message}`,
                 "error"
             );
-            showErrorPopup(
-                message === PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3
-                    ? message
-                    : `No se pudo importar el producto preciso: ${message}`
-            );
+            if (!responseAccepted) {
+                showPreciseProductValidationFailure(message, {
+                    phase: "import",
+                    focusId: "preciseProductPreviewConfirmBtn"
+                });
+            } else {
+                showErrorPopup(`El producto fue aceptado, pero no se pudo completar su incorporación a Layers: ${message}`);
+            }
         } finally {
             preciseProductImportBusy = false;
             if (preciseProductPreviewModal.classList.contains("open")) {
@@ -3817,7 +3874,10 @@ export function setupObjectSidebar({
             try {
                 replacePendingPreciseProductSlotFile(kind, file);
             } catch (error) {
-                showErrorPopup(error instanceof Error ? error.message : String(error));
+                showPreciseProductValidationFailure(error, {
+                    phase: "preview",
+                    focusId: "preciseProductImportConfirmBtn"
+                });
             }
         });
     });
@@ -3829,7 +3889,10 @@ export function setupObjectSidebar({
         try {
             appendPendingPreciseProductArchive(file);
         } catch (error) {
-            showErrorPopup(error instanceof Error ? error.message : String(error));
+            showPreciseProductValidationFailure(error, {
+                phase: "preview",
+                focusId: "preciseProductImportConfirmBtn"
+            });
         }
     });
     preciseProductImportModal.querySelectorAll("[data-precise-product-slot-clear]").forEach((button) => {
@@ -4097,7 +4160,7 @@ export function setupObjectSidebar({
             try {
                 openPreciseProductImportModal(files);
             } catch (error) {
-                showErrorPopup(`No se pueden preparar esos productos GNSS: ${error instanceof Error ? error.message : String(error)}`);
+                showPreciseProductValidationFailure(error, { phase: "preview" });
             }
             return;
         }
@@ -4161,7 +4224,7 @@ export function setupObjectSidebar({
             try {
                 openPreciseProductImportModal(selected);
             } catch (error) {
-                showErrorPopup(`No se pueden preparar esos productos GNSS: ${error instanceof Error ? error.message : String(error)}`);
+                showPreciseProductValidationFailure(error, { phase: "preview" });
             }
             return;
         }
@@ -4705,7 +4768,7 @@ export function setupObjectSidebar({
                 try {
                     openPreciseProductImportModal([action.file]);
                 } catch (error) {
-                    showErrorPopup(`No se pueden preparar esos productos GNSS: ${error instanceof Error ? error.message : String(error)}`);
+                    showPreciseProductValidationFailure(error, { phase: "preview" });
                 }
             } else {
                 importCatalogFile(action.file, { autoAddToView: false, announce: true });

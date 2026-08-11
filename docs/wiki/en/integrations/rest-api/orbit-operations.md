@@ -91,6 +91,14 @@ partial selection receives a stable product identity including the subset, so
 two different subsets of the same SP3 can coexist and rehydrate without
 overwriting each other.
 
+Both endpoints run the same strict SP3 preflight. It checks the header,
+satellite list, epochs, cadence, finite numbers, conversion of the declared
+time scale, and the Lagrange contract with maximum degree 9. A `422` neither
+creates nor persists a product; a successful response includes
+`product.sp3_validation` with the passed report. See [Precise GNSS
+products](../../formats/precise-products.md#safety-gate-before-persistence)
+for limits, absent-state sentinels, and mathematical conditions.
+
 `content_base64` carries the binary without a `data:` prefix. Provider, family,
 and class are determined exclusively from the sources: requests must not assign
 `provider_hint` or `product_class` manually. For compatibility, the service
@@ -104,18 +112,27 @@ Every input is classified from its window field and extension: required SP3
 `.OSB.BIA`/`.OSB.BIA.gz` or `.BIA`/`.BIA.gz`. The service rejects an upload
 with no SP3 using `422` and the exact text **“Debe proporcionar un fichero SP3.”**.
 
-The current UI does not request ECI at import time. `require_eci` is reserved
-for a future feature that needs an ITRF-to-ECI conversion; with `true`, ERP
-will be required and its absence will produce `422` with the exact text
-**“Debe proporcionar un fichero ERP para convertir a ECI.”**. ERP supplies UT1
-and polar motion; when SP3 declares an IGS realization, a registered and
-applied realization transform is also required. ERP does not invent that
-transformation, so ECI remains blocked until both conditions are met.
+The current UI does not request ECI at import time. `require_eci=true` is the
+backend gate for a capability that needs it: it requires valid ERP, complete
+ERP coverage of the selected SP3 subset, a local leap-second table with a
+version, SHA-256, and non-expired publisher-provided validity horizon covering
+that full window, a terrestrial-realization route, and ERFA/SOFA with IAU
+2006/2000A. A normal import may use the bundled table, but returns
+`product.time_validation.leap_seconds.external_freshness="unverified"`; that
+open-ended table does not enable high-rigor ECI. If ERP is absent it produces
+`422` with the exact text **“Debe proporcionar un fichero ERP para convertir a
+ECI.”**. ERP supplies UT1 and polar motion; when SP3 declares an IGS
+realization, a registered and applied realization transform is also required.
+ERP does not invent that transformation and the visual GMST model does not
+substitute for precise reduction, so ECI remains blocked until every condition
+is met. A product-bound SP3 ECI call cannot override that contract with an
+explicit `EarthOrientation`.
 
 A successful response contains `product`, `satellites`, and `importedIds`.
 `product` declares provider, class, family, detection, native frame,
 operational frame label, time scale, coverage, ancillary products, and
-SHA-256 checksums of its sources. Each registered satellite ID has the form
+SHA-256 checksums of its sources, plus `sp3_validation` when the file passed
+the strict gate. Each registered satellite ID has the form
 `precise:<product_id>:<gnss_identifier>`, for example
 `precise:precise-0123456789abcdef0123:G01`. That ID can be used as `sat_id` in
 ephemeris, orbital-parameter, propagation, and AOS/LOS routes, but a query

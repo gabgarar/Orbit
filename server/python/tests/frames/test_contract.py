@@ -324,6 +324,47 @@ def test_polar_motion_is_applied_after_earth_rotation_and_preserves_radius(eop: 
     )
 
 
+def test_itrf_to_eme2000_uses_iau_rotation_and_preserves_the_position_norm(eop: EarthOrientation):
+    native = _state(
+        frame=FrameId.ITRF,
+        frame_realization="ITRF2020",
+        position_m=(6_700_000.0, -1_100_000.0, 2_300_000.0),
+    )
+    service = FrameTransformService()
+
+    assert service.has_iau2006_2000a is True
+    transformed = service.transform(
+        native,
+        target_frame=FrameId.EME2000,
+        earth_orientation=eop,
+    )
+
+    assert transformed.frame is FrameId.EME2000
+    assert transformed.transform_path == ("ITRF", "TIRS", "CIRS", "EME2000")
+    assert math.hypot(*transformed.position_m) == pytest.approx(
+        math.hypot(*native.position_m),
+        rel=1e-12,
+        abs=1e-6,
+    )
+    assert transformed.provenance["frame_transform"]["model"] == "IAU 2006/2000A + IERS EOP"
+
+
+def test_frame_transform_rejects_a_non_orthonormal_rotation_matrix(monkeypatch, eop: EarthOrientation):
+    native = replace(
+        _state(frame=FrameId.ITRF, frame_realization="ITRF2020"),
+        velocity_m_s=None,
+    )
+    service = FrameTransformService()
+    monkeypatch.setattr(
+        service,
+        "_matrix_between",
+        lambda *_args: ((1.0, 0.0, 0.0), (0.0, 1.001, 0.0), (0.0, 0.0, 1.0)),
+    )
+
+    with pytest.raises(FrameTransformationError, match="ortonormal"):
+        service.transform(native, target_frame=FrameId.EME2000, earth_orientation=eop)
+
+
 def test_strict_frame_workflows_reject_the_named_visual_eop_fallback():
     native = _state(frame=FrameId.TEME)
 

@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import datetime
 import math
+from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import Callable
 
 from orbit_api.timekeeping import (
     EarthOrientation,
@@ -40,6 +40,14 @@ except ImportError:  # pragma: no cover - exercised in dependency-minimal dev sh
 Matrix3 = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
 _IDENTITY: Matrix3 = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 _DERIVATIVE_SECONDS = 0.5
+_ROTATION_ORTHONORMAL_TOLERANCE = 5.0e-12
+_ROTATION_DETERMINANT_TOLERANCE = 5.0e-12
+_ROTATION_NORM_RELATIVE_TOLERANCE = 1.0e-12
+_ROTATION_NORM_ABSOLUTE_TOLERANCE_METRES = 1.0e-6
+_PRECISE_GNSS_LEAP_SNAPSHOT_ERROR = (
+    "ECI preciso requiere una tabla de segundos intercalares local, versionada, "
+    "con SHA-256 y fecha de caducidad vigente."
+)
 
 
 class FrameTransformationError(ValueError):
@@ -107,6 +115,62 @@ def _external_matrix(value: object) -> Matrix3:
         return tuple(tuple(float(value[row][column]) for column in range(3)) for row in range(3))  # type: ignore[index,return-value]
     except (TypeError, ValueError, IndexError) as exc:
         raise FrameTransformationError("La biblioteca ERFA devolvió una matriz de transformación inválida") from exc
+
+
+def _validate_rotation_matrix(matrix: Matrix3) -> None:
+    """Fail closed when an Earth-orientation matrix is not a proper rotation.
+
+    A frame change between the built-in Earth-centred frames must preserve a
+    Euclidean position norm.  Testing ``RᵀR = I`` and ``det(R) = +1`` here is
+    a compact boundary check for broken ERFA input, a future implementation
+    mistake, or an accidental reflection.  Datum/Helmert callbacks are not
+    checked here because they deliberately take a separate registered path.
+    """
+
+    try:
+        values = tuple(tuple(float(matrix[row][column]) for column in range(3)) for row in range(3))
+    except (TypeError, ValueError, IndexError) as exc:
+        raise FrameTransformationError("La matriz de rotación terrestre no tiene dimensiones 3×3 válidas") from exc
+    if not all(math.isfinite(value) for row in values for value in row):
+        raise FrameTransformationError("La matriz de rotación terrestre contiene valores no finitos")
+    transposed = _transpose(values)  # type: ignore[arg-type]
+    gram = _matmul(transposed, values)  # type: ignore[arg-type]
+    maximum_error = max(
+        abs(gram[row][column] - (1.0 if row == column else 0.0))
+        for row in range(3)
+        for column in range(3)
+    )
+    if maximum_error > _ROTATION_ORTHONORMAL_TOLERANCE:
+        raise FrameTransformationError(
+            "La matriz de rotación terrestre no es ortonormal (RᵀR ≠ I)"
+        )
+    determinant = (
+        values[0][0] * ((values[1][1] * values[2][2]) - (values[1][2] * values[2][1]))
+        - values[0][1] * ((values[1][0] * values[2][2]) - (values[1][2] * values[2][0]))
+        + values[0][2] * ((values[1][0] * values[2][1]) - (values[1][1] * values[2][0]))
+    )
+    if not math.isfinite(determinant) or abs(determinant - 1.0) > _ROTATION_DETERMINANT_TOLERANCE:
+        raise FrameTransformationError(
+            "La matriz de rotación terrestre no es una rotación propia (det(R) ≠ +1)"
+        )
+
+
+def _validate_rotation_preserves_position_norm(source: Vector3, transformed: Vector3) -> None:
+    """Verify the position invariant of a pure ITRF/celestial rotation."""
+
+    source_norm = math.hypot(*source)
+    transformed_norm = math.hypot(*transformed)
+    if not math.isfinite(source_norm) or not math.isfinite(transformed_norm):
+        raise FrameTransformationError("La comprobación de norma ITRF/ECI no produjo valores finitos")
+    if not math.isclose(
+        source_norm,
+        transformed_norm,
+        rel_tol=_ROTATION_NORM_RELATIVE_TOLERANCE,
+        abs_tol=_ROTATION_NORM_ABSOLUTE_TOLERANCE_METRES,
+    ):
+        raise FrameTransformationError(
+            "La conversión terrestre/celeste no conserva la norma de la posición (|r|)"
+        )
 
 
 def _julian_parts(
@@ -192,6 +256,51 @@ class FrameTransformService:
         """Return this service's pinned table or the live legacy default table."""
 
         return self._leap_second_table if self._leap_second_table is not None else default_leap_second_table()
+
+    @property
+    def has_iau2006_2000a(self) -> bool:
+        """Whether this service can perform the full ERFA/SOFA ECI route.
+
+        The dependency-free GMST branch remains useful for explicitly marked
+        visual rendering, but must never be presented as an IAU 2006/2000A
+        terrestrial-to-inertial reduction for a precise GNSS product.
+        """
+
+        return _erfa is not None
+
+    def require_iau2006_2000a(self) -> None:
+        """Raise a deterministic error when a precise ITRF→ECI route is absent."""
+
+        if not self.has_iau2006_2000a:
+            raise FrameTransformationError(
+                "La conversión ITRF→ECI requiere pyerfa/SOFA con IAU 2006/2000A; "
+                "el modelo de respaldo visual no es suficiente"
+            )
+
+    def require_precise_gnss_leap_second_snapshot(self, moment: datetime.datetime) -> None:
+        """Require externally auditable UTC/TAI data for precise GNSS ECI.
+
+        The bundled historical table is intentionally adequate for ordinary
+        terrestrial display and deterministic legacy conversions, but it has
+        no publisher expiry or file identity.  A precise ITRF→ECI result must
+        not present that open-ended default as proof that GPS/TAI→UTC is still
+        current.  The deployment factory can provide this contract through
+        ``ORBIT_LEAP_SECONDS_PATH``, ``_SHA256`` and ``_VERSION``.
+        """
+
+        leap_seconds = self.leap_second_table
+        if (
+            leap_seconds.version is None
+            or leap_seconds.sha256 is None
+            or leap_seconds.expires_at is None
+        ):
+            raise FrameTransformationError(_PRECISE_GNSS_LEAP_SNAPSHOT_ERROR)
+        try:
+            leap_seconds.require_coverage(moment, require_unexpired=True)
+        except ValueError as exc:
+            raise FrameTransformationError(
+                f"{_PRECISE_GNSS_LEAP_SNAPSHOT_ERROR} {exc}"
+            ) from exc
 
     def with_earth_orientation_provider(
         self,
@@ -305,6 +414,11 @@ class FrameTransformService:
             return state
         if state.center != "EARTH":
             raise FrameTransformationError("Solo se admiten transformaciones de marcos geocéntricos Earth por ahora")
+        self._require_precise_gnss_eci_contract(
+            state,
+            target,
+            explicit_earth_orientation=earth_orientation,
+        )
 
         source_realization = self._terrestrial_realization(state.frame, state.frame_realization)
         destination_realization = self._terrestrial_realization(target, target_realization)
@@ -362,6 +476,7 @@ class FrameTransformService:
                 return delegated
 
         matrix = self._matrix_between(state.frame, target, utc, orientation)
+        _validate_rotation_matrix(matrix)
         derivative: Matrix3 | None = None
         second_derivative: Matrix3 | None = None
         if state.velocity_m_s is not None or state.acceleration_m_s2 is not None or state.covariance is not None:
@@ -373,6 +488,7 @@ class FrameTransformService:
                 explicit_orientation=earth_orientation is not None,
             )
         position = _matvec(matrix, state.position_m)
+        _validate_rotation_preserves_position_norm(state.position_m, position)
         velocity = None
         if state.velocity_m_s is not None:
             assert derivative is not None
@@ -432,6 +548,109 @@ class FrameTransformService:
         if target is not FrameId.ITRF:
             return state.frame_realization == target_realization
         return not target_realization or state.frame_realization == target_realization
+
+    def _require_precise_gnss_eci_contract(
+        self,
+        state: StateVector,
+        target: FrameId | str,
+        *,
+        explicit_earth_orientation: EarthOrientation | None,
+    ) -> None:
+        """Prevent a product-bound SP3 state from bypassing its ERP guard.
+
+        ``PreciseProduct.eci_state_at`` is the public high-level API, but a
+        caller can also retain its tabular provider and request EME2000
+        directly.  The per-sample contract makes that lower-level path obey
+        the same no-ERP/no-IAU policy instead of falling back to the process
+        visual EOP provider.  Other formats intentionally carry no such
+        marker and retain their existing explicit transformation behaviour.
+        """
+
+        if target not in {FrameId.CIRS, FrameId.GCRF, FrameId.ICRF, FrameId.EME2000}:
+            return
+        if not state.is_terrestrial:
+            return
+        contract = state.provenance.get("precise_gnss_frame_contract")
+        if not isinstance(contract, Mapping):
+            return
+        if explicit_earth_orientation is not None:
+            # Product ERP is part of the source contract.  Accepting an
+            # arbitrary caller-supplied EOP here would make an apparently
+            # product-bound SP3 ECI state depend on a different DUT1/polar
+            # motion solution.  The high-level product method intentionally
+            # offers no override; preserve that rule on the public lower-level
+            # transform path as well.
+            raise FrameTransformationError(
+                "Los estados SP3 precisos deben usar el ERP importado; no se admite un EarthOrientation explícito para convertir a ECI."
+            )
+        reason = str(contract.get("eci_reason") or "La conversión a ECI no está disponible para este producto SP3.")
+        if not bool(contract.get("erp_present")):
+            raise FrameTransformationError("Debe proporcionar un fichero ERP para convertir a ECI.")
+        if not bool(contract.get("eci_route_available")):
+            raise FrameTransformationError(reason)
+        if not bool(contract.get("eci_iau2006_2000a_available")):
+            raise FrameTransformationError(reason)
+        if not bool(contract.get("eci_leap_seconds_available")):
+            raise FrameTransformationError(reason)
+        if not bool(contract.get("eci_available_within_erp_coverage")):
+            raise FrameTransformationError(reason)
+
+        # Do not rely on the later EOP lookup to reject a partial ERP.  The
+        # state provider is a public OrbitRuntime route, so make the
+        # product-declared ERP window an explicit boundary check here too.  It
+        # prevents a lower-level caller from discovering a coverage fault only
+        # after the frame calculation has started, and gives the same public
+        # error as PreciseProduct.eci_state_at.
+        coverage = contract.get("eci_coverage")
+        if not isinstance(coverage, Mapping):
+            raise FrameTransformationError(
+                "El contrato ERP del producto SP3 no declara una cobertura válida para convertir a ECI."
+            )
+        try:
+            raw_start = str(coverage["erp_start"] or "")
+            raw_end = str(coverage["erp_end"] or "")
+            erp_start = datetime.datetime.fromisoformat(raw_start.replace("Z", "+00:00"))
+            erp_end = datetime.datetime.fromisoformat(raw_end.replace("Z", "+00:00"))
+            if erp_start.tzinfo is None or erp_end.tzinfo is None:
+                raise ValueError("ERP coverage has no UTC offset")
+            erp_start = erp_start.astimezone(datetime.UTC)
+            erp_end = erp_end.astimezone(datetime.UTC)
+
+            scale = TimeScale.from_label(state.time_scale)
+            if scale is TimeScale.UT1:
+                # DUT1 is indexed in UTC.  Use the same bounded provisional
+                # UTC -> ERP -> refined UTC sequence as the actual transform.
+                provisional_utc = to_utc(
+                    state.epoch,
+                    scale,
+                    dut1_seconds=0.0,
+                    leap_seconds=self.leap_second_table,
+                )
+                orientation = self.earth_orientation_at(provisional_utc)
+                requested_utc = to_utc(
+                    state.epoch,
+                    scale,
+                    dut1_seconds=orientation.dut1_seconds,
+                    leap_seconds=self.leap_second_table,
+                )
+            else:
+                requested_utc = to_utc(
+                    state.epoch,
+                    scale,
+                    leap_seconds=self.leap_second_table,
+                )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FrameTransformationError(
+                "No se puede resolver la época UTC y la cobertura ERP del producto SP3 para convertir a ECI."
+            ) from exc
+        if erp_start > erp_end:
+            raise FrameTransformationError(
+                "El contrato ERP del producto SP3 declara una cobertura temporal inválida para convertir a ECI."
+            )
+        if not erp_start <= requested_utc <= erp_end:
+            raise FrameTransformationError(
+                "El ERP importado no cubre la época solicitada para convertir a ECI."
+            )
 
     def _utc_and_orientation(
         self,

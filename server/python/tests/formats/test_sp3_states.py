@@ -49,6 +49,31 @@ def _polynomial_sp3_text(*, epochs: int = 11) -> str:
     return "\n".join(rows)
 
 
+def _strict_sparse_sp3_text() -> str:
+    """A structurally-valid source whose three missing states are unsafe.
+
+    The header/table remains continuous.  The intentionally sparse *usable*
+    G01 series at the end makes the ninth-degree Lagrange window amplify
+    errors beyond the upload policy's Lebesgue threshold.
+    """
+
+    rows = [
+        _sp3_header(frame="ITRF", epochs=15),
+        "## 0000 0 60.00000000 0 0",
+        "+    1   G01",
+        "%c cc UTC ccc ccc ccc",
+    ]
+    for minute in range(15):
+        rows.append(f"*  2026 07 26 00 {minute:02d} 18.00000000")
+        if minute in {11, 12, 13}:
+            rows.append("PG01      0.000000      0.000000      0.000000 999999.999999")
+        else:
+            rows.append(
+                f"PG01{7_000.0 + minute:14.6f}{0.0:14.6f}{0.0:14.6f}{0.0:14.6f}"
+            )
+    return "\n".join(rows)
+
+
 def test_sp3_provider_interpolates_in_native_gps_time_and_preserves_igs_realization():
     provider = Sp3StateProvider.from_text(_sp3_text())
 
@@ -170,3 +195,8 @@ def test_sp3_skips_real_world_all_zero_position_records_as_missing_states():
     assert len(samples) == 2
     assert samples[0].position_m == pytest.approx((12_000_000.0, 13_000_000.0, 14_000_000.0))
     assert samples[1].position_m == pytest.approx((12_100_000.0, 13_100_000.0, 14_100_000.0))
+
+
+def test_strict_sp3_rejects_a_sparse_lagrange_window_with_excessive_amplification():
+    with pytest.raises(EphemerisFormatError, match="amplifica demasiado los errores"):
+        Sp3StateProvider.from_text(_strict_sparse_sp3_text(), strict_structure=True)

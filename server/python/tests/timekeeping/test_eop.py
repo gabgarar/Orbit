@@ -97,8 +97,8 @@ def test_igs_erp_v2_parser_converts_published_units_and_keeps_snapshot_identity(
     contents = """
         version 2
         MJD Xpole Ypole UT1-UTC LOD Xsig Ysig UTsig LODsig Nr Nf Nt Xrt Yrt
-        61247.00000 1000000 -2000000 2500000 10000 0 0 0 0 0 0 0 0 0
-        61248.00000 3000000  2000000 4500000 30000 0 0 0 0 0 0 0 0 0
+        61247.00000 100000 -200000 2500000 10000 0 0 0 0 0 0 0 0 0
+        61248.00000 300000  200000 4500000 30000 0 0 0 0 0 0 0 0 0
     """.strip()
 
     provider = IgsErpEarthOrientationProvider.from_text(
@@ -116,19 +116,47 @@ def test_igs_erp_v2_parser_converts_published_units_and_keeps_snapshot_identity(
 
     assert sample.dut1_seconds == pytest.approx(0.25)
     assert sample.lod_seconds == pytest.approx(0.001)
-    assert sample.xp_radians == pytest.approx(1.0 * ARCSECOND_TO_RADIAN)
-    assert sample.yp_radians == pytest.approx(-2.0 * ARCSECOND_TO_RADIAN)
+    assert sample.xp_radians == pytest.approx(0.1 * ARCSECOND_TO_RADIAN)
+    assert sample.yp_radians == pytest.approx(-0.2 * ARCSECOND_TO_RADIAN)
     assert sample.dx_radians == 0.0
     assert sample.dy_radians == 0.0
     assert sample.source == "IGS ERP test"
     assert sample.version == "fixture-erp-v2"
     assert midpoint.dut1_seconds == pytest.approx(0.35)
-    assert midpoint.xp_radians == pytest.approx(2.0 * ARCSECOND_TO_RADIAN)
+    assert midpoint.xp_radians == pytest.approx(0.2 * ARCSECOND_TO_RADIAN)
     assert identity is not None
     assert identity.filename == "IGS0OPSFIN_20262070000_01D_ERP.ERP"
     assert identity.coverage_start == start
     assert identity.coverage_end == start + timedelta(days=1)
     assert sample.snapshot_id == f"sha256:{hashlib.sha256(contents.encode('utf-8')).hexdigest()}"
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        ("61247.0 1000001 0 0 0", "Xpole fuera"),
+        ("61247.0 0 -1000001 0 0", "Ypole fuera"),
+        ("61247.0 0 0 5000001 0", "UT1-UTC fuera"),
+        ("61247.0 0 0 0 100001", "LOD fuera"),
+    ],
+)
+def test_igs_erp_v2_parser_rejects_physically_implausible_orientation_values(row, message):
+    contents = f"VERSION 2\nMJD Xpole Ypole UT1-UTC LOD\n{row}"
+
+    with pytest.raises(EopSnapshotValidationError, match=message):
+        IgsErpEarthOrientationProvider.from_text(contents)
+
+
+def test_igs_erp_v2_parser_rejects_unsorted_epochs_instead_of_silently_reordering_them():
+    contents = (
+        "VERSION 2\n"
+        "MJD Xpole Ypole UT1-UTC LOD\n"
+        "61248.0 100000 -200000 2500000 10000\n"
+        "61247.0 110000 -190000 2600000 11000"
+    )
+
+    with pytest.raises(EopSnapshotValidationError, match="cronol"):
+        IgsErpEarthOrientationProvider.from_text(contents)
 
 
 def test_iers_c04_14_parser_converts_arcseconds_and_keeps_a_pinned_version():

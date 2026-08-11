@@ -111,23 +111,34 @@ producto GNSS, pero sólo SP3 aporta una trayectoria cartesiana.
 
 | Parte del SP3 | Parámetros y unidades de fuente que lee Orbit | Uso, persistencia y efecto visible |
 | --- | --- | --- |
-| Cabecera `#` y `%c` | Versión; tipo de registro `P`/`V`; época inicial; número de épocas; datos usados; sistema de coordenadas; tipo orbital; agencia; y `TIME_SYSTEM`. | Valida el producto y conserva todos esos metadatos como marco nativo, realización, agencia y escala temporal. Una escala no reconocida no se convierte silenciosamente a UTC: se rechaza al construir la fuente de estados. |
+| Cabeceras `#`, `##`, `+` y `%c` | Versión; tipo de registro `P`/`V`; época inicial; número de épocas; intervalo nominal; lista y número de satélites; datos usados; sistema de coordenadas; tipo orbital; agencia; y `TIME_SYSTEM`. | Valida el producto y conserva esos metadatos como marco nativo, realización, agencia y escala temporal. Una escala no reconocida no se convierte silenciosamente a UTC: se rechaza al construir la fuente de estados. |
 | Época y posición | Línea `*` seguida de `P<id> X Y Z [clock]`. `X`, `Y`, `Z` están en **km**. | Cada posición no ausente crea una muestra del satélite GNSS indicado y, tras confirmar la selección, una capa SP3. Las posiciones se normalizan a **m**; son la fuente de la órbita, el globo 2D/3D, ground track, distancia y AOS/LOS. |
 | Velocidad | `V<id> VX VY VZ [clock-rate]`; `VX`, `VY`, `VZ` están en **dm/s**. | Si existe, se normaliza a **m/s** y acompaña al estado tabulado. No se inventa una velocidad cuando el fichero no la publica. |
 | Reloj embebido | Cuarta componente de `P`: sesgo de reloj en **µs**. Cuarta componente de `V`: tasa en **10⁻⁴ µs/s**. | Se convierte a segundos y segundos/segundo y aparece como resumen/procedencia de reloj. No cambia posición, velocidad, marco, escala de tiempo, distancia ni visibilidad. |
 
-El centinela SP3 de componente ausente (`abs(valor) >= 999999`) se descarta;
-una posición `P` completa `(0, 0, 0)` también se trata como estado ausente/no
-físico y no se dibuja como una coordenada terrestre. Los registros `P`/`V` duplicados
-para la misma época y satélite son un error. Los indicadores de precisión,
-correlación, eventos y registros extendidos que algunos SP3 publican no se
-convierten en una covarianza ni en una corrección de la órbita en esta ruta.
+El centinela SP3 de componente ausente (`abs(valor) >= 999999`) y una posición
+`P` completa `(0, 0, 0)` son estados ausentes legales: se contabilizan para
+validar la estructura, pero no se convierten en una muestra cartesiana ni se
+dibujan como coordenadas terrestres. No deben confundirse con un fichero
+malformado. Un vector de posición o velocidad no numérico, vacío, `NaN` o
+infinito sí hace fallar la importación. La cuarta componente de reloj es
+opcional; cuando se publica, debe ser numérica y finita. También fallan los
+registros `P`/`V` duplicados para la misma época y satélite. Los indicadores de precisión, correlación, eventos y
+registros extendidos que algunos SP3 publican no se convierten en una
+covarianza ni en una corrección de la órbita en esta ruta.
 
 Orbit interpola cada serie elegida con una ventana Lagrange local de hasta diez
 muestras (grado 9), degradando al máximo grado disponible si la serie es más
-corta. Nunca extrapola fuera de las épocas SP3. El archivo fuente, su cabecera,
-las muestras interpretadas y su checksum quedan vinculados al producto y a la
-ficha de cada satélite.
+corta. Nunca extrapola fuera de las épocas SP3. Durante la prevalidación
+reconstruye cada nudo utilizable y exige un error por componente estrictamente
+menor que **`1e-9 m`**; además evalúa el punto medio de cada intervalo usable
+para descartar una interpolación no finita o mal condicionada. En esos puntos
+exige constante de Lebesgue `≤ 512` y magnitud relativa del denominador
+baricéntrico `≥ 1e-5`, límites numéricos de protección y no una cota de
+precisión del proveedor.
+Una serie de una sola época es una consulta exacta sin intervalo interpolable,
+por lo que no pretende usar grado 9. El archivo fuente, su cabecera, las muestras interpretadas y su
+checksum quedan vinculados al producto y a la ficha de cada satélite.
 
 #### CLK — relojes precisos (opcional)
 
@@ -161,9 +172,11 @@ archivo ERP: los deja explícitamente a cero, por lo que no sustituye un
 producto IERS C04 de correcciones celestes.
 
 Para una consulta SP3 terrestre → ECI hacen falta **a la vez**: ERP con
-cobertura en la época solicitada, tabla de segundos intercalares y una ruta de
-realización terrestre válida. Si se cumplen, la interfaz declara **ITRF (con
-ERP aplicado)**; ERP no crea por sí solo una transformación de datum como
+cobertura en la época solicitada, una tabla de segundos intercalares que pueda
+convertir la escala de tiempo declarada, una ruta de realización terrestre
+válida y ERFA/SOFA (`pyerfa`) con IAU 2006/2000A. Si faltan, Orbit bloquea la
+conversión; el respaldo GMST de la vista no se reutiliza como resultado GNSS
+preciso. ERP no crea por sí solo una transformación de datum como
 IGS20 → ITRF2020. Sin ERP, la capa puede inspeccionarse en su marco terrestre
 nativo, pero se etiqueta **Marco terrestre aproximado (sin ERP)** y se bloquea
 la conversión a ECI. Adjuntar ERP no cambia por sí mismo la posición SP3 ni
@@ -212,22 +225,90 @@ observaciones pueda usar exactamente el producto auxiliar seleccionado.
   y OSB se vuelven a verificar como fuentes persistidas, pero no adquieren una
   semántica nueva sólo por reiniciar Orbit.
 
+### Puerta de seguridad antes de persistir
+
+**Previsualizar satélites** e **Importar** ejecutan la misma prevalidación
+estricta del SP3 antes de crear una capa, un ID de runtime, un manifest o un
+directorio bajo `config/precise-products/`. La previsualización nunca persiste;
+la importación sólo llega a persistir cuando todas las comprobaciones pasan.
+Un fallo devuelve `422`, muestra el detalle en un cuadro de diálogo y no deja
+un producto parcialmente registrado.
+
+| Área | Comprobaciones que deben pasar |
+| --- | --- |
+| Archivo y cabecera | El contenido debe poder decodificarse bajo los límites de carga; la cabecera principal `#` debe ser válida, declarar una época inicial y un número positivo de épocas, debe existir una única línea `##` con cadencia positiva y finita, y las líneas `+` deben declarar una lista única cuyo tamaño coincida con su contador. |
+| Tabla de épocas | Debe haber exactamente el número de épocas declarado; la primera coincide con la cabecera, las épocas son estrictamente crecientes y cada intervalo coincide con `##` con una tolerancia de **2 µs** de redondeo. Cada época debe contener un registro `P` de cada satélite declarado, sin miembros inesperados ni duplicados. Un estado ausente legal sigue contando como registro de ese miembro. |
+| Valores numéricos | Los vectores de coordenadas y velocidad deben estar completos, ser numéricos y finitos. La cuarta componente de reloj es opcional, pero si se publica también debe ser numérica y finita. Los vectores vacíos, `NaN`, `Inf` o un identificador de satélite inválido se rechazan en lugar de convertirse en una geometría o una fecha aproximada. |
+| Tiempo | `TIME_SYSTEM` se conserva y debe ser una escala reconocida. Orbit convierte explícitamente la cobertura SP3 a UTC con su tabla local de segundos intercalares; no interpreta una época GPS, TAI u otra escala como si fuera UTC. Si la tabla no puede representar la época, el producto se rechaza en vez de introducir un desfase silencioso de un segundo. |
+| Interpolación | Cada serie con dos o más muestras usa Lagrange local de grado `min(9, N−1)`. La prevalidación reproduce todos los nudos utilizables con error `< 1e-9 m`; en el punto medio de cada intervalo exige una posición finita, constante de Lebesgue `≤ 512` y magnitud relativa del denominador baricéntrico `≥ 1e-5`. Son límites de estabilidad numérica, no una garantía de precisión del proveedor. No existe extrapolación fuera de cobertura. |
+
+Los centinelas oficiales de estado ausente se informan por separado de las
+muestras utilizables. Por ejemplo, no convierten un `P 0 0 0` o un valor
+`999999…` en una órbita en el centro de la Tierra ni hacen que un SP3 por lo
+demás válido se confunda con un archivo corrupto. El producto requiere al
+menos un estado utilizable para poder ofrecer satélites seleccionables.
+
+Una respuesta satisfactoria expone el informe de paso en
+`product.sp3_validation`: contador y miembros de cabecera, número/cadencia de
+épocas, estados utilizables/ausentes y el contrato de interpolación. El informe
+no es una estimación de precisión del proveedor; acredita únicamente las
+invariantes de lectura que Orbit ha podido verificar.
+
+!!! warning "Límite de la validación temporal"
+
+    La comprobación GPS/TAI/GAL/BDT ↔ UTC valida la conversión configurada de
+    Orbit y la cobertura de su snapshot de segundos intercalares. Ese snapshot
+    y su procedencia forman parte de la frontera de confianza: Orbit no puede
+    demostrar por sí solo que un proveedor etiquetó correctamente
+    `TIME_SYSTEM`, ni detectar una tabla local obsoleta si aún cubre la fecha.
+    El operador debe mantener y auditar la fuente de segundos intercalares;
+    consulte [Tiempo, EOP e ITRF](../operations/time-eop.md).
+
+    Una importación terrestre normal puede usar la tabla integrada de Orbit, de
+    vigencia abierta. En ese caso se admite el producto, pero la respuesta marca
+    `time_validation.leap_seconds.external_freshness` como `unverified`: no se
+    afirma que la relación UTC sea verificable externamente para esa fecha.
+
 ### Validación dependiente de ECI
 
-ERP es opcional en la ventana de importación actual. No hay todavía una
-herramienta de comparación de propagadores ni un control de ECI en esta
-ventana. Cuando exista una función que solicite convertir el producto a ECI,
-la capacidad correspondiente deberá exigir ERP, una ruta de realización y
-cobertura temporal válida. Si falta ERP, detendrá esa operación con:
+ERP sigue siendo opcional para una importación terrestre normal, pero **todo
+ERP que se adjunte se valida** antes de persistirlo: MJD finito y válido,
+épocas en orden cronológico estricto sin duplicados, y valores físicos
+plausibles. Los límites de protección son `|xp|, |yp| ≤ 1 arcsec`,
+`|UT1−UTC| ≤ 0,5 s` y `|LOD| ≤ 0,010 s`. Son límites de cordura para detectar
+un fichero corrupto o una unidad mal interpretada; no son una garantía de
+precisión ni sustituyen el control de calidad del centro de análisis.
+
+La interfaz actual no activa ECI durante la importación, pero el contrato de
+servicio `require_eci=true` ya es una puerta estricta para la función que lo
+solicite. Exige ERP, cobertura ERP completa del subconjunto SP3 elegido, una
+ruta de realización terrestre registrada y `pyerfa`/SOFA para la reducción
+IAU 2006/2000A. Además exige un snapshot **local** de segundos intercalares
+con versión, SHA-256 y horizonte de validez publicado por su emisor, no
+caducado y que cubra toda la ventana SP3 seleccionada. Una tabla integrada o
+abierta no satisface esta garantía de alto rigor. Si falta ERP, esa operación
+se detiene con:
 
 ```text
 Debe proporcionar un fichero ERP para convertir a ECI.
 ```
 
+En una consulta ECI puntual, la época solicitada también debe estar cubierta
+por el ERP y por el snapshot local de segundos intercalares verificado. La ruta
+usa `xp`/`yp` para el movimiento polar, `UT1−UTC` para UTC→UT1 y el ángulo de
+rotación terrestre, y la precesión/nutación IAU 2006/2000A de ERFA/SOFA. El
+modelo GMST de respaldo de visualización nunca se presenta como una conversión
+GNSS precisa. Una órbita SP3 ligada al producto tampoco admite que el llamador
+inyecte un `EarthOrientation` explícito: sólo puede usar el ERP registrado con
+ese producto. Como comprobación matemática, la matriz de rotación debe ser
+ortonormal (`RᵀR = I`), tener determinante `+1` y conservar la norma de posición
+(`|r_ITRF| ≈ |r_ECI|`); cualquier fallo bloquea la conversión.
+
 No existe todavía una interfaz ni una ruta independiente de comparación de
-propagadores. El contrato interno `require_eci` queda reservado como guard de
-esa futura función; no forma parte del formulario de importación ni habilita
-una comparación hoy.
+propagadores, ni métricas de error medio/umbral. Esta puerta sólo evita que
+una futura comparación solicite ECI sin los datos y el modelo necesarios; no
+declara que Orbit ya compare propagadores ni valida la exactitud científica
+del producto frente a otra efeméride.
 
 !!! warning "No confundir el reloj con la escala temporal"
 
@@ -280,9 +361,9 @@ asociado a ese producto:
 
 | Estado de ERP y realización | Etiqueta operacional | Capacidades |
 | --- | --- | --- |
-| ERP asociado, usado y ruta de realización aplicada | **ITRF (con ERP aplicado)** | Se habilita SP3/ITRF → ECI; la procedencia incluye UT1, movimiento polar y los parámetros de rotación terrestre usados. |
+| ERP asociado, ruta de realización disponible, ERFA/SOFA disponible y cobertura ERP coincidente | **ITRF (con ERP aplicado)** | La etiqueta sólo cubre las épocas solapadas. La conversión completa del subconjunto SP3 exige que ERP cubra toda su ventana; la procedencia incluye UT1, movimiento polar y el modelo IAU 2006/2000A usado. |
 | No | **Marco terrestre aproximado (sin ERP)** | Puede inspeccionarse la serie terrestre aproximada, pero no se afirma ITRF ni se habilita la conversión a ECI. |
-| ERP asociado, pero falta una ruta de realización | Marco nativo declarado | ERP no inventa IGS→ITRF. Se conserva el diagnóstico y se bloquea ECI hasta registrar la transformación de datum correspondiente. |
+| ERP asociado, pero falta cobertura, ruta de realización o ERFA/SOFA | Marco nativo declarado | ERP no inventa IGS→ITRF y un modelo visual no sustituye IAU 2006/2000A. Se conserva el diagnóstico y se bloquea ECI hasta cumplir todas las condiciones. |
 
 Todos los módulos que muestran el marco —ficha de objeto, efemérides,
 telemetría, AOS/LOS, exportación y comparación futura— deben usar la etiqueta

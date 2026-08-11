@@ -27,6 +27,17 @@ _MJD_UNIX_EPOCH = 40_587.0
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _IGS_ERP_MJD_EPOCH = datetime.datetime(1858, 11, 17, tzinfo=datetime.UTC)
 
+# These are deliberately *plausibility* limits, not an EOP accuracy model.
+# Their job at the import boundary is to catch a corrupt ERP row or a unit
+# mistake (for example raw microarcseconds interpreted as arcseconds) before
+# it can rotate a precise orbit by kilometres.  Modern IGS values are normally
+# a few tenths of an arcsecond and a few milliseconds or less.  The pole and
+# LOD envelopes leave room for real operational variation while remaining far
+# below a value that could plausibly be a wrong unit.
+IGS_ERP_MAX_ABS_POLAR_MOTION_ARCSECONDS = 1.0
+IGS_ERP_MAX_ABS_DUT1_SECONDS = 0.5
+IGS_ERP_MAX_ABS_LOD_SECONDS = 0.010
+
 
 class EarthOrientationCoverageError(ValueError):
     """Raised when a requested epoch lies outside a strict EOP snapshot."""
@@ -359,6 +370,7 @@ class IgsErpEarthOrientationProvider(TabularEarthOrientationProvider):
         lines = source_text.splitlines()
         header_index, columns = cls._header(lines)
         samples: list[EarthOrientation] = []
+        previous_mjd: float | None = None
         for line_number, line in enumerate(lines[header_index + 1:], start=header_index + 2):
             stripped = line.strip()
             if not stripped or stripped.startswith(("#", "*", "+", "-", "_")):
@@ -386,6 +398,17 @@ class IgsErpEarthOrientationProvider(TabularEarthOrientationProvider):
                 raise EopSnapshotValidationError(
                     f"El MJD ERP no es válido en la línea {line_number}"
                 )
+            if previous_mjd is not None and mjd <= previous_mjd:
+                raise EopSnapshotValidationError(
+                    f"El ERP debe estar ordenado cronológicamente sin épocas repetidas (línea {line_number})"
+                )
+            cls._validate_physical_values(
+                xp_microarcseconds=xp,
+                yp_microarcseconds=yp,
+                dut1_tenth_microseconds=dut1,
+                lod_tenth_microseconds=lod,
+                line_number=line_number,
+            )
             samples.append(EarthOrientation(
                 dut1_seconds=dut1 * cls._TENTH_MICROSECONDS_TO_SECONDS,
                 xp_radians=xp * cls._MICROARCSECONDS_TO_RADIAN,
@@ -401,6 +424,7 @@ class IgsErpEarthOrientationProvider(TabularEarthOrientationProvider):
                 quality=str(quality or "unknown").strip().lower() or "unknown",
                 sampled_at=cls._datetime_from_mjd(mjd),
             ))
+            previous_mjd = mjd
         if not samples:
             raise EopSnapshotValidationError("El fichero ERP no contiene registros ERP v2 utilizables")
         ordered = tuple(sorted(samples, key=lambda sample: sample.sampled_at))
@@ -436,6 +460,49 @@ class IgsErpEarthOrientationProvider(TabularEarthOrientationProvider):
         )
         provider._timestamps = tuple(sample.sampled_at for sample in provider._samples)
         return provider
+
+    @classmethod
+    def _validate_physical_values(
+        cls,
+        *,
+        xp_microarcseconds: float,
+        yp_microarcseconds: float,
+        dut1_tenth_microseconds: float,
+        lod_tenth_microseconds: float,
+        line_number: int,
+    ) -> None:
+        """Reject ERP values that cannot plausibly be Earth orientation.
+
+        IGS ERP v2 publishes pole coordinates in microarcseconds and
+        ``UT1-UTC``/``LOD`` in 0.1 microseconds.  Keeping this check in those
+        native units makes an accidental unit conversion visible at the exact
+        source line, before any state or rotation matrix is constructed.
+        """
+
+        xp_arcseconds = xp_microarcseconds * 1.0e-6
+        yp_arcseconds = yp_microarcseconds * 1.0e-6
+        dut1_seconds = dut1_tenth_microseconds * cls._TENTH_MICROSECONDS_TO_SECONDS
+        lod_seconds = lod_tenth_microseconds * cls._TENTH_MICROSECONDS_TO_SECONDS
+        if abs(xp_arcseconds) > IGS_ERP_MAX_ABS_POLAR_MOTION_ARCSECONDS:
+            raise EopSnapshotValidationError(
+                "El ERP contiene Xpole fuera del rango físico "
+                f"de ±{IGS_ERP_MAX_ABS_POLAR_MOTION_ARCSECONDS:g} arcsec en la línea {line_number}"
+            )
+        if abs(yp_arcseconds) > IGS_ERP_MAX_ABS_POLAR_MOTION_ARCSECONDS:
+            raise EopSnapshotValidationError(
+                "El ERP contiene Ypole fuera del rango físico "
+                f"de ±{IGS_ERP_MAX_ABS_POLAR_MOTION_ARCSECONDS:g} arcsec en la línea {line_number}"
+            )
+        if abs(dut1_seconds) > IGS_ERP_MAX_ABS_DUT1_SECONDS:
+            raise EopSnapshotValidationError(
+                "El ERP contiene UT1-UTC fuera del rango físico "
+                f"de ±{IGS_ERP_MAX_ABS_DUT1_SECONDS:g} s en la línea {line_number}"
+            )
+        if abs(lod_seconds) > IGS_ERP_MAX_ABS_LOD_SECONDS:
+            raise EopSnapshotValidationError(
+                "El ERP contiene LOD fuera del rango físico "
+                f"de ±{IGS_ERP_MAX_ABS_LOD_SECONDS:g} s en la línea {line_number}"
+            )
 
     @staticmethod
     def _datetime_from_mjd(mjd: float) -> datetime.datetime:

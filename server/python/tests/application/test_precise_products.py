@@ -27,7 +27,9 @@ from orbit_api.frames import (
     FrameId,
     FrameTransformService,
     build_frame_transformer_from_environment,
+    register_igs20_family_itrf2020_identities,
 )
+from orbit_api.timekeeping import LeapSecondTable
 
 
 def _sp3_header(*, frame: str = "ITRF", epochs: int = 2) -> str:
@@ -42,21 +44,36 @@ def _sp3_header(*, frame: str = "ITRF", epochs: int = 2) -> str:
     )
 
 
+def _sp3_record(
+    record_type: str,
+    satellite_id: str,
+    x: float,
+    y: float,
+    z: float,
+    clock: float,
+) -> str:
+    """Create an SP3 fixed-column P/V record for strict-import fixtures."""
+
+    return f"{record_type}{satellite_id}{x:14.6f}{y:14.6f}{z:14.6f}{clock:14.6f}"
+
+
 def _sp3_text(*, frame: str = "ITRF", include_velocity: bool = False) -> str:
     rows = [
         _sp3_header(frame=frame),
+        "## 0000 0 60.00000000 0 0",
+        "+    1   G01",
         "%c cc UTC ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc",
         "*  2026 07 26 00 00 18.00000000",
-        "PG01 7000.000000 0.000000 0.000000 0.123456",
+        _sp3_record("P", "G01", 7000.0, 0.0, 0.0, 0.123456),
     ]
     if include_velocity:
-        rows.append("VG01 10000.000000 0.000000 0.000000 1.000000")
+        rows.append(_sp3_record("V", "G01", 10000.0, 0.0, 0.0, 1.0))
     rows.extend([
         "*  2026 07 26 00 01 18.00000000",
-        "PG01 7060.000000 0.000000 0.000000 0.123457",
+        _sp3_record("P", "G01", 7060.0, 0.0, 0.0, 0.123457),
     ])
     if include_velocity:
-        rows.append("VG01 10000.000000 0.000000 0.000000 1.000000")
+        rows.append(_sp3_record("V", "G01", 10000.0, 0.0, 0.0, 1.0))
     return "\n".join(rows)
 
 
@@ -65,13 +82,15 @@ def _multi_satellite_sp3_text(*, frame: str = "ITRF") -> str:
 
     return "\n".join([
         _sp3_header(frame=frame),
+        "## 0000 0 60.00000000 0 0",
+        "+    2   G01C06",
         "%c cc UTC ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc",
         "*  2026 07 26 00 00 18.00000000",
-        "PG01 7000.000000 0.000000 0.000000 0.123456",
-        "PC06 26000.000000 0.000000 0.000000 0.223456",
+        _sp3_record("P", "G01", 7000.0, 0.0, 0.0, 0.123456),
+        _sp3_record("P", "C06", 26000.0, 0.0, 0.0, 0.223456),
         "*  2026 07 26 00 01 18.00000000",
-        "PG01 7060.000000 0.000000 0.000000 0.123457",
-        "PC06 26060.000000 0.000000 0.000000 0.223457",
+        _sp3_record("P", "G01", 7060.0, 0.0, 0.0, 0.123457),
+        _sp3_record("P", "C06", 26060.0, 0.0, 0.0, 0.223457),
     ])
 
 
@@ -83,12 +102,14 @@ def _minimal_sp3_text() -> str:
     two-record fixture above.
     """
 
-    return (
+    header = (
         f"{_sp3_header(epochs=1)}\n"
+        "## 0000 0 60.00000000 0 0\n"
+        "+    1   G01\n"
         "%c cc UTC\n"
         "*  2026 07 26 00 00 18.00000000\n"
-        "PG01 7000.0 0.0 0.0 0.0"
     )
+    return header + _sp3_record("P", "G01", 7000.0, 0.0, 0.0, 0.0)
 
 
 def _clk_text() -> str:
@@ -109,10 +130,29 @@ def _erp_text(mjds: tuple[float, ...] = (61247.0, 61248.0)) -> str:
     ]
     for index, mjd in enumerate(mjds):
         rows.append(
-            f"{mjd:.8f} {1000000 + index * 1000000} {-2000000 + index * 1000000} "
+            f"{mjd:.8f} {100000 + index * 100000} {-200000 + index * 100000} "
             f"{2500000 + index * 1000000} {10000 + index * 10000} 0 0 0 0 0 0 0 0 0"
         )
     return "\n".join(rows)
+
+
+def _high_rigor_leap_second_table() -> LeapSecondTable:
+    """Pinned local time data required by the precise ECI contract."""
+
+    return LeapSecondTable(
+        entries=((datetime(2025, 1, 1, tzinfo=UTC), 38),),
+        source="test local leap-second table",
+        version="fixture-2025",
+        expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+        sha256="c" * 64,
+    )
+
+
+def _high_rigor_transformer(*, realization: str | None = None) -> FrameTransformService:
+    return FrameTransformService(
+        default_terrestrial_realization=realization,
+        leap_second_table=_high_rigor_leap_second_table(),
+    )
 
 
 def _upload(name: str, content: str | bytes) -> tuple[str, str]:
@@ -199,7 +239,7 @@ def test_precise_product_requires_erp_when_eci_is_requested_with_the_public_exac
 
 
 def test_gnss_companions_and_erp_are_persisted_and_bind_an_isolated_transformer(tmp_path):
-    base_transformer = FrameTransformService()
+    base_transformer = _high_rigor_transformer()
     product = import_precise_product(
         [
             _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),
@@ -262,7 +302,7 @@ def test_eci_capability_requires_a_physical_route_and_erp_coverage_at_requested_
         # its first 25 seconds, so a capability summary must not advertise a
         # whole-product ECI comparison.
         _upload("IGS0OPSFIN_20262070000_01D_ERP.ERP", _erp_text((61247.0, 61247.0005))),
-    ])
+    ], frame_transformer=_high_rigor_transformer())
 
     capability = product.eci_conversion_summary()
     assert capability["route_available"] is True
@@ -277,15 +317,13 @@ def test_eci_capability_requires_a_physical_route_and_erp_coverage_at_requested_
     igs_without_datum_route = import_precise_product([
         _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text(frame="IGc20")),
         _upload("IGS0OPSFIN_20262070000_01D_ERP.ERP", _erp_text()),
-    ])
+    ], frame_transformer=_high_rigor_transformer())
     assert igs_without_datum_route.eci_conversion_summary()["route_available"] is False
     with pytest.raises(PreciseProductImportError, match="transformación de realización terrestre"):
         igs_without_datum_route.eci_state_at("G01", datetime(2026, 7, 26, tzinfo=UTC))
 
-    transformer = build_frame_transformer_from_environment({
-        "ORBIT_TERRESTRIAL_REALIZATION": "ITRF2020",
-        "ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT": "true",
-    })
+    transformer = _high_rigor_transformer(realization="ITRF2020")
+    register_igs20_family_itrf2020_identities(transformer)
     plain_itrf_with_renderer_realization = import_precise_product(
         [
             _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),

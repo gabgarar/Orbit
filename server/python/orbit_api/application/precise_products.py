@@ -42,7 +42,9 @@ from orbit_api.frames import FrameId, FrameTransformService, StateVector
 from orbit_api.timekeeping import (
     IgsErpEarthOrientationProvider,
     TimeScale,
+    from_utc,
     to_utc,
+    utc_to_ut1,
 )
 
 MAX_PRECISE_PRODUCT_FILES = 8
@@ -77,6 +79,14 @@ _GNSS_CONSTELLATION_LABELS = {
 
 class PreciseProductImportError(ValueError):
     """Raised for a recoverable precise-product ingestion error."""
+
+
+@dataclass(frozen=True, slots=True)
+class PreciseGnssTimeValidation:
+    """Facts established by the temporal preflight before persistence."""
+
+    source_epoch_count: int
+    utc_ut1_checked_epoch_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +160,7 @@ class PreciseProduct:
     source_files: tuple[ProductSourceFile, ...]
     selected_satellite_ids: tuple[str, ...]
     decoded_files: tuple[DecodedProductFile, ...] = field(repr=False, compare=False)
+    time_validation_report: PreciseGnssTimeValidation | None = None
 
     def __post_init__(self) -> None:
         if not _PRODUCT_ID_PATTERN.fullmatch(self.product_id):
@@ -166,6 +177,11 @@ class PreciseProduct:
             raise PreciseProductImportError("El producto preciso no contiene ficheros de origen")
         if self.erp is not None and not isinstance(self.erp, IgsErpEarthOrientationProvider):
             raise PreciseProductImportError("El proveedor ERP del producto preciso no es válido")
+        if self.time_validation_report is not None and not isinstance(
+            self.time_validation_report,
+            PreciseGnssTimeValidation,
+        ):
+            raise PreciseProductImportError("El informe temporal del producto preciso no es válido")
         selected = tuple(_satellite_id(identifier) for identifier in self.selected_satellite_ids)
         if len(selected) != len(set(selected)):
             raise PreciseProductImportError("Los satélites seleccionados no pueden repetirse.")
@@ -233,6 +249,10 @@ class PreciseProduct:
             )
         if not capability["route_available"]:
             raise PreciseProductImportError(str(capability["reason"]))
+        if not capability["iau2006_2000a_available"]:
+            raise PreciseProductImportError(str(capability["reason"]))
+        if not capability["leap_seconds_available"]:
+            raise PreciseProductImportError(str(capability["reason"]))
         identity = self.erp.snapshot_identity
         erp_start = identity.coverage_start if identity is not None else self.erp.samples[0].sampled_at
         erp_end = identity.coverage_end if identity is not None else self.erp.samples[-1].sampled_at
@@ -250,21 +270,38 @@ class PreciseProduct:
         provider = self.provider_for_satellite(satellite_id)
         reference = self.sp3.metadata.reference_frame
         transformer = self.sp3.frame_transformer
+        if transformer is None:
+            raise PreciseProductImportError(
+                "No hay un transformador de marcos asociado al producto preciso."
+            )
+        try:
+            # Never turn the dependency-free visual GMST fallback into a
+            # precise-GNSS ECI result.  The product ERP supplies EOP, while
+            # ERFA/SOFA supplies the required IAU 2006/2000A reduction.
+            transformer.require_iau2006_2000a()
+        except ValueError as exc:
+            raise PreciseProductImportError(str(exc)) from exc
         # FrameTransformService intentionally refuses to jump from an
         # external terrestrial realization (for example IGc20) directly to
         # EME2000.  When, and only when, the capability above found a
         # registered datum operation, make that physical two-step path
         # explicit: source realization -> selected ITRF realization -> ECI.
         if reference.family != "ITRF":
-            if transformer is None or transformer.default_terrestrial_realization is None:
+            if transformer.default_terrestrial_realization is None:
                 raise PreciseProductImportError(str(capability["reason"]))
-            terrestrial = transformer.transform(
-                provider.native_state_at(instant),
-                target_frame=FrameId.ITRF,
-                target_realization=transformer.default_terrestrial_realization,
-            )
-            return transformer.transform(terrestrial, target_frame=target_frame)
-        return provider.state_at(instant, target_frame=target_frame)
+            try:
+                terrestrial = transformer.transform(
+                    provider.native_state_at(instant),
+                    target_frame=FrameId.ITRF,
+                    target_realization=transformer.default_terrestrial_realization,
+                )
+                return transformer.transform(terrestrial, target_frame=target_frame)
+            except ValueError as exc:
+                raise PreciseProductImportError(str(exc)) from exc
+        try:
+            return provider.state_at(instant, target_frame=target_frame)
+        except ValueError as exc:
+            raise PreciseProductImportError(str(exc)) from exc
 
     def coverage_utc(self, satellite_id: str | None = None) -> tuple[datetime.datetime | None, datetime.datetime | None]:
         providers: Iterable[TabularStateProvider]
@@ -275,12 +312,11 @@ class PreciseProduct:
         values: list[datetime.datetime] = []
         for provider in providers:
             for sample in provider.samples:
-                try:
-                    values.append(to_utc(sample.epoch, sample.time_scale))
-                except ValueError as exc:
-                    raise PreciseProductImportError(
-                        "No se puede convertir la cobertura temporal SP3 a UTC"
-                    ) from exc
+                # Keep presentation, ERP-coverage decisions and the later
+                # frame transformation on the exact same pinned leap-second
+                # table.  A process-wide default here could differ from the
+                # product transformer's audited temporal contract.
+                values.append(_precise_sample_utc(self.sp3, sample, self.erp))
         return min(values, default=None), max(values, default=None)
 
     def clock_summary(self, satellite_id: str | None = None) -> dict[str, object]:
@@ -372,6 +408,22 @@ class PreciseProduct:
         """
 
         return _eci_conversion_contract(self.sp3, self.erp)
+
+    def time_validation_summary(self) -> dict[str, object]:
+        """Expose the immutable time-data contract checked before import.
+
+        This is deliberately an audit record, not an assertion that Orbit can
+        independently prove a local leap-second table contains future IERS
+        announcements.  A versioned snapshot with a publisher expiry is the
+        operator's evidence for that external fact; Orbit checks its declared
+        scale round trips and enforces that expiry when one is supplied.
+        """
+
+        return _precise_gnss_time_validation_payload(
+            self.sp3,
+            self.erp,
+            self.time_validation_report,
+        )
 
     def rendering_summary(self) -> dict[str, object]:
         """Describe the Earth-fixed view without claiming absent ERP data."""
@@ -513,6 +565,8 @@ class PreciseProduct:
                 "erp": self.erp_summary(),
                 "eci_conversion": rendering["eci_conversion"],
                 "rendering": rendering,
+                "time_validation": self.time_validation_summary(),
+                "validation": _sp3_validation_payload(self.sp3),
             },
         }
 
@@ -604,6 +658,7 @@ class PreciseProduct:
             "native_frame": rendering["native_frame"],
             "time_scale": self.sp3.metadata.time_scale_label,
             "time_system": self.sp3.metadata.time_scale_label,
+            "time_validation": self.time_validation_summary(),
             "start_time": _iso_or_none(start),
             "end_time": _iso_or_none(end),
             "start_time_ms": _epoch_millis(start),
@@ -618,6 +673,11 @@ class PreciseProduct:
             "eci_conversion": rendering["eci_conversion"],
             "renderer_reference": rendering,
             "rendering": rendering,
+            # A product is only constructed after the fail-closed parser has
+            # checked its source table. Keep the successful report in both
+            # preview and persisted payloads so clients can explain why an
+            # import is safe rather than inferring it from a 200 response.
+            "sp3_validation": _sp3_validation_payload(self.sp3),
             "satellite_count": len(self.satellite_ids),
             "satellite_ids": list(self.satellite_ids),
             "selected_satellite_ids": list(self.selected_satellite_ids),
@@ -724,8 +784,9 @@ def build_precise_product(
         source_sp3 = parse_sp3_state_provider(
             _decode_text(recognized["sp3"]),
             frame_transformer=product_transformer,
+            strict_structure=True,
         )
-        source_sp3 = _annotate_precise_gnss_frame_contract(source_sp3, erp)
+        time_validation_report = _validate_precise_gnss_time_contract(source_sp3, erp)
         clock = (
             parse_rinex_clock_product(_decode_text(recognized["clk"]))
             if "clk" in recognized
@@ -741,6 +802,14 @@ def build_precise_product(
     # can coexist without overwriting or rehydrating each other incorrectly.
     is_subset = selected != source_sp3.satellite_ids
     sp3 = _subset_sp3_state_provider(source_sp3, selected) if is_subset else source_sp3
+    # The contract must describe the satellites actually registered, not an
+    # unselected member whose different coverage would incorrectly block a
+    # future ECI operation for the chosen subset.
+    sp3 = _annotate_precise_gnss_frame_contract(sp3, erp)
+    if require_eci:
+        eci_capability = _eci_conversion_contract(sp3, erp)
+        if not eci_capability["available"]:
+            raise PreciseProductImportError(str(eci_capability["reason"]))
 
     sources = tuple(source_files or _source_metadata(files))
     expected_id = _product_id(
@@ -771,6 +840,7 @@ def build_precise_product(
         source_files=sources,
         selected_satellite_ids=selected,
         decoded_files=tuple(files),
+        time_validation_report=time_validation_report,
     )
 
 
@@ -998,8 +1068,246 @@ def _erp_quality(product_class: str) -> str:
     return "unknown"
 
 
+def _precise_epoch_utc(
+    sp3: Sp3StateProvider,
+    epoch: datetime.datetime,
+    time_scale: TimeScale | str,
+    erp: IgsErpEarthOrientationProvider | None,
+) -> datetime.datetime:
+    """Resolve one SP3 calendar epoch through the product's pinned time data.
+
+    SP3 stores a calendar label plus a declared scale.  Using the process
+    default leap-second list here would let the coverage checks disagree with
+    the transformer that later rotates the same state.  This helper is the
+    single import-time route for GPS/TAI/UTC→UTC and the special UT1 case.
+    """
+
+    transformer = sp3.frame_transformer
+    if transformer is None:
+        raise PreciseProductImportError("El SP3 no tiene un transformador temporal asociado.")
+    leap_seconds = transformer.leap_second_table
+    scale = TimeScale.from_label(time_scale)
+    try:
+        if scale is TimeScale.UT1:
+            if erp is None:
+                raise PreciseProductImportError(
+                    "SP3 declara UT1; debe proporcionar un fichero ERP para convertir sus épocas a UTC."
+                )
+            # DUT1 itself is indexed in UTC.  Start with the bounded UTC≈UT1
+            # estimate, resolve ERP there, then make the actual UT1→UTC
+            # conversion with that snapshot's DUT1.
+            provisional_utc = to_utc(
+                epoch,
+                scale,
+                dut1_seconds=0.0,
+                leap_seconds=leap_seconds,
+            )
+            orientation = erp.at(provisional_utc)
+            utc = to_utc(
+                epoch,
+                scale,
+                dut1_seconds=orientation.dut1_seconds,
+                leap_seconds=leap_seconds,
+            )
+        else:
+            utc = to_utc(epoch, scale, leap_seconds=leap_seconds)
+
+        # An explicitly dated local snapshot must not be used after its
+        # publisher's validity horizon.  Strict/pinned workflows retain the
+        # stronger existing coverage policy even if the metadata was unusual.
+        require_unexpired = leap_seconds.expires_at is not None or (
+            transformer.strict_eop and leap_seconds.sha256 is not None
+        )
+        leap_seconds.require_coverage(utc, require_unexpired=require_unexpired)
+        return utc
+    except PreciseProductImportError:
+        raise
+    except ValueError as exc:
+        raise PreciseProductImportError(
+            f"No se puede convertir una época SP3 {scale.value} a UTC con la tabla de segundos intercalares activa."
+        ) from exc
+
+
+def _precise_sample_utc(
+    sp3: Sp3StateProvider,
+    sample: StateVector,
+    erp: IgsErpEarthOrientationProvider | None,
+) -> datetime.datetime:
+    """Resolve a native SP3 sample to UTC using the product time contract."""
+
+    return _precise_epoch_utc(sp3, sample.epoch, sample.time_scale, erp)
+
+
+def _precise_gnss_time_validation_payload(
+    sp3: Sp3StateProvider,
+    erp: IgsErpEarthOrientationProvider | None,
+    report: PreciseGnssTimeValidation | None,
+) -> dict[str, object]:
+    """Return auditable metadata for the import-time temporal preflight.
+
+    The validation itself happens in :func:`_validate_precise_gnss_time_contract`
+    before ``PreciseProduct`` is constructed.  Keeping the resulting report
+    declarative avoids repeating a full product-wide validation whenever a UI
+    asks for the payload, while still identifying the exact leap-second table
+    which governed GPS/TAI/UTC conversion.
+    """
+
+    transformer = sp3.frame_transformer
+    if transformer is None or report is None:
+        return {
+            "status": "unavailable" if transformer is None else "unknown",
+            "reason": (
+                "El SP3 no tiene un transformador temporal asociado."
+                if transformer is None
+                else "No hay informe de prevalidación temporal para este SP3 heredado."
+            ),
+        }
+    leap_seconds = transformer.leap_second_table
+    externally_fresh = bool(
+        leap_seconds.version is not None
+        and leap_seconds.sha256 is not None
+        and leap_seconds.expires_at is not None
+    )
+    return {
+        "status": "passed_before_persistence",
+        "declared_time_scale": sp3.metadata.time_scale_label,
+        "source_to_utc_round_trip": {
+            "status": "passed",
+            "tolerance_seconds": 1.0e-6,
+            "scope": "cada época SP3 distinta",
+            "checked_epoch_count": report.source_epoch_count,
+        },
+        "utc_to_ut1_round_trip": {
+            "status": "passed" if report.utc_ut1_checked_epoch_count else "not_applicable",
+            "tolerance_seconds": 1.0e-6 if report.utc_ut1_checked_epoch_count else None,
+            "scope": "épocas SP3 cubiertas por el ERP" if erp is not None else None,
+            "checked_epoch_count": report.utc_ut1_checked_epoch_count,
+        },
+        "leap_seconds": {
+            "source": leap_seconds.source,
+            "version": leap_seconds.version,
+            "sha256": leap_seconds.sha256,
+            "last_effective_at": _iso_or_none(leap_seconds.last_effective_at),
+            "expires_at": _iso_or_none(leap_seconds.expires_at),
+            "publisher_validity_horizon_present": leap_seconds.expires_at is not None,
+            "external_freshness": "verified" if externally_fresh else "unverified",
+            "external_freshness_reason": (
+                None
+                if externally_fresh
+                else (
+                    "Para ECI preciso, configure una tabla local de segundos intercalares "
+                    "versionada, con SHA-256 y fecha de caducidad del publicador."
+                )
+            ),
+        },
+    }
+
+
+def _validate_precise_gnss_time_contract(
+    sp3: Sp3StateProvider,
+    erp: IgsErpEarthOrientationProvider | None,
+) -> PreciseGnssTimeValidation:
+    """Preflight SP3 time conversions before a product can be persisted.
+
+    The round trips prove the configured GPS/TAI/UTC relation is internally
+    exact at every distinct SP3 epoch.  Whenever the supplied ERP covers an
+    epoch, UTC→UT1→UTC is tested with the same DUT1 sample as the later frame
+    transform.  A mismatch above one microsecond is treated as a rejected
+    import, which is deliberately far below a one-second Earth-rotation
+    error.
+    """
+
+    source_samples = sorted(
+        {
+            (sample.epoch, sample.time_scale)
+            for provider in sp3.satellites.values()
+            for sample in provider.samples
+        },
+        key=lambda item: item[0],
+    )
+    if not source_samples:
+        raise PreciseProductImportError("El SP3 no contiene épocas para validar su escala temporal.")
+
+    transformer = sp3.frame_transformer
+    if transformer is None:
+        raise PreciseProductImportError("El SP3 no tiene un transformador temporal asociado.")
+    leap_seconds = transformer.leap_second_table
+
+    erp_start = erp_end = None
+    if erp is not None:
+        identity = erp.snapshot_identity
+        erp_start = identity.coverage_start if identity is not None else erp.samples[0].sampled_at
+        erp_end = identity.coverage_end if identity is not None else erp.samples[-1].sampled_at
+
+    previous_utc: datetime.datetime | None = None
+    utc_ut1_checked_epoch_count = 0
+    for epoch, scale in source_samples:
+        # The metadata parser already accepts only known time scales, but keep
+        # this explicit at the persistence boundary in case an integration
+        # constructed a provider directly.
+        normalized_scale = TimeScale.from_label(scale)
+        utc = _precise_epoch_utc(sp3, epoch, normalized_scale, erp)
+        try:
+            dut1 = None
+            if normalized_scale is TimeScale.UT1:
+                if erp is None:
+                    raise PreciseProductImportError(
+                        "SP3 declara UT1; debe proporcionar un fichero ERP para convertir sus épocas a UTC."
+                    )
+                dut1 = erp.at(utc).dut1_seconds
+            round_trip = from_utc(
+                utc,
+                normalized_scale,
+                dut1_seconds=dut1,
+                leap_seconds=leap_seconds,
+            )
+        except PreciseProductImportError:
+            raise
+        except ValueError as exc:
+            raise PreciseProductImportError(
+                f"No se puede comprobar el retorno UTC→{normalized_scale.value} de una época SP3."
+            ) from exc
+        if abs((round_trip - epoch).total_seconds()) > 1.0e-6:
+            raise PreciseProductImportError(
+                "La conversión temporal SP3 no supera la comprobación de desfase; "
+                "revise la tabla de segundos intercalares."
+            )
+        if previous_utc is not None and utc <= previous_utc:
+            raise PreciseProductImportError(
+                "La conversión temporal del SP3 a UTC no conserva el orden de las épocas."
+            )
+        previous_utc = utc
+
+        if erp_start is None or erp_end is None or not (erp_start <= utc <= erp_end):
+            continue
+        try:
+            orientation = erp.at(utc)  # Linear, bounded ERP interpolation.
+            ut1 = utc_to_ut1(utc, dut1_seconds=orientation.dut1_seconds)
+            recovered_utc = to_utc(
+                ut1,
+                TimeScale.UT1,
+                dut1_seconds=orientation.dut1_seconds,
+                leap_seconds=leap_seconds,
+            )
+        except ValueError as exc:
+            raise PreciseProductImportError(
+                "No se puede comprobar la conversión UTC→UT1 con el ERP importado."
+            ) from exc
+        if abs((recovered_utc - utc).total_seconds()) > 1.0e-6:
+            raise PreciseProductImportError(
+                "La conversión UTC→UT1 no supera la comprobación de desfase temporal."
+            )
+        utc_ut1_checked_epoch_count += 1
+
+    return PreciseGnssTimeValidation(
+        source_epoch_count=len(source_samples),
+        utc_ut1_checked_epoch_count=utc_ut1_checked_epoch_count,
+    )
+
+
 def _sp3_coverage_utc(
     sp3: Sp3StateProvider,
+    erp: IgsErpEarthOrientationProvider | None = None,
 ) -> tuple[datetime.datetime | None, datetime.datetime | None]:
     """Return the finite SP3 coverage in UTC without assuming its scale.
 
@@ -1011,13 +1319,55 @@ def _sp3_coverage_utc(
     values: list[datetime.datetime] = []
     for provider in sp3.satellites.values():
         for sample in provider.samples:
-            try:
-                values.append(to_utc(sample.epoch, sample.time_scale))
-            except ValueError as exc:
-                raise PreciseProductImportError(
-                    "No se puede convertir la cobertura temporal SP3 a UTC"
-                ) from exc
+            values.append(_precise_sample_utc(sp3, sample, erp))
     return min(values, default=None), max(values, default=None)
+
+
+def _precise_gnss_eci_time_contract(
+    sp3: Sp3StateProvider,
+    product_start: datetime.datetime | None,
+    product_end: datetime.datetime | None,
+) -> dict[str, object]:
+    """Qualify the UTC/TAI snapshot required by high-rigor GNSS ECI.
+
+    The import-time source-scale round trip establishes internal consistency.
+    This additional gate distinguishes an auditable IERS/NTP snapshot from the
+    intentionally open-ended compatibility table: a future ECI/comparison
+    workflow must have a version, content hash and publisher validity horizon
+    covering the complete selected SP3 interval.
+    """
+
+    transformer = sp3.frame_transformer
+    if transformer is None or product_start is None or product_end is None:
+        return {
+            "available": False,
+            "reason": "No hay cobertura temporal SP3 o transformador para cualificar UTC→ECI.",
+            "source": None,
+            "version": None,
+            "sha256": None,
+            "expires_at": None,
+        }
+    leap_seconds = transformer.leap_second_table
+    try:
+        transformer.require_precise_gnss_leap_second_snapshot(product_start)
+        transformer.require_precise_gnss_leap_second_snapshot(product_end)
+    except ValueError as exc:
+        return {
+            "available": False,
+            "reason": str(exc),
+            "source": leap_seconds.source,
+            "version": leap_seconds.version,
+            "sha256": leap_seconds.sha256,
+            "expires_at": _iso_or_none(leap_seconds.expires_at),
+        }
+    return {
+        "available": True,
+        "reason": "La tabla de segundos intercalares versionada y con hash cubre toda la ventana SP3.",
+        "source": leap_seconds.source,
+        "version": leap_seconds.version,
+        "sha256": leap_seconds.sha256,
+        "expires_at": _iso_or_none(leap_seconds.expires_at),
+    }
 
 
 def _eci_conversion_contract(
@@ -1033,11 +1383,18 @@ def _eci_conversion_contract(
     that the selected ERP cannot support.
     """
 
-    product_start, product_end = _sp3_coverage_utc(sp3)
+    # ERP is also needed when an uncommon SP3 declares UT1.  Passing it here
+    # keeps the ERP coverage comparison on the same UTC conversion route used
+    # during import and payload rendering.
+    product_start, product_end = _sp3_coverage_utc(sp3, erp)
+    time_data = _precise_gnss_eci_time_contract(sp3, product_start, product_end)
     reference = sp3.metadata.reference_frame
     transformer = sp3.frame_transformer
     target_realization = (
         transformer.default_terrestrial_realization if transformer is not None else None
+    )
+    iau2006_2000a_available = bool(
+        transformer is not None and transformer.has_iau2006_2000a
     )
     source_realization = reference.realization or reference.label
     if erp is None:
@@ -1046,6 +1403,10 @@ def _eci_conversion_contract(
             "available": False,
             "route_available": False,
             "available_within_erp_coverage": False,
+            "iau2006_2000a_available": iau2006_2000a_available,
+            "leap_seconds_available": time_data["available"],
+            "leap_seconds": time_data,
+            "model": "IAU 2006/2000A + IERS ERP",
             "target_frame": "EME2000",
             "erp_applied": False,
             "coverage": {
@@ -1110,6 +1471,13 @@ def _eci_conversion_contract(
                 f"El ERP está disponible, pero {reference.label} no tiene una ruta terrestre "
                 "registrada para convertir a ECI."
             )
+    elif not iau2006_2000a_available:
+        reason = (
+            "La conversión ITRF→ECI requiere pyerfa/SOFA con IAU 2006/2000A; "
+            "el modelo de respaldo visual no es suficiente."
+        )
+    elif not time_data["available"]:
+        reason = str(time_data["reason"])
     elif covers_product:
         reason = (
             "La conversión terrestre→EME2000 usa el ERP importado y conserva "
@@ -1127,11 +1495,20 @@ def _eci_conversion_contract(
         )
     return {
         "required": True,
-        "available": route_available and covers_product,
+        "available": route_available and iau2006_2000a_available and bool(time_data["available"]) and covers_product,
         "route_available": route_available,
-        "available_within_erp_coverage": route_available and overlaps_product,
+        "available_within_erp_coverage": (
+            route_available
+            and iau2006_2000a_available
+            and bool(time_data["available"])
+            and overlaps_product
+        ),
+        "iau2006_2000a_available": iau2006_2000a_available,
+        "leap_seconds_available": time_data["available"],
+        "leap_seconds": time_data,
+        "model": "IAU 2006/2000A + IERS ERP",
         "target_frame": "EME2000",
-        "erp_applied": route_available and overlaps_product,
+        "erp_applied": route_available and iau2006_2000a_available and bool(time_data["available"]) and overlaps_product,
         "coverage": coverage,
         "reason": reason,
     }
@@ -1160,6 +1537,9 @@ def _annotate_precise_gnss_frame_contract(
         "erp_snapshot_id": identity.content_id if identity is not None else None,
         "eci_target_frame": "EME2000",
         "eci_route_available": eci["route_available"],
+        "eci_iau2006_2000a_available": eci["iau2006_2000a_available"],
+        "eci_leap_seconds_available": eci["leap_seconds_available"],
+        "eci_model": eci["model"],
         "eci_available": eci["available"],
         "eci_available_within_erp_coverage": eci["available_within_erp_coverage"],
         "eci_coverage": eci["coverage"],
@@ -1750,6 +2130,19 @@ def _subset_sp3_state_provider(
             if identifier in sp3.clock_samples
         },
     )
+
+
+def _sp3_validation_payload(sp3: Sp3StateProvider) -> dict[str, object] | None:
+    """Expose only a parser-produced validation report.
+
+    ``None`` is reserved for backwards-compatible in-memory providers
+    constructed by integrations before source validation existed. Normal
+    uploads and repository reloads always receive a passed report from
+    :func:`parse_sp3_state_provider`.
+    """
+
+    report = sp3.validation
+    return report.payload() if report is not None else None
 
 
 def _tabular_interpolation_summary(provider: TabularStateProvider) -> dict[str, object]:
