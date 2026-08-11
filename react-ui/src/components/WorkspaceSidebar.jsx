@@ -59,7 +59,17 @@ function ProjectTimeFooter() {
     useEffect(() => {
         const onTimeContext = (event) => {
             const nextDate = new Date(event.detail?.date || Date.now());
-            setContext({ date: Number.isNaN(nextDate.getTime()) ? new Date() : nextDate, mode: event.detail?.mode || "realtime", isPlaying: event.detail?.isPlaying !== false, oemDomainActive: event.detail?.oemDomainActive === true });
+            setContext({
+                date: Number.isNaN(nextDate.getTime()) ? new Date() : nextDate,
+                mode: event.detail?.mode || "realtime",
+                isPlaying: event.detail?.isPlaying !== false,
+                oemDomainActive: event.detail?.oemDomainActive === true,
+                sp3DomainActive: event.detail?.sp3DomainActive === true,
+                finiteEphemerisDomainActive: event.detail?.finiteEphemerisDomainActive === true,
+                finiteEphemerisSources: Array.isArray(event.detail?.finiteEphemerisSources)
+                    ? event.detail.finiteEphemerisSources
+                    : []
+            });
         };
         window.addEventListener("orbit:time-context", onTimeContext);
         return () => window.removeEventListener("orbit:time-context", onTimeContext);
@@ -73,6 +83,11 @@ function ProjectTimeFooter() {
     const isStatic = context.mode === "static";
     const isPausedRealtime = context.mode === "realtime" && context.isPlaying === false;
     const selectedMode = context.mode === "range" ? "range" : (isStatic ? "static" : "realtime");
+    const finiteEphemerisDomainActive = context.finiteEphemerisDomainActive === true;
+    const finiteSourceLabel = context.finiteEphemerisSources?.length
+        ? context.finiteEphemerisSources.join(" y ")
+        : (context.sp3DomainActive ? "SP3" : "OEM");
+    const finiteDomainRestriction = `Las efemÃ©rides ${finiteSourceLabel} requieren el modo Simulated.`;
     const modePresentation = isPausedRealtime
         ? { label: "Paused", dot: "bg-[#f0ae45] shadow-[0_0_8px_rgba(240,174,69,.65)]" }
         : {
@@ -102,7 +117,10 @@ function ProjectTimeFooter() {
                 <span className={`ml-px grid size-[13px] shrink-0 place-items-center text-[#a9beda] transition-transform ${modeMenuOpen ? "rotate-180" : ""}`} aria-hidden="true"><ChevronDownIcon /></span>
             </button>
             {modeMenuOpen && <div id="projectTimeModeMenu" className="absolute right-0 bottom-[calc(100%+6px)] z-[10230] grid min-w-[120px] gap-1 rounded-[7px] border border-[#315178] bg-[#0c1728] p-[4px] shadow-[0_12px_28px_rgba(0,0,0,.45)]" role="menu" aria-label="Modo temporal">
-                {[{ value: "static", label: "Static" }, { value: "realtime", label: "Real time" }, { value: "range", label: "Simulated" }].map((option) => <button className={`orbit-time-mode-option cursor-pointer appearance-none rounded-[5px] border-0 bg-transparent px-[8px] py-[7px] text-left font-[system-ui,sans-serif] text-[10px] leading-none font-semibold text-[#c7d5e9]${selectedMode === option.value ? " is-selected" : ""}`} type="button" role="menuitemradio" aria-checked={selectedMode === option.value} key={option.value} onClick={() => selectMode(option.value)}>{option.label}</button>)}
+                {[{ value: "static", label: "Static" }, { value: "realtime", label: "Real time" }, { value: "range", label: "Simulated" }].map((option) => {
+                    const disabled = finiteEphemerisDomainActive && option.value !== "range";
+                    return <button className={`orbit-time-mode-option cursor-pointer appearance-none rounded-[5px] border-0 bg-transparent px-[8px] py-[7px] text-left font-[system-ui,sans-serif] text-[10px] leading-none font-semibold text-[#c7d5e9]${selectedMode === option.value ? " is-selected" : ""}${disabled ? " cursor-not-allowed opacity-45" : ""}`} type="button" role="menuitemradio" aria-checked={selectedMode === option.value} aria-disabled={disabled} disabled={disabled} title={disabled ? finiteDomainRestriction : undefined} key={option.value} onClick={() => selectMode(option.value)}>{option.label}</button>;
+                })}
             </div>}
         </div>
     </footer>;

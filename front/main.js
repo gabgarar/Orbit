@@ -83,6 +83,7 @@ import { createFreeCameraKeyboardControls } from "./js/runtime/camera/freeKeyboa
 import { formatDurationCompact, parseTleEpochDate } from "./js/runtime/simulation/timeFormatting.js";
 import { createSimulationState, setSimulationRange, SIMULATION_MODE_RANGE, SIMULATION_MODE_REALTIME, SIMULATION_MODE_STATIC } from "./js/runtime/simulation/simulationState.js";
 import { createSimulationController } from "./js/runtime/simulation/simulationController.js";
+import { resolveSimulationModeRequest } from "./js/runtime/simulation/modePolicy.js";
 import { clamp, getDateAtTimelineRatio, getRangeHours, getTimelineRatio } from "./js/runtime/simulation/timeline.js";
 import { createTychoSkyDome } from "./js/rendering/tychoSkyDome.js";
 import { createNightImageryLayer } from "./js/rendering/nightImageryLayer.js";
@@ -881,6 +882,77 @@ function resolvePreciseProductCoverage(entries = [], payload = {}) {
     return end > start ? { start, end } : null;
 }
 
+function getActivePreciseProductEntries() {
+    const entriesBySourceId = new Map();
+    for (const layerId of getActiveSatelliteLayerIds()) {
+        const sourceId = getSatelliteSourceIdFromLayerId(layerId);
+        if (!sourceId || entriesBySourceId.has(sourceId)) {
+            continue;
+        }
+        const entry = getCatalogEntryMeta(sourceId);
+        const sourceFormat = String(entry?.sourceFormat ?? entry?.source_format ?? "").toUpperCase();
+        if (sourceFormat === "SP3") {
+            entriesBySourceId.set(sourceId, entry);
+        }
+    }
+    return [...entriesBySourceId.values()];
+}
+
+function getFiniteEphemerisDomainState() {
+    const preciseEntries = getActivePreciseProductEntries();
+    const hasOemDomain = hasLoadedOemEphemerisTracks();
+    const hasSp3Domain = preciseEntries.length > 0;
+    return {
+        hasOemDomain,
+        hasSp3Domain,
+        finiteEphemerisDomainActive: hasOemDomain || hasSp3Domain,
+        finiteSources: [
+            ...(hasOemDomain ? ["OEM"] : []),
+            ...(hasSp3Domain ? ["SP3"] : [])
+        ],
+        preciseCoverage: hasSp3Domain ? resolvePreciseProductCoverage(preciseEntries) : null
+    };
+}
+
+function finiteEphemerisDomainLabel(domain = getFiniteEphemerisDomainState()) {
+    if (domain.hasOemDomain && domain.hasSp3Domain) return "OEM y SP3";
+    if (domain.hasSp3Domain) return "SP3";
+    return "OEM";
+}
+
+function forceFiniteEphemerisRange(domain = getFiniteEphemerisDomainState()) {
+    if (!domain.finiteEphemerisDomainActive) {
+        return false;
+    }
+
+    if (domain.hasOemDomain) {
+        const bounds = getLoadedOemEphemerisTimeBounds();
+        if (bounds) {
+            applySimulationRange(new Date(bounds.startTimeMs), new Date(bounds.endTimeMs));
+        }
+    } else if (domain.preciseCoverage) {
+        applySimulationRange(
+            new Date(domain.preciseCoverage.start),
+            new Date(domain.preciseCoverage.end),
+            { preferRequestedRange: true }
+        );
+    }
+
+    // ``range`` is the only request that modePolicy accepts while a finite
+    // source is active, so this cannot recurse back into the restriction.
+    setSimulationMode(SIMULATION_MODE_RANGE);
+    return true;
+}
+
+function reconcileFiniteEphemerisDomainAfterLayerChange() {
+    const domain = getFiniteEphemerisDomainState();
+    if (domain.finiteEphemerisDomainActive && simulationState.mode !== SIMULATION_MODE_RANGE) {
+        forceFiniteEphemerisRange(domain);
+        return;
+    }
+    updateTopToolbarTime();
+}
+
 function alignSimulationToPreciseProductCoverage(entries, payload) {
     const coverage = resolvePreciseProductCoverage(entries, payload);
     if (!coverage || !applySimulationRange(new Date(coverage.start), new Date(coverage.end), { preferRequestedRange: true })) {
@@ -1449,6 +1521,13 @@ function setCompositeLayerActive(layerId, active) {
     const changed = setSatelliteLayerActive(layerId, isActive);
     if (changed) {
         syncGroundStationVisibilityLinks();
+        const sourceId = getSatelliteSourceIdFromLayerId(layerId);
+        if (isPreciseProductLayer(sourceId)) {
+            // A finite SP3 may be activated from Layers or while restoring a
+            // project.  In both cases it owns an explicit coverage interval,
+            // never wall-clock realtime or an unconstrained static instant.
+            reconcileFiniteEphemerisDomainAfterLayerChange();
+        }
     }
     return changed;
 }
@@ -2519,6 +2598,9 @@ async function selectSatelliteFromGlobalSearch(item) {
             await showAppAlert(`No hay hueco para activar la capa de ${satId}.`, uiText("alertTitle"));
             return;
         }
+        if (isPreciseProductLayer(satId)) {
+            reconcileFiniteEphemerisDomainAfterLayerChange();
+        }
     }
 
     openLeftSatellitesPanel();
@@ -2644,7 +2726,7 @@ function setupTopSearchAutocomplete() {
     topSearchInitialized = true;
 }
 
-function updateSimulationTimelineUi() {
+function updateSimulationTimelineUi(finiteDomain = getFiniteEphemerisDomainState()) {
     // React owns the visible controls and receives a complete state snapshot.
     window.dispatchEvent(new CustomEvent("orbit:simulation-state", {
         detail: {
@@ -2652,7 +2734,10 @@ function updateSimulationTimelineUi() {
             isPlaying: simulationState.isPlaying,
             isPaused: simulationState.isPlaying === false,
             speed: simulationState.speed,
-            oemDomainActive: hasLoadedOemEphemerisTracks(),
+            oemDomainActive: finiteDomain.hasOemDomain,
+            sp3DomainActive: finiteDomain.hasSp3Domain,
+            finiteEphemerisDomainActive: finiteDomain.finiteEphemerisDomainActive,
+            finiteEphemerisSources: finiteDomain.finiteSources,
             currentDate: getDisplayedSimulationDate().toISOString(),
             startDate: simulationState.startDate.toISOString(),
             endDate: simulationState.endDate.toISOString(),
@@ -2688,21 +2773,17 @@ function updateTelemetryTimeContext() {
 function setSimulationMode(mode) {
     const previousMode = simulationState.mode;
     const displayedDate = getDisplayedSimulationDate();
-    const normalized = [SIMULATION_MODE_REALTIME, SIMULATION_MODE_RANGE, SIMULATION_MODE_STATIC].includes(mode)
-        ? mode
-        : SIMULATION_MODE_REALTIME;
+    const finiteDomain = getFiniteEphemerisDomainState();
+    const request = resolveSimulationModeRequest(mode, finiteDomain);
+    const normalized = request.mode;
 
-    if (normalized === SIMULATION_MODE_REALTIME && hasLoadedOemEphemerisTracks()) {
-        const bounds = getLoadedOemEphemerisTimeBounds();
-        if (bounds) {
-            applySimulationRange(new Date(bounds.startTimeMs), new Date(bounds.endTimeMs));
-        }
-        simulationState.mode = SIMULATION_MODE_RANGE;
-        showAppAlert("No se puede usar tiempo real mientras haya OEMs cargados. Usa modo Rango.", uiText("alertTitle"));
-        simulationState.lastTickTimestamp = Date.now();
-        applySimulationDateToViewer(getDisplayedSimulationDate());
-        updateTopToolbarTime();
-        refreshSimulationControlsUi();
+    if (request.restricted) {
+        forceFiniteEphemerisRange(finiteDomain);
+        const requestedLabel = request.requestedMode === SIMULATION_MODE_STATIC ? "Static" : "Real time";
+        void showAppAlert(
+            `No se puede usar ${requestedLabel} mientras haya efemÃ©rides ${finiteEphemerisDomainLabel(finiteDomain)} activas. Usa modo Simulated.`,
+            uiText("alertTitle")
+        );
         return;
     }
 
@@ -3443,6 +3524,15 @@ function restoreProjectSimulationState(snapshot) {
     const requestedMode = [SIMULATION_MODE_REALTIME, SIMULATION_MODE_RANGE, SIMULATION_MODE_STATIC].includes(snapshot.mode)
         ? snapshot.mode
         : SIMULATION_MODE_RANGE;
+    const finiteDomain = getFiniteEphemerisDomainState();
+    const modeRequest = resolveSimulationModeRequest(requestedMode, finiteDomain);
+    if (modeRequest.restricted) {
+        // A project can have been saved before this finite-domain policy was
+        // introduced. Do not resurrect an SP3/OEM layer into wall-clock or
+        // static time; restore its bounded ephemeris domain instead.
+        forceFiniteEphemerisRange(finiteDomain);
+        return true;
+    }
     const savedStart = new Date(snapshot.startDate);
     const savedEnd = new Date(snapshot.endDate);
     const hasSavedRange = !Number.isNaN(savedStart.getTime())
@@ -3465,7 +3555,7 @@ function restoreProjectSimulationState(snapshot) {
         restoredDate = new Date(clamp(restoredDate.getTime(), rangeStartMs, rangeEndMs));
     }
 
-    if (requestedMode === SIMULATION_MODE_REALTIME && !hasLoadedOemEphemerisTracks()) {
+    if (requestedMode === SIMULATION_MODE_REALTIME) {
         simulationState.mode = SIMULATION_MODE_REALTIME;
         simulationState.currentDate = new Date();
         simulationState.isPlaying = true;
@@ -3752,14 +3842,18 @@ function updateTopToolbarState() {
 }
 
 function updateTopToolbarTime() {
-    updateSimulationTimelineUi();
+    const finiteDomain = getFiniteEphemerisDomainState();
+    updateSimulationTimelineUi(finiteDomain);
     window.dispatchEvent(new CustomEvent("orbit:time-context", {
         detail: {
             date: getDisplayedSimulationDate().toISOString(),
             mode: simulationState.mode,
             isPlaying: simulationState.isPlaying,
             isPaused: simulationState.isPlaying === false,
-            oemDomainActive: hasLoadedOemEphemerisTracks()
+            oemDomainActive: finiteDomain.hasOemDomain,
+            sp3DomainActive: finiteDomain.hasSp3Domain,
+            finiteEphemerisDomainActive: finiteDomain.finiteEphemerisDomainActive,
+            finiteEphemerisSources: finiteDomain.finiteSources
         }
     }));
 }
@@ -6433,12 +6527,15 @@ function setupPropagatedParametersInspector() {
         },
         onAddAllLayers: () => {
             if (isManualOrbitDesignActive()) return false;
-            return setAllSatelliteLayersActive(true);
+            const result = setAllSatelliteLayersActive(true);
+            reconcileFiniteEphemerisDomainAfterLayerChange();
+            return result;
         },
         onRemoveAllLayers: () => {
             if (isManualOrbitDesignActive()) return false;
             bodyCentricCamera.deactivate();
             setAllSatelliteLayersActive(false);
+            reconcileFiniteEphemerisDomainAfterLayerChange();
             for (const stationId of [...groundStationLayers.keys()]) {
                 removeGroundStationLayer(stationId);
             }
