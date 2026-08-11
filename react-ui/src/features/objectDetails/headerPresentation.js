@@ -5,7 +5,7 @@ const absentIdentifiers = new Set(["", "-", "unknown", "n/a", "na", "none", "nul
  * actually publishes one.  In particular, an SP3 PRN (for example G01) is
  * not a NORAD identifier and must not be presented as a missing NORAD value.
  */
-export function objectDetailsNoradId(value) {
+function objectDetailsNoradId(value) {
     const normalized = String(value ?? "").trim();
     return absentIdentifiers.has(normalized.toLowerCase()) ? "" : normalized;
 }

@@ -126,5 +126,3 @@ export function getObjectDetailFieldHelp(label, { sourceFormat = "", section = "
     }
     return FIELD_HELP[key] || dynamicFieldHelp(key) || "";
 }
-
-export { normalizedLabel as normalizeObjectDetailFieldLabel };

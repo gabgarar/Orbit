@@ -8,7 +8,6 @@
  */
 
 export const PRECISE_PRODUCT_VALIDATION_DIALOG_EVENT = "orbit:precise-product-validation-dialog";
-export const PRECISE_PRODUCT_VALIDATION_DIALOG_DISMISS_EVENT = "orbit:precise-product-validation-dialog-dismiss";
 
 function text(value) {
     return String(value ?? "").trim();

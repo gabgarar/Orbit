@@ -7,7 +7,7 @@
   },
   "knip": {
     "entry": ["main.js", "tests/unit/**/*.test.js"],
-    "project": ["main.js", "js/**/*.js", "tests/unit/**/*.test.js"],
+    "project": ["js/**/*.js", "tests/unit/**/*.test.js"],
     "ignoreExportsUsedInFile": true,
     "ignoreIssues": {
       "js/runtime/runtimeStatus.js": ["exports"]

@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import PanelCloseButton from "./PanelCloseButton.jsx";
-import {
-    PRECISE_PRODUCT_VALIDATION_DIALOG_DISMISS_EVENT,
-    PRECISE_PRODUCT_VALIDATION_DIALOG_EVENT
-} from "../../../front/js/features/preciseProducts/validationUi.js";
+import { PRECISE_PRODUCT_VALIDATION_DIALOG_EVENT } from "../../../front/js/features/preciseProducts/validationUi.js";
 
 function normalizedRequest(value) {
     if (!value || typeof value !== "object") return null;
@@ -35,11 +32,8 @@ export default function PreciseProductValidationDialog() {
 
     const dismiss = useCallback(() => {
         if (!request) return;
-        const { id, focusId } = request;
+        const { focusId } = request;
         setRequest(null);
-        window.dispatchEvent(new CustomEvent(PRECISE_PRODUCT_VALIDATION_DIALOG_DISMISS_EVENT, {
-            detail: { id }
-        }));
         window.requestAnimationFrame(() => {
             document.getElementById(focusId)?.focus?.({ preventScroll: true });
         });

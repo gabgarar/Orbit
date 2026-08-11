@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getObjectDetailFieldHelp, normalizeObjectDetailFieldLabel } from "../../../react-ui/src/features/objectDetails/fieldHelp.js";
+import { getObjectDetailFieldHelp } from "../../../react-ui/src/features/objectDetails/fieldHelp.js";
 import { buildObjectDetails } from "../../../react-ui/src/features/objectDetails/detailRows.js";
 
 const asObject = (rows) => Object.fromEntries(rows.map(([label, value]) => [label, value]));
 
 test("object detail field help describes SP3 source, frame and companion fields", () => {
-    assert.equal(normalizeObjectDetailFieldLabel("Época de cabecera"), "epoca de cabecera");
+    assert.match(getObjectDetailFieldHelp("Época de cabecera"), /cabecera SP3/i);
     assert.match(getObjectDetailFieldHelp("Marco nativo"), /archivo SP3/i);
     assert.match(getObjectDetailFieldHelp("Cobertura del producto"), /no extrapola/i);
     assert.match(getObjectDetailFieldHelp("Cadencia media"), /muestras válidas/i);

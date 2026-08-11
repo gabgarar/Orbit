@@ -358,13 +358,6 @@ export function isMechanicallyReachable(station, azimuthDeg, elevationDeg) {
         && (!azimuthIsDefined || isAzimuthWithinBounds(azimuthDeg, config.mechanical_azimuth_min_deg, config.mechanical_azimuth_max_deg));
 }
 
-/** Great-circle separation of two local horizon directions. */
-export function calculateAngularSeparationDeg(azimuthAdeg, elevationAdeg, azimuthBdeg, elevationBdeg) {
-    const directionA = localHorizonDirection(azimuthAdeg, elevationAdeg);
-    const directionB = localHorizonDirection(azimuthBdeg, elevationBdeg);
-    return Math.acos(clamp(dotDirection(directionA, directionB), -1, 1)) * 180 / Math.PI;
-}
-
 /**
  * Resolve a target direction in the tangent basis of a boresight.
  *

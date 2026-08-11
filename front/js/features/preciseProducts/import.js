@@ -68,23 +68,6 @@ export const PRECISE_PRODUCT_FILE_SLOTS = Object.freeze([
 ]);
 
 const SLOT_BY_KIND = new Map(PRECISE_PRODUCT_FILE_SLOTS.map((slot) => [slot.kind, slot]));
-const FILE_ACCEPT_VALUES = new Set(PRECISE_PRODUCT_FILE_SLOTS
-    .flatMap((slot) => slot.accept.split(",")));
-
-// The named fields deliberately implement the small, documented contract
-// above. The older drop/multi-file flow remains broader so existing SP3c/d,
-// RINEX CLK variants and bounded SP3/CLK archives do not regress.
-const LEGACY_PRODUCT_ACCEPT_VALUES = [
-    ".sp3c", ".sp3c.gz", ".sp3d", ".sp3d.gz",
-    ".sp3.zip", ".sp3c.zip", ".sp3d.zip",
-    ".sp3.Z", ".sp3c.Z", ".sp3d.Z",
-    ".clk_30s", ".clk_30s.gz", ".clk_05s", ".clk_05s.gz",
-    ".clk.zip", ".clk_30s.zip", ".clk_05s.zip",
-    ".clk.Z", ".clk_30s.Z", ".clk_05s.Z",
-    ".zip"
-];
-for (const value of LEGACY_PRODUCT_ACCEPT_VALUES) FILE_ACCEPT_VALUES.add(value);
-export const PRECISE_PRODUCT_FILE_ACCEPT = [...FILE_ACCEPT_VALUES].join(",");
 
 export const PRECISE_PRODUCT_MAX_FILE_BYTES = 32 * 1024 * 1024;
 export const PRECISE_PRODUCT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -166,10 +149,6 @@ export function normalizePreciseProductFileSelections(files) {
 
 export function isPreciseProductFileName(fileName) {
     return Boolean(classifyPreciseProductFile(fileName));
-}
-
-export function preciseProductSlotForKind(kind) {
-    return SLOT_BY_KIND.get(text(kind).toLowerCase()) || null;
 }
 
 /**

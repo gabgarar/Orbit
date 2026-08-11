@@ -6,8 +6,8 @@ import { GroundStationIcon } from "./icons.jsx";
  * The React surface owns format selection only.  `front/main.js` owns the
  * download because it is the authority for the authored station layers.
  */
-export const GROUND_STATION_EXPORT_REQUEST_EVENT = "orbit:ground-stations-export-request";
-export const GROUND_STATION_EXPORT_MENU_OPEN_EVENT = "orbit:ground-stations-export-menu-open";
+const GROUND_STATION_EXPORT_REQUEST_EVENT = "orbit:ground-stations-export-request";
+const GROUND_STATION_EXPORT_MENU_OPEN_EVENT = "orbit:ground-stations-export-menu-open";
 
 const FORMATS = Object.freeze([
     {
