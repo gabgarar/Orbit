@@ -127,6 +127,77 @@ function isApproximateEarthOrientation(earthOrientation, renderer) {
         || source.includes("approximate");
 }
 
+const ECI_BLOCK_LABELS = Object.freeze({
+    "missing-erp": "Marco terrestre aproximado (sin ERP)",
+    "missing-route": "Marco terrestre aproximado (ERP sin ruta ECI)",
+    "temporal-data": "ERP presente · ECI bloqueado por datos temporales",
+    "iau-model": "ERP presente · ECI bloqueado por motor IAU",
+    "erp-coverage": "ERP fuera de cobertura · ECI bloqueado",
+    unknown: "ERP presente · ECI no disponible"
+});
+
+const ECI_BLOCK_FALLBACK_REASONS = Object.freeze({
+    "missing-erp": PRECISE_PRODUCT_IMPORT_ERRORS.missingErpForEci,
+    "missing-route": "El ERP está disponible, pero falta una ruta de realización terrestre válida para convertir a ECI.",
+    "temporal-data": "La conversión a ECI está bloqueada hasta verificar la tabla de segundos intercalares para la ventana SP3.",
+    "iau-model": "La conversión a ECI requiere el motor IAU 2006/2000A; el modelo visual de respaldo no es suficiente.",
+    "erp-coverage": "El ERP importado no cubre la ventana temporal solicitada para convertir a ECI.",
+    unknown: "La conversión a ECI no está disponible para este producto SP3."
+});
+
+function normalizedDiagnosticText(value) {
+    return text(value)
+        .normalize("NFD")
+        .replace(/\p{Diacritic}/gu, "")
+        .toLowerCase();
+}
+
+function inferEciBlockReason(reason) {
+    const diagnostic = normalizedDiagnosticText(reason);
+    if (!diagnostic) return "";
+    if (/segundos intercalares|leap[ -]?seconds?|tabla temporal|datos temporales|time (?:data|table)/.test(diagnostic)) {
+        return "temporal-data";
+    }
+    if (/iau(?:\s*2006|\s*2000a)?|pyerfa|sofa/.test(diagnostic)) {
+        return "iau-model";
+    }
+    if (/ruta terrestre|realizacion terrestre|terrestrial (?:route|realization)|datum (?:route|operation)|registered (?:route|operation)/.test(diagnostic)) {
+        return "missing-route";
+    }
+    if (/cobertura|coverage|no cubre|fuera de (?:rango|ventana)|outside (?:the )?coverage/.test(diagnostic)) {
+        return "erp-coverage";
+    }
+    return "";
+}
+
+function resolveEciBlockReason({
+    erpProvided,
+    eciAvailable,
+    routeAvailable,
+    iau2006Available,
+    leapSecondsAvailable,
+    coverageAvailable,
+    coverageOverlapsProduct,
+    coverageCoversProduct,
+    reason
+}) {
+    if (!erpProvided) return "missing-erp";
+    if (eciAvailable) return "";
+    if (routeAvailable === false) return "missing-route";
+    if (iau2006Available === false) return "iau-model";
+    if (leapSecondsAvailable === false) return "temporal-data";
+
+    // Older runtime payloads exposed only `available_within_erp_coverage`.
+    // Prefer a detailed reason before interpreting that generic flag: it is
+    // also false when the time-data or IAU prerequisite is unavailable.
+    const inferred = inferEciBlockReason(reason);
+    if (inferred) return inferred;
+    if (coverageAvailable === false || coverageOverlapsProduct === false || coverageCoversProduct === false) {
+        return "erp-coverage";
+    }
+    return "unknown";
+}
+
 /**
  * Resolve the provenance of a precise-product frame without inventing an ITRF
  * transformation.  The Python service has used both the legacy `rendering`
@@ -207,27 +278,71 @@ export function resolvePreciseProductFrameStatus(source = {}, { runtimeFrame = "
     ], [
         "erp_applied", "erpApplied", "earth_orientation_applied", "earthOrientationApplied", "applied"
     ]);
-    const erpProvided = hasErpSource([renderer, ...metadata]);
-    const eciAvailability = booleanFromSources([eciConversion, renderer, ...metadata], [
+    const eciContractSources = [eciConversion, renderer, ...metadata];
+    const explicitErpProvided = booleanFromSources(eciContractSources, [
+        "erp_present", "erpPresent", "has_erp", "hasErp"
+    ]);
+    const erpProvided = hasErpSource([renderer, ...metadata]) || explicitErpProvided === true;
+    const eciAvailability = booleanFromSources(eciContractSources, [
         "eci_available", "eciAvailable", "available", "enabled", "ready"
     ]);
+    const eciRouteAvailable = booleanFromSources(eciContractSources, [
+        "route_available", "routeAvailable", "eci_route_available", "eciRouteAvailable"
+    ]);
+    const eciIau2006Available = booleanFromSources(eciContractSources, [
+        "iau2006_2000a_available", "iau2006_2000aAvailable",
+        "eci_iau2006_2000a_available", "eciIau2006_2000aAvailable"
+    ]);
+    const eciLeapSecondsAvailable = booleanFromSources(eciContractSources, [
+        "leap_seconds_available", "leapSecondsAvailable",
+        "eci_leap_seconds_available", "eciLeapSecondsAvailable"
+    ]);
+    const eciCoverage = firstRecord(eciContractSources, [
+        "coverage", "eci_coverage", "eciCoverage"
+    ]);
+    const eciCoverageSources = [eciCoverage, ...eciContractSources];
+    const eciCoverageAvailable = booleanFromSources(eciCoverageSources, [
+        "available_within_erp_coverage", "availableWithinErpCoverage",
+        "eci_available_within_erp_coverage", "eciAvailableWithinErpCoverage"
+    ]);
+    const eciCoverageOverlapsProduct = booleanFromSources(eciCoverageSources, [
+        "overlaps_product", "overlapsProduct"
+    ]);
+    const eciCoverageCoversProduct = booleanFromSources(eciCoverageSources, [
+        "covers_product", "coversProduct"
+    ]);
+    const rawEciReason = firstText([eciConversion, renderer, ...metadata], [
+        "eci_reason", "eciReason", "reason", "message", "detail", "error"
+    ]);
+    const eciCapabilityBlocked = eciRouteAvailable === false
+        || eciIau2006Available === false
+        || eciLeapSecondsAvailable === false
+        || eciCoverageAvailable === false;
     // A label alone is not permission to claim an ECI-capable route.  In
     // particular, an ERP can be present while the source realization lacks
     // the datum operation required by the backend.  An explicit unavailable
     // capability always wins over a stale/persisted display label.
     const erpApplied = (explicitErpApplied === true
         || backendDisplayLabel === "ITRF (con ERP aplicado)")
-        && eciAvailability !== false;
+        && eciAvailability !== false
+        && !eciCapabilityBlocked;
     // An ERP may be attached without being applicable to the requested epoch.
     // Only an explicitly applied ERP capability unlocks ECI work.
-    const eciAvailable = erpApplied && eciAvailability !== false;
-    const eciReason = firstText([eciConversion, renderer, ...metadata], [
-        "eci_reason", "eciReason", "reason", "message", "detail", "error"
-    ]) || (eciAvailable
+    const eciAvailable = erpApplied && eciAvailability !== false && !eciCapabilityBlocked;
+    const eciBlockReason = resolveEciBlockReason({
+        erpProvided,
+        eciAvailable,
+        routeAvailable: eciRouteAvailable,
+        iau2006Available: eciIau2006Available,
+        leapSecondsAvailable: eciLeapSecondsAvailable,
+        coverageAvailable: eciCoverageAvailable,
+        coverageOverlapsProduct: eciCoverageOverlapsProduct,
+        coverageCoversProduct: eciCoverageCoversProduct,
+        reason: rawEciReason
+    });
+    const eciReason = rawEciReason || (eciAvailable
         ? ""
-        : erpProvided
-            ? "El ERP está disponible, pero falta una ruta de realización terrestre válida para convertir a ECI."
-            : PRECISE_PRODUCT_IMPORT_ERRORS.missingErpForEci);
+        : ECI_BLOCK_FALLBACK_REASONS[eciBlockReason] || ECI_BLOCK_FALLBACK_REASONS.unknown);
     const approximate = !erpApplied || isApproximateEarthOrientation(earthOrientation, renderer);
     // Older persisted products may predate `renderer_reference`. If the
     // native realization and the runtime's Earth-fixed label differ, do not
@@ -244,12 +359,10 @@ export function resolvePreciseProductFrameStatus(source = {}, { runtimeFrame = "
 
     // A GNSS product must never present an Earth-fixed rendering value as a
     // complete ITRF-to-ECI solution unless the imported ERP was actually
-    // applied.  Keep the no-ERP label exact, while distinguishing the less
-    // common case in which an ERP is attached but the source datum has no
-    // registered route to ECI.
-    const approximateFrameLabel = erpProvided
-        ? "Marco terrestre aproximado (ERP sin ruta ECI)"
-        : "Marco terrestre aproximado (sin ERP)";
+    // applied.  When an ERP exists, name the prerequisite that blocked ECI
+    // rather than collapsing every case into a missing terrestrial route.
+    const approximateFrameLabel = ECI_BLOCK_LABELS[eciBlockReason]
+        || (erpProvided ? ECI_BLOCK_LABELS.unknown : ECI_BLOCK_LABELS["missing-erp"]);
     let displayFrame = erpApplied
         ? "ITRF (con ERP aplicado)"
         : approximateFrameLabel;
@@ -287,6 +400,7 @@ export function resolvePreciseProductFrameStatus(source = {}, { runtimeFrame = "
         erpProvided,
         erpApplied,
         eciAvailable,
+        eciBlockReason,
         eciReason,
         renderingLabel
     };
