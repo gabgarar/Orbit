@@ -45,6 +45,7 @@ credencial de CDDIS/IGS/ESA.
 | Método y ruta | Operación | Límite principal |
 | --- | --- | --- |
 | `GET /api/precise-products` | Lista productos persistidos, diagnósticos de rehidratación y los IDs runtime por satélite. | No vuelve a descargar fuentes. |
+| `POST /api/precise-products/preview` | Valida y analiza un producto GNSS sin guardarlo ni registrar capas. | Devuelve los satélites SP3 disponibles para seleccionar. |
 | `POST /api/precise-products/import` | Valida, persiste y registra un producto GNSS. | Un SP3 obligatorio y hasta un archivo de cada auxiliar: CLK, ERP, SUM, ATT y OSB. |
 
 El cuerpo canónico de importación es:
@@ -71,6 +72,24 @@ Content-Type: application/json
   }
 }
 ~~~
+
+El mismo cuerpo enviado a `POST /api/precise-products/preview` devuelve
+`preview.product` y `preview.satellites`, sin crear un directorio de producto,
+una capa ni un ID runtime. Cada candidato incluye su identificador GNSS,
+constelación, cobertura UTC, número de muestras y cadencia. Para confirmar un
+subconjunto, envíe el cuerpo a `/import` con, por ejemplo:
+
+~~~json
+{
+  "selected_satellite_ids": ["G01", "C06"]
+}
+~~~
+
+La selección se valida frente al SP3 y no puede estar vacía. Si se omite,
+`/import` conserva el comportamiento compatible de registrar todos los
+miembros. Una selección parcial recibe una identidad de producto estable que
+incluye el subconjunto, por lo que dos subconjuntos distintos del mismo SP3
+pueden coexistir y rehidratarse sin sobrescribirse.
 
 `content_base64` contiene el binario sin prefijo `data:`. La procedencia, la
 familia y la clase se determinan exclusivamente desde las fuentes: las

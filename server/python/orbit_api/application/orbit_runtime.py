@@ -538,6 +538,7 @@ class OrbitRuntime:
         files,
         *,
         require_eci: bool = False,
+        selected_satellite_ids=None,
     ) -> PreciseProduct:
         """Persist and register a local SP3/CLK precise product.
 
@@ -550,6 +551,7 @@ class OrbitRuntime:
         product = import_precise_product(
             files,
             require_eci=require_eci,
+            selected_satellite_ids=selected_satellite_ids,
             frame_transformer=self._frame_transformer,
         )
         self._precise_product_repository.save(product)
@@ -558,6 +560,25 @@ class OrbitRuntime:
             products[product.product_id] = product
             self._set_precise_products_locked(products)
         return product
+
+    def preview_precise_product(
+        self,
+        files,
+        *,
+        require_eci: bool = False,
+    ) -> PreciseProduct:
+        """Parse a local GNSS product without changing project state.
+
+        This is intentionally separate from ``import_precise_product``.  A
+        canceled selection dialog must not write an on-disk product, allocate
+        runtime propagators, invalidate cache state, or alter layer hydration.
+        """
+
+        return import_precise_product(
+            files,
+            require_eci=require_eci,
+            frame_transformer=self._frame_transformer,
+        )
 
     def precise_products_payload(self) -> dict:
         """Return persisted precise products and registered satellite entries."""

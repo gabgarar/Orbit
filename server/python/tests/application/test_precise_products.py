@@ -60,6 +60,21 @@ def _sp3_text(*, frame: str = "ITRF", include_velocity: bool = False) -> str:
     return "\n".join(rows)
 
 
+def _multi_satellite_sp3_text(*, frame: str = "ITRF") -> str:
+    """Small source with two GNSS constellations for selection tests."""
+
+    return "\n".join([
+        _sp3_header(frame=frame),
+        "%c cc UTC ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc",
+        "*  2026 07 26 00 00 18.00000000",
+        "PG01 7000.000000 0.000000 0.000000 0.123456",
+        "PC06 26000.000000 0.000000 0.000000 0.223456",
+        "*  2026 07 26 00 01 18.00000000",
+        "PG01 7060.000000 0.000000 0.000000 0.123457",
+        "PC06 26060.000000 0.000000 0.000000 0.223457",
+    ])
+
+
 def _minimal_sp3_text() -> str:
     """One-record SP3 fixture small enough for literal-only .Z coding.
 
@@ -600,6 +615,135 @@ def test_runtime_registers_p_only_sp3_uses_it_for_ephemeris_and_reloads_persiste
 
     assert reloaded.resolve_propagator(runtime_id, None, None)[0] == runtime_id
     assert reloaded.precise_products_payload()["items"][0]["satellites"][0]["id"] == runtime_id
+
+
+def test_precise_product_preview_parses_all_members_without_persisting_or_registering(tmp_path):
+    runtime = OrbitRuntime(precise_products_dir=tmp_path / "precise-products")
+
+    product = runtime.preview_precise_product([
+        _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _multi_satellite_sp3_text()),
+    ])
+    preview = product.preview_payload()
+
+    assert product.satellite_ids == ("G01", "C06")
+    assert not (tmp_path / "precise-products").exists()
+    assert runtime.precise_products_payload() == {"items": [], "diagnostics": []}
+    assert preview["product"]["persistence"] == {"scope": "preview", "reloadable": False}
+    assert preview["satellites"] == [
+        {
+            "id": "G01",
+            "satellite_id": "G01",
+            "gnss_id": "G01",
+            "name": "G01 · IGS0OPSFIN_20262070000_01D_05M_ORB",
+            "display_name": "G01",
+            "constellation": "GPS",
+            "coverage_start": "2026-07-26T00:00:18+00:00",
+            "coverage_end": "2026-07-26T00:01:18+00:00",
+            "coverage": {
+                "start_time": "2026-07-26T00:00:18+00:00",
+                "end_time": "2026-07-26T00:01:18+00:00",
+                "time_scale": "UTC",
+            },
+            "sample_count": 2,
+            "sample_cadence_seconds": 60.0,
+            "interpolation": {
+                "method": "LAGRANGE",
+                "declared_method": "LAGRANGE",
+                "degree": 1,
+                "sample_count": 2,
+                "mean_sample_cadence_seconds": 60.0,
+            },
+            "reference_frame": "ITRF",
+            "time_scale": "UTC",
+        },
+        {
+            "id": "C06",
+            "satellite_id": "C06",
+            "gnss_id": "C06",
+            "name": "C06 · IGS0OPSFIN_20262070000_01D_05M_ORB",
+            "display_name": "C06",
+            "constellation": "BeiDou",
+            "coverage_start": "2026-07-26T00:00:18+00:00",
+            "coverage_end": "2026-07-26T00:01:18+00:00",
+            "coverage": {
+                "start_time": "2026-07-26T00:00:18+00:00",
+                "end_time": "2026-07-26T00:01:18+00:00",
+                "time_scale": "UTC",
+            },
+            "sample_count": 2,
+            "sample_cadence_seconds": 60.0,
+            "interpolation": {
+                "method": "LAGRANGE",
+                "declared_method": "LAGRANGE",
+                "degree": 1,
+                "sample_count": 2,
+                "mean_sample_cadence_seconds": 60.0,
+            },
+            "reference_frame": "ITRF",
+            "time_scale": "UTC",
+        },
+    ]
+
+
+def test_partial_precise_import_persists_only_selected_members_with_a_distinct_identity(tmp_path):
+    storage = tmp_path / "precise-products"
+    runtime = OrbitRuntime(precise_products_dir=storage)
+    upload = [
+        _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _multi_satellite_sp3_text()),
+    ]
+
+    beidou = runtime.import_precise_product(upload, selected_satellite_ids=["c06"])
+    gps = runtime.import_precise_product(upload, selected_satellite_ids=["G01"])
+
+    assert beidou.satellite_ids == ("C06",)
+    assert beidou.selected_satellite_ids == ("C06",)
+    assert gps.satellite_ids == ("G01",)
+    assert beidou.product_id != gps.product_id
+    assert sorted(path.name for path in storage.iterdir()) == sorted([beidou.product_id, gps.product_id])
+    hydrated = runtime.precise_products_payload()["items"]
+    assert {tuple(item["product"]["satellite_ids"]) for item in hydrated} == {("C06",), ("G01",)}
+    assert {tuple(item["importedIds"]) for item in hydrated} == {
+        (beidou.runtime_id("C06"),),
+        (gps.runtime_id("G01"),),
+    }
+
+    reloaded = PreciseProductRepository(storage).load(beidou.product_id)
+    assert reloaded.satellite_ids == ("C06",)
+    assert reloaded.selected_satellite_ids == ("C06",)
+    assert reloaded.product_id == beidou.product_id
+
+
+def test_partial_precise_import_rejects_unknown_member_without_persisting_or_registering(tmp_path):
+    runtime = OrbitRuntime(precise_products_dir=tmp_path / "precise-products")
+
+    with pytest.raises(PreciseProductImportError) as raised:
+        runtime.import_precise_product(
+            [_upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _multi_satellite_sp3_text())],
+            selected_satellite_ids=["E99"],
+        )
+
+    assert str(raised.value) == "El SP3 no contiene los satélites seleccionados: E99."
+    assert not (tmp_path / "precise-products").exists()
+    assert runtime.precise_products_payload() == {"items": [], "diagnostics": []}
+
+
+def test_legacy_complete_product_manifest_without_selection_reloads_all_members(tmp_path):
+    repository = PreciseProductRepository(tmp_path / "precise-products")
+    product = import_precise_product([
+        _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _multi_satellite_sp3_text()),
+    ])
+    repository.save(product)
+    manifest_path = repository.root / product.product_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("selected_satellite_ids")
+    manifest["schema_version"] = 1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    loaded = repository.load(product.product_id)
+
+    assert loaded.product_id == product.product_id
+    assert loaded.satellite_ids == ("G01", "C06")
+    assert loaded.selected_satellite_ids == ("G01", "C06")
 
 
 def test_runtime_reports_out_of_coverage_precise_source_without_crashing_realtime_or_orbit_payload(tmp_path):

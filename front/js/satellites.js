@@ -744,6 +744,56 @@ function finiteVector(value) {
     return { x, y, z };
 }
 
+/**
+ * Convert a runtime position into a valid Cartographic point, when possible.
+ *
+ * Range products are allowed to exist in Layers before an exact ephemeris has
+ * been loaded, or when the backend has marked their terrestrial realization as
+ * unavailable.  In both cases a Cesium entity/property can be present without
+ * being a finite Cartesian state.  Cesium's conversion routines assume a
+ * complete Cartesian input and can otherwise throw while reading its
+ * longitude/latitude fields.  Geographic telemetry and overlays are optional,
+ * so reject only that invalid conversion instead of allowing it to escape into
+ * the React inspector.
+ */
+function cartographicFromFiniteCartesian(position) {
+    const vector = finiteVector(position);
+    if (!vector
+        || typeof Cesium === "undefined"
+        || !Cesium.Cartesian3
+        || !Cesium.Cartographic
+        || typeof Cesium.Cartographic.fromCartesian !== "function") {
+        return null;
+    }
+
+    let cartographic;
+    try {
+        cartographic = Cesium.Cartographic.fromCartesian(
+            new Cesium.Cartesian3(vector.x, vector.y, vector.z)
+        );
+    } catch {
+        // A third-party Cesium build may reject a transient Cartesian state.
+        // Geographic values are optional; constrain this recovery boundary to
+        // the conversion itself so unrelated renderer errors still surface.
+        return null;
+    }
+    const latitude = Number(cartographic?.latitude);
+    const longitude = Number(cartographic?.longitude);
+    const height = Number(cartographic?.height);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(height)) {
+        return null;
+    }
+    return cartographic;
+}
+
+function cesiumCartesianFromFiniteVector(position) {
+    const vector = finiteVector(position);
+    if (!vector || typeof Cesium === "undefined" || !Cesium.Cartesian3) {
+        return null;
+    }
+    return new Cesium.Cartesian3(vector.x, vector.y, vector.z);
+}
+
 function vectorMagnitude(value) {
     const vector = finiteVector(value);
     if (!vector) {
@@ -1682,16 +1732,13 @@ function getSurfaceGroundTrackArcType() {
 }
 
 function computeFootprintAngularRadius(position) {
-    if (!position
-        || typeof Cesium === "undefined"
-        || !Cesium.Cartographic
-        || typeof Cesium.Cartographic.fromCartesian !== "function"
+    if (typeof Cesium === "undefined"
         || !Cesium.Ellipsoid?.WGS84
         || !Number.isFinite(Cesium.Ellipsoid.WGS84.maximumRadius)) {
         return 0;
     }
 
-    const cartographic = Cesium.Cartographic.fromCartesian(position);
+    const cartographic = cartographicFromFiniteCartesian(position);
     if (!cartographic) {
         return 0;
     }
@@ -1708,6 +1755,7 @@ function computeFootprintAngularRadius(position) {
 
 function computeFootprintCirclePositions(centerCartographic, angularRadius, segments = FOOTPRINT_CIRCLE_SEGMENTS) {
     if (!centerCartographic
+        || !Number.isFinite(Number(angularRadius))
         || !(angularRadius > 0)
         || typeof Cesium === "undefined"
         || !Cesium.Cartesian3
@@ -1715,8 +1763,11 @@ function computeFootprintCirclePositions(centerCartographic, angularRadius, segm
         return [];
     }
 
-    const lat1 = centerCartographic.latitude;
-    const lon1 = centerCartographic.longitude;
+    const lat1 = Number(centerCartographic.latitude);
+    const lon1 = Number(centerCartographic.longitude);
+    if (!Number.isFinite(lat1) || !Number.isFinite(lon1)) {
+        return [];
+    }
     const sinLat1 = Math.sin(lat1);
     const cosLat1 = Math.cos(lat1);
     const sinR = Math.sin(angularRadius);
@@ -1731,7 +1782,10 @@ function computeFootprintCirclePositions(centerCartographic, angularRadius, segm
         const y = Math.sin(bearing) * sinR * cosLat1;
         const x = cosR - sinLat1 * sinLat2;
         const lon2 = lon1 + Math.atan2(y, x);
-        positions.push(Cesium.Cartesian3.fromRadians(lon2, lat2, FOOTPRINT_SURFACE_HEIGHT));
+        const position = Cesium.Cartesian3.fromRadians(lon2, lat2, FOOTPRINT_SURFACE_HEIGHT);
+        if (finiteVector(position)) {
+            positions.push(position);
+        }
     }
 
     return positions;
@@ -1772,6 +1826,12 @@ function updateVisibilityFootprint(viewer, state, {
         return false;
     }
 
+    const cartographic = cartographicFromFiniteCartesian(center);
+    if (!cartographic) {
+        removeFootprintEntity(viewer, state);
+        return false;
+    }
+
     const footprintAngularRadius = computeFootprintAngularRadius(center);
     const footprintRadiusMeters = Cesium.Ellipsoid.WGS84.maximumRadius * footprintAngularRadius;
     if (!(footprintRadiusMeters > 10)) {
@@ -1779,7 +1839,6 @@ function updateVisibilityFootprint(viewer, state, {
         return false;
     }
 
-    const cartographic = Cesium.Cartographic.fromCartesian(center);
     const footprintPositions = computeFootprintCirclePositions(cartographic, footprintAngularRadius);
     if (footprintPositions.length < 3) {
         removeFootprintEntity(viewer, state);
@@ -2707,14 +2766,22 @@ export function getSatelliteTelemetry(id) {
     const accelerationEcef = coordinatesAreEarthFixed ? accelerationVector : null;
     const speed = vectorMagnitude(velocityVector);
 
-    const cartographic = coordinatesAreEarthFixed ? Cesium.Cartographic.fromCartesian(position) : null;
+    const cartographic = coordinatesAreEarthFixed
+        ? cartographicFromFiniteCartesian(positionVector)
+        : null;
     const latitudeDeg = cartographic ? Cesium.Math.toDegrees(cartographic.latitude) : null;
     const longitudeDeg = cartographic ? Cesium.Math.toDegrees(cartographic.longitude) : null;
     const altitudeM = cartographic ? cartographic.height : null;
 
     let distanceToCameraM = null;
-    if (coordinatesAreEarthFixed && currentViewer?.camera?.positionWC) {
-        distanceToCameraM = Cesium.Cartesian3.distance(currentViewer.camera.positionWC, position);
+    const positionCartesian = cesiumCartesianFromFiniteVector(positionVector);
+    if (coordinatesAreEarthFixed
+        && positionCartesian
+        && finiteVector(currentViewer?.camera?.positionWC)
+        && typeof Cesium !== "undefined"
+        && Cesium.Cartesian3
+        && typeof Cesium.Cartesian3.distance === "function") {
+        distanceToCameraM = Cesium.Cartesian3.distance(currentViewer.camera.positionWC, positionCartesian);
     }
 
     const speedKmS = Number.isFinite(speed) ? speed / 1000 : null;

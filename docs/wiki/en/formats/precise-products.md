@@ -221,9 +221,13 @@ automatically.
    the required SP3 and fill in the relevant optional fields. The dialog detects
    provider and class from the sources; it neither allows manual declarations nor
    activates ECI during import.
-4. Review the provenance summary and layers created by source satellite ID. A
-   layer represents a tabulated ephemeris, not a TLE object.
-5. Orbit aligns the simulated timeline to the published common coverage. Keep
+4. Choose **Preview satellites**. Orbit parses the product without persisting it
+   and shows a table with GNSS identifier, constellation, coverage, and
+   sampling. Mark the subset to use or **Select all**; cancelling creates no
+   layers.
+5. Confirm **Import N satellites**. Only the chosen members are registered,
+   and each layer represents a tabulated ephemeris rather than a TLE object.
+6. Orbit aligns the simulated timeline to the published common coverage. Keep
    any later query within the imported SP3 epochs.
 
 The load is local and is durably registered in Orbit's precise-product store.

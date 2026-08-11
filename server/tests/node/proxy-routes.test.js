@@ -155,6 +155,38 @@ test("proxy forwards paired precise-product uploads through the dedicated bounde
     }]);
 });
 
+test("proxy forwards non-persistent precise-product previews through the same bounded route", async () => {
+    const calls = [];
+    const app = createProxyApp(async (path, options) => {
+        calls.push({ path, options });
+        return new Response('{"ok":true,"preview":{"satellites":[]}}', {
+            headers: { "content-type": "application/json" }
+        });
+    });
+    const payload = {
+        sp3: { name: "IGS0OPSFIN_20262220000_01D_05M_ORB.SP3.gz", content_base64: "U1Az" }
+    };
+
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/precise-products/preview`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        assert.equal(response.status, 200);
+    });
+
+    assert.deepEqual(calls, [{
+        path: "/precise-products/preview",
+        options: {
+            method: "POST",
+            headers: { Accept: "*/*", "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            timeoutMs: PYTHON_PROXY_TIMEOUT_MS
+        }
+    }]);
+});
+
 test("the precise upload parser does not widen normal API JSON limits", async () => {
     const calls = [];
     const request = async (path, options) => {

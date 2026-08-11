@@ -230,9 +230,13 @@ no se descarga ni se empareja automáticamente ninguna fuente remota.
    seleccione el SP3 obligatorio y rellene los campos opcionales que
    correspondan. El diálogo detecta proveedor y clase desde las fuentes; no
    permite declararlos manualmente ni activa ECI durante la importación.
-4. Revise el resumen de procedencia y las capas creadas por identificador de
-   satélite. Una capa representa la efeméride tabulada, no un objeto TLE.
-5. Orbit alinea la línea temporal simulada a la cobertura común publicada.
+4. Pulse **Previsualizar satélites**. Orbit analiza el producto sin persistirlo
+   y muestra una tabla de identificador GNSS, constelación, cobertura y
+   muestreo. Marque el subconjunto que va a usar o **Seleccionar todos**;
+   cancelar no crea ninguna capa.
+5. Confirme **Importar N satélites**. Sólo los miembros elegidos se registran
+   y cada capa representa una efeméride tabulada, no un objeto TLE.
+6. Orbit alinea la línea temporal simulada a la cobertura común publicada.
    Mantenga cualquier consulta posterior dentro de las épocas importadas.
 
 La carga es local y se registra de forma durable en el almacén de productos

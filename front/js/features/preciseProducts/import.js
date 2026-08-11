@@ -8,6 +8,8 @@
  * precise product must not let an operator rewrite its provenance.
  */
 
+import { normalizeSelectedPreciseProductSatelliteIds } from "./preview.js";
+
 export const PRECISE_PRODUCT_IMPORT_ERRORS = Object.freeze({
     missingSp3: "Debe proporcionar un fichero SP3.",
     // Retained for the future ECI comparison capability guard.  The GNSS
@@ -240,7 +242,7 @@ export function arrayBufferToBase64(buffer) {
  * sending modern files both there and in named slots doubles large ATT/CLK
  * uploads and can make an otherwise valid product appear unresponsive.
  */
-export async function buildPreciseProductImportPayload(files) {
+export async function buildPreciseProductImportPayload(files, options = {}) {
     validatePreciseProductFiles(files);
     const selected = normalizePreciseProductFileSelections(files);
     const encodedFiles = await Promise.all(selected.map(async ({ file, kind }) => ({
@@ -260,8 +262,12 @@ export async function buildPreciseProductImportPayload(files) {
         file.kind !== "archive"
         && classifyPreciseProductSlotFile(file.name) === file.kind
     ));
+    const selectedSatelliteIds = normalizeSelectedPreciseProductSatelliteIds(
+        options.selected_satellite_ids ?? options.selectedSatelliteIds
+    );
     return {
         ...namedSlots,
-        ...(legacyFiles.length ? { files: legacyFiles } : {})
+        ...(legacyFiles.length ? { files: legacyFiles } : {}),
+        ...(selectedSatelliteIds.length ? { selected_satellite_ids: selectedSatelliteIds } : {})
     };
 }

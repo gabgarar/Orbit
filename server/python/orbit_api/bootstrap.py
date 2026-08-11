@@ -50,6 +50,7 @@ def create_app() -> FastAPI:
         runtime.import_precise_product,
         runtime.precise_products_payload,
         runtime.precise_product_import_payload,
+        runtime.preview_precise_product,
     ))
     app.include_router(create_orbits_router(
         runtime.resolve_propagator,

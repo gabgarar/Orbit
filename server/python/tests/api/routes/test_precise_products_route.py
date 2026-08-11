@@ -10,6 +10,7 @@ import json
 import pytest
 from fastapi import FastAPI, HTTPException
 from orbit_api.api.routes.precise_products import create_precise_products_router
+from orbit_api.application.orbit_runtime import OrbitRuntime
 from orbit_api.application.precise_products import (
     PreciseProductImportError,
     import_precise_product,
@@ -93,6 +94,100 @@ def test_precise_product_routes_expose_post_runtime_entries_and_get_hydration_sh
         [("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", base64.b64encode(b"sp3").decode("ascii"))],
         False,
     )]
+
+
+def test_precise_product_preview_uses_a_non_persisting_service_and_returns_selectable_gnss_members():
+    calls: list[tuple[list[tuple[str, str]], bool]] = []
+    source = """#cP2026 07 26 00 00 18.00000000       2 ORBIT ITRF  FIT COD
+%c cc UTC ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc
+*  2026 07 26 00 00 18.00000000
+PG01 7000.000000 0.000000 0.000000 0.000000
+PC06 26000.000000 0.000000 0.000000 0.000000
+*  2026 07 26 00 01 18.00000000
+PG01 7060.000000 0.000000 0.000000 0.000000
+PC06 26060.000000 0.000000 0.000000 0.000000"""
+
+    def must_not_import(*_args, **_kwargs):
+        raise AssertionError("preview must not call the persistent import service")
+
+    def preview_product(files, *, require_eci=False):
+        calls.append((files, require_eci))
+        return import_precise_product(files, require_eci=require_eci)
+
+    router = create_precise_products_router(
+        must_not_import,
+        lambda: {"items": [], "diagnostics": []},
+        preview_product=preview_product,
+    )
+    encoded = base64.b64encode(source.encode("ascii")).decode("ascii")
+    request = PreciseProductImportRequest(
+        sp3={"name": "IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", "content_base64": encoded},
+    )
+
+    preview = _endpoint(router, "/precise-products/preview")(request)
+
+    assert preview["ok"] is True
+    assert preview["preview"]["product"]["persistence"] == {
+        "scope": "preview", "reloadable": False,
+    }
+    assert [(item["satellite_id"], item["constellation"]) for item in preview["preview"]["satellites"]] == [
+        ("G01", "GPS"),
+        ("C06", "BeiDou"),
+    ]
+    assert calls == [([("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", encoded)], False)]
+
+
+def test_precise_product_preview_endpoint_does_not_create_a_runtime_product(tmp_path):
+    source = """#cP2026 07 26 00 00 18.00000000       2 ORBIT ITRF  FIT COD
+%c cc UTC ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc
+*  2026 07 26 00 00 18.00000000
+PG01 7000.000000 0.000000 0.000000 0.000000
+*  2026 07 26 00 01 18.00000000
+PG01 7060.000000 0.000000 0.000000 0.000000"""
+    storage = tmp_path / "precise-products"
+    runtime = OrbitRuntime(precise_products_dir=storage)
+    router = create_precise_products_router(
+        runtime.import_precise_product,
+        runtime.precise_products_payload,
+        runtime.precise_product_import_payload,
+        runtime.preview_precise_product,
+    )
+    request = PreciseProductImportRequest(
+        sp3={
+            "name": "product.SP3",
+            "content_base64": base64.b64encode(source.encode("ascii")).decode("ascii"),
+        },
+    )
+
+    response = _endpoint(router, "/precise-products/preview")(request)
+
+    assert response["ok"] is True
+    assert [satellite["id"] for satellite in response["preview"]["satellites"]] == ["G01"]
+    assert runtime.precise_products_payload() == {"items": [], "diagnostics": []}
+    assert not storage.exists()
+
+
+def test_precise_product_import_forwards_an_explicit_satellite_subset():
+    calls: list[tuple[list[tuple[str, str]], list[str] | None]] = []
+    product = object()
+
+    def import_product(files, *, selected_satellite_ids=None):
+        calls.append((files, selected_satellite_ids))
+        return product
+
+    router = create_precise_products_router(
+        import_product,
+        lambda: {"items": [], "diagnostics": []},
+        lambda _product: {"ok": True},
+    )
+    encoded = base64.b64encode(b"sp3").decode("ascii")
+    request = PreciseProductImportRequest(
+        files=[{"name": "product.SP3", "content_base64": encoded}],
+        selectedSatelliteIds=["c06", "G01"],
+    )
+
+    assert _endpoint(router, "/precise-products/import")(request) == {"ok": True}
+    assert calls == [([("product.SP3", encoded)], ["C06", "G01"])]
 
 
 def test_precise_product_route_projects_import_validation_failures_to_422():
@@ -194,6 +289,26 @@ def test_precise_product_request_rejects_manual_provenance_or_product_class():
         )
 
 
+def test_precise_product_request_validates_optional_selected_satellite_ids():
+    encoded = base64.b64encode(b"sp3").decode("ascii")
+    request = PreciseProductImportRequest(
+        sp3={"name": "product.SP3", "kind": "sp3", "content_base64": encoded},
+        selectedSatelliteIds=["g01", "C06"],
+    )
+
+    assert request.selected_satellite_ids == ["G01", "C06"]
+    with pytest.raises(ValidationError, match="Seleccione al menos"):
+        PreciseProductImportRequest(
+            sp3={"name": "product.SP3", "kind": "sp3", "content_base64": encoded},
+            selected_satellite_ids=[],
+        )
+    with pytest.raises(ValidationError, match="no pueden repetirse"):
+        PreciseProductImportRequest(
+            sp3={"name": "product.SP3", "kind": "sp3", "content_base64": encoded},
+            selected_satellite_ids=["G01", "g01"],
+        )
+
+
 def test_precise_product_route_projects_exact_missing_sp3_and_erp_for_eci_errors():
     router = create_precise_products_router(
         import_precise_product,
@@ -229,6 +344,29 @@ PG01 7060.000000 0.000000 0.000000 0.000000"""
         ))
     assert missing_erp.value.status_code == 422
     assert missing_erp.value.detail == "Debe proporcionar un fichero ERP para convertir a ECI."
+
+
+def test_precise_product_route_rejects_selected_satellites_not_declared_by_the_sp3():
+    source = """#cP2026 07 26 00 00 18.00000000       2 ORBIT ITRF  FIT COD
+%c cc UTC ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc
+*  2026 07 26 00 00 18.00000000
+PG01 7000.000000 0.000000 0.000000 0.000000
+*  2026 07 26 00 01 18.00000000
+PG01 7060.000000 0.000000 0.000000 0.000000"""
+    router = create_precise_products_router(import_precise_product, lambda: {"items": [], "diagnostics": []})
+    request = PreciseProductImportRequest(
+        sp3={
+            "name": "product.SP3",
+            "content_base64": base64.b64encode(source.encode("ascii")).decode("ascii"),
+        },
+        selected_satellite_ids=["C06"],
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        _endpoint(router, "/precise-products/import")(request)
+
+    assert raised.value.status_code == 422
+    assert raised.value.detail == "El SP3 no contiene los satélites seleccionados: C06."
 
 
 def test_precise_product_route_imports_every_optional_gnss_member_with_automatic_metadata():

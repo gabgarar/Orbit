@@ -564,6 +564,271 @@ body.with-toolbars #objectSidebar.collapsed {
     filter: brightness(1.12);
 }
 
+/* The SP3 preview deliberately lives in a separate modal: choosing files
+   only asks the service to inspect them, while the second step lets an
+   operator select the GNSS satellites that will actually become layers. */
+#preciseProductPreviewModal {
+    position: fixed;
+    inset: 0;
+    z-index: 10136;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
+    background: var(--orbit-bg-overlay);
+}
+
+#preciseProductPreviewModal.open {
+    display: flex;
+}
+
+.catalog-filter-panel.precise-product-preview-panel {
+    width: min(1020px, calc(100vw - 32px));
+    height: min(740px, calc(100dvh - 32px));
+    max-height: calc(100dvh - 32px);
+    grid-template-rows: auto auto auto minmax(132px, 1fr) auto auto;
+    gap: 10px;
+    overflow: hidden;
+}
+
+.precise-product-preview-summary {
+    display: grid;
+    gap: 3px;
+    padding: 9px 10px;
+    border: 1px solid color-mix(in srgb, var(--orbit-border-primary) 90%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--orbit-bg-elevated) 68%, transparent);
+}
+
+.precise-product-preview-summary strong {
+    overflow: hidden;
+    color: var(--orbit-text-primary);
+    font: 650 11px/1.3 var(--orbit-font-ui, Inter, sans-serif);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.precise-product-preview-summary span {
+    overflow: hidden;
+    color: var(--orbit-text-tertiary);
+    font: 500 10px/1.35 var(--orbit-font-ui, Inter, sans-serif);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.precise-product-preview-toolbar,
+.precise-product-preview-controls,
+.precise-product-preview-actions {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    min-width: 0;
+}
+
+.precise-product-preview-toolbar {
+    justify-content: space-between;
+}
+
+.precise-product-preview-search {
+    display: grid;
+    gap: 4px;
+    min-width: min(300px, 100%);
+    color: var(--orbit-text-tertiary);
+    font: 650 9px/1.2 var(--orbit-font-ui, Inter, sans-serif);
+    letter-spacing: .03em;
+    text-transform: uppercase;
+}
+
+.precise-product-preview-search input {
+    width: 100%;
+    min-height: 30px;
+    box-sizing: border-box;
+    border: 1px solid color-mix(in srgb, var(--orbit-border-primary) 92%, transparent);
+    border-radius: 7px;
+    background: var(--orbit-bg-input);
+    color: var(--orbit-text-primary);
+    outline: none;
+    padding: 6px 8px;
+    font: 500 11px/1.2 var(--orbit-font-ui, Inter, sans-serif);
+}
+
+.precise-product-preview-search input:focus {
+    border-color: var(--orbit-border-focus);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--orbit-text-accent) 16%, transparent);
+}
+
+.precise-product-preview-controls {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.precise-product-preview-controls > span {
+    flex: 0 0 auto;
+    color: var(--orbit-text-secondary);
+    font: 600 10px/1.2 var(--orbit-font-ui, Inter, sans-serif);
+    white-space: nowrap;
+}
+
+.precise-product-preview-controls .catalog-header-btn,
+.precise-product-preview-actions .catalog-header-btn {
+    min-height: 29px;
+    padding: 5px 8px;
+    font: 600 10px/1 var(--orbit-font-ui, Inter, sans-serif);
+}
+
+.precise-product-preview-table-wrap {
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid color-mix(in srgb, var(--orbit-border-primary) 92%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--orbit-bg-elevated) 63%, transparent);
+    scrollbar-color: var(--orbit-border-focus) var(--orbit-bg-input);
+    scrollbar-width: thin;
+}
+
+.precise-product-preview-table-wrap:focus {
+    outline: 1px solid var(--orbit-border-focus);
+    outline-offset: -1px;
+}
+
+.precise-product-preview-table-wrap::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.precise-product-preview-table-wrap::-webkit-scrollbar-track {
+    background: var(--orbit-bg-input);
+}
+
+.precise-product-preview-table-wrap::-webkit-scrollbar-thumb {
+    border: 2px solid var(--orbit-bg-input);
+    border-radius: 999px;
+    background: var(--orbit-border-focus);
+}
+
+.precise-product-preview-table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: collapse;
+    color: var(--orbit-text-secondary);
+    font: 500 10px/1.3 var(--orbit-font-ui, Inter, sans-serif);
+}
+
+.precise-product-preview-table th,
+.precise-product-preview-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--orbit-border-primary) 72%, transparent);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.precise-product-preview-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    color: var(--orbit-text-tertiary);
+    background: color-mix(in srgb, var(--orbit-bg-secondary) 96%, transparent);
+    font: 700 9px/1.2 var(--orbit-font-ui, Inter, sans-serif);
+    letter-spacing: .025em;
+    text-transform: uppercase;
+}
+
+.precise-product-preview-table th:first-child,
+.precise-product-preview-table td:first-child {
+    width: 34px;
+    padding-right: 3px;
+    text-align: center;
+}
+
+.precise-product-preview-table tbody tr {
+    transition: background 130ms ease;
+}
+
+.precise-product-preview-table tbody tr:hover {
+    background: color-mix(in srgb, var(--orbit-bg-hover) 72%, transparent);
+}
+
+.precise-product-preview-table tbody tr.is-selected {
+    background: color-mix(in srgb, var(--orbit-bg-active) 45%, var(--orbit-bg-elevated));
+}
+
+.precise-product-preview-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.precise-product-preview-table input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: var(--orbit-text-accent);
+    cursor: pointer;
+}
+
+.precise-product-preview-table td:nth-child(2) {
+    min-width: 118px;
+}
+
+.precise-product-preview-table td:nth-child(2) strong,
+.precise-product-preview-table td:nth-child(2) small {
+    display: block;
+}
+
+.precise-product-preview-table td:nth-child(2) strong {
+    color: var(--orbit-text-primary);
+    font: 650 10px/1.25 var(--orbit-font-ui, Inter, sans-serif);
+}
+
+.precise-product-preview-table td:nth-child(2) small {
+    overflow: hidden;
+    max-width: 180px;
+    margin-top: 2px;
+    color: var(--orbit-text-tertiary);
+    font: 500 9px/1.2 var(--orbit-font-ui, Inter, sans-serif);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.precise-product-preview-coverage {
+    min-width: 220px;
+    color: var(--orbit-text-secondary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 9px;
+}
+
+.precise-product-preview-empty {
+    padding: 24px 10px !important;
+    color: var(--orbit-text-tertiary);
+    text-align: center !important;
+}
+
+@media (max-width: 720px) {
+    .catalog-filter-panel.precise-product-preview-panel {
+        width: min(100%, calc(100vw - 20px));
+        height: min(760px, calc(100dvh - 20px));
+        max-height: calc(100dvh - 20px);
+        gap: 8px;
+    }
+
+    .precise-product-preview-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .precise-product-preview-search {
+        min-width: 0;
+    }
+
+    .precise-product-preview-controls {
+        justify-content: flex-start;
+    }
+
+    .precise-product-preview-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+}
+
 @media (max-width: 580px) {
     .precise-product-slot-list {
         grid-template-columns: minmax(0, 1fr);

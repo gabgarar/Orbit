@@ -45,6 +45,7 @@ credential.
 | Method and route | Operation | Main limit |
 | --- | --- | --- |
 | `GET /api/precise-products` | Lists persisted products, rehydration diagnostics, and runtime IDs per satellite. | It does not download sources again. |
+| `POST /api/precise-products/preview` | Validates and parses a GNSS product without storing it or registering layers. | Returns the SP3 satellites available for selection. |
 | `POST /api/precise-products/import` | Validates, persists, and registers a GNSS product. | One required SP3 and at most one of every ancillary file: CLK, ERP, SUM, ATT, and OSB. |
 
 The canonical import body is:
@@ -71,6 +72,24 @@ Content-Type: application/json
   }
 }
 ~~~
+
+The same body sent to `POST /api/precise-products/preview` returns
+`preview.product` and `preview.satellites`, without creating a product
+directory, layer, or runtime ID. Each candidate carries its GNSS identifier,
+constellation, UTC coverage, sample count, and cadence. To confirm a subset,
+send the body to `/import` with, for example:
+
+~~~json
+{
+  "selected_satellite_ids": ["G01", "C06"]
+}
+~~~
+
+The selection is validated against the SP3 and cannot be empty. If omitted,
+`/import` keeps its compatible behaviour of registering every member. A
+partial selection receives a stable product identity including the subset, so
+two different subsets of the same SP3 can coexist and rehydrate without
+overwriting each other.
 
 `content_base64` carries the binary without a `data:` prefix. Provider, family,
 and class are determined exclusively from the sources: requests must not assign

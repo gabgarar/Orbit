@@ -64,6 +64,15 @@ _PRODUCT_FAMILIES = {
     "esa_nso": "esa_ops",
     "custom": "custom",
 }
+_GNSS_CONSTELLATION_LABELS = {
+    "G": "GPS",
+    "R": "GLONASS",
+    "E": "Galileo",
+    "C": "BeiDou",
+    "J": "QZSS",
+    "I": "NavIC / IRNSS",
+    "S": "SBAS",
+}
 
 
 class PreciseProductImportError(ValueError):
@@ -139,6 +148,7 @@ class PreciseProduct:
     clock: RinexClockProduct | None
     erp: IgsErpEarthOrientationProvider | None
     source_files: tuple[ProductSourceFile, ...]
+    selected_satellite_ids: tuple[str, ...]
     decoded_files: tuple[DecodedProductFile, ...] = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -156,6 +166,14 @@ class PreciseProduct:
             raise PreciseProductImportError("El producto preciso no contiene ficheros de origen")
         if self.erp is not None and not isinstance(self.erp, IgsErpEarthOrientationProvider):
             raise PreciseProductImportError("El proveedor ERP del producto preciso no es válido")
+        selected = tuple(_satellite_id(identifier) for identifier in self.selected_satellite_ids)
+        if len(selected) != len(set(selected)):
+            raise PreciseProductImportError("Los satélites seleccionados no pueden repetirse.")
+        if selected != self.sp3.satellite_ids:
+            raise PreciseProductImportError(
+                "La selección persistida no coincide con los satélites SP3 registrados"
+            )
+        object.__setattr__(self, "selected_satellite_ids", selected)
 
     @property
     def satellite_ids(self) -> tuple[str, ...]:
@@ -271,13 +289,22 @@ class PreciseProduct:
             if satellite_id is not None
             else tuple(sample for samples in self.sp3.clock_samples.values() for sample in samples)
         )
+        selected_clock_ids = (
+            (_satellite_id(satellite_id),)
+            if satellite_id is not None
+            else tuple(
+                identifier
+                for identifier in self.satellite_ids
+                if self.clock is not None and identifier in self.clock.satellites
+            )
+        )
         rinex_samples = (
             self.clock.samples_for_satellite(satellite_id)
             if self.clock is not None and satellite_id is not None
             else tuple(
                 sample
-                for samples in (self.clock.satellites.values() if self.clock is not None else ())
-                for sample in samples
+                for identifier in selected_clock_ids
+                for sample in (self.clock.samples_for_satellite(identifier) if self.clock is not None else ())
             )
         )
         return {
@@ -295,8 +322,8 @@ class PreciseProduct:
                 "present": bool(rinex_samples),
                 "file_present": self.clock is not None,
                 "sample_count": len(rinex_samples),
-                "satellite_count": len(self.clock.satellite_ids) if self.clock is not None else 0,
-                "satellite_ids": list(self.clock.satellite_ids) if self.clock is not None else [],
+                "satellite_count": len(selected_clock_ids) if self.clock is not None else 0,
+                "satellite_ids": list(selected_clock_ids) if self.clock is not None else [],
                 "time_scale": self.clock.metadata.time_scale_label if self.clock is not None else None,
                 "file": self.clock_file.name if self.clock_file is not None else None,
                 "coverage": _clock_coverage(
@@ -489,6 +516,63 @@ class PreciseProduct:
             },
         }
 
+    def preview_satellite_payload(self, satellite_id: str) -> dict[str, object]:
+        """Return source-derived data used to choose an SP3 member.
+
+        A preview is deliberately not a runtime layer: it has no generated
+        ``precise:<product>:<satellite>`` identifier and no renderer state to
+        accidentally register.  The compact shape gives the import dialog
+        enough information to make an informed, per-satellite selection
+        before anything is written to the configuration volume.
+        """
+
+        identifier = _satellite_id(satellite_id)
+        provider = self.provider_for_satellite(identifier)
+        start, end = self.coverage_utc(identifier)
+        interpolation = _tabular_interpolation_summary(provider)
+        coverage_start = _iso_or_none(start)
+        coverage_end = _iso_or_none(end)
+        return {
+            # ``id`` is intentionally the SP3/GNSS identifier rather than a
+            # future runtime ID.  It is the value accepted by
+            # ``selected_satellite_ids`` on the later import request.
+            "id": identifier,
+            "satellite_id": identifier,
+            "gnss_id": identifier,
+            "name": f"{identifier} · {self.name}",
+            "display_name": identifier,
+            "constellation": _gnss_constellation(identifier),
+            "coverage_start": coverage_start,
+            "coverage_end": coverage_end,
+            "coverage": {
+                "start_time": coverage_start,
+                "end_time": coverage_end,
+                "time_scale": "UTC",
+            },
+            "sample_count": len(provider.samples),
+            "sample_cadence_seconds": interpolation["mean_sample_cadence_seconds"],
+            "interpolation": interpolation,
+            "reference_frame": self.sp3.metadata.reference_frame.label,
+            "time_scale": self.sp3.metadata.time_scale_label,
+        }
+
+    def preview_payload(self) -> dict[str, object]:
+        """Return a strictly non-persistent import preview contract."""
+
+        product = self.payload()
+        # A content-addressed product ID is useful for traceability during a
+        # preview, but it must never imply that the source was stored or
+        # registered.  Make this explicit instead of reusing the normal
+        # persistence claim from an imported product payload.
+        product["persistence"] = {"scope": "preview", "reloadable": False}
+        return {
+            "product": product,
+            "satellites": [
+                self.preview_satellite_payload(identifier)
+                for identifier in self.satellite_ids
+            ],
+        }
+
     def payload(self) -> dict[str, object]:
         start, end = self.coverage_utc()
         rendering = self.rendering_summary()
@@ -536,6 +620,7 @@ class PreciseProduct:
             "rendering": rendering,
             "satellite_count": len(self.satellite_ids),
             "satellite_ids": list(self.satellite_ids),
+            "selected_satellite_ids": list(self.selected_satellite_ids),
             "persistence": {"scope": "config-volume", "reloadable": True},
         }
 
@@ -544,6 +629,7 @@ def import_precise_product(
     files: Sequence[tuple[str, str]],
     *,
     require_eci: bool = False,
+    selected_satellite_ids: Sequence[str] | None = None,
     frame_transformer: FrameTransformService | None = None,
 ) -> PreciseProduct:
     """Decode, validate and parse one local SP3 product and its companions.
@@ -559,6 +645,7 @@ def import_precise_product(
     return build_precise_product(
         decoded_files,
         require_eci=require_eci,
+        selected_satellite_ids=selected_satellite_ids,
         frame_transformer=frame_transformer,
     )
 
@@ -567,6 +654,7 @@ def build_precise_product(
     files: Sequence[DecodedProductFile],
     *,
     require_eci: bool = False,
+    selected_satellite_ids: Sequence[str] | None = None,
     frame_transformer: FrameTransformService | None = None,
     product_id: str | None = None,
     product_name: str | None = None,
@@ -633,11 +721,11 @@ def build_precise_product(
             if erp is not None
             else base_transformer
         )
-        sp3 = parse_sp3_state_provider(
+        source_sp3 = parse_sp3_state_provider(
             _decode_text(recognized["sp3"]),
             frame_transformer=product_transformer,
         )
-        sp3 = _annotate_precise_gnss_frame_contract(sp3, erp)
+        source_sp3 = _annotate_precise_gnss_frame_contract(source_sp3, erp)
         clock = (
             parse_rinex_clock_product(_decode_text(recognized["clk"]))
             if "clk" in recognized
@@ -646,11 +734,20 @@ def build_precise_product(
     except (EphemerisFormatError, ValueError) as exc:
         raise PreciseProductImportError(str(exc)) from exc
 
+    selected = _select_precise_satellites(source_sp3, selected_satellite_ids)
+    # Direct imports retain the source SP3's complete set and therefore the
+    # original product fingerprint.  A true subset gets a new deterministic
+    # ID below and a narrowed provider, so two selections from the same SP3
+    # can coexist without overwriting or rehydrating each other incorrectly.
+    is_subset = selected != source_sp3.satellite_ids
+    sp3 = _subset_sp3_state_provider(source_sp3, selected) if is_subset else source_sp3
+
     sources = tuple(source_files or _source_metadata(files))
     expected_id = _product_id(
         files,
         provider_id=selected_provider,
         product_class=selected_class,
+        selected_satellite_ids=selected if is_subset else None,
     )
     if product_id is not None:
         if not _PRODUCT_ID_PATTERN.fullmatch(product_id):
@@ -672,6 +769,7 @@ def build_precise_product(
         clock=clock,
         erp=erp,
         source_files=sources,
+        selected_satellite_ids=selected,
         decoded_files=tuple(files),
     )
 
@@ -841,6 +939,9 @@ class PreciseProductRepository:
             product_id=product_id,
             product_name=manifest.get("name"),
             source_files=sources,
+            selected_satellite_ids=_selected_satellite_ids_from_manifest(
+                manifest.get("selected_satellite_ids")
+            ),
         )
 
     def load_all(
@@ -1112,9 +1213,27 @@ def _source_from_manifest(value: Mapping[str, Any]) -> ProductSourceFile:
     )
 
 
+def _selected_satellite_ids_from_manifest(value: object) -> tuple[str, ...] | None:
+    """Read a persisted partial-import selection without trusting its shape."""
+
+    # Version-1 manifests did not include a selection and represent the
+    # historical whole-SP3 import behaviour.
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        raise PreciseProductImportError("El manifest contiene una selección de satélites inválida")
+    try:
+        selected = tuple(_satellite_id(identifier) for identifier in value)
+    except (TypeError, ValueError, PreciseProductImportError) as exc:
+        raise PreciseProductImportError("El manifest contiene una selección de satélites inválida") from exc
+    if len(selected) != len(set(selected)):
+        raise PreciseProductImportError("El manifest contiene una selección de satélites duplicada")
+    return selected
+
+
 def _manifest_payload(product: PreciseProduct) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "product_id": product.product_id,
         "name": product.name,
         "provider_id": product.provider_id,
@@ -1122,6 +1241,10 @@ def _manifest_payload(product: PreciseProduct) -> dict[str, object]:
         "detected_provider_id": product.detected_provider_id,
         "detected_product_class": product.detected_product_class,
         "detected_product_family": product.detected_product_family,
+        # This is part of the content-addressed ID for a partial import. It
+        # must survive restart so the repository does not re-register every
+        # satellite contained in the original SP3 source file.
+        "selected_satellite_ids": list(product.selected_satellite_ids),
         "source_files": [
             {**source.payload(), "storage_name": source.storage_name}
             for source in product.source_files
@@ -1489,6 +1612,7 @@ def _product_id(
     *,
     provider_id: str,
     product_class: str,
+    selected_satellite_ids: Sequence[str] | None = None,
 ) -> str:
     fingerprint = {
         "provider_id": provider_id,
@@ -1498,6 +1622,14 @@ def _product_id(
             key=lambda source: (str(source["name"]), str(source["sha256"])),
         ),
     }
+    # Omit the key for a complete/direct import to preserve IDs already
+    # persisted by previous Orbit releases.  A narrowed set is part of the
+    # immutable product identity: it is the same source file, but not the
+    # same registered collection of runtime satellites.
+    if selected_satellite_ids is not None:
+        fingerprint["selected_satellite_ids"] = sorted(
+            _satellite_id(identifier) for identifier in selected_satellite_ids
+        )
     digest = hashlib.sha256(
         json.dumps(fingerprint, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -1566,6 +1698,58 @@ def _satellite_id(value: object) -> str:
     if not identifier or not re.fullmatch(r"[A-Z0-9]{1,12}", identifier):
         raise PreciseProductImportError("El identificador de satélite preciso no es válido")
     return identifier
+
+
+def _gnss_constellation(satellite_id: str) -> str:
+    """Return the constellation encoded by a standard SP3 satellite prefix."""
+
+    return _GNSS_CONSTELLATION_LABELS.get(_satellite_id(satellite_id)[0], "Other GNSS")
+
+
+def _select_precise_satellites(
+    sp3: Sp3StateProvider,
+    selected_satellite_ids: Sequence[str] | None,
+) -> tuple[str, ...]:
+    """Validate a requested subset against parsed SP3 source members.
+
+    The SP3's own ordering remains canonical.  That makes an import of
+    ``[C06, G01]`` identical to ``[G01, C06]`` and avoids product IDs that
+    differ merely because a user clicked checkboxes in a different order.
+    """
+
+    if selected_satellite_ids is None:
+        return sp3.satellite_ids
+    if not selected_satellite_ids:
+        raise PreciseProductImportError("Seleccione al menos un satélite del SP3.")
+    requested = tuple(_satellite_id(identifier) for identifier in selected_satellite_ids)
+    if len(requested) != len(set(requested)):
+        raise PreciseProductImportError("Los satélites seleccionados no pueden repetirse.")
+    available = set(sp3.satellite_ids)
+    missing = tuple(identifier for identifier in requested if identifier not in available)
+    if missing:
+        raise PreciseProductImportError(
+            "El SP3 no contiene los satélites seleccionados: " + ", ".join(missing) + "."
+        )
+    selected_set = set(requested)
+    return tuple(identifier for identifier in sp3.satellite_ids if identifier in selected_set)
+
+
+def _subset_sp3_state_provider(
+    sp3: Sp3StateProvider,
+    satellite_ids: Sequence[str],
+) -> Sp3StateProvider:
+    """Create a parsed-SP3 view containing only the confirmed members."""
+
+    identifiers = tuple(_satellite_id(identifier) for identifier in satellite_ids)
+    return replace(
+        sp3,
+        satellites={identifier: sp3.for_satellite(identifier) for identifier in identifiers},
+        clock_samples={
+            identifier: sp3.clock_samples[identifier]
+            for identifier in identifiers
+            if identifier in sp3.clock_samples
+        },
+    )
 
 
 def _tabular_interpolation_summary(provider: TabularStateProvider) -> dict[str, object]:

@@ -466,6 +466,18 @@ class PreciseProductImportRequest(BaseModel):
         validation_alias=AliasChoices("product_class", "productClass", "class"),
         max_length=40,
     )
+    selected_satellite_ids: list[str] | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "selected_satellite_ids",
+            "selectedSatelliteIds",
+            "selectedSatellites",
+        ),
+        # SP3-d can carry a large multi-GNSS constellation. Keep a bounded
+        # request while still allowing an operator to choose every member of
+        # a product rather than unexpectedly rejecting "Select all".
+        max_length=1000,
+    )
 
     @field_validator("provider_hint", "product_class", mode="before")
     @classmethod
@@ -486,6 +498,32 @@ class PreciseProductImportRequest(BaseModel):
         raise ValueError(
             "La procedencia y la clase del producto se determinan automáticamente a partir de los ficheros."
         )
+
+    @field_validator("selected_satellite_ids")
+    @classmethod
+    def validate_selected_precise_satellites(cls, value: list[str] | None) -> list[str] | None:
+        """Normalize an optional SP3 subset without trusting it as product data.
+
+        The source SP3 remains authoritative: this boundary only keeps a
+        malformed browser selection from reaching the parser.  Membership is
+        checked later against the parsed product, where archive contents are
+        known.  ``None`` intentionally means the legacy/direct-import
+        behaviour of importing every satellite in the SP3.
+        """
+
+        if value is None:
+            return None
+        if not value:
+            raise ValueError("Seleccione al menos un satélite del SP3.")
+        normalized: list[str] = []
+        for raw_identifier in value:
+            identifier = str(raw_identifier or "").strip().upper()
+            if not re.fullmatch(r"[A-Z0-9]{1,12}", identifier):
+                raise ValueError("El identificador de satélite preciso no es válido")
+            normalized.append(identifier)
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("Los satélites seleccionados no pueden repetirse.")
+        return normalized
 
     @model_validator(mode="after")
     def validate_declared_product_file_kinds(self) -> "PreciseProductImportRequest":

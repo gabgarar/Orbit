@@ -58,6 +58,14 @@ product and their provenance is retained. ERP is likewise associated, but
 ITRF-to-ECI comparison is future tooling: when implemented, it will require
 ERP, a realization route, and valid temporal coverage.
 
+After choosing the files, **Preview satellites** validates and reads the
+product without creating layers or storing files. Its table shows the GNSS
+identifier, constellation, UTC coverage, and sampling published by the SP3.
+The selection starts empty: choose one or more rows, use **Select all**, or go
+back. **Cancel** discards the preview completely. Only **Import _N_
+satellites** persists the product and creates the chosen layers; a partial
+selection does not activate the remaining SP3 members.
+
 | Locally downloaded product | Example use |
 | --- | --- |
 | IGS Final/Rapid/Ultra-Rapid from [NASA CDDIS](https://cddis.nasa.gov/Data_and_Derived_Products/GNSS/orbit_and_clock_products.html) | Load the SP3 for the analysis date; add its CLK if clock information must be retained. |

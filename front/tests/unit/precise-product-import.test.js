@@ -51,6 +51,22 @@ test("precise import payload preserves binary bytes without manual provenance or
     });
 });
 
+test("precise import sends only the GNSS satellites selected in the preview", async () => {
+    const bytes = new Uint8Array([0x53, 0x50, 0x33]);
+    const file = {
+        name: "IGS0OPSFIN_ORB.SP3",
+        size: bytes.byteLength,
+        arrayBuffer: async () => bytes.buffer
+    };
+
+    const payload = await buildPreciseProductImportPayload([file], {
+        selectedSatelliteIds: ["G01", "E12", " G01 ", ""]
+    });
+
+    assert.deepEqual(payload.selected_satellite_ids, ["G01", "E12"]);
+    assert.equal(payload.sp3?.kind, "sp3");
+});
+
 test("GNSS slots identify ERP, product metadata, attitude and observable biases", () => {
     assert.equal(classifyPreciseProductFile("final.SP3.gz"), "sp3");
     assert.equal(classifyPreciseProductFile("final.CLK"), "clk");

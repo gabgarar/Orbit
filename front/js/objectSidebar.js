@@ -15,6 +15,10 @@ import {
     isPreciseProductFileName,
     normalizePreciseProductFileSelections
 } from "./features/preciseProducts/import.js";
+import {
+    normalizePreciseProductPreview,
+    normalizeSelectedPreciseProductSatelliteIds
+} from "./features/preciseProducts/preview.js";
 import { preciseProductSatelliteEntriesFromPayload } from "./satellites.js";
 
 function visibilityIconMarkup(isVisible) {
@@ -1031,6 +1035,11 @@ export function setupObjectSidebar({
     let pendingPreciseProductFiles = [];
     let pendingPreciseProductFolderAssignment = null;
     let preciseProductImportBusy = false;
+    let preciseProductPreviewBusy = false;
+    let preciseProductPreviewRequestId = 0;
+    let pendingPreciseProductPreview = null;
+    const selectedPreciseProductSatelliteIds = new Set();
+    let preciseProductPreviewFilter = "";
     // Project ownership will provide persistence later; UI grouping is session-only.
     const layerTree = createLayerTree(null);
     // Bodies are a permanent workspace group rather than user folders, but
@@ -1561,7 +1570,9 @@ export function setupObjectSidebar({
     document.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;
         closeContextMenu();
-        if (preciseProductImportModal?.classList.contains("open")) {
+        if (preciseProductPreviewModal?.classList.contains("open")) {
+            closePreciseProductPreviewModal();
+        } else if (preciseProductImportModal?.classList.contains("open")) {
             closePreciseProductImportModal();
         }
         folderContextMenu.classList.remove("open");
@@ -1643,11 +1654,57 @@ export function setupObjectSidebar({
             <p class="precise-product-import-status" id="preciseProductImportStatus" role="status" aria-live="polite">Selecciona un SP3 para empezar.</p>
             <footer class="catalog-filter-actions precise-product-import-actions">
                 <button class="catalog-header-btn" id="preciseProductImportCancelBtn" type="button">Cancelar</button>
-                <button class="catalog-header-btn precise-product-import-confirm" id="preciseProductImportConfirmBtn" type="button">Importar producto</button>
+                <button class="catalog-header-btn precise-product-import-confirm" id="preciseProductImportConfirmBtn" type="button">Previsualizar satélites</button>
             </footer>
         </section>
     `;
     document.body.appendChild(preciseProductImportModal);
+    const preciseProductPreviewModal = document.createElement("div");
+    preciseProductPreviewModal.id = "preciseProductPreviewModal";
+    preciseProductPreviewModal.innerHTML = `
+        <section class="catalog-filter-panel precise-product-preview-panel" role="dialog" aria-modal="true" aria-labelledby="preciseProductPreviewTitle">
+            <header class="catalog-filter-header">
+                <div>
+                    <h3 id="preciseProductPreviewTitle">Satélites detectados</h3>
+                    <p class="precise-product-import-lead">Esta previsualización no crea capas ni guarda el producto. Selecciona únicamente los satélites que quieres importar.</p>
+                </div>
+                <button class="catalog-close-btn" id="preciseProductPreviewCloseBtn" type="button" aria-label="Cancelar importación de producto GNSS" title="Cerrar">×</button>
+            </header>
+            <section class="precise-product-preview-summary" id="preciseProductPreviewSummary" aria-live="polite"></section>
+            <div class="precise-product-preview-toolbar">
+                <label class="precise-product-preview-search" for="preciseProductPreviewSearch">
+                    <span>Filtrar</span>
+                    <input id="preciseProductPreviewSearch" type="search" autocomplete="off" placeholder="ID GNSS, nombre o constelación" />
+                </label>
+                <div class="precise-product-preview-controls">
+                    <span id="preciseProductPreviewCount" aria-live="polite">0 de 0 seleccionados</span>
+                    <button class="catalog-header-btn" id="preciseProductPreviewSelectAllBtn" type="button">Seleccionar todos</button>
+                    <button class="catalog-header-btn" id="preciseProductPreviewClearBtn" type="button">Limpiar selección</button>
+                </div>
+            </div>
+            <div class="precise-product-preview-table-wrap" role="region" aria-label="Satélites GNSS detectados" tabindex="0">
+                <table class="precise-product-preview-table">
+                    <thead>
+                        <tr>
+                            <th scope="col"><input id="preciseProductPreviewSelectVisible" type="checkbox" aria-label="Seleccionar satélites visibles" /></th>
+                            <th scope="col">ID GNSS</th>
+                            <th scope="col">Constelación</th>
+                            <th scope="col">Cobertura UTC</th>
+                            <th scope="col">Muestras / cadencia</th>
+                        </tr>
+                    </thead>
+                    <tbody id="preciseProductPreviewRows"></tbody>
+                </table>
+            </div>
+            <p class="precise-product-import-status" id="preciseProductPreviewStatus" role="status" aria-live="polite">La previsualización todavía no contiene satélites.</p>
+            <footer class="catalog-filter-actions precise-product-preview-actions">
+                <button class="catalog-header-btn" id="preciseProductPreviewCancelBtn" type="button">Cancelar</button>
+                <button class="catalog-header-btn" id="preciseProductPreviewBackBtn" type="button">Volver</button>
+                <button class="catalog-header-btn precise-product-import-confirm" id="preciseProductPreviewConfirmBtn" type="button" disabled>Importar 0 satélites</button>
+            </footer>
+        </section>
+    `;
+    document.body.appendChild(preciseProductPreviewModal);
     const groundStationModal = document.createElement("div");
     groundStationModal.id = "groundStationModal";
     groundStationModal.innerHTML = `
@@ -1904,6 +1961,19 @@ export function setupObjectSidebar({
         .map((element) => [element.dataset.preciseProductSlotName, element]));
     const preciseProductSlotClearButtons = new Map([...preciseProductImportModal.querySelectorAll("[data-precise-product-slot-clear]")]
         .map((button) => [button.dataset.preciseProductSlotClear, button]));
+
+    const preciseProductPreviewCloseBtn = preciseProductPreviewModal.querySelector("#preciseProductPreviewCloseBtn");
+    const preciseProductPreviewCancelBtn = preciseProductPreviewModal.querySelector("#preciseProductPreviewCancelBtn");
+    const preciseProductPreviewBackBtn = preciseProductPreviewModal.querySelector("#preciseProductPreviewBackBtn");
+    const preciseProductPreviewConfirmBtn = preciseProductPreviewModal.querySelector("#preciseProductPreviewConfirmBtn");
+    const preciseProductPreviewSelectAllBtn = preciseProductPreviewModal.querySelector("#preciseProductPreviewSelectAllBtn");
+    const preciseProductPreviewClearBtn = preciseProductPreviewModal.querySelector("#preciseProductPreviewClearBtn");
+    const preciseProductPreviewSelectVisible = preciseProductPreviewModal.querySelector("#preciseProductPreviewSelectVisible");
+    const preciseProductPreviewSearch = preciseProductPreviewModal.querySelector("#preciseProductPreviewSearch");
+    const preciseProductPreviewSummary = preciseProductPreviewModal.querySelector("#preciseProductPreviewSummary");
+    const preciseProductPreviewCount = preciseProductPreviewModal.querySelector("#preciseProductPreviewCount");
+    const preciseProductPreviewRows = preciseProductPreviewModal.querySelector("#preciseProductPreviewRows");
+    const preciseProductPreviewStatus = preciseProductPreviewModal.querySelector("#preciseProductPreviewStatus");
 
     const groundStationCloseBtn = groundStationModal.querySelector("#groundStationCloseBtn");
     const groundStationCancelBtn = groundStationModal.querySelector("#groundStationCancelBtn");
@@ -3142,10 +3212,239 @@ export function setupObjectSidebar({
         }
         setPreciseProductImportStatus(
             selectedCount === 1
-                ? "SP3 seleccionado. Puedes importarlo o adjuntar productos auxiliares."
-                : `${selectedCount} ficheros seleccionados. Listos para importar.`,
+                ? "SP3 seleccionado. Previsualiza los satélites o adjunta productos auxiliares."
+                : `${selectedCount} ficheros seleccionados. Listos para previsualizar.`,
             "ready"
         );
+    }
+
+    function preciseProductPreviewSatellites() {
+        return Array.isArray(pendingPreciseProductPreview?.satellites)
+            ? pendingPreciseProductPreview.satellites
+            : [];
+    }
+
+    function filteredPreciseProductPreviewSatellites() {
+        const query = String(preciseProductPreviewFilter || "").trim().toLocaleLowerCase();
+        if (!query) return preciseProductPreviewSatellites();
+        return preciseProductPreviewSatellites().filter((satellite) => [
+            satellite.id,
+            satellite.name,
+            satellite.constellation
+        ].some((value) => String(value || "").toLocaleLowerCase().includes(query)));
+    }
+
+    function formatPreciseProductPreviewUtc(value) {
+        const raw = String(value || "").trim();
+        if (!raw) return "—";
+        const timestamp = Date.parse(raw);
+        if (!Number.isFinite(timestamp)) return raw;
+        return new Date(timestamp).toISOString().replace(".000Z", "Z");
+    }
+
+    function formatPreciseProductPreviewCoverage(satellite) {
+        const start = formatPreciseProductPreviewUtc(satellite?.coverageStart);
+        const end = formatPreciseProductPreviewUtc(satellite?.coverageEnd);
+        return start === "—" && end === "—" ? "No declarada" : `${start} → ${end}`;
+    }
+
+    function formatPreciseProductPreviewSampling(satellite) {
+        const samples = Number.isFinite(Number(satellite?.sampleCount))
+            ? `${Number(satellite.sampleCount).toLocaleString("es-ES")} muestras`
+            : "Muestras no declaradas";
+        const cadence = Number.isFinite(Number(satellite?.cadenceSeconds))
+            ? `${Number(satellite.cadenceSeconds)} s`
+            : "cadencia no declarada";
+        return `${samples} · ${cadence}`;
+    }
+
+    function setPreciseProductPreviewStatus(message, state = "") {
+        if (!preciseProductPreviewStatus) return;
+        preciseProductPreviewStatus.textContent = String(message || "");
+        preciseProductPreviewStatus.classList.toggle("is-error", state === "error");
+        preciseProductPreviewStatus.classList.toggle("is-busy", state === "busy");
+        preciseProductPreviewStatus.classList.toggle("is-ready", state === "ready");
+    }
+
+    function setPreciseProductPreviewImportControls(isBusy) {
+        const disabled = Boolean(isBusy);
+        for (const control of [
+            preciseProductPreviewCloseBtn,
+            preciseProductPreviewCancelBtn,
+            preciseProductPreviewBackBtn,
+            preciseProductPreviewSelectAllBtn,
+            preciseProductPreviewClearBtn,
+            preciseProductPreviewSelectVisible,
+            preciseProductPreviewSearch
+        ]) {
+            if (control) control.disabled = disabled;
+        }
+        preciseProductPreviewRows?.querySelectorAll("[data-precise-product-satellite-id]").forEach((input) => {
+            input.disabled = disabled;
+        });
+    }
+
+    function renderPreciseProductPreviewSummary() {
+        const product = pendingPreciseProductPreview?.product || {};
+        const productCoverage = product?.coverage && typeof product.coverage === "object" ? product.coverage : {};
+        const productName = String(product?.name || product?.product_name || product?.id || "Producto GNSS").trim();
+        const provider = String(product?.provider || product?.provider_id || product?.source || "Proveedor detectado automáticamente").trim();
+        const coverage = formatPreciseProductPreviewCoverage({
+            coverageStart: product?.coverage_start ?? product?.coverageStart ?? product?.start_time ?? product?.startTime
+                ?? productCoverage.start_time ?? productCoverage.startTime ?? productCoverage.coverage_start ?? productCoverage.coverageStart,
+            coverageEnd: product?.coverage_end ?? product?.coverageEnd ?? product?.end_time ?? product?.endTime
+                ?? productCoverage.end_time ?? productCoverage.endTime ?? productCoverage.coverage_end ?? productCoverage.coverageEnd
+        });
+        preciseProductPreviewSummary.replaceChildren();
+        const title = document.createElement("strong");
+        title.textContent = productName;
+        const detail = document.createElement("span");
+        detail.textContent = `${provider} · cobertura ${coverage}`;
+        preciseProductPreviewSummary.append(title, detail);
+    }
+
+    function updatePreciseProductPreviewSelectionUi() {
+        const satellites = preciseProductPreviewSatellites();
+        const knownIds = new Set(satellites.map((satellite) => satellite.id));
+        for (const id of [...selectedPreciseProductSatelliteIds]) {
+            if (!knownIds.has(id)) selectedPreciseProductSatelliteIds.delete(id);
+        }
+        const selectedCount = selectedPreciseProductSatelliteIds.size;
+        const visible = filteredPreciseProductPreviewSatellites();
+        const selectedVisible = visible.filter((satellite) => selectedPreciseProductSatelliteIds.has(satellite.id)).length;
+        if (preciseProductPreviewCount) {
+            preciseProductPreviewCount.textContent = `${selectedCount} de ${satellites.length} seleccionados`;
+        }
+        if (preciseProductPreviewSelectVisible) {
+            preciseProductPreviewSelectVisible.disabled = visible.length === 0 || preciseProductImportBusy;
+            preciseProductPreviewSelectVisible.checked = visible.length > 0 && selectedVisible === visible.length;
+            preciseProductPreviewSelectVisible.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
+        }
+        if (preciseProductPreviewConfirmBtn) {
+            preciseProductPreviewConfirmBtn.disabled = selectedCount === 0 || preciseProductImportBusy;
+            preciseProductPreviewConfirmBtn.textContent = `Importar ${selectedCount} ${selectedCount === 1 ? "satélite" : "satélites"}`;
+        }
+        if (preciseProductPreviewSelectAllBtn) {
+            preciseProductPreviewSelectAllBtn.disabled = satellites.length === 0 || preciseProductImportBusy;
+        }
+        if (preciseProductPreviewClearBtn) {
+            preciseProductPreviewClearBtn.disabled = selectedCount === 0 || preciseProductImportBusy;
+        }
+        if (preciseProductPreviewSearch) preciseProductPreviewSearch.disabled = preciseProductImportBusy;
+        setPreciseProductPreviewStatus(
+            selectedCount
+                ? `Se importarán ${selectedCount} de ${satellites.length} satélites detectados.`
+                : `Selecciona al menos un satélite de los ${satellites.length} detectados para continuar.`,
+            selectedCount ? "ready" : ""
+        );
+    }
+
+    function renderPreciseProductPreviewRows() {
+        const visible = filteredPreciseProductPreviewSatellites();
+        preciseProductPreviewRows.replaceChildren();
+        if (!visible.length) {
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.colSpan = 5;
+            cell.className = "precise-product-preview-empty";
+            cell.textContent = preciseProductPreviewSatellites().length
+                ? "No hay satélites que coincidan con el filtro."
+                : "El SP3 no declaró satélites importables.";
+            row.appendChild(cell);
+            preciseProductPreviewRows.appendChild(row);
+            updatePreciseProductPreviewSelectionUi();
+            return;
+        }
+
+        const fragment = document.createDocumentFragment();
+        for (const satellite of visible) {
+            const row = document.createElement("tr");
+            row.classList.toggle("is-selected", selectedPreciseProductSatelliteIds.has(satellite.id));
+
+            const selectionCell = document.createElement("td");
+            const selection = document.createElement("input");
+            selection.type = "checkbox";
+            selection.checked = selectedPreciseProductSatelliteIds.has(satellite.id);
+            selection.disabled = preciseProductImportBusy;
+            selection.dataset.preciseProductSatelliteId = satellite.id;
+            selection.setAttribute("aria-label", `Seleccionar ${satellite.name || satellite.id}`);
+            selectionCell.appendChild(selection);
+
+            const idCell = document.createElement("td");
+            const id = document.createElement("strong");
+            id.textContent = satellite.id;
+            const name = document.createElement("small");
+            name.textContent = satellite.name || satellite.id;
+            idCell.append(id, name);
+
+            const constellationCell = document.createElement("td");
+            constellationCell.textContent = satellite.constellation || "GNSS";
+
+            const coverageCell = document.createElement("td");
+            coverageCell.className = "precise-product-preview-coverage";
+            coverageCell.textContent = formatPreciseProductPreviewCoverage(satellite);
+            coverageCell.title = coverageCell.textContent;
+
+            const samplesCell = document.createElement("td");
+            samplesCell.textContent = formatPreciseProductPreviewSampling(satellite);
+            row.append(selectionCell, idCell, constellationCell, coverageCell, samplesCell);
+            fragment.appendChild(row);
+        }
+        preciseProductPreviewRows.appendChild(fragment);
+        updatePreciseProductPreviewSelectionUi();
+    }
+
+    function resetPreciseProductPreview() {
+        setPreciseProductPreviewImportControls(false);
+        pendingPreciseProductPreview = null;
+        selectedPreciseProductSatelliteIds.clear();
+        preciseProductPreviewFilter = "";
+        if (preciseProductPreviewSearch) preciseProductPreviewSearch.value = "";
+        preciseProductPreviewRows?.replaceChildren();
+        preciseProductPreviewSummary?.replaceChildren();
+        if (preciseProductPreviewCount) preciseProductPreviewCount.textContent = "0 de 0 seleccionados";
+        if (preciseProductPreviewSelectVisible) {
+            preciseProductPreviewSelectVisible.checked = false;
+            preciseProductPreviewSelectVisible.indeterminate = false;
+            preciseProductPreviewSelectVisible.disabled = true;
+        }
+        if (preciseProductPreviewConfirmBtn) {
+            preciseProductPreviewConfirmBtn.disabled = true;
+            preciseProductPreviewConfirmBtn.textContent = "Importar 0 satélites";
+        }
+        setPreciseProductPreviewStatus("La previsualización todavía no contiene satélites.");
+    }
+
+    function openPreciseProductPreviewModal(payload) {
+        const preview = normalizePreciseProductPreview(payload);
+        if (!preview.satellites.length) {
+            throw new Error("No se detectaron satélites importables en el producto SP3.");
+        }
+        pendingPreciseProductPreview = preview;
+        setPreciseProductPreviewImportControls(false);
+        selectedPreciseProductSatelliteIds.clear();
+        preciseProductPreviewFilter = "";
+        if (preciseProductPreviewSearch) preciseProductPreviewSearch.value = "";
+        renderPreciseProductPreviewSummary();
+        renderPreciseProductPreviewRows();
+        preciseProductImportModal.classList.remove("open");
+        preciseProductPreviewModal.classList.add("open");
+        preciseProductPreviewSearch?.focus({ preventScroll: true });
+    }
+
+    function closePreciseProductPreviewModal({ discard = true, returnToFiles = false } = {}) {
+        if (preciseProductImportBusy) return;
+        preciseProductPreviewModal.classList.remove("open");
+        if (returnToFiles) {
+            preciseProductImportModal.classList.add("open");
+            preciseProductImportConfirmBtn?.focus({ preventScroll: true });
+        }
+        if (discard) {
+            resetPreciseProductPreview();
+            pendingPreciseProductFiles = [];
+            pendingPreciseProductFolderAssignment = null;
+            renderPreciseProductFileList([]);
+        }
     }
 
     function preciseProductRenderingWarning(payload, entries = []) {
@@ -3209,6 +3508,7 @@ export function setupObjectSidebar({
     }
 
     function replacePendingPreciseProductSlotFile(kind, file) {
+        preciseProductPreviewRequestId += 1;
         const detectedKind = classifyPreciseProductSlotFile(file?.name);
         if (!file || !detectedKind) {
             throw new Error(`${file?.name || "El archivo"} no parece un producto GNSS compatible.`);
@@ -3224,6 +3524,7 @@ export function setupObjectSidebar({
     }
 
     function clearPendingPreciseProductSlotFile(kind) {
+        preciseProductPreviewRequestId += 1;
         pendingPreciseProductFiles = pendingPreciseProductFiles.filter((entry) => entry.kind !== kind);
         const input = preciseProductSlotInputs.get(kind);
         if (input) input.value = "";
@@ -3231,6 +3532,7 @@ export function setupObjectSidebar({
     }
 
     function appendPendingPreciseProductArchive(file) {
+        preciseProductPreviewRequestId += 1;
         if (classifyPreciseProductFile(file?.name) !== "archive") {
             throw new Error("El paquete compatible debe tener extensión .zip.");
         }
@@ -3242,36 +3544,106 @@ export function setupObjectSidebar({
     }
 
     function closePreciseProductImportModal({ discard = true } = {}) {
+        preciseProductPreviewRequestId += 1;
         preciseProductImportModal.classList.remove("open");
+        preciseProductPreviewModal.classList.remove("open");
         if (discard) {
             pendingPreciseProductFiles = [];
             pendingPreciseProductFolderAssignment = null;
+            resetPreciseProductPreview();
             renderPreciseProductFileList([]);
         }
     }
 
     function openPreciseProductImportModal(files = []) {
+        preciseProductPreviewRequestId += 1;
         pendingPreciseProductFiles = preparePendingPreciseProductFiles(files);
+        resetPreciseProductPreview();
         renderPreciseProductFileList(pendingPreciseProductFiles);
         preciseProductImportModal.classList.add("open");
         (pendingPreciseProductHasSlot("sp3") ? preciseProductImportConfirmBtn : preciseProductSlotInputs.get("sp3"))?.focus({ preventScroll: true });
     }
 
-    async function importPreciseProductFiles({ autoAddToView = true, announce = true } = {}) {
-        if (preciseProductImportBusy) return;
-        preciseProductImportBusy = true;
+    async function requestPreciseProductPreview() {
+        if (preciseProductPreviewBusy || preciseProductImportBusy) return;
         const files = [...pendingPreciseProductFiles];
         const initialButtonLabel = preciseProductImportConfirmBtn.textContent;
+        const requestId = ++preciseProductPreviewRequestId;
+        preciseProductPreviewBusy = true;
 
         try {
+            const requestPayload = await buildPreciseProductImportPayload(files);
+            setPreciseProductImportStatus("Analizando el producto GNSS sin importarlo…", "busy");
+            preciseProductImportConfirmBtn.disabled = true;
+            preciseProductImportConfirmBtn.textContent = "Analizando…";
+            preciseProductImportConfirmBtn.setAttribute("aria-busy", "true");
+            setCatalogBusyState(true, "Previsualizando producto preciso...");
+            const response = await fetch("/api/precise-products/preview", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(requestPayload)
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || payload?.ok === false) {
+                if (response.status === 404) {
+                    throw new Error("Este runtime todavía no ofrece la previsualización GNSS. Actualiza Orbit antes de importar productos SP3.");
+                }
+                throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+            }
+            if (requestId !== preciseProductPreviewRequestId || !preciseProductImportModal.classList.contains("open")) {
+                return;
+            }
+            openPreciseProductPreviewModal(payload);
+        } catch (error) {
+            if (requestId !== preciseProductPreviewRequestId || !preciseProductImportModal.classList.contains("open")) {
+                return;
+            }
+            const message = error instanceof Error ? error.message : String(error);
             setPreciseProductImportStatus(
-                `Importando ${files.length} ${files.length === 1 ? "fichero" : "ficheros"} GNSS…`,
+                message === PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3
+                    ? message
+                    : `No se pudo previsualizar: ${message}`,
+                "error"
+            );
+            showErrorPopup(
+                message === PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3
+                    ? message
+                    : `No se pudo previsualizar el producto preciso: ${message}`
+            );
+        } finally {
+            preciseProductPreviewBusy = false;
+            if (requestId !== preciseProductPreviewRequestId || !preciseProductImportModal.classList.contains("open")) {
+                setCatalogBusyState(false, "");
+                return;
+            }
+            preciseProductImportConfirmBtn.disabled = false;
+            preciseProductImportConfirmBtn.textContent = initialButtonLabel;
+            preciseProductImportConfirmBtn.removeAttribute("aria-busy");
+            setCatalogBusyState(false, "");
+        }
+    }
+
+    async function importPreciseProductFiles({ autoAddToView = true, announce = true, selectedSatelliteIds = [] } = {}) {
+        if (preciseProductImportBusy) return;
+        const selectedIds = normalizeSelectedPreciseProductSatelliteIds(selectedSatelliteIds);
+        if (!selectedIds.length) {
+            setPreciseProductPreviewStatus("Selecciona al menos un satélite antes de confirmar la importación.", "error");
+            return;
+        }
+        preciseProductImportBusy = true;
+        const files = [...pendingPreciseProductFiles];
+        const initialButtonLabel = preciseProductPreviewConfirmBtn.textContent;
+
+        try {
+            setPreciseProductPreviewStatus(
+                `Importando ${selectedIds.length} ${selectedIds.length === 1 ? "satélite" : "satélites"}…`,
                 "busy"
             );
-            preciseProductImportConfirmBtn.disabled = true;
-            preciseProductImportConfirmBtn.textContent = "Importando…";
-            preciseProductImportConfirmBtn.setAttribute("aria-busy", "true");
-            const requestPayload = await buildPreciseProductImportPayload(files);
+            preciseProductPreviewConfirmBtn.disabled = true;
+            preciseProductPreviewConfirmBtn.textContent = "Importando…";
+            preciseProductPreviewConfirmBtn.setAttribute("aria-busy", "true");
+            setPreciseProductPreviewImportControls(true);
+            const requestPayload = await buildPreciseProductImportPayload(files, { selectedSatelliteIds: selectedIds });
             setCatalogBusyState(true, "Importando producto preciso...");
             const response = await fetch("/api/precise-products/import", {
                 method: "POST",
@@ -3310,7 +3682,7 @@ export function setupObjectSidebar({
             renderList();
             renderInfo();
             renderCatalogList();
-            setPreciseProductImportStatus("Producto GNSS importado correctamente.", "ready");
+            setPreciseProductPreviewStatus("Importación confirmada correctamente.", "ready");
             closePreciseProductImportModal({ discard: true });
             if (announce) {
                 const productName = String(
@@ -3334,7 +3706,7 @@ export function setupObjectSidebar({
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            setPreciseProductImportStatus(
+            setPreciseProductPreviewStatus(
                 message === PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3
                     ? message
                     : `No se pudo importar: ${message}`,
@@ -3347,9 +3719,12 @@ export function setupObjectSidebar({
             );
         } finally {
             preciseProductImportBusy = false;
-            preciseProductImportConfirmBtn.disabled = false;
-            preciseProductImportConfirmBtn.textContent = initialButtonLabel;
-            preciseProductImportConfirmBtn.removeAttribute("aria-busy");
+            if (preciseProductPreviewModal.classList.contains("open")) {
+                setPreciseProductPreviewImportControls(false);
+                preciseProductPreviewConfirmBtn.textContent = initialButtonLabel;
+                preciseProductPreviewConfirmBtn.removeAttribute("aria-busy");
+                updatePreciseProductPreviewSelectionUi();
+            }
             setCatalogBusyState(false, "");
             // Do not leak a target folder to a later, unrelated import after
             // a failed product validation or network response.
@@ -3379,7 +3754,44 @@ export function setupObjectSidebar({
     importPreciseProductBtn?.addEventListener("click", () => requestPreciseProductImport());
     preciseProductImportCloseBtn?.addEventListener("click", () => closePreciseProductImportModal());
     preciseProductImportCancelBtn?.addEventListener("click", () => closePreciseProductImportModal());
-    preciseProductImportConfirmBtn?.addEventListener("click", () => { void importPreciseProductFiles(); });
+    preciseProductImportConfirmBtn?.addEventListener("click", () => { void requestPreciseProductPreview(); });
+    preciseProductPreviewCloseBtn?.addEventListener("click", () => closePreciseProductPreviewModal());
+    preciseProductPreviewCancelBtn?.addEventListener("click", () => closePreciseProductPreviewModal());
+    preciseProductPreviewBackBtn?.addEventListener("click", () => closePreciseProductPreviewModal({ discard: false, returnToFiles: true }));
+    preciseProductPreviewConfirmBtn?.addEventListener("click", () => {
+        void importPreciseProductFiles({ selectedSatelliteIds: [...selectedPreciseProductSatelliteIds] });
+    });
+    preciseProductPreviewSelectAllBtn?.addEventListener("click", () => {
+        for (const satellite of preciseProductPreviewSatellites()) {
+            selectedPreciseProductSatelliteIds.add(satellite.id);
+        }
+        renderPreciseProductPreviewRows();
+    });
+    preciseProductPreviewClearBtn?.addEventListener("click", () => {
+        selectedPreciseProductSatelliteIds.clear();
+        renderPreciseProductPreviewRows();
+    });
+    preciseProductPreviewSelectVisible?.addEventListener("change", (event) => {
+        const checked = Boolean(event.target?.checked);
+        for (const satellite of filteredPreciseProductPreviewSatellites()) {
+            if (checked) selectedPreciseProductSatelliteIds.add(satellite.id);
+            else selectedPreciseProductSatelliteIds.delete(satellite.id);
+        }
+        renderPreciseProductPreviewRows();
+    });
+    preciseProductPreviewSearch?.addEventListener("input", (event) => {
+        preciseProductPreviewFilter = String(event.target?.value || "");
+        renderPreciseProductPreviewRows();
+    });
+    preciseProductPreviewRows?.addEventListener("change", (event) => {
+        const checkbox = event.target?.closest?.("[data-precise-product-satellite-id]");
+        if (!checkbox) return;
+        const satelliteId = String(checkbox.dataset.preciseProductSatelliteId || "").trim();
+        if (!satelliteId) return;
+        if (checkbox.checked) selectedPreciseProductSatelliteIds.add(satelliteId);
+        else selectedPreciseProductSatelliteIds.delete(satelliteId);
+        renderPreciseProductPreviewRows();
+    });
     preciseProductImportModal.querySelectorAll("[data-precise-product-slot-select]").forEach((button) => {
         button.addEventListener("click", () => {
             const kind = button.dataset.preciseProductSlotSelect;
@@ -3414,6 +3826,9 @@ export function setupObjectSidebar({
     });
     preciseProductImportModal.addEventListener("click", (event) => {
         if (event.target === preciseProductImportModal) closePreciseProductImportModal();
+    });
+    preciseProductPreviewModal.addEventListener("click", (event) => {
+        if (event.target === preciseProductPreviewModal) closePreciseProductPreviewModal();
     });
     const requestCelestialBody = (kind) => {
         closeAddMenu();
@@ -5453,6 +5868,7 @@ export function setupObjectSidebar({
             contextMenu.remove();
             addMenu.remove();
             preciseProductImportModal.remove();
+            preciseProductPreviewModal.remove();
             groundStationModal.remove();
         }
     };

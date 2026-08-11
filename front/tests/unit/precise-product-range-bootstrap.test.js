@@ -4,6 +4,7 @@ import test from "node:test";
 import {
     getSatelliteTelemetry,
     initSatelliteReceiver,
+    refreshSatelliteOverlays,
     registerPreciseProductSatelliteEntries,
     setOrbitConfig,
     setSatelliteLayerActive,
@@ -26,6 +27,13 @@ function createCesiumTestDouble() {
                 this.x = x;
                 this.y = y;
                 this.z = z;
+            }
+
+            static fromRadians(longitude, latitude, height) {
+                if (![longitude, latitude, height].every(Number.isFinite)) {
+                    throw new TypeError("Cannot read properties of undefined (reading 'longitude')");
+                }
+                return new this(longitude, latitude, height);
             }
         },
         Cartesian2: class Cartesian2 {
@@ -50,7 +58,12 @@ function createCesiumTestDouble() {
         Cartographic: {
             fromCartesian: () => ({ latitude: 0, longitude: 0, height: 700_000 })
         },
-        Ellipsoid: { WGS84: { maximumRadius: 6_378_137 } }
+        Ellipsoid: { WGS84: { maximumRadius: 6_378_137 } },
+        PolygonHierarchy: class PolygonHierarchy {
+            constructor(positions) {
+                this.positions = positions;
+            }
+        }
     };
 }
 
@@ -169,6 +182,44 @@ test("an active historical SP3 layer seeds Cesium from its aligned range instead
         assert.equal(telemetry.runtime_state, "ACTIVE");
         assert.equal(telemetry.position.x, 7_050_000, "the marker is sampled at the selected timeline time");
         assert.equal(telemetry.position.y, 30_000);
+
+        // A product can have an aligned range but no projectable geodetic
+        // state (for example while a renderer realization is unavailable or
+        // an incomplete state is being replaced). The object inspector must
+        // keep the Cartesian telemetry and omit only geodetic fields.
+        globalThis.Cesium.Cartographic.fromCartesian = () => ({
+            latitude: 0,
+            height: 700_000
+        });
+        assert.doesNotThrow(() => getSatelliteTelemetry(stationId));
+        const unprojectableTelemetry = getSatelliteTelemetry(stationId);
+        assert.deepEqual(unprojectableTelemetry.geo, {
+            latitude_deg: null,
+            longitude_deg: null,
+            altitude_m: null
+        });
+        assert.equal(unprojectableTelemetry.footprint_radius_m, null);
+
+        // The same incomplete state must be harmless when surface overlays
+        // refresh: no footprint is created and the remaining orbit state is
+        // still usable by the inspector.
+        setOrbitConfig({
+            satellite_use_3d_model: false,
+            orbit_future_show: false,
+            orbit_ground_track_show: true,
+            propagation_hours: 1
+        });
+        assert.doesNotThrow(() => refreshSatelliteOverlays(viewer));
+        assert.equal(entities.some((entity) => entity.id === `${stationId}-footprint`), false);
+
+        // Some Cesium builds reject an intermediate Cartesian conversion
+        // outright. Keep that recovery boundary local to the optional
+        // cartographic representation as well.
+        globalThis.Cesium.Cartographic.fromCartesian = () => {
+            throw new TypeError("Cannot read properties of undefined (reading 'longitude')");
+        };
+        assert.doesNotThrow(() => getSatelliteTelemetry(stationId));
+        assert.doesNotThrow(() => refreshSatelliteOverlays(viewer));
     } finally {
         setSatelliteLayerActive(stationId, false);
         setSimulationTimelineProvider(null);

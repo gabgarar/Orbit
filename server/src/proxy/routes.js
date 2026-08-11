@@ -55,5 +55,9 @@ export function registerPreciseProductImportBodyParser(app) {
 
 export function registerPreciseProductImportProxyRoute(app, client) {
     const forward = createPythonForwarder(client);
+    // Preview accepts the same potentially large SP3/companion upload body
+    // as import, but FastAPI only parses it and does not mutate project
+    // state. Keep it on this bounded route rather than the generic JSON API.
+    app.post("/api/precise-products/preview", (request, response) => forward(request, response, "/precise-products/preview"));
     app.post("/api/precise-products/import", (request, response) => forward(request, response, "/precise-products/import"));
 }

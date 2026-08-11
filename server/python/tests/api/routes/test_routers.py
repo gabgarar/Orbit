@@ -23,7 +23,7 @@ def test_every_domain_route_factory_has_its_public_paths():
     assert _paths(create_system_router(lambda: 1, lambda: 1)) == {"/health", "/reload"}
     assert _paths(create_catalog_router(lambda: ["ISS"])) == {"/catalog"}
     assert _paths(create_precise_products_router(lambda *_args, **_kwargs: object(), lambda: {})) == {
-        "/precise-products", "/precise-products/import",
+        "/precise-products", "/precise-products/import", "/precise-products/preview",
     }
     assert {"/propagate", "/orbits", "/ephemeris"} <= _paths(create_orbits_router(resolver, lambda *_args, **_kwargs: {}, lambda *_: 2, ephemeris))
     assert _paths(create_manual_orbits_router(ephemeris, lambda value: value)) == {"/manual-orbits"}
