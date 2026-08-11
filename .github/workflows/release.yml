@@ -1,0 +1,181 @@
+name: Release Orbit
+
+# A tag push is the normal release path.  The `release` trigger also covers a
+# release created from an existing tag; its tag is checked again before any
+# build or upload begins.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate-release-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      is_semver: ${{ steps.tag.outputs.is_semver }}
+    steps:
+      - name: Check tag format
+        id: tag
+        shell: bash
+        env:
+          PUSH_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG:-$PUSH_TAG}"
+          semver_pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if [[ "$tag" =~ $semver_pattern ]]; then
+            echo "is_semver=true" >> "$GITHUB_OUTPUT"
+            echo "Release tag accepted: ${tag}"
+          else
+            echo "is_semver=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping release build for '${tag:-unknown}': expected vMAJOR.MINOR.PATCH (optionally with SemVer pre-release/build metadata)."
+          fi
+
+  build-release:
+    name: Build Orbit Tracker
+    needs: validate-release-tag
+    if: needs.validate-release-tag.outputs.is_semver == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.package.outputs.artifact_name }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate-release-tag.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            react-ui/package-lock.json
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: server/requirements.txt
+
+      - name: Install JavaScript dependencies
+        run: |
+          node --version
+          npm --version
+          npm ci --prefix server
+          npm ci --prefix react-ui
+
+      - name: Install and validate Python runtime
+        run: |
+          python --version
+          python -m pip install --upgrade pip
+          python -m pip install -r server/requirements.txt
+          python -m compileall -q server/python
+
+      - name: Build Orbit Tracker frontend
+        run: |
+          npm run build --prefix react-ui
+          node server/scripts/validate-image-config.js
+
+      - name: Package reproducible release archive
+        id: package
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          artifact_name="orbit-tracker-${RELEASE_TAG}"
+          package_root="$RUNNER_TEMP/orbit-release"
+          bundle_dir="$package_root/$artifact_name"
+          source_commit="$(git rev-parse HEAD)"
+          source_date_epoch="$(git log -1 --format=%ct "$source_commit")"
+
+          mkdir -p "$bundle_dir"
+          git archive --format=tar "$source_commit" | tar -xf - -C "$bundle_dir"
+          mkdir -p "$bundle_dir/front"
+          cp -R front/dist "$bundle_dir/front/dist"
+          printf 'Orbit Tracker %s\nSource commit: %s\nSource date (UTC epoch): %s\n' \
+            "$RELEASE_TAG" "$source_commit" "$source_date_epoch" > "$bundle_dir/BUILD-INFO.txt"
+
+          mkdir -p release
+          tar --sort=name \
+            --mtime="@${source_date_epoch}" \
+            --owner=0 --group=0 --numeric-owner \
+            --pax-option=delete=atime,delete=ctime \
+            -C "$package_root" -cf - "$artifact_name" \
+            | gzip -n > "release/${artifact_name}.tar.gz"
+          (
+            cd release
+            sha256sum "${artifact_name}.tar.gz" > SHA256SUMS.txt
+          )
+
+          echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Created release/${artifact_name}.tar.gz"
+          cat release/SHA256SUMS.txt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: |
+            release/*.tar.gz
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release:
+    name: Attach artifacts to GitHub Release
+    needs: [validate-release-tag, build-release]
+    if: needs.validate-release-tag.outputs.is_semver == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-release.outputs.artifact_name }}
+          path: release
+
+      - name: Create release if needed and upload assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "Publishing Orbit release ${RELEASE_TAG}"
+          find release -maxdepth 1 -type f -printf '%f\n' | sort
+          test -f release/SHA256SUMS.txt
+          shopt -s nullglob
+          archives=(release/*.tar.gz)
+          if (( ${#archives[@]} != 1 )); then
+            echo "::error::Expected exactly one Orbit Tracker archive, found ${#archives[@]}."
+            exit 1
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "A GitHub Release already exists for ${RELEASE_TAG}."
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "Orbit ${RELEASE_TAG}" \
+              --generate-notes
+          fi
+
+          gh release upload "$RELEASE_TAG" "${archives[@]}" release/SHA256SUMS.txt --clobber
+          echo "::notice::Release assets uploaded for ${RELEASE_TAG}."
