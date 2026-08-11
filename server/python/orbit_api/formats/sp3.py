@@ -419,14 +419,45 @@ def _optional_text(value: str) -> str | None:
 
 
 def _find_time_scale_label(lines: tuple[str, ...]) -> str:
+    """Return the SP3 ``TIME_SYSTEM`` field without mistaking a placeholder.
+
+    A standards-compliant SP3 ``%c`` line is fixed-width and commonly looks
+    like ``%c M  cc GPS ...``.  The ``cc`` token is a literal placeholder,
+    while ``GPS`` is the time system.  Earlier compact test fixtures used the
+    abbreviated ``%c cc GPS ...`` form, so retain that compatible fallback.
+    Unknown *declared* scales are intentionally returned for the caller to
+    reject explicitly; placeholders themselves are not declarations.
+    """
+
+    unknown_candidates: list[str] = []
     for line in lines:
         if not line.startswith("%c"):
             continue
         tokens = line[2:].split()
-        # SP3 defines this line as ``%c cc TIME_SYSTEM ...``.  Select the
-        # declared slot even when the scale is newer than Orbit's enum.
-        if len(tokens) >= 2:
-            return tokens[1]
+        if len(tokens) >= 3 and tokens[0].upper() == "M":
+            # In a canonical header TIME_SYSTEM occupies columns 10--12
+            # (one-based), i.e. the third whitespace token after ``%c``.
+            # Prefer the token so a producer that trims one padding space
+            # does not shift ``GPS`` into an invalid fixed-width slice.
+            candidate = tokens[2]
+        elif len(tokens) >= 2:
+            # Compatibility for concise fixtures and older producers that
+            # omit the leading ``M`` and its placeholder field.
+            candidate = tokens[1]
+        else:
+            continue
+
+        normalized = candidate.strip().upper()
+        if not normalized or set(normalized.casefold()) == {"c"}:
+            continue
+        if TimeScale.from_label(normalized) is not TimeScale.UNKNOWN:
+            return normalized
+        unknown_candidates.append(normalized)
+
+    if unknown_candidates:
+        # Preserve an actual unrecognised declaration so ``from_text`` can
+        # report it accurately instead of silently assuming UTC.
+        return unknown_candidates[0]
     raise EphemerisFormatError("La cabecera SP3 no declara TIME_SYSTEM en una línea %c")
 
 

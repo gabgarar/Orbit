@@ -46,6 +46,34 @@ def test_sp3_metadata_preserves_its_native_igs_frame_and_gps_time_scale():
     assert metadata.agency == "COD"
 
 
+def test_sp3_standard_percent_c_header_skips_its_cc_placeholder_for_gps():
+    """A real CODE/IGS SP3 uses ``M cc GPS``, not ``cc`` as TIME_SYSTEM."""
+
+    source = "\n".join(
+        [
+            _sp3_header(frame="IGb20"),
+            "## 2366      0.00000000   300.00000000 60806 0.0000000000000",
+            "+    1   G01",
+            "%c M  cc GPS ccc cccc cccc cccc ccccc ccccc ccccc ccccc",
+        ]
+    )
+
+    metadata = parse_sp3_metadata(source)
+
+    assert metadata.reference_frame.label == "IGB20"
+    assert metadata.time_scale is TimeScale.GPS
+    assert metadata.time_scale_label == "GPS"
+
+
+def test_sp3_trimmed_standard_percent_c_header_keeps_the_third_time_token():
+    source = "\n".join([_sp3_header(), "%c M cc GPS ccc cccc"])
+
+    metadata = parse_sp3_metadata(source)
+
+    assert metadata.time_scale is TimeScale.GPS
+    assert metadata.time_scale_label == "GPS"
+
+
 def test_sp3_keeps_unknown_time_scale_label_without_assuming_utc():
     source = "\n".join([_sp3_header(frame="ITRF"), "%c cc FUTURE ccc ccc"])
 
