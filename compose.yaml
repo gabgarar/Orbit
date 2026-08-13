@@ -10,6 +10,9 @@ services:
       # The HTTP port inside the container is part of the runtime contract.
       PORT: "8100"
       PYTHON_BACKEND_URL: "http://127.0.0.1:8765"
+      # Strict SP3/ERP rehydration is local but can take longer than a normal
+      # web-service boot. The runtime only accepts 10,000–600,000 ms.
+      ORBIT_PYTHON_STARTUP_TIMEOUT_MS: "${ORBIT_PYTHON_STARTUP_TIMEOUT_MS:-180000}"
       # Pinned time data is opt-in and remains local to the mounted config
       # volume. Paths here are container paths, normally /app/config/eop/… .
       ORBIT_EOP_C04_PATH: "${ORBIT_EOP_C04_PATH:-}"
@@ -22,12 +25,15 @@ services:
       ORBIT_EOP_ALLOW_EXTRAPOLATION: "${ORBIT_EOP_ALLOW_EXTRAPOLATION:-}"
       ORBIT_EOP_REQUIRED_START: "${ORBIT_EOP_REQUIRED_START:-}"
       ORBIT_EOP_REQUIRED_END: "${ORBIT_EOP_REQUIRED_END:-}"
-      ORBIT_LEAP_SECONDS_PATH: "${ORBIT_LEAP_SECONDS_PATH:-}"
-      ORBIT_LEAP_SECONDS_SHA256: "${ORBIT_LEAP_SECONDS_SHA256:-}"
-      ORBIT_LEAP_SECONDS_SOURCE: "${ORBIT_LEAP_SECONDS_SOURCE:-}"
-      ORBIT_LEAP_SECONDS_VERSION: "${ORBIT_LEAP_SECONDS_VERSION:-}"
-      ORBIT_LEAP_SECONDS_REQUIRED: "${ORBIT_LEAP_SECONDS_REQUIRED:-}"
-      ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED: "${ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED:-}"
+      # A pinned IERS EOC Bulletin C 72 snapshot.  This is deliberately local:
+      # ECI never contacts IERS/NTP at runtime and fails closed at its #@
+      # horizon.  Override the path, SHA and version together when updating.
+      ORBIT_LEAP_SECONDS_PATH: "${ORBIT_LEAP_SECONDS_PATH:-/app/config/eop/leap-seconds.list}"
+      ORBIT_LEAP_SECONDS_SHA256: "${ORBIT_LEAP_SECONDS_SHA256:-db5a895f16853b03bfc865e8d68f9fc8710ef1740e3400c701cd46a5bbbc3433}"
+      ORBIT_LEAP_SECONDS_SOURCE: "${ORBIT_LEAP_SECONDS_SOURCE:-IERS Earth Orientation Center leap-seconds.list}"
+      ORBIT_LEAP_SECONDS_VERSION: "${ORBIT_LEAP_SECONDS_VERSION:-IERS-Bulletin-C-72-2026-07-06}"
+      ORBIT_LEAP_SECONDS_REQUIRED: "${ORBIT_LEAP_SECONDS_REQUIRED:-true}"
+      ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED: "${ORBIT_LEAP_SECONDS_REQUIRE_UNEXPIRED:-true}"
       # Precise GNSS SP3 products from the current IGS20 family (IGS20,
       # IGb20 and IGc20) publish a zero-parameter satellite-orbit datum
       # relationship to ITRF2020.  Make that audited, satellite-only route

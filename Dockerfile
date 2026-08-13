@@ -37,6 +37,11 @@ COPY .scripts/ ./.scripts/
 COPY server/ ./server/
 COPY front/ ./front/
 COPY react-ui/ ./react-ui/
+# The pinned UTC-TAI snapshot is an immutable build input: Python and Node
+# validation exercise its integrity before the mutable runtime config layer.
+# Precise-product uploads intentionally stay outside this layer and are
+# supplied by Compose through the config volume at runtime.
+COPY config/eop/ ./config/eop/
 
 RUN npm run test:node --prefix server \
     && npm run test:frontend --prefix server \
@@ -52,7 +57,10 @@ ENV PATH="/opt/venv/bin:${PATH}"
 
 EXPOSE 8100
 
-HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
+# The Node gateway intentionally waits for strict local GNSS rehydration.
+# Keep Docker from declaring the service unhealthy before the largest accepted
+# ORBIT_PYTHON_STARTUP_TIMEOUT_MS (10 minutes) has elapsed.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10m --retries=5 \
     CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 8100) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["node", "server/nodeServer.js"]

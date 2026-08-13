@@ -8,6 +8,7 @@ import {
     PYTHON_STARTUP_POLL_INTERVAL_MS,
     PYTHON_STARTUP_TIMEOUT_MS
 } from "../../src/runtime/python-backend.js";
+import { DEFAULT_PYTHON_STARTUP_TIMEOUT_MS } from "../../src/runtime/python-startup-timeout.js";
 
 function childProcess() {
     const child = new EventEmitter();
@@ -102,10 +103,30 @@ test("Python supervisor allows strict precise-product hydration beyond the old 1
     await backend.ensureStarted();
 
     assert.equal(PYTHON_STARTUP_POLL_INTERVAL_MS, 250);
-    assert.equal(PYTHON_STARTUP_TIMEOUT_MS, 60_000);
-    assert.equal(PYTHON_STARTUP_ATTEMPTS, 240);
+    assert.equal(PYTHON_STARTUP_TIMEOUT_MS, DEFAULT_PYTHON_STARTUP_TIMEOUT_MS);
+    assert.equal(PYTHON_STARTUP_TIMEOUT_MS, 180_000);
+    assert.equal(PYTHON_STARTUP_ATTEMPTS, 720);
     assert.ok(healthChecks >= 70);
     assert.equal(child.killed, false);
+});
+
+test("Python supervisor derives its poll budget from the configured startup timeout", async () => {
+    const child = childProcess();
+    let sleepCalls = 0;
+    const backend = createPythonBackend({
+        client: { isHealthy: async () => false },
+        pythonDir: "/app/server/python",
+        logger,
+        platform: "linux",
+        startupTimeoutMs: 10_000,
+        startupDelayMs: 2_000,
+        sleep: async () => { sleepCalls += 1; },
+        spawnImpl: () => child
+    });
+
+    await assert.rejects(backend.ensureStarted(), /within 10000 ms/);
+    assert.equal(sleepCalls, 5);
+    assert.equal(child.killed, true);
 });
 
 test("Python supervisor waits for its owned process and stops it cleanly", async () => {

@@ -89,6 +89,7 @@ provenance contract.
 | ORBIT_HTTP_PORT | Published port on the host; does not change the internal port 8100. |
 | ORBIT_HTTP_BIND | Listening interface. The default value of 127.0.0.1 maintains local access. |
 | PYTHON_BACKEND_URL | Internal URL used by the gateway for the Python backend. |
+| ORBIT_PYTHON_STARTUP_TIMEOUT_MS | Python-backend startup budget: `180000` ms by default; only integer values from `10000` to `600000` are accepted. Leave enough time to rehydrate strict local GNSS products (SP3/ERP) before the service is declared available. |
 | ORBIT_EOP_* | Policy and origin of the local C04 snapshot. |
 | ORBIT_LEAP_SECONDS_* | Local UTC–TAI table policy. |
 | ORBIT_TERRESTRIAL_REALIZATION | Output terrestrial realization; Compose defaults to `ITRF2020`. |
@@ -103,6 +104,11 @@ before enabling it.
 Temporary and implementation variables do not belong in the interface JSON.
 They are injected into Compose when starting the process; your contract is documented in
 [Time and EOP](time-eop.md).
+
+`restart-orbit` waits for the configured budget, rounded up to seconds, plus
+60 s for the gateway and healthcheck cadence. The default therefore waits up
+to 240 s. If strict GNSS collection rehydration needs longer, set the variable
+within its valid range and restart the runtime.
 
 ## Application of changes
 

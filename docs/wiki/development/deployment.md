@@ -52,6 +52,7 @@ espacio de trabajo; también puede abrirse directamente en una pestaña. La ruta
 | `ORBIT_HTTP_PORT` | `8100` | Puerto publicado del host. Debe ser un entero entre 1 y 65535 en los scripts Windows. |
 | `PORT` | `8100` | Puerto interno del gateway en el contenedor. |
 | `PYTHON_BACKEND_URL` | `http://127.0.0.1:8765` | Origen privado que utiliza el gateway para FastAPI. |
+| `ORBIT_PYTHON_STARTUP_TIMEOUT_MS` | `180000` | Presupuesto de arranque del backend Python en ms; entero entre `10000` y `600000`, especialmente para la rehidratación local estricta de SP3/ERP. |
 
 `ORBIT_HTTP_BIND=0.0.0.0` publica Orbit en todas las interfaces del host. No
 hay autenticación ni autorización en la aplicación; use firewall, VPN o proxy
@@ -93,7 +94,7 @@ procedimiento operativo de estos ficheros.
 
 | Script | Efecto |
 | --- | --- |
-| `.\.scripts\restart-orbit.cmd` | Construye con caché, detiene Compose, recrea el servicio y espera hasta 90 s el healthcheck. |
+| `.\.scripts\restart-orbit.cmd` | Construye con caché, detiene Compose, recrea el servicio y espera `ceil(ORBIT_PYTHON_STARTUP_TIMEOUT_MS / 1000) + 60` s el healthcheck (240 s con el valor predeterminado). |
 | `.\.scripts\restart-orbit.cmd -SkipBuild` | Reutiliza la imagen actual y reinicia. |
 | `.\.scripts\restart-orbit.cmd -NoCache` | Construye sin caché antes de reiniciar. |
 | `.\.scripts\orbit-status.cmd` | Muestra `docker compose ps`. |

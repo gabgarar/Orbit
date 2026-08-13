@@ -36,5 +36,9 @@ react-ui/.runtime-vendor/
 # The source TIFF is retained locally for re-export only; the runtime uses
 # the known-good low-resolution lunar texture stored alongside the basemaps.
 front/assets/basemap/Moon_color_16bit_srgb_4k.tif
+# Imported precise GNSS products are mutable runtime state.  Compose mounts
+# config/ at runtime, so baking this OneDrive reparse-point directory into the
+# build context is unnecessary and can make Docker fail while archiving it.
+config/precise-products/
 tests/artifacts
 server/ui-artifacts/

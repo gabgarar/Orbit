@@ -16,6 +16,22 @@ $orbitHttpBind = Get-OrbitHttpBind
 $env:ORBIT_HTTP_PORT = "$orbitHttpPort"
 $env:ORBIT_HTTP_BIND = $orbitHttpBind
 
+# Match Compose' bounded backend-startup budget.  A product collection may
+# need several minutes for strict local SP3/ERP rehydration before /health is
+# available; add one minute for the gateway and Docker healthcheck cadence.
+$defaultPythonStartupTimeoutMs = 180000
+$minimumPythonStartupTimeoutMs = 10000
+$maximumPythonStartupTimeoutMs = 600000
+$pythonStartupTimeoutMs = $defaultPythonStartupTimeoutMs
+$configuredPythonStartupTimeoutMs = "$env:ORBIT_PYTHON_STARTUP_TIMEOUT_MS".Trim()
+if ($configuredPythonStartupTimeoutMs -match '^\d+$') {
+    $candidatePythonStartupTimeoutMs = [long]$configuredPythonStartupTimeoutMs
+    if ($candidatePythonStartupTimeoutMs -ge $minimumPythonStartupTimeoutMs -and $candidatePythonStartupTimeoutMs -le $maximumPythonStartupTimeoutMs) {
+        $pythonStartupTimeoutMs = $candidatePythonStartupTimeoutMs
+    }
+}
+$composeWaitTimeoutSeconds = [Math]::Ceiling($pythonStartupTimeoutMs / 1000.0) + 60
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker was not found. Open Docker Desktop and run this script from a new terminal."
 }
@@ -58,9 +74,9 @@ try {
         throw "Orbit containers could not be stopped after the image was rebuilt."
     }
 
-    docker compose up --detach --force-recreate --wait --wait-timeout 90
+    docker compose up --detach --force-recreate --wait --wait-timeout $composeWaitTimeoutSeconds
     if ($LASTEXITCODE -ne 0) {
-        throw "Orbit did not become healthy within 90 seconds. Run .\.scripts\orbit-logs.cmd to inspect the service logs."
+        throw "Orbit did not become healthy within $composeWaitTimeoutSeconds seconds. Run .\.scripts\orbit-logs.cmd to inspect the service logs."
     }
 
     docker compose ps

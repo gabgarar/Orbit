@@ -16,11 +16,14 @@ test("runtime starts dependencies in order and stops them only once", async () =
         serverDir: "/app/server",
         logger: { log: () => {}, warn: () => {} },
         services: {
-            getRuntimeSettings: () => ({ port: 8100, configDir: "/app/config", pythonDir: "/app/server/python", pythonBackendUrl: "http://python" }),
+            getRuntimeSettings: () => ({ port: 8100, configDir: "/app/config", pythonDir: "/app/server/python", pythonBackendUrl: "http://python", pythonStartupTimeoutMs: 234_000 }),
             createConfigRepository: () => config,
             createCatalogRepository: () => catalog,
             createPythonClient: () => ({}),
-            createPythonBackend: () => pythonBackend,
+            createPythonBackend: (options) => {
+                assert.equal(options.startupTimeoutMs, 234_000);
+                return pythonBackend;
+            },
             createCatalogRefreshService: () => refresher,
             createCatalogImportService: () => ({}),
             createOrbitApp: () => ({ name: "app" }),

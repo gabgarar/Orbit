@@ -52,6 +52,7 @@ reserved for the FastAPI backend Swagger interface.
 | `ORBIT_HTTP_PORT` | `8100` | Published port of the host. Must be an integer between 1 and 65535 in Windows scripts. |
 | `PORT` | `8100` | Internal port of the gateway in the container. |
 | `PYTHON_BACKEND_URL` | `http://127.0.0.1:8765` | Private origin that uses the gateway for FastAPI. |
+| `ORBIT_PYTHON_STARTUP_TIMEOUT_MS` | `180000` | Python-backend startup budget in ms; integer from `10000` to `600000`, especially for strict local SP3/ERP rehydration. |
 
 `ORBIT_HTTP_BIND=0.0.0.0` publishes Orbit to all host interfaces. No
 there is no authentication or authorization in the application; use firewall, VPN or proxy
@@ -93,7 +94,7 @@ operating procedure for these files.
 
 | Script | Effect |
 | --- | --- |
-| `.\.scripts\restart-orbit.cmd` | Build with cache, stop Compose, recreate the service and wait up to 90s for the healthcheck. |
+| `.\.scripts\restart-orbit.cmd` | Build with cache, stop Compose, recreate the service and wait `ceil(ORBIT_PYTHON_STARTUP_TIMEOUT_MS / 1000) + 60` s for the healthcheck (240 s by default). |
 | `.\.scripts\restart-orbit.cmd -SkipBuild` | Reuse the current image and reboot. |
 | `.\.scripts\restart-orbit.cmd -NoCache` | Build without cache before reboot. |
 | `.\.scripts\orbit-status.cmd` | Shows `docker compose ps`. |

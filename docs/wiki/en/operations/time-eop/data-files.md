@@ -10,3 +10,20 @@
 
 Do not use a C04 IAU 1980 that declares dPsi/dEps instead of dX/dY. Orbit it
 rejects when the header identifies it.
+
+## UTC-TAI snapshot included with Compose
+
+The distribution includes `config/eop/leap-seconds.list`, copied from the
+official [IERS EOC source](https://hpiers.obspm.fr/iers/bul/bulc/ntp/leap-seconds.list)
+updated by Bulletin C 72 (2026-07-06). The default deployment pins:
+
+| Data | Value |
+| --- | --- |
+| SHA-256 | `db5a895f16853b03bfc865e8d68f9fc8710ef1740e3400c701cd46a5bbbc3433` |
+| Version | `IERS-Bulletin-C-72-2026-07-06` |
+| NTP update | `3992312697` |
+| IERS `#@` horizon | `2027-06-28T00:00:00Z` (exclusive) |
+
+It was current on 2026-08-12. It is never downloaded at runtime: the hash is
+verified at startup and an SP3-to-ECI conversion is rejected at that horizon.
+Update the file, SHA and version together from IERS, not from a mirror.

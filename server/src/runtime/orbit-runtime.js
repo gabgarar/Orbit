@@ -27,7 +27,13 @@ export function createOrbitRuntime({ serverDir, environment, logger = console, s
     const config = factory.createConfigRepository({ configDir: settings.configDir });
     const catalog = factory.createCatalogRepository({ getCatalogPath: config.getCatalogPath });
     const pythonClient = factory.createPythonClient(settings.pythonBackendUrl);
-    const pythonBackend = factory.createPythonBackend({ client: pythonClient, pythonDir: settings.pythonDir, backendUrl: settings.pythonBackendUrl, logger });
+    const pythonBackend = factory.createPythonBackend({
+        client: pythonClient,
+        pythonDir: settings.pythonDir,
+        backendUrl: settings.pythonBackendUrl,
+        startupTimeoutMs: settings.pythonStartupTimeoutMs,
+        logger
+    });
     const serialize = { text: serializeTleCatalog, json: serializeTleCatalogJson };
     const refresher = factory.createCatalogRefreshService({ catalog, config, serialize, reloadPython: pythonBackend.reload, logger });
     const importer = factory.createCatalogImportService({ catalog, serialize, reloadPython: pythonBackend.reload });

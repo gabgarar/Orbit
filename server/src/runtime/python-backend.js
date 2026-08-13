@@ -1,16 +1,21 @@
 import { spawn } from "node:child_process";
+import {
+    DEFAULT_PYTHON_STARTUP_TIMEOUT_MS,
+    getPythonStartupAttempts,
+    PYTHON_STARTUP_POLL_INTERVAL_MS,
+    readPythonStartupTimeoutMs
+} from "./python-startup-timeout.js";
+
+export { PYTHON_STARTUP_POLL_INTERVAL_MS } from "./python-startup-timeout.js";
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const DEFAULT_RECOVERY_DELAYS_MS = Object.freeze([1_000, 2_000, 5_000]);
 export const PYTHON_RELOAD_TIMEOUT_MS = 10_000;
 // Rehydrating a validated precise-GNSS product performs the same strict SP3,
-// ERP and checksum work as an import.  Give that deterministic local work a
-// realistic window rather than killing Uvicorn after the old 10-second poll.
-export const PYTHON_STARTUP_POLL_INTERVAL_MS = 250;
-export const PYTHON_STARTUP_TIMEOUT_MS = 60_000;
-export const PYTHON_STARTUP_ATTEMPTS = Math.ceil(
-    PYTHON_STARTUP_TIMEOUT_MS / PYTHON_STARTUP_POLL_INTERVAL_MS
-);
+// ERP and checksum work as an import. The default supports a persisted
+// product collection without the supervisor killing Uvicorn prematurely.
+export const PYTHON_STARTUP_TIMEOUT_MS = DEFAULT_PYTHON_STARTUP_TIMEOUT_MS;
+export const PYTHON_STARTUP_ATTEMPTS = getPythonStartupAttempts(PYTHON_STARTUP_TIMEOUT_MS);
 
 function resolveRecoveryDelays(delays) {
     const configuredDelays = Array.isArray(delays) ? delays : DEFAULT_RECOVERY_DELAYS_MS;
@@ -29,12 +34,20 @@ export function createPythonBackend({
     platform = process.platform,
     environment = process.env,
     sleep = delay,
-    startupAttempts = PYTHON_STARTUP_ATTEMPTS,
+    startupTimeoutMs = PYTHON_STARTUP_TIMEOUT_MS,
+    startupAttempts,
     startupDelayMs = PYTHON_STARTUP_POLL_INTERVAL_MS,
     recoveryDelaysMs = DEFAULT_RECOVERY_DELAYS_MS,
     setTimeoutImpl = setTimeout,
     clearTimeoutImpl = clearTimeout
 }) {
+    const configuredStartupTimeoutMs = readPythonStartupTimeoutMs(startupTimeoutMs);
+    const configuredStartupDelayMs = Number.isFinite(startupDelayMs) && startupDelayMs > 0
+        ? startupDelayMs
+        : PYTHON_STARTUP_POLL_INTERVAL_MS;
+    const configuredStartupAttempts = Number.isSafeInteger(startupAttempts) && startupAttempts > 0
+        ? startupAttempts
+        : getPythonStartupAttempts(configuredStartupTimeoutMs, configuredStartupDelayMs);
     const recoveryDelays = resolveRecoveryDelays(recoveryDelaysMs);
     let processHandle = null;
     let ownsProcess = false;
@@ -161,14 +174,14 @@ export function createPythonBackend({
         ownsProcess = true;
         observeProcess(child, executable);
 
-        for (let attempt = 0; attempt < startupAttempts; attempt += 1) {
-            await sleep(startupDelayMs);
+        for (let attempt = 0; attempt < configuredStartupAttempts; attempt += 1) {
+            await sleep(configuredStartupDelayMs);
             if (await isHealthy()) return;
             if (startupError || processExited || processHandle !== child || child.killed) break;
         }
         stopOwnedProcess(processHandle, "SIGTERM");
         if (startupError) throw describeStartupError(executable, startupError);
-        const startupWindowMs = startupAttempts * startupDelayMs;
+        const startupWindowMs = configuredStartupAttempts * configuredStartupDelayMs;
         throw new Error(
             `Python backend did not become healthy at ${backendUrl}/health within ${startupWindowMs} ms`
         );
