@@ -6,6 +6,7 @@ import {
     intersectManualOrbitUtcRanges,
     manualOrbitForceTermsRequireErp,
     normalizeManualOrbitUtcRange,
+    physicalEpochAtDesignWindowStart,
     resolveManualOrbitTimePolicy,
     utcRangeCovers
 } from "../../js/features/manualOrbit/timePolicy.js";
@@ -25,6 +26,17 @@ test("TIME uses the complete manual ERP coverage as its automatic UTC design win
         endTime: "2026-08-03T00:00:00.000Z"
     });
     assert.equal(designWindowFromManualErp({ startTime: ERP.endTime, endTime: ERP.startTime }), null);
+});
+
+test("a validated ERP design window anchors the physical state epoch at its UTC start", () => {
+    assert.equal(
+        physicalEpochAtDesignWindowStart(ERP),
+        "2026-08-01T00:00:00.000Z"
+    );
+    assert.equal(
+        physicalEpochAtDesignWindowStart({ startTime: ERP.endTime, endTime: ERP.startTime }),
+        null
+    );
 });
 
 test("datetime-local TIME values are interpreted as UTC, not browser-local time", () => {

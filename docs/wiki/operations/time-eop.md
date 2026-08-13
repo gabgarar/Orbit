@@ -56,6 +56,11 @@ $$
 D=[t_{ERP,min},t_{ERP,max}].
 $$
 
+En la misma acción, el **State-vector epoch** físico se ancla a
+\(t_{ERP,min}\). Esto evita conservar un epoch anterior fuera de cobertura.
+Puede editarse después, pero las fuerzas ligadas a Tierra exigen que siga
+dentro de la cobertura del ERP.
+
 Esto no se recorta automáticamente a una capa SP3/OEM que estuviera ya en la
 escena. Recortarlo ocultaría al operador que dos productos tienen coberturas
 distintas y cambiaría el diseño manual sin una acción explícita.

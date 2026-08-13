@@ -45,11 +45,12 @@ The **TIME** tab separates three decisions which must not be conflated:
 | **Orbit preview frame** | View of the same ephemeris in `EME2000` or through its terrestrial route; it does not change integration. |
 | **Manual ERP** | Local Earth-orientation file and UTC coverage for Earth-bound forces. |
 
-When a valid ERP is attached, the window is initially set to the file's
-coverage start and end. If **Full geopotential** or **Atmospheric drag** is
-enabled, preview and creation cannot run outside that coverage. An
-inertial-force-only orbit may omit ERP, but that does not thereby obtain a
-rigorous terrestrial transformation.
+When a valid ERP is attached or replaced, the window is initially set to the
+file's coverage start and end and the **State-vector epoch** is anchored to
+that start. It can then be edited manually. If **Full geopotential** or
+**Atmospheric drag** is enabled, preview and creation cannot run outside that
+coverage. An inertial-force-only orbit may omit ERP, but that does not thereby
+obtain a rigorous terrestrial transformation.
 
 If the project already contains SP3, OEM, or a simulation range, it is not
 mixing clocks: all instants are UTC. However, comparing or analysing multiple

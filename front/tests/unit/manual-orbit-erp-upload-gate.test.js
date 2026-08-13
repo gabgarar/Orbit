@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import {
+    createDefaultManualOrbitState,
+    synchronizeManualOrbitState
+} from "../../js/features/manualOrbit/editorState.js";
 import { createManualErpUploadGate } from "../../js/features/manualOrbit/erpUploadGate.js";
+import { physicalEpochAtDesignWindowStart } from "../../js/features/manualOrbit/timePolicy.js";
+
+const mainSource = readFileSync(new URL("../../main.js", import.meta.url), "utf8");
+const panelSource = readFileSync(new URL("../../../react-ui/src/components/ManualOrbitPanel.jsx", import.meta.url), "utf8");
 
 class FakeAbortController {
     constructor() {
@@ -37,4 +46,22 @@ test("manual ERP upload replacement makes only the latest response eligible", ()
 
     replacement.finish();
     assert.equal(replacement.isCurrent(), false);
+});
+
+test("validated ERP preflight anchors the canonical physical epoch and publishes it to TIME", () => {
+    const suggestedWindow = {
+        startTime: "2026-05-10T00:00:00Z",
+        endTime: "2026-05-13T00:00:00Z"
+    };
+    const epochUtc = physicalEpochAtDesignWindowStart(suggestedWindow);
+    const stale = createDefaultManualOrbitState({ now: "2026-08-13T21:16:00Z" });
+    const anchored = synchronizeManualOrbitState(stale, { epochUtc }, undefined);
+
+    assert.equal(anchored.epochUtc, "2026-05-10T00:00:00.000Z");
+    assert.deepEqual(anchored.stateVector, stale.stateVector);
+    assert.match(mainSource, /const anchoredPhysicalEpoch = anchorManualOrbitPhysicalEpochToDesignStart\(suggestedWindow\)/);
+    assert.match(mainSource, /epochUtc: anchoredPhysicalEpoch,[\s\S]*?epochStartUtc: suggestedWindow\.startTime/);
+    assert.match(mainSource, /physicalEpochUtc: anchoredPhysicalEpoch/);
+    assert.match(panelSource, /anchorPhysicalEpoch: true/);
+    assert.match(panelSource, /physicalEpochAtDesignWindowStart\(suggestedWindow\)/);
 });

@@ -150,6 +150,16 @@ export function designWindowFromManualErp(erpCoverage) {
     return normalizeManualOrbitUtcRange(erpCoverage);
 }
 
+/**
+ * Return the physical state-vector epoch used when TIME adopts a validated
+ * ERP design window. A successful ERP attach/replacement is explicit, so
+ * anchoring the state to the same UTC start prevents retaining an older epoch
+ * which the newly selected ERP cannot cover. Later edits remain explicit.
+ */
+export function physicalEpochAtDesignWindowStart(designWindow) {
+    return normalizeManualOrbitUtcRange(designWindow)?.startTime || null;
+}
+
 /** Whether selected forces require an Earth-orientation ERP in manual TIME. */
 export function manualOrbitForceTermsRequireErp(forceTerms = []) {
     const terms = Array.isArray(forceTerms)

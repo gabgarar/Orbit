@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
 import {
     designWindowFromManualErp,
+    physicalEpochAtDesignWindowStart,
     resolveManualOrbitTimePolicy
 } from "../../../front/js/features/manualOrbit/timePolicy.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
@@ -1015,6 +1016,7 @@ export default function ManualOrbitPanel() {
                     startTime: fallbackWindow.startTime,
                     endTime: fallbackWindow.endTime
                 } : null),
+                anchorPhysicalEpoch: true,
                 sceneAlignment: detail.sceneAlignment ?? detail.scene_alignment ?? null,
                 source: "manual-erp-upload"
             });
@@ -1099,18 +1101,25 @@ export default function ManualOrbitPanel() {
     };
     const updateManualErpReference = (manualErp, {
         designWindow = null,
+        anchorPhysicalEpoch = false,
         sceneAlignment = undefined,
         source = "manual-erp"
     } = {}) => {
         const currentForm = formRef.current || form;
         const normalizedErp = normalizeManualErpReference(manualErp);
         const suggestedWindow = normalizeTimeRange(designWindow);
+        const anchoredPhysicalEpoch = anchorPhysicalEpoch
+            ? physicalEpochAtDesignWindowStart(suggestedWindow)
+            : null;
         const next = {
             ...currentForm,
-            // An ERP adjusts the visible design range only. The physical
-            // state epoch remains an explicit user input and is guarded by
-            // TIME coverage validation rather than being moved silently.
-            epochUtc: currentForm.epochUtc,
+            // A validated ERP attach/replacement is explicit. Anchor the
+            // physical state epoch to the adopted design start so a stale
+            // draft cannot leave the editor blocked by ERP coverage.
+            // Later direct edits remain user controlled.
+            epochUtc: anchoredPhysicalEpoch
+                ? toDatetimeInput(anchoredPhysicalEpoch, currentForm.epochUtc)
+                : currentForm.epochUtc,
             epochStartUtc: suggestedWindow ? toDatetimeInput(suggestedWindow.startTime, currentForm.epochStartUtc) : currentForm.epochStartUtc,
             epochEndUtc: suggestedWindow ? toDatetimeInput(suggestedWindow.endTime, currentForm.epochEndUtc) : currentForm.epochEndUtc,
             timeData: {
@@ -1470,7 +1479,7 @@ export default function ManualOrbitPanel() {
                     <label className="mt-2 grid min-w-0 gap-1 font-[system-ui,sans-serif] text-[10px] font-semibold text-[#c7d5ea]">
                         <span className="flex items-center justify-between gap-2"><span>State-vector epoch</span><small className="font-medium text-[#7f94b4]">PHYSICAL UTC</small></span>
                         <input className="!h-[33px] !min-w-0 !rounded-lg !border !border-[#294361] !bg-[#0b1728] !px-1.5 !font-[system-ui,sans-serif] !text-[11px] !font-medium !text-[#eaf2ff] !outline-none focus:!border-[#5d8fff] focus:!shadow-[0_0_0_2px_rgba(75,122,255,.16)]" type="datetime-local" value={form.epochUtc} onChange={(event) => updateOrbitEpoch(event.target.value)} />
-                        <small className="text-[9px] leading-[1.3] font-medium text-[#7f94b4]">This is the epoch of the EME2000 input state. ERP validation adjusts the design window, never this physical epoch; when Earth-fixed forces are selected it must also lie within ERP coverage.</small>
+                        <small className="text-[9px] leading-[1.3] font-medium text-[#7f94b4]">This is the epoch of the EME2000 input state. Attaching or replacing a validated ERP anchors it to the design start; you can edit it afterwards, but Earth-fixed forces require it to remain within ERP coverage.</small>
                     </label>
                     {!epochRangeValid && <p className="mt-2 mb-0 text-[10px] leading-[1.35] font-semibold text-[#ff9cab]" role="alert">El epoch final debe ser posterior al inicial.</p>}
                     {timePolicy.requiresErp && <p className={`mt-2 mb-0 rounded border px-2 py-1.5 text-[9px] leading-[1.35] font-semibold ${timePolicy.canCreate ? "border-[#2d7252] bg-[#102a22] text-[#b8f1d0]" : "border-[#874252] bg-[#291821] text-[#ffd0d9]"}`} role={timePolicy.canCreate ? "status" : "alert"}>{timePolicy.canCreate ? "La ventana completa está cubierta por el ERP manual requerido para las fuerzas terrestres seleccionadas." : timeBlockMessage}</p>}

@@ -55,6 +55,11 @@ $$
 D=[t_{ERP,min},t_{ERP,max}].
 $$
 
+In that same explicit action, the physical **State-vector epoch** is anchored
+to \(t_{ERP,min}\). This prevents an old draft epoch from surviving when the
+new ERP does not cover it. It may be edited afterwards, but Earth-bound forces
+require it to remain within ERP coverage.
+
 It is not automatically clipped to an SP3/OEM layer already in the scene.
 Clipping would hide the fact that the products have different coverages and
 would change the manual design without an explicit operator action.

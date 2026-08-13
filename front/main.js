@@ -148,7 +148,10 @@ import {
 import { normalizeManualOrbitPreviewReferenceFrame } from "./js/features/frames/referenceFrame.js";
 import { resolvePreciseProductFrameStatus } from "./js/features/preciseProducts/frameStatus.js";
 import { arrayBufferToBase64 } from "./js/features/preciseProducts/import.js";
-import { resolveManualOrbitTimePolicy } from "./js/features/manualOrbit/timePolicy.js";
+import {
+    physicalEpochAtDesignWindowStart,
+    resolveManualOrbitTimePolicy
+} from "./js/features/manualOrbit/timePolicy.js";
 import { createManualErpUploadGate } from "./js/features/manualOrbit/erpUploadGate.js";
 import { createPropagatedParametersContextBuilder } from "./js/features/propagatedParameters/context.js";
 
@@ -5575,6 +5578,25 @@ function updateManualOrbitDesignSettings(payload = {}) {
 }
 
 /**
+ * A successful manual ERP preflight explicitly adopts its suggested UTC
+ * design range. Keep the physical EME2000 state epoch aligned with that
+ * start too: otherwise a stale draft epoch can be outside a valid replacement
+ * ERP and incorrectly block preview/create.
+ */
+function anchorManualOrbitPhysicalEpochToDesignStart(designWindow) {
+    const epochUtc = physicalEpochAtDesignWindowStart(designWindow);
+    if (!epochUtc) {
+        throw new Error("El ERP validado no define un inicio de cobertura UTC válido.");
+    }
+    manualOrbitEditorState = synchronizeManualOrbitState(
+        manualOrbitEditorState,
+        { epochUtc },
+        undefined
+    );
+    return epochUtc;
+}
+
+/**
  * Reopen the design workspace with a confirmed, user-authored manual orbit.
  * The data comes from the local manual-track registry rather than catalogue
  * metadata, so importing/copying a TLE can never make a catalogue satellite
@@ -7085,10 +7107,12 @@ async function previewManualOrbitErpUpload(detail = {}) {
             startTime: manualErp.coverageStart,
             endTime: manualErp.coverageEnd
         };
+        const anchoredPhysicalEpoch = anchorManualOrbitPhysicalEpochToDesignStart(suggestedWindow);
         // The full ERP range is the explicit design range; do not silently
         // trim it to an SP3/OEM scene interval.  The UI policy exposes the
         // intersection separately for future joint operations.
         updateManualOrbitDesignSettings({
+            epochUtc: anchoredPhysicalEpoch,
             epochStartUtc: suggestedWindow.startTime,
             epochEndUtc: suggestedWindow.endTime,
             manualErp,
@@ -7098,6 +7122,16 @@ async function previewManualOrbitErpUpload(detail = {}) {
                 : settings.finiteEphemerisRanges,
             sceneAlignment: responsePayload.sceneAlignment ?? responsePayload.scene_alignment ?? null
         });
+        // A previous debounced preview can otherwise complete after the
+        // replacement and draw samples calculated with the old epoch/ERP.
+        // React also receives the authoritative state below, but the runtime
+        // must be safe even if the panel remounts during this response.
+        if (manualOrbitDesignSession?.active) {
+            stopManualOrbitPreviewRequest();
+            clearManualOrbitPreview();
+            applyManualOrbitDesignTimeWindow();
+            scheduleManualOrbitPreview({ immediate: true });
+        }
         // Keep the bridge authoritative even if React remounts between the
         // request and its response. The state contains only provenance.
         publishManualOrbitState();
@@ -7105,6 +7139,8 @@ async function previewManualOrbitErpUpload(detail = {}) {
             ok: true,
             manualErp,
             suggestedDesignWindow: suggestedWindow,
+            physicalEpochUtc: anchoredPhysicalEpoch,
+            anchorPhysicalEpoch: true,
             sceneAlignment: responsePayload.sceneAlignment ?? responsePayload.scene_alignment ?? null,
             message: responsePayload.message
         });

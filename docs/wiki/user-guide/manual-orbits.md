@@ -48,11 +48,12 @@ La pestaña **TIME** separa tres decisiones que no deben confundirse:
 | **Orbit preview frame** | Vista de la misma efeméride en `EME2000` o mediante su ruta terrestre; no cambia la integración. |
 | **ERP manual** | Fichero local de orientación terrestre y cobertura UTC para fuerzas ligadas a Tierra. |
 
-Al adjuntar un ERP válido, la ventana se fija inicialmente al comienzo y fin
-de cobertura del fichero. Si se activa **Full geopotential** o **Atmospheric
-drag**, no se podrá previsualizar ni crear fuera de esa cobertura. Una órbita
-de fuerzas inerciales puede no usar ERP, pero no obtiene por ello una
-transformación terrestre rigurosa.
+Al adjuntar o reemplazar un ERP válido, la ventana se fija inicialmente al
+comienzo y fin de cobertura del fichero y el **State-vector epoch** se ancla a
+ese comienzo. Después puede modificarse manualmente. Si se activa **Full
+geopotential** o **Atmospheric drag**, no se podrá previsualizar ni crear fuera
+de esa cobertura. Una órbita de fuerzas inerciales puede no usar ERP, pero no
+obtiene por ello una transformación terrestre rigurosa.
 
 Si ya hay un SP3, OEM o rango de simulación en el proyecto, no se mezclan
 relojes: todos los instantes son UTC. Sin embargo, para comparar o analizar
