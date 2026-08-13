@@ -10,6 +10,11 @@ SYSTEM_CONFIG_PATH = CONFIG_DIR / "system_config.json"
 # manifest.  ``config`` is mounted into the container, so imports survive a
 # Docker rebuild/restart without being copied into the application image.
 PRECISE_PRODUCTS_DIR = CONFIG_DIR / "precise-products"
+# Per-manual-orbit ERP uploads are kept separately from SP3 product bundles.
+# The project document stores only the content-addressed snapshot ID, while
+# these local bytes remain in the mounted config volume for reproducible
+# restore and force evaluation.
+MANUAL_ERP_SNAPSHOTS_DIR = CONFIG_DIR / "manual-erp-snapshots"
 
 AUTO_MIN_ORBIT_SAMPLES = 24
 # Enough for a 12-hour low-Earth path at the angular tessellation used by the

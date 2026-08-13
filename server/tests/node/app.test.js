@@ -152,20 +152,23 @@ test("the prebuilt MkDocs site is served from /Orbit without replacing FastAPI S
     }
 });
 
-test("precise product uploads are not public static config assets", async () => {
+test("precise products and manual ERP snapshots are not public static config assets", async () => {
     const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "orbit-private-precise-products-"));
     const configDir = path.join(temporaryRoot, "config");
     const preciseDir = path.join(configDir, "precise-products", "igs-final");
+    const manualErpDir = path.join(configDir, "manual-erp-snapshots", "deadbeef");
     const frontDir = path.join(temporaryRoot, "front");
     const reactDistDir = path.join(temporaryRoot, "react-dist");
     await Promise.all([
         fs.mkdir(preciseDir, { recursive: true }),
+        fs.mkdir(manualErpDir, { recursive: true }),
         fs.mkdir(frontDir, { recursive: true }),
         fs.mkdir(reactDistDir, { recursive: true })
     ]);
     await Promise.all([
         fs.writeFile(path.join(configDir, "catalog.json"), '{"entries":[]}'),
-        fs.writeFile(path.join(preciseDir, "IGS0OPSFIN_ORB.SP3.gz"), "private precise product")
+        fs.writeFile(path.join(preciseDir, "IGS0OPSFIN_ORB.SP3.gz"), "private precise product"),
+        fs.writeFile(path.join(manualErpDir, "source.erp"), "private manual ERP")
     ]);
 
     try {
@@ -185,7 +188,11 @@ test("precise product uploads are not public static config assets", async () => 
                 "/config/precise-products/igs-final/IGS0OPSFIN_ORB.SP3.gz",
                 "/config/PRECISE-PRODUCTS/igs-final/IGS0OPSFIN_ORB.SP3.gz",
                 "/config/precise-products%2Figs-final%2FIGS0OPSFIN_ORB.SP3.gz",
-                "/config/safe%2F..%2Fprecise-products%2Figs-final%2FIGS0OPSFIN_ORB.SP3.gz"
+                "/config/safe%2F..%2Fprecise-products%2Figs-final%2FIGS0OPSFIN_ORB.SP3.gz",
+                "/config/manual-erp-snapshots/deadbeef/source.erp",
+                "/config/MANUAL-ERP-SNAPSHOTS/deadbeef/source.erp",
+                "/config/manual-erp-snapshots%2Fdeadbeef%2Fsource.erp",
+                "/config/safe%2F..%2Fmanual-erp-snapshots%2Fdeadbeef%2Fsource.erp"
             ]) {
                 const response = await fetch(`${baseUrl}${suffix}`);
                 assert.equal(response.status, 404, suffix);

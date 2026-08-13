@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import math
 from datetime import UTC, datetime, timedelta
 
@@ -9,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 from orbit_api.api.routes.orbit_parameters import create_orbit_parameters_router
 from orbit_api.application.manual_orbits import ManualOrbitError
+from orbit_api.application.manual_erp import ManualErpRepository
 from orbit_api.application.orbit_parameters import (
     OrbitParametersError,
     build_orbit_parameters,
@@ -70,6 +72,26 @@ def manual_payload(*, propagator: str = "two-body", options: dict | None = None)
         },
         **({"propagationOptions": options} if options is not None else {}),
     }
+
+
+def _manual_erp_text() -> str:
+    return "\n".join((
+        "VERSION 2",
+        "MJD Xpole Ypole UT1-UTC LOD",
+        "61240.00000000 100000 -200000 2500000 10000",
+        "61243.00000000 120000 -180000 2600000 11000",
+    ))
+
+
+@pytest.fixture
+def manual_erp_snapshot(tmp_path):
+    repository = ManualErpRepository(tmp_path / "manual-erp-snapshots")
+    content = base64.b64encode(_manual_erp_text().encode("utf-8")).decode("ascii")
+    return repository, repository.save_upload("manual-force.erp", content)
+
+
+def _with_manual_erp(payload: dict, snapshot) -> dict:
+    return {**payload, "manualErp": {"snapshotId": snapshot.snapshot_id}}
 
 
 def manual_request(*, propagator: str = "two-body", options: dict | None = None, hours: float = 6.0, samples: int = 4) -> OrbitParametersRequest:
@@ -255,7 +277,7 @@ def test_route_maps_cowell_inspector_budget_to_actionable_422():
     assert "Cowell/RK4" in rejected.value.detail
 
 
-def test_cowell_drag_on_and_off_show_a_measurable_leo_decay_difference():
+def test_cowell_drag_on_and_off_show_a_measurable_leo_decay_difference(manual_erp_snapshot):
     # 250 km with an intentionally visible ballistic factor makes the
     # non-conservative drag model measurable in a short, deterministic test.
     payload = manual_payload(
@@ -276,8 +298,9 @@ def test_cowell_drag_on_and_off_show_a_measurable_leo_decay_difference():
         "argumentOfPeriapsisDeg": 0.0,
         "trueAnomalyDeg": 0.0,
     }
+    repository, erp = manual_erp_snapshot
     request = OrbitParametersRequest(
-        source={"kind": "manual", "manualOrbit": payload},
+        source={"kind": "manual", "manualOrbit": _with_manual_erp(payload, erp)},
         startTime=EPOCH.isoformat(),
         endTime=(EPOCH + timedelta(hours=6)).isoformat(),
         samples=3,
@@ -287,6 +310,7 @@ def test_cowell_drag_on_and_off_show_a_measurable_leo_decay_difference():
         request,
         resolve_propagator=native_only_resolver,
         frame_transformer=frame_transformer,
+        manual_erp_repository=repository,
     )
     without_drag_payload = {
         **payload,
@@ -294,13 +318,14 @@ def test_cowell_drag_on_and_off_show_a_measurable_leo_decay_difference():
     }
     without_drag = build_orbit_parameters(
         OrbitParametersRequest(
-            source={"kind": "manual", "manualOrbit": without_drag_payload},
+            source={"kind": "manual", "manualOrbit": _with_manual_erp(without_drag_payload, erp)},
             startTime=EPOCH.isoformat(),
             endTime=(EPOCH + timedelta(hours=6)).isoformat(),
             samples=3,
         ),
         resolve_propagator=native_only_resolver,
         frame_transformer=frame_transformer,
+        manual_erp_repository=repository,
     )
 
     initial = with_drag["samples"][0]["elements"]["semi_major_axis_km"]
@@ -320,7 +345,7 @@ def test_cowell_drag_on_and_off_show_a_measurable_leo_decay_difference():
     assert drag_decay_km > no_drag_decay_km + 0.1
 
 
-def test_cowell_drag_is_negligible_for_the_same_ballistic_body_at_1000_km():
+def test_cowell_drag_is_negligible_for_the_same_ballistic_body_at_1000_km(manual_erp_snapshot):
     payload = manual_payload(
         propagator="cowell-rk4",
         options={
@@ -345,19 +370,22 @@ def test_cowell_drag_is_negligible_for_the_same_ballistic_body_at_1000_km():
         "samples": 2,
     }
     frame_transformer = strict_force_transformer()
+    repository, erp = manual_erp_snapshot
     with_drag = build_orbit_parameters(
-        OrbitParametersRequest(source={"kind": "manual", "manualOrbit": payload}, **request_fields),
+        OrbitParametersRequest(source={"kind": "manual", "manualOrbit": _with_manual_erp(payload, erp)}, **request_fields),
         resolve_propagator=native_only_resolver,
         frame_transformer=frame_transformer,
+        manual_erp_repository=repository,
     )
     without_drag_payload = {
         **payload,
         "propagationOptions": {**payload["propagationOptions"], "atmosphericDrag": False},
     }
     without_drag = build_orbit_parameters(
-        OrbitParametersRequest(source={"kind": "manual", "manualOrbit": without_drag_payload}, **request_fields),
+        OrbitParametersRequest(source={"kind": "manual", "manualOrbit": _with_manual_erp(without_drag_payload, erp)}, **request_fields),
         resolve_propagator=native_only_resolver,
         frame_transformer=frame_transformer,
+        manual_erp_repository=repository,
     )
 
     final_with_drag = with_drag["samples"][-1]["elements"]["semi_major_axis_km"]
@@ -365,7 +393,7 @@ def test_cowell_drag_is_negligible_for_the_same_ballistic_body_at_1000_km():
     assert abs(final_with_drag - final_without_drag) < 0.05
 
 
-def test_inspector_rebuilds_a_configured_geopotential_manual_orbit():
+def test_inspector_rebuilds_a_configured_geopotential_manual_orbit(manual_erp_snapshot):
     payload = manual_payload(
         propagator="cowell-rk4",
         options={
@@ -374,9 +402,10 @@ def test_inspector_rebuilds_a_configured_geopotential_manual_orbit():
             "geopotentialOrder": 0,
         },
     )
+    repository, erp = manual_erp_snapshot
     response = build_orbit_parameters(
         OrbitParametersRequest(
-            source={"kind": "manual", "manualOrbit": payload},
+            source={"kind": "manual", "manualOrbit": _with_manual_erp(payload, erp)},
             startTime=EPOCH.isoformat(),
             endTime=(EPOCH + timedelta(minutes=2)).isoformat(),
             samples=2,
@@ -384,6 +413,7 @@ def test_inspector_rebuilds_a_configured_geopotential_manual_orbit():
         resolve_propagator=native_only_resolver,
         frame_transformer=strict_force_transformer(),
         gravity_field=GravityFieldModel.wgs84_zonal_degree4(),
+        manual_erp_repository=repository,
     )
 
     assert response["model"]["force_terms"] == ["central", "geopotential"]

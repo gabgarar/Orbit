@@ -26,7 +26,7 @@ def test_every_domain_route_factory_has_its_public_paths():
     }
     assert {"/propagate", "/orbits", "/ephemeris"} <= _paths(create_orbits_router(resolver, lambda *_args, **_kwargs: {}, lambda *_: 2, ephemeris))
     assert _paths(create_manual_orbits_router(ephemeris, lambda value: value)) == {
-        "/manual-orbits", "/manual-orbits/capabilities",
+        "/manual-orbits", "/manual-orbits/capabilities", "/manual-orbits/time/erp-preview",
     }
     assert _paths(create_orbit_parameters_router(resolver, lambda value: value)) == {"/orbit-parameters"}
     ground_station_paths = _paths(create_ground_stations_router(resolver, ephemeris, lambda x: x))

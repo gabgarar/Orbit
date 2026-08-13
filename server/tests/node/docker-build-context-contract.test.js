@@ -11,7 +11,7 @@ async function readProjectFile(...segments) {
     return fs.readFile(path.join(projectRoot, ...segments), "utf8");
 }
 
-test("Docker excludes mutable precise products while Compose supplies them at runtime", async () => {
+test("Docker excludes mutable precise products and manual ERP snapshots while Compose supplies config at runtime", async () => {
     const [dockerignore, dockerfile, compose, repository] = await Promise.all([
         readProjectFile(".dockerignore"),
         readProjectFile("Dockerfile"),
@@ -20,6 +20,7 @@ test("Docker excludes mutable precise products while Compose supplies them at ru
     ]);
 
     assert.match(dockerignore, /^config\/precise-products\/?$/m);
+    assert.match(dockerignore, /^config\/manual-erp-snapshots\/?$/m);
     assert.match(dockerfile, /^COPY config\/ \.\/config\/$/m);
     assert.match(compose, /^\s*- \.\/config:\/app\/config\s*$/m);
     assert.match(repository, /self\.root\.mkdir\(parents=True, exist_ok=True\)/);

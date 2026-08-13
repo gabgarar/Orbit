@@ -46,6 +46,15 @@ The harmonic term contributes the non-central part of acceleration. `central`
 remains mandatory, and `geopotential` is mutually exclusive with J2/J3/J4
 switches to avoid double counting.
 
+The selection contract permits through **2159 × 2159**, the semantic maximum
+of a complete EGM2008 field. This must not be confused with the current
+evaluator budget: Python RK4 explicitly rejects a stage with more than 2,555
+non-central harmonic coefficients. A dense `70 × 70` field fits the current
+profile; a zonal/low-order selection may reach higher degree when it stays within
+that budget. There is no silent truncation. The LEO, MEO/GNSS, GEO, and mission
+selection table is maintained in
+[Configurable geopotential](../propagation/full-geopotential.md).
+
 ## Correct evaluation frame
 
 \(\bar C_{nm},\bar S_{nm}\) coefficients describe mass distribution relative

@@ -146,6 +146,12 @@ _FORCE_TERM_ALIASES = {
 
 _SPEED_OF_LIGHT_KM_S = 299_792.458
 
+# The request contract accepts the full EGM2008 degree/order range, but this
+# interpreter evaluates every harmonic at every fixed RK4 stage.  Bound the
+# actual work until an optimized/adaptive evaluator is introduced; rejecting
+# clearly is safer than making a UI/API request monopolize the service.
+MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS = 2_555  # sum(n + 1, n=1..70)
+
 
 def _finite(value: object, label: str) -> float:
     try:
@@ -166,6 +172,21 @@ def _normalize_term(value: object) -> str:
     while "--" in normalized:
         normalized = normalized.replace("--", "-")
     return normalized.strip("-")
+
+
+def _geopotential_harmonic_term_count(degree: int, order: int) -> int:
+    """Count non-central (n >= 1) coefficients evaluated for N×M.
+
+    A degree/order field does not always contain ``N * (M + 1)`` terms:
+    degrees below ``M`` only contain orders through their own degree.  Keeping
+    the exact count here makes the RK4 safety budget transparent and lets a
+    zonal ``N×0`` request use a much lower cost than full ``N×N``.
+    """
+
+    maximum_order = min(degree, order)
+    lower_triangle = maximum_order * (maximum_order + 3) // 2
+    rectangular_tail = (degree - maximum_order) * (maximum_order + 1)
+    return lower_triangle + rectangular_tail
 
 
 def _normalize_force_terms(
@@ -376,6 +397,19 @@ class CowellPropagator:
                 raise ValueError(
                     "geopotential requiere grado >= 2; J1 no es un término seleccionable "
                     "en un campo centrado en el centro de masas"
+                )
+            requested_harmonic_terms = _geopotential_harmonic_term_count(
+                geopotential_degree,
+                geopotential_order,
+            )
+            if (
+                requested_harmonic_terms > MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS
+            ):
+                raise ValueError(
+                    "El geopotencial solicitado supera el presupuesto de ejecución del RK4 "
+                    f"actual ({MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS} términos armónicos). "
+                    "El campo puede contener hasta 2159×2159; para evaluarlo completo "
+                    "se requiere el futuro evaluador optimizado e integrador adaptativo."
                 )
             try:
                 self.geopotential_configuration = GeopotentialConfiguration(

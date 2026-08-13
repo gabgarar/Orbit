@@ -677,9 +677,17 @@ class OrbitRuntime:
         points_estimate = int(((end_utc - start_utc).total_seconds() / step) + 1)
         if points_estimate > MAX_EPHEMERIS_POINTS:
             raise HTTPException(status_code=400, detail=f"Invalid ephemeris range ({points_estimate} points, max {MAX_EPHEMERIS_POINTS})")
+        # A manual design can carry an isolated, content-addressed ERP. Use
+        # the propagator's own transform service for cache identity and
+        # coverage checks; falling back to the process-wide C04 here would
+        # reject a valid manual ERP window or, worse, cache it as another EOP
+        # product. Catalogue propagators retain the shared runtime service.
+        propagation_transformer = getattr(prop, "frame_transformer", None)
+        if not isinstance(propagation_transformer, FrameTransformService):
+            propagation_transformer = self._frame_transformer
         eop_token = (
-            self._frame_transformer.cache_token_at(start_utc),
-            self._frame_transformer.cache_token_at(end_utc),
+            propagation_transformer.cache_token_at(start_utc),
+            propagation_transformer.cache_token_at(end_utc),
         )
         cache_key = hashlib.sha1(
             f"{name}|{start_utc.isoformat()}|{end_utc.isoformat()}|{step}|{include_velocity}|{position_only}|{eop_token}".encode("utf-8")

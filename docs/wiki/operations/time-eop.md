@@ -36,6 +36,72 @@ aproximado (sin ERP)** y rechazar cualquier solicitud que declare `require_eci`.
 El snapshot C04 global no se adopta silenciosamente como ERP de una revisión
 SP3: ambos orígenes mantienen su propia versión y procedencia.
 
+## Órbita manual: pestaña TIME y ERP local
+
+La pestaña **TIME** del diseño de órbita manual contiene dos contratos
+distintos: **Design window**, que define las épocas UTC que se propagarán, y
+**Orbit preview frame**, que solo decide cómo se inspecciona la efeméride. No
+son dos relojes ni dos dinámicas diferentes.
+
+Un ERP de una órbita manual se adjunta expresamente desde esa pestaña como un
+fichero local. Orbit no descarga ni adopta de forma silenciosa el C04 global,
+el ERP de un SP3 ya cargado ni un valor de Internet para completar ese fichero.
+El resultado conserva nombre, proveedor, huella, escala UTC y límites de
+cobertura del ERP adjunto.
+
+Cuando la validación del ERP termina correctamente, TIME sustituye el
+**Design window** por el intervalo completo cubierto por el fichero:
+
+$$
+D=[t_{ERP,min},t_{ERP,max}].
+$$
+
+Esto no se recorta automáticamente a una capa SP3/OEM que estuviera ya en la
+escena. Recortarlo ocultaría al operador que dos productos tienen coberturas
+distintas y cambiaría el diseño manual sin una acción explícita.
+
+### Cuándo es obligatorio el ERP
+
+El ERP manual es obligatorio si la composición Cowell incluye una fuerza ligada
+a Tierra: actualmente `geopotential` o `drag`. Antes de previsualizar o crear,
+Orbit exige que el ERP cubra por completo la ventana diseñada:
+
+$$
+D\subseteq E_{ERP}.
+$$
+
+Si falta, el error es **“Debe proporcionar un fichero ERP para convertir a
+ECI.”**; si existe pero no cubre toda la ventana, la creación se rechaza con
+una explicación de cobertura. El usuario puede seguir diseñando una órbita de
+fuerzas estrictamente inerciales —por ejemplo `central`, tercero cuerpo, SRP o
+relatividad— sin adjuntar ERP, pero eso no habilita una evaluación terrestre
+estricta. Los requisitos de segundos intercalares y ERFA siguen siendo
+independientes del ERP manual.
+
+### Alineación con SP3, OEM y el rango de la escena
+
+No aparecen “marcos de tiempo” distintos: el reloj común de Orbit es UTC. Lo
+que puede diferir es la cobertura. Si hay una ventana de escena \(S\) y capas
+finitas con dominios publicados \(P_1,\ldots,P_k\), la ventana permitida para
+una comparación, una gráfica conjunta o un cálculo que use ambas fuentes es:
+
+$$
+C=D\cap S\cap P_1\cap\cdots\cap P_k.
+$$
+
+- Si \(C\) existe pero es menor que \(D\), TIME indica la **ventana común**;
+  la operación conjunta debe usarla, no extrapolar el SP3/OEM.
+- Si \(C\) es vacía, la órbita manual puede crearse si su propio contrato ERP
+  es válido, pero no se permite presentarla como comparable o analizable junto
+  con esas capas hasta que el usuario seleccione productos/rangos que solapen.
+- El rango global no se modifica implícitamente al adjuntar un ERP. El usuario
+  puede aplicar la ventana común de forma explícita; así la cronología del
+  proyecto sigue siendo reproducible.
+
+La procedencia de una órbita manual debe incluir su ventana de diseño, la
+cobertura y huella del ERP si se utilizó, el marco de previsualización elegido
+y la ventana común efectiva cuando se ejecute una operación multi-fuente.
+
 ## Guías operativas
 
 | Tema | Contenido |

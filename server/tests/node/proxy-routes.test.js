@@ -3,6 +3,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PYTHON_PROXY_TIMEOUT_MS } from "../../src/proxy/forwarder.js";
 import {
+    MANUAL_ERP_PREVIEW_JSON_LIMIT,
+    registerManualOrbitErpBodyParser,
+    registerManualOrbitErpPreviewProxyRoute,
     PRECISE_PRODUCT_IMPORT_JSON_LIMIT,
     registerPreciseProductImportBodyParser,
     registerPreciseProductImportProxyRoute,
@@ -27,6 +30,8 @@ function createProxyApp(request) {
     // before the normal JSON parser.
     registerPreciseProductImportBodyParser(app);
     registerPreciseProductImportProxyRoute(app, { request });
+    registerManualOrbitErpBodyParser(app);
+    registerManualOrbitErpPreviewProxyRoute(app, { request });
     app.use(express.json({ limit: "25mb" }));
     registerPythonProxyRoutes(app, { request });
     return app;
@@ -119,6 +124,44 @@ test("proxy exposes the transient manual-orbits endpoint", async () => {
     assert.equal(calls[0].options.body, JSON.stringify(payload));
 });
 
+test("proxy forwards a manually uploaded ERP only through its bounded preview route", async () => {
+    const calls = [];
+    const app = createProxyApp(async (path, options) => {
+        calls.push({ path, options });
+        return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
+    });
+    const payload = {
+        manualErp: {
+            name: "IGS0OPSFIN_20262220000_01D_ERP.ERP.gz",
+            contentBase64: "RVJQ"
+        },
+        designWindow: {
+            startTime: "2026-08-01T00:00:00Z",
+            endTime: "2026-08-02T00:00:00Z"
+        }
+    };
+
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/manual-orbits/time/erp-preview`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        assert.equal(response.status, 200);
+    });
+
+    assert.equal(MANUAL_ERP_PREVIEW_JSON_LIMIT, "50mb");
+    assert.deepEqual(calls, [{
+        path: "/manual-orbits/time/erp-preview",
+        options: {
+            method: "POST",
+            headers: { Accept: "*/*", "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            timeoutMs: PYTHON_PROXY_TIMEOUT_MS
+        }
+    }]);
+});
+
 test("proxy forwards paired precise-product uploads through the dedicated bounded route", async () => {
     const calls = [];
     const app = createProxyApp(async (path, options) => {
@@ -196,6 +239,8 @@ test("the precise upload parser does not widen normal API JSON limits", async ()
     const app = express();
     registerPreciseProductImportBodyParser(app);
     registerPreciseProductImportProxyRoute(app, { request });
+    registerManualOrbitErpBodyParser(app);
+    registerManualOrbitErpPreviewProxyRoute(app, { request });
     // A deliberately small generic limit proves that the high upload limit
     // remains isolated to /api/precise-products/import.
     app.use(express.json({ limit: "256b" }));
@@ -225,6 +270,13 @@ test("the precise upload parser does not widen normal API JSON limits", async ()
             body: JSON.stringify({ payload: "x".repeat(1024) })
         });
         assert.equal(ordinaryResponse.status, 413);
+
+        const manualOrbitResponse = await fetch(`${baseUrl}/api/manual-orbits`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ payload: "x".repeat(1024) })
+        });
+        assert.equal(manualOrbitResponse.status, 413);
     });
 
     assert.equal(calls.length, 1);

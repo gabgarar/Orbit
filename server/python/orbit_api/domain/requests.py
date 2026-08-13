@@ -92,15 +92,12 @@ COWELL_FORCE_TERMS = (
     "solar-radiation-pressure",
     "relativity",
 )
-# The full ICGEM evaluator is intentionally pure Python and is evaluated at
-# every RK4 stage.  Letting an HTTP request select an arbitrary high-degree
-# (for example a degree-2190 field at full order) would turn a normal preview
-# into an unbounded synchronous CPU operation.  This is a public execution
-# safety limit, not a statement about the highest degree contained in a local
-# field file.  The low-level, explicitly invoked science primitive remains
-# able to inspect a complete field; a future compiled/adaptive evaluator can
-# raise this operational ceiling with its own validated cost model.
-MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 70
+# EGM2008 is complete to degree/order 2159 (with a few additional degree-2190
+# coefficients).  This is the public data-contract ceiling: a UI may express
+# the full field's scientifically meaningful degree/order, even though the
+# current pure-Python fixed-step evaluator separately applies a fail-closed
+# execution-cost budget before attempting an expensive propagation.
+MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 2159
 # Start new designs from the smallest physically complete model. Additional
 # harmonics are opt-in force terms of Cowell/RK4; they are never implied by an
 # unrelated propagation family such as two-body.
@@ -1263,6 +1260,125 @@ class ManualObjectMetadata(BaseModel):
         }
 
 
+class ManualErpInput(BaseModel):
+    """A transient ERP upload or a durable reference for a manual orbit.
+
+    A browser may provide ``name`` plus ``content_base64`` only while it is
+    uploading a new local snapshot.  Once Orbit has accepted it, project JSON
+    must contain the content-addressed ``snapshot_id`` alone (with optional
+    display provenance).  Keeping both shapes in one request model lets an
+    imported project be restored without ever embedding an ERP in it.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    name: str | None = Field(default=None, min_length=1, max_length=180)
+    content_base64: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("content_base64", "contentBase64"),
+        # Same 32 MiB binary boundary as the precise-product importer.
+        max_length=((32 * 1024 * 1024 * 4) // 3) + 16,
+        repr=False,
+    )
+    snapshot_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("snapshot_id", "snapshotId", "id"),
+        min_length=1,
+        max_length=96,
+    )
+
+    @field_validator("name", "snapshot_id", mode="before")
+    @classmethod
+    def normalize_manual_erp_text(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def validate_manual_erp_shape(self):
+        has_bytes = bool(self.content_base64 and self.content_base64.strip())
+        has_snapshot = bool(self.snapshot_id)
+        if has_bytes and not self.name:
+            raise ValueError("El ERP manual con contenido debe declarar su nombre de fichero")
+        if has_bytes and has_snapshot:
+            raise ValueError("El ERP manual debe enviar contenido o snapshot_id, no ambos")
+        if not has_bytes and not has_snapshot:
+            raise ValueError("El ERP manual requiere content_base64 o snapshot_id")
+        return self
+
+    @property
+    def is_upload(self) -> bool:
+        return bool(self.content_base64 and self.content_base64.strip())
+
+
+class ManualOrbitTimeWindow(BaseModel):
+    """One optional UTC design/scene interval used by ERP preflight."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    start_time: datetime.datetime | None = Field(
+        default=None,
+        validation_alias=AliasChoices("start_time", "startTime"),
+    )
+    end_time: datetime.datetime | None = Field(
+        default=None,
+        validation_alias=AliasChoices("end_time", "endTime"),
+    )
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalize_time_window_utc(cls, value: datetime.datetime | None) -> datetime.datetime | None:
+        return ensure_utc(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_complete_window(self):
+        if (self.start_time is None) != (self.end_time is None):
+            raise ValueError("La ventana temporal debe declarar inicio y final")
+        if self.start_time is not None and self.end_time is not None and self.end_time <= self.start_time:
+            raise ValueError("El final de la ventana temporal debe ser posterior al inicio")
+        return self
+
+    def payload(self) -> dict[str, str] | None:
+        if self.start_time is None or self.end_time is None:
+            return None
+        return {
+            "start_time": self.start_time.isoformat(),
+            "end_time": self.end_time.isoformat(),
+            "startTime": self.start_time.isoformat(),
+            "endTime": self.end_time.isoformat(),
+        }
+
+
+class ManualErpPreviewRequest(BaseModel):
+    """ERP upload validation request for the manual TIME tab.
+
+    A successful preview creates a local, content-addressed snapshot so the
+    client can retain only its reference in the manual-orbit/project record.
+    The raw upload bytes are never returned by this request's response.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    manual_erp: ManualErpInput = Field(
+        validation_alias=AliasChoices("manual_erp", "manualErp", "erp"),
+    )
+    design_window: ManualOrbitTimeWindow | None = Field(
+        default=None,
+        validation_alias=AliasChoices("design_window", "designWindow"),
+    )
+    scene_window: ManualOrbitTimeWindow | None = Field(
+        default=None,
+        validation_alias=AliasChoices("scene_window", "sceneWindow"),
+    )
+
+    @model_validator(mode="after")
+    def require_upload_for_preview(self):
+        if not self.manual_erp.is_upload:
+            raise ValueError("La previsualización ERP requiere un fichero local")
+        return self
+
+
 class ManualOrbitRequest(BaseModel):
     """Validated request for a transient manual orbit.
 
@@ -1292,6 +1408,12 @@ class ManualOrbitRequest(BaseModel):
     propagation_options: ManualPropagationOptions = Field(
         default_factory=ManualPropagationOptions,
         validation_alias=AliasChoices("propagation_options", "propagationOptions"),
+    )
+    manual_erp: ManualErpInput | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "manual_erp", "manualErp", "manual_erp_snapshot", "manualErpSnapshot"
+        ),
     )
     definition_source: Literal["keplerian", "state_vector"] | None = Field(
         default=None,
@@ -1341,6 +1463,17 @@ class ManualOrbitRequest(BaseModel):
         if not isinstance(value, dict):
             return value
         payload = dict(value)
+        if not any(key in payload for key in ("manual_erp", "manualErp")):
+            snapshot_id = next(
+                (
+                    payload[key]
+                    for key in ("manual_erp_snapshot_id", "manualErpSnapshotId")
+                    if payload.get(key) is not None
+                ),
+                None,
+            )
+            if snapshot_id is not None:
+                payload["manualErp"] = {"snapshotId": snapshot_id}
         if not any(key in payload for key in ("propagation_options", "propagationOptions")):
             flat_options = {
                 "forceTerms": payload.get("forceTerms", payload.get("gravityTerms")),
@@ -1502,6 +1635,7 @@ class OrbitParametersSource(BaseModel):
                 manual_keys = {
                     "name", "epoch", "epochUtc", "epoch_utc", "propagator",
                     "objectMetadata", "object_metadata", "propagationOptions", "propagation_options",
+                    "manualErp", "manual_erp", "manualErpSnapshotId", "manual_erp_snapshot_id",
                     "definitionSource", "definition_source", "source", "keplerian", "stateVector", "state_vector",
                 }
                 compact_manual = {key: item for key, item in payload.items() if key in manual_keys}

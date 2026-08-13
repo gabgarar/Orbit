@@ -20,11 +20,16 @@ from orbit_api.application.manual_orbits import (
     ManualOrbitError,
     build_manual_orbit_propagator,
     canonical_manual_orbit,
+    manual_erp_frame_transformer,
+    manual_orbit_requires_erp,
+    require_manual_erp_for_force_terms,
+    validate_manual_erp_coverage,
 )
 from orbit_api.domain.requests import (
     OrbitParametersRequest,
     require_manual_orbit_runtime_propagator,
 )
+from orbit_api.application.manual_erp import ManualErpError, ManualErpRepository, resolve_manual_erp_input
 from orbit_api.frames import FrameTransformService, StateVector
 from orbit_api.orbits.forces import GravityFieldModel
 from orbit_api.orbits.propagators.classical import (
@@ -367,6 +372,9 @@ def _manual_source(
     payload: OrbitParametersRequest,
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
+    manual_erp_repository: ManualErpRepository | None = None,
+    coverage_start: datetime.datetime | None = None,
+    coverage_end: datetime.datetime | None = None,
 ) -> tuple[str, Callable, str, float, dict[str, Any], dict[str, Any]]:
     manual = payload.source.manual_orbit
     if manual is None:  # Defensive narrowing; the request model already rejects this.
@@ -375,6 +383,30 @@ def _manual_source(
         propagator_name = require_manual_orbit_runtime_propagator(manual.propagator)
     except ValueError as exc:
         raise ManualOrbitError(str(exc)) from exc
+    try:
+        manual_erp = resolve_manual_erp_input(manual.manual_erp, manual_erp_repository)
+    except ManualErpError as exc:
+        raise ManualOrbitError(str(exc)) from exc
+    propagation_options = manual.propagation_options.canonical(
+        propagator=propagator_name
+    )
+    require_manual_erp_for_force_terms(
+        tuple(propagation_options["force_terms"]),
+        manual_erp.provider if manual_erp is not None else None,
+    )
+    if (
+        coverage_start is not None
+        and coverage_end is not None
+        and manual_orbit_requires_erp(tuple(propagation_options["force_terms"]))
+    ):
+        validate_manual_erp_coverage(
+            frame_transformer=manual_erp_frame_transformer(
+                frame_transformer,
+                manual_erp.provider if manual_erp is not None else None,
+            ),
+            start_time=coverage_start,
+            end_time=coverage_end,
+        )
     definition_source, keplerian, state_vector = canonical_manual_orbit(manual)
     runtime_name, propagator, model = build_manual_orbit_propagator(
         propagator_name,
@@ -382,11 +414,11 @@ def _manual_source(
         epoch=manual.epoch,
         keplerian=keplerian,
         state_vector=state_vector,
-        propagation_options=manual.propagation_options.canonical(
-            propagator=propagator_name
-        ),
+        propagation_options=propagation_options,
         frame_transformer=frame_transformer,
         gravity_field=gravity_field,
+        manual_erp_provider=manual_erp.provider if manual_erp is not None else None,
+        manual_erp_snapshot_id=manual_erp.snapshot_id if manual_erp is not None else None,
     )
     frame = "EME2000"
     model = {
@@ -405,9 +437,8 @@ def _manual_source(
         "definition_source": definition_source,
         "reference_frame": frame,
         "object_metadata": manual.object_metadata.canonical(),
-        "propagation_options": manual.propagation_options.canonical(
-            propagator=propagator_name
-        ),
+        "propagation_options": propagation_options,
+        "manual_erp": manual_erp.payload() if manual_erp is not None else None,
     }
     return manual.name, _native_state_provider(propagator, frame), frame, mu, model, identity
 
@@ -419,6 +450,7 @@ def build_orbit_parameters(
     ensure_utc: Callable[[datetime.datetime], datetime.datetime] | None = None,
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
+    manual_erp_repository: ManualErpRepository | None = None,
 ) -> dict[str, Any]:
     """Propagate a source at evenly spaced instants and derive its elements."""
 
@@ -435,6 +467,9 @@ def build_orbit_parameters(
             payload,
             frame_transformer,
             gravity_field,
+            manual_erp_repository,
+            min(normalise_utc(payload.source.manual_orbit.epoch), start_time),
+            max(normalise_utc(payload.source.manual_orbit.epoch), end_time),
         )
     else:
         name, state_at, frame, mu, model, identity = _catalog_source(payload, resolve_propagator)

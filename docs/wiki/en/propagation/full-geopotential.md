@@ -33,23 +33,49 @@ It must not change normalization or invent coefficients in the background.
 
 | Setting | Meaning | Constraint |
 | --- | --- | --- |
-| `degree` | Largest evaluated \(n\). | Integer \(2\leq N\leq \min(N_{field},70)\) in the public API and UI; 0/1 remain inactive compatibility values only. |
-| `order` | Largest \(m\) per degree. | Integer \(0\leq M\leq \min(N,M_{field})\). |
+| `degree` | Largest evaluated \(n\). | Integer \(2\leq N\leq \min(N_{field},2159)\). `2159` is the semantic model/API/UI maximum, aligned with a complete EGM2008 field; 0/1 remain inactive compatibility values only. |
+| `order` | Largest \(m\) per degree. | Integer \(0\leq M\leq \min(N,M_{field},2159)\). |
 | `geopotential` | Enables the non-central harmonic sum. | Do not combine with `j2`, `j3`, or `j4`. |
 
 Central gravity remains the separate, mandatory `central` term. This avoids
 adding the \(n=0\) term twice. Runtime rejects degree below 2 with HTTP 422
 when `geopotential` is active.
 
-!!! warning "Current execution budget"
+!!! warning "Semantic limit and execution budget are different"
 
-    The present harmonic evaluator and RK4 run in Python and evaluate the
-    field at all four stages of each step. For operational safety, Orbit caps
-    the public degree at **70**, even if the ICGEM file contains additional
-    coefficients. This is not a scientific field limit or a silent
-    truncation: a larger request is rejected before propagation begins.
-    Supporting higher degrees requires an optimized evaluator and an
-    integrator with a validated cost/error budget.
+    `2159 × 2159` is the largest field/configuration/provenance contract that
+    Orbit accepts; it does not mean that the current RK4 automatically runs
+    that complete field. The fixed-step Python evaluator has an explicit guard
+    of **2,555 non-central harmonic coefficients per stage**. A configuration
+    above it is rejected before propagation: it is neither silently truncated
+    nor replaced by a lower model.
+
+    A dense `70 × 70` is an example that fits the current profile. A zonal or
+    low-order configuration can reach higher degree if it remains within budget.
+    A complete `2159 × 2159` requires an optimized evaluator and adaptive
+    integrator before it can be offered as a mission calculation.
+
+## Choosing degree and order \(N\times M\)
+
+Choose the value through convergence against the mission tolerance, not by
+selecting the largest number available. Practical starting points are:
+
+| Case | Initial selection | Rationale and limit |
+| --- | ---: | --- |
+| Quick test or preliminary design | **20 × 20** | Low cost; useful to check geometry and configuration. |
+| General LEO engineering analysis | **40 × 40** | Recommended starting point for sensitivity comparison. |
+| LEO, short arc, or sensitivity study | **60 × 60** | Adds detail without normally exhausting the current profile. |
+| Current dense RK4 profile maximum | **70 × 70** | Example within the 2,555-term guard; not the model's semantic maximum. |
+| MEO/GNSS | **20 × 20** | High harmonics attenuate with altitude; always validate against the selected reference. |
+| GEO | **12 × 12 to 20 × 20** | Starting point; other perturbations may dominate the error budget. |
+| Future mission study | **120 × 120** initially; **180 × 180 to 360 × 360** after convergence | Requires the future optimized engine and adaptive integration. |
+| Complete EGM2008 field | **2159 × 2159** | Maximum accepted data/configuration; not executable by the current Python RK4. |
+
+To justify a selection, propagate the same arc with `20 × 20`, `40 × 40`, and
+`60 × 60`; compare final position and RMS against the reference product—for
+example an SP3—and choose the smallest model whose difference from the next
+one meets the mission threshold. This test does not replace tides, drag, SRP,
+attitude, or an integration-step test.
 
 ## J1, J2, and J3
 

@@ -47,6 +47,15 @@ El término armónico aporta la parte no central de la aceleración. `central`
 sigue siendo obligatorio, y `geopotential` se excluye mutuamente con los
 interruptores J2/J3/J4 para evitar doble conteo.
 
+El contrato de selección admite hasta **2159 × 2159**, que es el máximo
+semántico de un campo completo EGM2008. No debe confundirse con el presupuesto
+del evaluador actual: el RK4 Python rechaza de forma explícita una etapa con
+más de 2.555 coeficientes armónicos no centrales. Un campo `70 × 70` denso cabe
+como perfil actual; una selección zonal/de orden bajo puede alcanzar mayor grado si
+respeta ese presupuesto. No existe truncación silenciosa. La tabla de elección
+por LEO, MEO/GNSS, GEO y misión se mantiene en
+[Geopotencial configurable](../propagation/full-geopotential.md).
+
 ## Marco correcto de evaluación
 
 Los coeficientes \(\bar C_{nm},\bar S_{nm}\) describen la distribución de masa

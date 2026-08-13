@@ -17,7 +17,8 @@ from orbit_api.api.routes.precise_products import create_precise_products_router
 from orbit_api.api.routes.realtime import create_realtime_router
 from orbit_api.api.routes.system import create_system_router
 from orbit_api.application.orbit_runtime import OrbitRuntime
-from orbit_api.core.settings import COMPRESSION_THRESHOLD, CONFIG_DIR
+from orbit_api.application.manual_erp import ManualErpRepository
+from orbit_api.core.settings import COMPRESSION_THRESHOLD, CONFIG_DIR, MANUAL_ERP_SNAPSHOTS_DIR
 from orbit_api.frames import build_frame_transformer_from_environment
 from orbit_api.infrastructure.config_watcher import start_configuration_watcher
 from orbit_api.orbits.forces import build_gravity_field_from_environment
@@ -33,6 +34,10 @@ def create_app() -> FastAPI:
     # server starts.  Leaving it unset is valid; the manual API then keeps the
     # legacy zonal terms but rejects the configurable geopotential term.
     gravity_field = build_gravity_field_from_environment()
+    # Manual TIME-tab ERP uploads are content-addressed local snapshots. The
+    # mounted config volume keeps their immutable bytes available to project
+    # restores without serialising them into project JSON.
+    manual_erp_repository = ManualErpRepository(MANUAL_ERP_SNAPSHOTS_DIR)
     runtime = OrbitRuntime(frame_transformer=frame_transformer)
 
     @asynccontextmanager
@@ -71,12 +76,14 @@ def create_app() -> FastAPI:
         ensure_utc,
         runtime.frame_transformer,
         gravity_field,
+        manual_erp_repository,
     ))
     app.include_router(create_orbit_parameters_router(
         runtime.resolve_propagator,
         ensure_utc,
         runtime.frame_transformer,
         gravity_field,
+        manual_erp_repository,
     ))
     app.include_router(create_ground_stations_router(
         runtime.resolve_propagator,
@@ -84,6 +91,7 @@ def create_app() -> FastAPI:
         ensure_utc,
         runtime.frame_transformer,
         gravity_field,
+        manual_erp_repository,
     ))
     app.include_router(create_exports_router(
         runtime.find_catalog_entry,
@@ -92,6 +100,7 @@ def create_app() -> FastAPI:
         ensure_utc,
         runtime.frame_transformer,
         gravity_field,
+        manual_erp_repository,
     ))
     app.include_router(create_realtime_router(
         runtime.get_state_snapshot,

@@ -21,7 +21,11 @@ from orbit_api.orbits.forces.geopotential import (
     geopotential_perturbation_acceleration_itrf,
 )
 from orbit_api.orbits.propagators.classical import EARTH_MU_KM3_S2
-from orbit_api.orbits.propagators.cowell import CowellPropagator
+from orbit_api.orbits.propagators.cowell import (
+    MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS,
+    CowellPropagator,
+    _geopotential_harmonic_term_count,
+)
 from orbit_api.timekeeping import (
     EarthOrientation,
     LeapSecondTable,
@@ -143,6 +147,45 @@ def test_geopotential_rejects_legacy_zonal_double_counting_and_unconfigured_mode
         )
     with pytest.raises(ValueError, match="campo ICGEM"):
         CowellPropagator(EPOCH, STATE, force_terms=("geopotential",))
+
+
+def test_geopotential_semantic_range_is_separate_from_the_rk4_work_budget():
+    """2159x2159 is valid user vocabulary, not safe Python-RK4 work today."""
+
+    model = GravityFieldModel(
+        model_id="budget-fixture",
+        source="test fixture",
+        version="1",
+        sha256=None,
+        mu_km3_s2=398600.4418,
+        reference_radius_km=6378.137,
+        normalization="fully_normalized",
+        max_degree=2159,
+        coefficients={(0, 0): (1.0, 0.0)},
+    )
+
+    assert _geopotential_harmonic_term_count(70, 70) == MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS
+    assert _geopotential_harmonic_term_count(2159, 0) == 2159
+
+    allowed = CowellPropagator(
+        EPOCH,
+        STATE,
+        force_terms=("geopotential",),
+        geopotential_model=model,
+        geopotential_degree=70,
+        geopotential_order=70,
+    )
+    assert allowed.geopotential_configuration == GeopotentialConfiguration(70, 70)
+
+    with pytest.raises(ValueError, match="presupuesto de ejecuci"):
+        CowellPropagator(
+            EPOCH,
+            STATE,
+            force_terms=("geopotential",),
+            geopotential_model=model,
+            geopotential_degree=71,
+            geopotential_order=71,
+        )
 
 
 def test_time_dependent_forces_receive_the_four_actual_rk_stage_epochs(monkeypatch):

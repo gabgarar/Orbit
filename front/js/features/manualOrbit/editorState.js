@@ -14,11 +14,10 @@ import {
 } from "./orbitalElements.js";
 
 export const DEFAULT_MANUAL_ORBIT_NAME = "Manual Orbit";
-// Public Cowell/RK4 requests are deliberately bounded.  A higher-degree
-// ICGEM file may be installed for offline inspection, but this pure-JS editor
-// must not send a configuration whose pure-Python RK4 evaluation can stall a
-// normal preview or API request.
-export const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 70;
+// EGM2008 is complete through degree/order 2159.  The backend separately
+// enforces the current RK4 execution budget; this UI bound describes the
+// scientific/request contract rather than silently rewriting an N×M choice.
+export const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 2159;
 // A manually designed trajectory has a physical ECI state at its epoch, so
 // two-body propagation is the honest default.  SGP4 remains available for
 // TLE-compatible scenarios, but is not silently imposed on new designs.
@@ -985,6 +984,22 @@ function appendApiOption(result, options, optionKey, apiKey) {
 }
 
 /**
+ * Convert only a durable manual-ERP snapshot reference to the API spelling.
+ *
+ * Upload bytes are intentionally excluded here.  The TIME preflight owns the
+ * one-shot `{ name, contentBase64 }` transfer and returns a content-addressed
+ * snapshot ID; all later preview/create/restore requests must name that exact
+ * validated snapshot or fail closed on the server.
+ */
+function manualErpSnapshotReference(value) {
+    const source = safeObject(value);
+    const snapshot = readAlias(source, ["snapshotId", "snapshot_id", "id"]);
+    if (!snapshot.found) return null;
+    const snapshotId = normalizedText(snapshot.value, "", { maximumLength: 96 });
+    return snapshotId ? { snapshot_id: snapshotId } : null;
+}
+
+/**
  * Serialize a canonical/manual UI state for the Python manual-orbit endpoint.
  * The endpoint receives both representations, while `definition_source`
  * records the form the user last edited and therefore must be propagated.
@@ -992,6 +1007,7 @@ function appendApiOption(result, options, optionKey, apiKey) {
 export function toManualOrbitApiPayload(state, options = {}) {
     const source = normalizeDefinitionSource(options.source) || "keplerian";
     const canonical = normalizeManualOrbitState(state, { source });
+    const rawState = unwrapPayload(state);
     const result = {
         name: canonical.name,
         epoch: canonical.epochUtc,
@@ -1006,6 +1022,15 @@ export function toManualOrbitApiPayload(state, options = {}) {
     appendApiOption(result, options, "endTime", "end_time");
     appendApiOption(result, options, "horizonHours", "horizon_hours");
     appendApiOption(result, options, "stepSeconds", "step_seconds");
+    const manualErp = manualErpSnapshotReference(
+        options.manualErp
+        ?? options.manual_erp
+        ?? rawState.manualErp
+        ?? rawState.manual_erp
+        ?? safeObject(rawState.timeData).manualErp
+        ?? safeObject(rawState.time_data).manual_erp
+    );
+    if (manualErp) result.manual_erp = manualErp;
     if (typeof options.includeVelocity === "boolean") result.include_velocity = options.includeVelocity;
     return result;
 }

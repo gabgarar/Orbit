@@ -4,6 +4,10 @@ import express from "express";
 const API_ROUTES = ["/propagate", "/orbits", "/aos-los", "/ephemeris", "/manual-orbits", "/orbit-parameters"];
 const SATELLITE_API_ROUTES = ["/propagate", "/orbits"];
 export const PRECISE_PRODUCT_IMPORT_JSON_LIMIT = "90mb";
+// ERP uploads are scoped to a single manual orbit.  A 32 MiB binary ERP is
+// roughly 42.7 MiB after base64 encoding, so keep enough JSON headroom while
+// leaving every unrelated manual-orbit request on the regular small parser.
+export const MANUAL_ERP_PREVIEW_JSON_LIMIT = "50mb";
 
 function registerForwardingRoute(app, method, route, getPythonPath, forward) {
     app[method](route, (request, response) => forward(request, response, getPythonPath(request)));
@@ -53,6 +57,13 @@ export function registerPreciseProductImportBodyParser(app) {
     app.use("/api/precise-products", express.json({ limit: PRECISE_PRODUCT_IMPORT_JSON_LIMIT }));
 }
 
+export function registerManualOrbitErpBodyParser(app) {
+    app.use(
+        "/api/manual-orbits/time/erp-preview",
+        express.json({ limit: MANUAL_ERP_PREVIEW_JSON_LIMIT })
+    );
+}
+
 export function registerPreciseProductImportProxyRoute(app, client) {
     const forward = createPythonForwarder(client);
     // Preview accepts the same potentially large SP3/companion upload body
@@ -60,4 +71,12 @@ export function registerPreciseProductImportProxyRoute(app, client) {
     // state. Keep it on this bounded route rather than the generic JSON API.
     app.post("/api/precise-products/preview", (request, response) => forward(request, response, "/precise-products/preview"));
     app.post("/api/precise-products/import", (request, response) => forward(request, response, "/precise-products/import"));
+}
+
+export function registerManualOrbitErpPreviewProxyRoute(app, client) {
+    const forward = createPythonForwarder(client);
+    app.post(
+        "/api/manual-orbits/time/erp-preview",
+        (request, response) => forward(request, response, "/manual-orbits/time/erp-preview")
+    );
 }

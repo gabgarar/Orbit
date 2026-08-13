@@ -36,6 +36,70 @@ ERP)** and reject any request declaring `require_eci`. The global C04 snapshot
 is not silently adopted as an ERP for an SP3 revision: both sources retain
 their own version and provenance.
 
+## Manual orbit: TIME tab and local ERP
+
+The manual-orbit design **TIME** tab contains two separate contracts:
+**Design window** defines the UTC epochs to propagate, while **Orbit preview
+frame** only chooses how to inspect the ephemeris. They are not two clocks or
+two different dynamics.
+
+A manual orbit ERP is explicitly attached from that tab as a local file. Orbit
+does not silently download or adopt the global C04, an ERP belonging to an
+already-loaded SP3, or an Internet value to complete that file. The result keeps
+the attached ERP's name, provider, digest, UTC scale, and coverage limits.
+
+After the ERP validates successfully, TIME replaces the **Design window** with
+the complete interval covered by the file:
+
+$$
+D=[t_{ERP,min},t_{ERP,max}].
+$$
+
+It is not automatically clipped to an SP3/OEM layer already in the scene.
+Clipping would hide the fact that the products have different coverages and
+would change the manual design without an explicit operator action.
+
+### When ERP is mandatory
+
+The manual ERP is required when the Cowell composition includes an Earth-bound
+force: currently `geopotential` or `drag`. Before previewing or creating, Orbit
+requires the ERP to cover the complete design interval:
+
+$$
+D\subseteq E_{ERP}.
+$$
+
+When it is absent the error is **“Debe proporcionar un fichero ERP para
+convertir a ECI.”**; when present but not covering the entire window, creation
+is rejected with a coverage explanation. An operator can still design an
+inertial-only force composition —for example `central`, third body, SRP, or
+relativity— without attaching an ERP, but that does not enable a rigorous
+Earth-fixed evaluation. Leap-second and ERFA requirements remain independent
+from the manual ERP.
+
+### Alignment with SP3, OEM, and scene range
+
+There are no different “time frames”: Orbit's common clock is UTC. Coverage
+may differ. Given a scene window \(S\) and finite layers with published domains
+\(P_1,\ldots,P_k\), the permitted interval for a comparison, joint plot, or
+calculation using both sources is:
+
+$$
+C=D\cap S\cap P_1\cap\cdots\cap P_k.
+$$
+
+- If \(C\) exists but is smaller than \(D\), TIME reports the **common
+  window**. A joint operation must use it and must not extrapolate SP3/OEM.
+- If \(C\) is empty, the manual orbit may be created when its own ERP contract
+  is valid, but it cannot be presented as comparable or jointly analysable
+  with those layers until the operator chooses overlapping products/ranges.
+- Attaching an ERP never silently changes the global range. The operator may
+  explicitly apply the common window, preserving reproducible project timing.
+
+Manual-orbit provenance must include its design window, ERP coverage and digest
+when used, selected preview frame, and the effective common window whenever a
+multi-source operation runs.
+
 ## Operational guides
 
 | Theme | Content |

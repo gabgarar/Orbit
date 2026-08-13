@@ -1,5 +1,6 @@
 """Manual-orbit conversion, native-engine selection, and route adapter tests."""
 
+import base64
 import math
 from datetime import UTC, datetime
 
@@ -11,6 +12,7 @@ from orbit_api.application.manual_orbits import (
     build_manual_orbit_propagator,
     canonical_manual_orbit,
 )
+from orbit_api.application.manual_erp import ManualErpRepository
 from orbit_api.domain.requests import (
     LEGACY_MANUAL_ORBIT_PROPAGATORS,
     MANUAL_ORBIT_PROPAGATORS,
@@ -40,6 +42,24 @@ def keplerian_payload(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def _manual_erp_text() -> str:
+    """A local ERP covering the manual-orbit fixture epoch and horizon."""
+
+    return "\n".join((
+        "VERSION 2",
+        "MJD Xpole Ypole UT1-UTC LOD",
+        "61240.00000000 100000 -200000 2500000 10000",
+        "61243.00000000 120000 -180000 2600000 11000",
+    ))
+
+
+@pytest.fixture
+def manual_erp_snapshot(tmp_path):
+    repository = ManualErpRepository(tmp_path / "manual-erp-snapshots")
+    content = base64.b64encode(_manual_erp_text().encode("utf-8")).decode("ascii")
+    return repository, repository.save_upload("manual-force.erp", content)
 
 
 def test_manual_request_accepts_editor_camel_case_with_a_native_eme2000_definition():
@@ -275,20 +295,30 @@ def test_cowell_accepts_new_physical_force_terms_and_rejects_geopotential_double
 
 
 def test_public_cowell_geopotential_degree_has_a_bounded_execution_budget():
-    """The HTTP/editor contract cannot schedule an unbounded RK4 workload."""
+    """EGM2008's 2159 ceiling is distinct from the current RK4 cost guard."""
 
-    with pytest.raises(ValidationError, match="less than or equal to 70"):
+    request = ManualOrbitRequest(**keplerian_payload(
+        propagator="cowell-rk4",
+        propagationOptions={
+            "forceTerms": ["geopotential"],
+            "geopotentialDegree": 2159,
+            "geopotentialOrder": 2159,
+        },
+    ))
+    assert request.propagation_options.geopotential_degree == 2159
+
+    with pytest.raises(ValidationError, match="less than or equal to 2159"):
         ManualOrbitRequest(**keplerian_payload(
             propagator="cowell-rk4",
             propagationOptions={
                 "forceTerms": ["geopotential"],
-                "geopotentialDegree": 71,
+                "geopotentialDegree": 2160,
                 "geopotentialOrder": 0,
             },
         ))
 
 
-def test_cowell_builder_exposes_configured_geopotential_provenance():
+def test_cowell_builder_exposes_configured_geopotential_provenance(manual_erp_snapshot):
     request = ManualOrbitRequest(**keplerian_payload(
         propagator="cowell-rk4",
         propagationOptions={
@@ -298,6 +328,7 @@ def test_cowell_builder_exposes_configured_geopotential_provenance():
         },
     ))
     _source, keplerian, state_vector = canonical_manual_orbit(request)
+    _repository, erp = manual_erp_snapshot
     name, propagator, metadata = build_manual_orbit_propagator(
         request.propagator,
         name=request.name,
@@ -306,6 +337,8 @@ def test_cowell_builder_exposes_configured_geopotential_provenance():
         state_vector=state_vector,
         propagation_options=request.propagation_options.canonical(propagator="cowell-rk4"),
         gravity_field=GravityFieldModel.wgs84_zonal_degree4(),
+        manual_erp_provider=erp.provider,
+        manual_erp_snapshot_id=erp.snapshot_id,
     )
 
     assert name.startswith("manual:cowell-rk4:")
@@ -339,8 +372,18 @@ def test_manual_force_capabilities_report_absent_or_pinned_gravity_data_without_
 
     assert configured["cowell"]["geopotential"]["available"] is True
     assert configured["cowell"]["geopotential"]["model"]["id"] == model.model_id
-    assert configured["cowell"]["geopotential"]["model"]["max_active_degree"] == 4
-    assert configured["cowell"]["geopotential"]["model"]["execution_limit"]["max_degree"] == 70
+    assert configured["cowell"]["geopotential"]["model"]["max_selectable_degree"] == 4
+    assert configured["cowell"]["geopotential"]["model"]["execution_limit"]["semantic_max_degree"] == 2159
+    assert configured["cowell"]["geopotential"]["model"]["execution_limit"] == {
+        "semantic_max_degree": 2159,
+        "max_harmonic_terms": 2555,
+        "full_degree_order_example": {"degree": 70, "order": 70},
+        "enforcement": "validated before propagation",
+        "reason": (
+            "bounded pure-Python RK4 evaluation; configurations above the harmonic-term "
+            "budget require a validated optimized evaluator"
+        ),
+    }
 
 
 def test_two_body_preserves_the_eme2000_epoch_state():
@@ -391,7 +434,7 @@ def test_direct_builder_projects_stale_cowell_terms_onto_fixed_engines():
     assert stale_metadata["id"] == "two-body"
 
 
-def test_native_manual_runtime_identity_uses_propagator_epoch_and_state_not_display_name():
+def test_native_manual_runtime_identity_uses_propagator_epoch_and_state_not_display_name(manual_erp_snapshot):
     request = ManualOrbitRequest(**keplerian_payload(propagator="two-body"))
     _, keplerian, state_vector = canonical_manual_orbit(request)
 
@@ -416,6 +459,7 @@ def test_native_manual_runtime_identity_uses_propagator_epoch_and_state_not_disp
         keplerian=keplerian,
         state_vector=changed_state,
     )
+    _repository, erp = manual_erp_snapshot
     drag_name, drag_propagator, drag_metadata = build_manual_orbit_propagator(
         "cowell-rk4",
         name="Same display name",
@@ -430,6 +474,8 @@ def test_native_manual_runtime_identity_uses_propagator_epoch_and_state_not_disp
             "area_m2": 2.0,
             "mass_kg": 100.0,
         },
+        manual_erp_provider=erp.provider,
+        manual_erp_snapshot_id=erp.snapshot_id,
     )
 
     assert isinstance(first_prop, TwoBodyPropagator)
@@ -666,7 +712,12 @@ def test_manual_route_keeps_j2_j3_j4_as_a_fixed_no_drag_preset():
         ("j2-j3-j4", ["central", "j2", "j3", "j4", "drag"], "WGS-84 central gravity + J2 + J3 + J4 + first-order atmospheric drag"),
     ],
 )
-def test_manual_route_uses_explicit_cowell_for_configurable_drag(force_model, expected_terms, expected_gravity_model):
+def test_manual_route_uses_explicit_cowell_for_configurable_drag(
+    force_model,
+    expected_terms,
+    expected_gravity_model,
+    manual_erp_snapshot,
+):
     calls = []
 
     def build_ephemeris(name, propagator, start, end, step, include_velocity):
@@ -690,12 +741,18 @@ def test_manual_route_uses_explicit_cowell_for_configurable_drag(force_model, ex
         "areaM2": 2,
         "massKg": 120,
     }
-    router = create_manual_orbits_router(build_ephemeris, lambda value: value.astimezone(UTC))
+    repository, erp = manual_erp_snapshot
+    router = create_manual_orbits_router(
+        build_ephemeris,
+        lambda value: value.astimezone(UTC),
+        manual_erp_repository=repository,
+    )
     endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits")
     response = endpoint(ManualOrbitRequest(**keplerian_payload(
         propagator="cowell-rk4",
         objectMetadata={"objectType": "Satellite", "launchDate": "2026-07-20"},
         propagationOptions=options,
+        manualErp={"snapshotId": erp.snapshot_id},
     )))
 
     assert len(calls) == 1
@@ -724,17 +781,23 @@ def test_manual_route_uses_explicit_cowell_for_configurable_drag(force_model, ex
     assert response["propagationOptions"]["numericalIntegrator"] == "rk4"
 
 
-def test_manual_route_converts_native_propagation_failure_to_a_correctable_422():
+def test_manual_route_converts_native_propagation_failure_to_a_correctable_422(manual_erp_snapshot):
     def build_ephemeris(*_args):
         raise ValueError("La propagaciÃ³n intersecta la Tierra")
 
-    router = create_manual_orbits_router(build_ephemeris, lambda value: value.astimezone(UTC))
+    repository, erp = manual_erp_snapshot
+    router = create_manual_orbits_router(
+        build_ephemeris,
+        lambda value: value.astimezone(UTC),
+        manual_erp_repository=repository,
+    )
     endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits")
 
     with pytest.raises(HTTPException) as error:
         endpoint(ManualOrbitRequest(**keplerian_payload(
             propagator="cowell-rk4",
             propagationOptions={"atmosphericDrag": True, "cowellGravityModel": "j2"},
+            manualErp={"snapshotId": erp.snapshot_id},
         )))
 
     assert error.value.status_code == 422

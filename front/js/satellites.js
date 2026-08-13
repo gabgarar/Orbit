@@ -61,10 +61,10 @@ const GROUND_TRACK_SURFACE_HEIGHT = 20000;
 const MINIMUM_RENDERABLE_EARTH_CENTER_DISTANCE_M = 1_000;
 const PROPAGATION_HOURS_MIN = 0;
 const PROPAGATION_HOURS_MAX = Number.POSITIVE_INFINITY;
-// Keep legacy/manual response normalisation aligned with the public Cowell
-// request budget.  The evaluator can parse a higher-degree ICGEM file, but a
-// fixed-step browser/API workflow must never resurrect an unbounded degree.
-const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 70;
+// This is the scientific/request ceiling of the EGM2008 complete field.  The
+// backend separately rejects configurations that exceed the current fixed-RK4
+// execution budget; do not silently rewrite a saved N×M selection here.
+const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 2159;
 // The manual-orbit editor renders outside the normal layer runtime while a
 // user is designing an orbit.  These entities intentionally have their own
 // visual identity and never participate in layer selection or telemetry.
@@ -4667,6 +4667,43 @@ function manualOrbitValue(source, keys) {
     return { found: false, value: undefined };
 }
 
+/**
+ * Copy only the content-addressed ERP provenance returned by the server.
+ * This object is deliberately project-safe: `contentBase64`/raw upload bytes
+ * never pass through a manual track, catalogue metadata or project export.
+ */
+function readManualOrbitErpReference(payload, ephemeris) {
+    const source = {
+        ...manualOrbitNestedRecord(ephemeris, "manualErp", "manual_erp"),
+        ...manualOrbitNestedRecord(payload, "manualErp", "manual_erp")
+    };
+    const snapshot = manualOrbitValue(source, ["snapshotId", "snapshot_id", "id"]);
+    const snapshotId = snapshot.found ? String(snapshot.value || "").trim() : "";
+    if (!snapshotId) return null;
+    const text = (keys) => {
+        const value = manualOrbitValue(source, keys);
+        return value.found ? String(value.value || "").trim() || null : null;
+    };
+    const nonNegativeInteger = (keys) => {
+        const value = manualOrbitValue(source, keys);
+        const numeric = Number(value.value);
+        return value.found && Number.isInteger(numeric) && numeric >= 0 ? numeric : null;
+    };
+    return {
+        snapshotId,
+        filename: text(["filename", "fileName", "file_name", "name"]),
+        sha256: text(["sha256", "sourceSha256", "source_sha256"]),
+        sourceSha256: text(["sourceSha256", "source_sha256"]),
+        byteSize: nonNegativeInteger(["byteSize", "byte_size", "size"]),
+        recordCount: nonNegativeInteger(["recordCount", "record_count", "sampleCount", "sample_count"]),
+        coverageStart: text(["coverageStart", "coverage_start"]),
+        coverageEnd: text(["coverageEnd", "coverage_end"]),
+        source: text(["source", "provider"]),
+        version: text(["version"]),
+        quality: text(["quality", "productClass", "product_class"])
+    };
+}
+
 function manualOrbitHasLegacyPropagationOptionSignal(source) {
     const record = manualOrbitRecord(source);
     // Old Cowell records did not have forceTerms or a gravity-model field;
@@ -4803,6 +4840,7 @@ function buildManualOrbitMetadata(payload, ephemeris, points) {
         previewReferenceFrame: normalizeManualOrbitPreviewReferenceFrame(
             payload?.previewReferenceFrame ?? payload?.preview_reference_frame
         ),
+        manualErp: readManualOrbitErpReference(payload, ephemeris),
         keplerian: cloneManualOrbitValue(payload?.keplerian || null),
         stateVector: cloneManualOrbitValue(payload?.state_vector || payload?.stateVector || null),
         summary: cloneManualOrbitValue(payload?.orbit_summary || payload?.orbitSummary || null),
@@ -5364,6 +5402,7 @@ function buildManualOrbitProjectEntry(id, track) {
         previewReferenceFrame: normalizeManualOrbitPreviewReferenceFrame(
             metadata.previewReferenceFrame ?? metadata.preview_reference_frame
         ),
+        manualErp: cloneManualOrbitValue(metadata.manualErp || metadata.manual_erp || null),
         keplerian: cloneManualOrbitValue(metadata.keplerian || null),
         stateVector: cloneManualOrbitValue(metadata.stateVector || metadata.state_vector || null),
         objectMetadata: cloneManualOrbitValue(metadata.objectMetadata || metadata.object_metadata || DEFAULT_MANUAL_ORBIT_OBJECT_METADATA),
@@ -5472,31 +5511,41 @@ export function hasLoadedOemEphemerisTracks() {
     return oemEphemerisTrackById.size > 0;
 }
 
+/**
+ * Return each valid OEM coverage independently.
+ *
+ * The aggregate bounds remain useful for the global timeline, but are unsafe
+ * for a joint-operation decision: two disjoint OEMs would otherwise make the
+ * gap between them look like published ephemeris coverage.  TIME consumes
+ * this per-track form so it can require an actual common UTC interval.
+ */
+export function getLoadedOemEphemerisTimeRanges() {
+    return [...oemEphemerisTrackById.entries()]
+        .map(([id, item]) => {
+            const startTimeMs = Number(item?.startTimeMs);
+            const endTimeMs = Number(item?.endTimeMs);
+            if (!Number.isFinite(startTimeMs) || !Number.isFinite(endTimeMs) || endTimeMs <= startTimeMs) {
+                return null;
+            }
+            return { id, startTimeMs, endTimeMs };
+        })
+        .filter(Boolean)
+        .sort((left, right) => (
+            left.startTimeMs - right.startTimeMs
+            || left.endTimeMs - right.endTimeMs
+            || String(left.id).localeCompare(String(right.id))
+        ));
+}
+
 export function getLoadedOemEphemerisTimeBounds() {
-    if (!oemEphemerisTrackById.size) {
-        return null;
-    }
-
-    let minStart = Number.POSITIVE_INFINITY;
-    let maxEnd = Number.NEGATIVE_INFINITY;
-
-    for (const item of oemEphemerisTrackById.values()) {
-        const start = Number(item?.startTimeMs);
-        const end = Number(item?.endTimeMs);
-        if (!Number.isFinite(start) || !Number.isFinite(end)) {
-            continue;
-        }
-        minStart = Math.min(minStart, start);
-        maxEnd = Math.max(maxEnd, end);
-    }
-
-    if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || maxEnd <= minStart) {
+    const ranges = getLoadedOemEphemerisTimeRanges();
+    if (!ranges.length) {
         return null;
     }
 
     return {
-        startTimeMs: minStart,
-        endTimeMs: maxEnd
+        startTimeMs: Math.min(...ranges.map((range) => range.startTimeMs)),
+        endTimeMs: Math.max(...ranges.map((range) => range.endTimeMs))
     };
 }
 

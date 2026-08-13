@@ -27,7 +27,7 @@ from orbit_api.orbits.forces import GravityFieldModel
 from orbit_api.orbits.propagators.cowell import CowellPropagator
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
-from orbit_api.timekeeping import ensure_utc
+from orbit_api.timekeeping import EarthOrientationCoverageError, ensure_utc
 
 EARTH_MU_KM3_S2 = 398600.4418
 EARTH_EQUATORIAL_RADIUS_KM = 6378.137
@@ -39,6 +39,93 @@ _ECCENTRICITY_TOLERANCE = 1e-10
 
 class ManualOrbitError(ValueError):
     """The supplied manual definition cannot represent a bounded orbit."""
+
+
+_MANUAL_ERP_FORCE_TERMS = frozenset({"geopotential", "drag"})
+MANUAL_ERP_REQUIRED_MESSAGE = (
+    "Debe proporcionar un fichero ERP para usar Full geopotential o arrastre atmosférico "
+    "en una órbita manual."
+)
+
+
+def manual_orbit_requires_erp(force_terms: tuple[str, ...] | list[str]) -> bool:
+    """Return whether a manual force is Earth-fixed and needs its own ERP."""
+
+    return bool(_MANUAL_ERP_FORCE_TERMS.intersection(force_terms))
+
+
+def require_manual_erp_for_force_terms(
+    force_terms: tuple[str, ...] | list[str],
+    manual_erp_provider: object | None,
+) -> None:
+    """Reject an Earth-fixed manual force before any global EOP can be read."""
+
+    if manual_orbit_requires_erp(force_terms) and manual_erp_provider is None:
+        raise ManualOrbitError(MANUAL_ERP_REQUIRED_MESSAGE)
+
+
+def manual_erp_frame_transformer(
+    base_transformer: FrameTransformService | None,
+    manual_erp_provider: object | None,
+) -> FrameTransformService | None:
+    """Build the manual orbit's isolated strict EOP route.
+
+    A process-global C04 must never be silently borrowed for a manual design
+    that explicitly selected an ERP-dependent force.  The caller has already
+    resolved a content-addressed local ERP snapshot; cloning keeps its EOP
+    values and provenance local to that one orbit while retaining the global
+    pinned leap-second table and any registered terrestrial datum operations.
+    """
+
+    if manual_erp_provider is None:
+        return base_transformer
+    try:
+        qualities = {
+            str(sample.quality or "").strip().lower()
+            for sample in manual_erp_provider.samples  # type: ignore[attr-defined]
+        }
+    except (AttributeError, TypeError) as exc:
+        raise ManualOrbitError(
+            "El ERP manual validado no expone muestras de orientación terrestre."
+        ) from exc
+    if qualities != {"local-validated"}:
+        raise ManualOrbitError(
+            "La órbita manual solo puede usar el ERP local validado que tiene asociado."
+        )
+    base = base_transformer or FrameTransformService()
+    try:
+        # This specialised clone is the sole route that permits the explicit
+        # ``local-validated`` quality. It never alters the process-wide C04
+        # transformer's published final/rapid policy.
+        return base.with_manual_earth_orientation_provider(
+            manual_erp_provider,  # type: ignore[arg-type]
+        )
+    except (TypeError, ValueError) as exc:
+        raise ManualOrbitError("El ERP manual no puede crear una ruta temporal válida") from exc
+
+
+def validate_manual_erp_coverage(
+    *,
+    frame_transformer: FrameTransformService | None,
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+) -> None:
+    """Check the complete design window before RK4 starts integrating it."""
+
+    if frame_transformer is None:
+        raise ManualOrbitError("Debe proporcionar un fichero ERP para usar fuerzas terrestres.")
+    for label, instant in (("inicio", ensure_utc(start_time)), ("final", ensure_utc(end_time))):
+        try:
+            orientation = frame_transformer.earth_orientation_at(instant)
+        except (EarthOrientationCoverageError, ValueError) as exc:
+            raise ManualOrbitError(
+                f"El ERP manual no cubre el {label} de la ventana de diseño ({instant.isoformat()})."
+            ) from exc
+        if orientation.quality != "local-validated":
+            raise ManualOrbitError(
+                "La órbita manual debe usar el ERP manual validado seleccionado; "
+                "no se permite sustituirlo por EOP global."
+            )
 
 
 _MANUAL_PROPAGATOR_METADATA = {
@@ -418,6 +505,7 @@ def _manual_runtime_identity(
     epoch: datetime.datetime,
     state_vector: dict[str, Any],
     propagation_options: dict[str, Any],
+    manual_erp_snapshot_id: str | None = None,
 ) -> str:
     """Build a cache-safe identity for a transient native propagator.
 
@@ -437,6 +525,11 @@ def _manual_runtime_identity(
             # and display name remain the same.  It must therefore be part
             # of the transient runtime/cache identity.
             "propagation_options": propagation_options,
+            # A manual ERP changes terrestrial-force accelerations even when
+            # the initial EME2000 state and force names are unchanged. The
+            # immutable snapshot identity must therefore invalidate runtime
+            # caches and distinguish two otherwise identical designs.
+            "manual_erp_snapshot_id": manual_erp_snapshot_id,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -455,6 +548,8 @@ def build_manual_orbit_propagator(
     propagation_options: dict[str, Any] | None = None,
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
+    manual_erp_provider: object | None = None,
+    manual_erp_snapshot_id: str | None = None,
 ) -> tuple[str, Any, dict[str, Any]]:
     """Instantiate the selected manual propagation engine.
 
@@ -481,6 +576,20 @@ def build_manual_orbit_propagator(
         raise ManualOrbitError(str(exc)) from exc
     force_terms = tuple(options["force_terms"])
     atmospheric_drag = bool(options["atmospheric_drag"])
+    requires_manual_erp = canonical == "cowell-rk4" and manual_orbit_requires_erp(force_terms)
+    if manual_erp_provider is None and manual_erp_snapshot_id is not None:
+        raise ManualOrbitError(
+            "La referencia ERP manual no tiene un fichero local validado asociado."
+        )
+    if manual_erp_provider is not None and not str(manual_erp_snapshot_id or "").strip():
+        raise ManualOrbitError(
+            "El ERP manual debe conservar una referencia de snapshot local."
+        )
+    require_manual_erp_for_force_terms(force_terms, manual_erp_provider)
+    effective_transformer = manual_erp_frame_transformer(
+        frame_transformer,
+        manual_erp_provider,
+    )
     legacy_force_model_id = option_model.cowell_gravity_model if canonical == "cowell-rk4" else None
     numerical_integrator = options.get("numerical_integrator")
     metadata = manual_propagator_metadata(canonical)
@@ -493,9 +602,9 @@ def build_manual_orbit_propagator(
 
     try:
         if canonical == "two-body":
-            propagator = TwoBodyPropagator(epoch, keplerian, frame_transformer=frame_transformer)
+            propagator = TwoBodyPropagator(epoch, keplerian, frame_transformer=effective_transformer)
         elif canonical == "j2-j3-j4":
-            propagator = J2J3J4Propagator(epoch, state_vector, frame_transformer=frame_transformer)
+            propagator = J2J3J4Propagator(epoch, state_vector, frame_transformer=effective_transformer)
         else:
             # Cowell is the configurable numerical route. The current public
             # integration algorithm is RK4, selected independently from the
@@ -514,7 +623,7 @@ def build_manual_orbit_propagator(
                 solar_radiation_coefficient=float(
                     options.get("solar_radiation_coefficient", 1.2)
                 ),
-                frame_transformer=frame_transformer,
+                frame_transformer=effective_transformer,
             )
     except ValueError as exc:
         raise ManualOrbitError(str(exc)) from exc
@@ -565,4 +674,16 @@ def build_manual_orbit_propagator(
                 else None
             ),
         })
-    return _manual_runtime_identity(canonical, epoch, state_vector, options), propagator, metadata
+    if requires_manual_erp:
+        metadata["manual_erp_required"] = True
+        metadata["manual_erp_snapshot_id"] = manual_erp_snapshot_id
+        metadata["earth_fixed_force_route"] = (
+            "EME2000 -> ITRF -> EME2000 (ERP manual local-validated)"
+        )
+    return _manual_runtime_identity(
+        canonical,
+        epoch,
+        state_vector,
+        options,
+        manual_erp_snapshot_id=manual_erp_snapshot_id,
+    ), propagator, metadata

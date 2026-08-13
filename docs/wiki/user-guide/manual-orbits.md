@@ -38,6 +38,29 @@ La previsualización se dibuja sobre la Tierra y no es todavía una capa del
 proyecto. Al confirmar, se crea una órbita manual y vuelve a aparecer en
 **Layers**.
 
+## TIME: ventana de diseño, previsualización y ERP
+
+La pestaña **TIME** separa tres decisiones que no deben confundirse:
+
+| Control | Función |
+| --- | --- |
+| **Design window** | Intervalo UTC que se propaga y que se guarda con la órbita manual. |
+| **Orbit preview frame** | Vista de la misma efeméride en `EME2000` o mediante su ruta terrestre; no cambia la integración. |
+| **ERP manual** | Fichero local de orientación terrestre y cobertura UTC para fuerzas ligadas a Tierra. |
+
+Al adjuntar un ERP válido, la ventana se fija inicialmente al comienzo y fin
+de cobertura del fichero. Si se activa **Full geopotential** o **Atmospheric
+drag**, no se podrá previsualizar ni crear fuera de esa cobertura. Una órbita
+de fuerzas inerciales puede no usar ERP, pero no obtiene por ello una
+transformación terrestre rigurosa.
+
+Si ya hay un SP3, OEM o rango de simulación en el proyecto, no se mezclan
+relojes: todos los instantes son UTC. Sin embargo, para comparar o analizar
+varias capas hay que usar el solape que muestra TIME. Si no existe solape, la
+órbita manual sigue siendo válida en su propio intervalo, pero no existe una
+operación conjunta válida con esas efemérides finitas. Consulte
+[Tiempo, EOP e ITRF](../operations/time-eop.md) para el contrato completo.
+
 ## Marcos de la previsualización
 
 La definición manual y su propagación física usan el marco inercial

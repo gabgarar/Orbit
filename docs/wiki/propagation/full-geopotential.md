@@ -34,23 +34,50 @@ segundo plano.
 
 | Ajuste | Significado | Restricción |
 | --- | --- | --- |
-| `degree` | Máximo \(n\) evaluado. | Entero \(2\leq N\leq \min(N_{campo},70)\) en la API y la interfaz públicas; 0/1 se conservan solo como valores inactivos de compatibilidad. |
-| `order` | Máximo \(m\) por grado. | Entero \(0\leq M\leq \min(N,M_{campo})\). |
+| `degree` | Máximo \(n\) evaluado. | Entero \(2\leq N\leq \min(N_{campo},2159)\). `2159` es el máximo semántico de modelo/API/UI, alineado con un campo completo EGM2008; 0/1 se conservan solo como valores inactivos de compatibilidad. |
+| `order` | Máximo \(m\) por grado. | Entero \(0\leq M\leq \min(N,M_{campo},2159)\). |
 | `geopotential` | Activa la suma armónica no central. | No combinar con `j2`, `j3` o `j4`. |
 
 La gravedad central se mantiene como término `central` separado y obligatorio.
 Así no se suma dos veces el término \(n=0\). El runtime rechaza con 422 un
 grado menor que 2 cuando `geopotential` está activo.
 
-!!! warning "Presupuesto de ejecución actual"
+!!! warning "Límite semántico y presupuesto de ejecución son distintos"
 
-    El evaluador de armónicos y el RK4 actual se ejecutan en Python y evalúan
-    el campo en cada una de sus cuatro etapas por paso. Por seguridad
-    operativa, Orbit limita el grado público a **70**, incluso si el fichero
-    ICGEM contiene más coeficientes. No es un límite científico del campo ni
-    una truncación silenciosa: una solicitud mayor se rechaza antes de iniciar
-    la propagación. Para habilitar grados superiores se necesita un evaluador
-    optimizado y un integrador con presupuesto de coste/errores validado.
+    `2159 × 2159` es el máximo que Orbit admite como contrato de campo,
+    configuración y procedencia; no significa que el RK4 actual pueda ejecutar
+    automáticamente ese campo completo. El evaluador Python de paso fijo tiene
+    un guard explícito de **2.555 coeficientes armónicos no centrales por
+    etapa**. Una configuración que lo supere se rechaza antes de propagar: no
+    se recorta ni se sustituye por un modelo menor de forma silenciosa.
+
+    Un `70 × 70` denso es un ejemplo que cabe en el perfil actual. Una
+    configuración zonal o de orden bajo puede alcanzar grados superiores si sigue
+    dentro del presupuesto. Un `2159 × 2159` completo requiere un evaluador
+    optimizado y un integrador adaptativo antes de ofrecerse como cálculo de
+    misión.
+
+## Elección de grado y orden \(N\times M\)
+
+El valor debe elegirse por convergencia contra la tolerancia de la misión, no
+por usar el mayor número disponible. Como punto de partida práctico:
+
+| Caso | Selección inicial | Motivo y límite |
+| --- | ---: | --- |
+| Prueba rápida o diseño preliminar | **20 × 20** | Coste bajo; útil para comprobar geometría y configuración. |
+| LEO general, análisis de ingeniería | **40 × 40** | Punto de partida recomendado para comparar sensibilidad. |
+| LEO, arco corto o sensibilidad | **60 × 60** | Añade detalle sin agotar normalmente el perfil actual. |
+| Máximo denso del perfil RK4 actual | **70 × 70** | Ejemplo dentro del guard de 2.555 términos; no es el máximo semántico del modelo. |
+| MEO/GNSS | **20 × 20** | Los armónicos altos se atenúan con la altura; validar siempre contra la referencia elegida. |
+| GEO | **12 × 12 a 20 × 20** | Punto de partida; otras perturbaciones pueden dominar el presupuesto de error. |
+| Estudio de misión futuro | **120 × 120** inicial; **180 × 180 a 360 × 360** tras convergencia | Requiere el futuro motor optimizado e integración adaptativa. |
+| Campo EGM2008 completo | **2159 × 2159** | Máximo de datos/configuración admitido; no ejecutable con el RK4 Python actual. |
+
+Para justificar una selección, propague el mismo arco con `20 × 20`, `40 ×
+40` y `60 × 60`; compare posición final y RMS con el producto de referencia
+—por ejemplo un SP3— y elija el menor modelo cuya diferencia con el siguiente
+cumpla el umbral de la misión. Esta prueba no sustituye mareas, arrastre, SRP,
+actitud ni una prueba de paso de integración.
 
 ## J1, J2 y J3
 

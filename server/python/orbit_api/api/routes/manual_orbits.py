@@ -12,14 +12,28 @@ from orbit_api.application.manual_orbits import (
     ManualOrbitError,
     build_manual_orbit_propagator,
     canonical_manual_orbit,
+    manual_erp_frame_transformer,
+    manual_orbit_requires_erp,
+    require_manual_erp_for_force_terms,
+    validate_manual_erp_coverage,
+)
+from orbit_api.application.manual_erp import (
+    ManualErpError,
+    ManualErpRepository,
+    ManualErpSnapshot,
+    resolve_manual_erp_input,
 )
 from orbit_api.domain.requests import (
     MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
+    ManualErpPreviewRequest,
     ManualOrbitRequest,
     require_manual_orbit_runtime_propagator,
 )
 from orbit_api.frames import FrameTransformService
 from orbit_api.orbits.forces import GravityFieldModel
+from orbit_api.orbits.propagators.cowell import (
+    MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS,
+)
 
 DEFAULT_MANUAL_ORBIT_HORIZON_HOURS = 24.0
 
@@ -147,15 +161,123 @@ def _camel_propagation_options(options: dict) -> dict:
     return result
 
 
+def _window_payload(start: datetime.datetime, end: datetime.datetime) -> dict[str, str]:
+    return {
+        "start_time": start.isoformat(),
+        "end_time": end.isoformat(),
+        "startTime": start.isoformat(),
+        "endTime": end.isoformat(),
+    }
+
+
+def _scene_alignment(
+    erp: ManualErpSnapshot,
+    scene_window: object | None,
+) -> dict[str, object]:
+    """Describe UTC overlap; ERP never changes another layer's time data."""
+
+    if scene_window is None or getattr(scene_window, "start_time", None) is None:
+        return {"relation": "not-provided", "common_window": None, "commonWindow": None}
+    scene_start = scene_window.start_time
+    scene_end = scene_window.end_time
+    erp_start, erp_end = erp.coverage_start, erp.coverage_end
+    common_start, common_end = max(erp_start, scene_start), min(erp_end, scene_end)
+    if common_end <= common_start:
+        return {
+            "relation": "disjoint",
+            "common_window": None,
+            "commonWindow": None,
+            "warning": (
+                "La cobertura del ERP y la ventana activa de la escena no tienen un intervalo UTC común; "
+                "las operaciones conjuntas deberán permanecer bloqueadas."
+            ),
+        }
+    common = _window_payload(common_start, common_end)
+    if erp_start <= scene_start and erp_end >= scene_end:
+        relation = "contains-scene"
+        warning = None
+    elif scene_start <= erp_start and scene_end >= erp_end:
+        relation = "inside-scene"
+        warning = (
+            "La escena continúa fuera de la cobertura ERP; las fuerzas terrestres de esta órbita "
+            "solo son válidas dentro del intervalo común."
+        )
+    else:
+        relation = "overlap"
+        warning = (
+            "La ventana ERP y la escena se solapan parcialmente; las operaciones conjuntas "
+            "deben usar únicamente el intervalo común UTC."
+        )
+    return {
+        "relation": relation,
+        "common_window": common,
+        "commonWindow": common,
+        "warning": warning,
+    }
+
+
+def _resolve_manual_erp_snapshot(
+    payload: ManualOrbitRequest,
+    repository: ManualErpRepository | None,
+) -> ManualErpSnapshot | None:
+    """Resolve an upload/reference without exposing ERP bytes downstream."""
+
+    try:
+        return resolve_manual_erp_input(payload.manual_erp, repository)
+    except ManualErpError as exc:
+        raise ManualOrbitError(str(exc)) from exc
+
+
 def create_manual_orbits_router(
     build_ephemeris: Callable,
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
+    manual_erp_repository: ManualErpRepository | None = None,
 ) -> APIRouter:
     """Build the HTTP adapter for transient manual orbit engines."""
 
     router = APIRouter(tags=["manual-orbits"])
+
+    @router.post("/manual-orbits/time/erp-preview")
+    def preview_manual_erp(payload: ManualErpPreviewRequest) -> dict:
+        """Validate and retain one local ERP before the TIME tab changes dates.
+
+        The content-addressed snapshot is deliberately persisted at this
+        boundary: the editor receives only its compact reference, so creating
+        or restoring a project never needs to retain ERP base64 in browser or
+        project state.  An unused snapshot is harmless immutable local data
+        and can later be garbage-collected by a dedicated storage policy.
+        """
+
+        if manual_erp_repository is None:
+            raise HTTPException(
+                status_code=503,
+                detail="El almacenamiento local de snapshots ERP manuales no está disponible.",
+            )
+        try:
+            assert payload.manual_erp.name is not None
+            assert payload.manual_erp.content_base64 is not None
+            snapshot = manual_erp_repository.save_upload(
+                payload.manual_erp.name,
+                payload.manual_erp.content_base64,
+            )
+        except (ManualErpError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        suggested = _window_payload(snapshot.coverage_start, snapshot.coverage_end)
+        return {
+            "ok": True,
+            "manual_erp": snapshot.payload(),
+            "manualErp": snapshot.payload(),
+            "suggested_design_window": suggested,
+            "suggestedDesignWindow": suggested,
+            "scene_alignment": _scene_alignment(snapshot, payload.scene_window),
+            "sceneAlignment": _scene_alignment(snapshot, payload.scene_window),
+            "message": (
+                "ERP manual validado y guardado localmente. La ventana de diseño propuesta "
+                "coincide exactamente con su cobertura UTC."
+            ),
+        }
 
     @router.get("/manual-orbits/capabilities")
     def manual_orbit_capabilities() -> dict:
@@ -191,15 +313,18 @@ def create_manual_orbits_router(
                             "version": gravity_field.version,
                             "sha256": gravity_field.sha256,
                             "max_degree": gravity_field.max_degree,
-                            "max_active_degree": min(
+                            "max_selectable_degree": min(
                                 gravity_field.max_degree,
                                 MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
                             ),
                             "execution_limit": {
-                                "max_degree": MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
+                                "semantic_max_degree": MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
+                                "max_harmonic_terms": MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS,
+                                "full_degree_order_example": {"degree": 70, "order": 70},
+                                "enforcement": "validated before propagation",
                                 "reason": (
-                                    "bounded pure-Python RK4 evaluation; higher degrees require "
-                                    "a validated optimized evaluator"
+                                    "bounded pure-Python RK4 evaluation; configurations above "
+                                    "the harmonic-term budget require a validated optimized evaluator"
                                 ),
                             },
                             "normalization": gravity_field.normalization,
@@ -238,6 +363,29 @@ def create_manual_orbits_router(
             propagation_options = payload.propagation_options.canonical(
                 propagator=propagator_name
             )
+            start_time, end_time, range_source = _resolve_propagation_range(payload, ensure_utc)
+            manual_erp = _resolve_manual_erp_snapshot(payload, manual_erp_repository)
+            requires_manual_erp = manual_orbit_requires_erp(
+                tuple(propagation_options["force_terms"])
+            )
+            require_manual_erp_for_force_terms(
+                tuple(propagation_options["force_terms"]),
+                manual_erp.provider if manual_erp is not None else None,
+            )
+            effective_transformer = manual_erp_frame_transformer(
+                frame_transformer,
+                manual_erp.provider if manual_erp is not None else None,
+            )
+            if requires_manual_erp:
+                validate_manual_erp_coverage(
+                    frame_transformer=effective_transformer,
+                    # Cowell integrates from the definition epoch to each
+                    # requested sample.  Checking only the visible design
+                    # interval would miss an ERP gap between the epoch and
+                    # its first sample.
+                    start_time=min(ensure_utc(payload.epoch), start_time),
+                    end_time=max(ensure_utc(payload.epoch), end_time),
+                )
             object_metadata = payload.object_metadata.canonical()
             definition_source, keplerian, state_vector = canonical_manual_orbit(payload)
             runtime_name, propagator, propagator_metadata = build_manual_orbit_propagator(
@@ -249,10 +397,11 @@ def create_manual_orbits_router(
                 propagation_options=propagation_options,
                 frame_transformer=frame_transformer,
                 gravity_field=gravity_field,
+                manual_erp_provider=manual_erp.provider if manual_erp is not None else None,
+                manual_erp_snapshot_id=manual_erp.snapshot_id if manual_erp is not None else None,
             )
-        except (ManualOrbitError, ValueError) as exc:
+        except (ManualOrbitError, ManualErpError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        start_time, end_time, range_source = _resolve_propagation_range(payload, ensure_utc)
 
         try:
             ephemeris = build_ephemeris(
@@ -292,6 +441,11 @@ def create_manual_orbits_router(
             "objectMetadata": _camel_object_metadata(object_metadata),
             "propagation_options": propagation_options,
             "propagationOptions": _camel_propagation_options(propagation_options),
+            # Deliberately compact. This is safe to keep in an authored
+            # project and lets a restore verify/reload the same snapshot;
+            # ERP bytes never leave the local snapshot repository.
+            "manual_erp": manual_erp.payload() if manual_erp is not None else None,
+            "manualErp": manual_erp.payload() if manual_erp is not None else None,
             # Compatibility key: manual creation no longer synthesizes or
             # returns a TLE. A future TLE fitting/export operation will have
             # its own explicit API and residual-quality contract.

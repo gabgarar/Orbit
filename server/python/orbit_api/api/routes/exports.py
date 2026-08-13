@@ -27,6 +27,15 @@ from orbit_api.application.manual_orbits import (
     ManualOrbitError,
     build_manual_orbit_propagator,
     canonical_manual_orbit,
+    manual_erp_frame_transformer,
+    manual_orbit_requires_erp,
+    require_manual_erp_for_force_terms,
+    validate_manual_erp_coverage,
+)
+from orbit_api.application.manual_erp import (
+    ManualErpError,
+    ManualErpRepository,
+    resolve_manual_erp_input,
 )
 from orbit_api.domain.requests import (
     ManualOrbitRequest,
@@ -158,12 +167,30 @@ def _build_manual_export_ephemeris(
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None,
     gravity_field: GravityFieldModel | None,
+    manual_erp_repository: ManualErpRepository | None,
 ) -> tuple[dict, datetime.datetime, datetime.datetime, str]:
     """Propagate a manual source exactly as the manual-orbit endpoint does."""
 
     try:
         propagator_name = require_manual_orbit_runtime_propagator(payload.propagator)
         propagation_options = payload.propagation_options.canonical(propagator=propagator_name)
+        start_time, end_time = _resolve_manual_export_range(payload, ensure_utc)
+        manual_erp = resolve_manual_erp_input(payload.manual_erp, manual_erp_repository)
+        require_manual_erp_for_force_terms(
+            tuple(propagation_options["force_terms"]),
+            manual_erp.provider if manual_erp is not None else None,
+        )
+        if manual_orbit_requires_erp(tuple(propagation_options["force_terms"])):
+            validate_manual_erp_coverage(
+                frame_transformer=manual_erp_frame_transformer(
+                    frame_transformer,
+                    manual_erp.provider if manual_erp is not None else None,
+                ),
+                # The initial state epoch participates in every numerical
+                # integration, even if the exported window starts later.
+                start_time=min(ensure_utc(payload.epoch), start_time),
+                end_time=max(ensure_utc(payload.epoch), end_time),
+            )
         _definition_source, keplerian, state_vector = canonical_manual_orbit(payload)
         runtime_name, engine, metadata = build_manual_orbit_propagator(
             propagator_name,
@@ -174,8 +201,9 @@ def _build_manual_export_ephemeris(
             propagation_options=propagation_options,
             frame_transformer=frame_transformer,
             gravity_field=gravity_field,
+            manual_erp_provider=manual_erp.provider if manual_erp is not None else None,
+            manual_erp_snapshot_id=manual_erp.snapshot_id if manual_erp is not None else None,
         )
-        start_time, end_time = _resolve_manual_export_range(payload, ensure_utc)
         result = build_ephemeris(
             runtime_name,
             engine,
@@ -186,7 +214,7 @@ def _build_manual_export_ephemeris(
         )
     except HTTPException:
         raise
-    except (ManualOrbitError, ValueError) as exc:
+    except (ManualOrbitError, ManualErpError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         **result,
@@ -202,6 +230,7 @@ def create_exports_router(
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
+    manual_erp_repository: ManualErpRepository | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["exports"])
 
@@ -293,6 +322,7 @@ def create_exports_router(
             ensure_utc,
             frame_transformer,
             gravity_field,
+            manual_erp_repository,
         )
         result.update({"source_format": "MANUAL", "propagator": propagator})
         return _serialize_ephemeris_product(

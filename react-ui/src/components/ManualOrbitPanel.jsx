@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
+import {
+    designWindowFromManualErp,
+    resolveManualOrbitTimePolicy
+} from "../../../front/js/features/manualOrbit/timePolicy.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
 
-// This mirrors the server-side execution budget for the current pure-Python,
-// fixed-step Cowell evaluator.  A local ICGEM file can contain more degrees,
-// but the UI must not advertise an unbounded synchronous calculation.
-const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 70;
+// This is the semantic/request ceiling of the EGM2008 complete field.  The
+// backend separately applies the present RK4 execution budget with an
+// actionable error rather than silently changing the requested N×M value.
+const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 2159;
+const MAX_MANUAL_ERP_FILE_BYTES = 32 * 1024 * 1024;
 
 /**
  * UI/event boundary for manually authored orbits.
@@ -154,6 +159,125 @@ function toDatetimeInput(value, fallback) {
     const utcEpoch = toUtcEpoch(value);
     const date = new Date(utcEpoch);
     return Number.isNaN(date.getTime()) ? fallback : date.toISOString().slice(0, 16);
+}
+
+function record(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function firstPresentValue(source, keys) {
+    const value = record(source);
+    for (const key of keys) {
+        if (Object.hasOwn(value, key) && value[key] !== undefined && value[key] !== null) {
+            return value[key];
+        }
+    }
+    return undefined;
+}
+
+function normalizedText(value, fallback = "") {
+    const text = value === undefined || value === null ? "" : String(value).trim();
+    return text || fallback;
+}
+
+/**
+ * Keep only the durable, content-addressed ERP provenance in React state.
+ * The browser File and its base64 transfer live exclusively in the one-shot
+ * upload event handled by the runtime; neither belongs in a project draft or
+ * a remountable UI event payload.
+ */
+function normalizeManualErpReference(value) {
+    if (value === null) return null;
+    const source = record(value);
+    const rawSnapshotId = normalizedText(firstPresentValue(source, ["snapshotId", "snapshot_id", "id"]));
+    const snapshotId = rawSnapshotId.length <= 96 ? rawSnapshotId : "";
+    const filename = normalizedText(firstPresentValue(source, ["filename", "fileName", "file_name", "name"]));
+    const coverageStart = toUtcEpoch(firstPresentValue(source, [
+        "coverageStart", "coverage_start", "startTime", "start_time", "startUtc", "start_utc"
+    ]));
+    const coverageEnd = toUtcEpoch(firstPresentValue(source, [
+        "coverageEnd", "coverage_end", "endTime", "end_time", "endUtc", "end_utc"
+    ]));
+    const startDate = new Date(coverageStart);
+    const endDate = new Date(coverageEnd);
+    const hasCoverage = !Number.isNaN(startDate.getTime())
+        && !Number.isNaN(endDate.getTime())
+        && endDate.getTime() > startDate.getTime();
+    if (!snapshotId && !filename && !hasCoverage) return null;
+
+    const numberOrNull = (candidate) => {
+        const numeric = Number(candidate);
+        return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
+    };
+    return {
+        snapshotId: snapshotId || null,
+        filename: filename || null,
+        sha256: normalizedText(firstPresentValue(source, ["sha256", "sha_256"])) || null,
+        sourceSha256: normalizedText(firstPresentValue(source, ["sourceSha256", "source_sha256"])) || null,
+        byteSize: numberOrNull(firstPresentValue(source, ["byteSize", "byte_size", "size"])),
+        recordCount: numberOrNull(firstPresentValue(source, ["recordCount", "record_count", "sampleCount", "sample_count"])),
+        coverageStart: hasCoverage ? startDate.toISOString() : null,
+        coverageEnd: hasCoverage ? endDate.toISOString() : null,
+        source: normalizedText(firstPresentValue(source, ["source", "provider"])) || null,
+        version: normalizedText(firstPresentValue(source, ["version"])) || null,
+        quality: normalizedText(firstPresentValue(source, ["quality", "productClass", "product_class"])) || null
+    };
+}
+
+function normalizeTimeRange(value) {
+    const source = record(value);
+    const startTime = toUtcEpoch(firstPresentValue(source, ["startTime", "start_time", "startUtc", "start_utc"]));
+    const endTime = toUtcEpoch(firstPresentValue(source, ["endTime", "end_time", "endUtc", "end_utc"]));
+    const startDate = new Date(startTime);
+    const endDate = new Date(endTime);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate <= startDate) {
+        return null;
+    }
+    return { startTime: startDate.toISOString(), endTime: endDate.toISOString() };
+}
+
+function normalizeFiniteEphemerisRanges(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((entry) => {
+        const range = normalizeTimeRange(entry?.range || entry);
+        if (!range) return null;
+        return {
+            ...range,
+            source: normalizedText(entry?.source ?? entry?.kind ?? entry?.format, "Efeméride finita")
+        };
+    }).filter(Boolean);
+}
+
+function normalizeManualOrbitTimeData(value, fallback = {}) {
+    const source = record(value);
+    const current = record(fallback);
+    const erpSource = Object.hasOwn(source, "manualErp")
+        ? source.manualErp
+        : Object.hasOwn(source, "manual_erp")
+            ? source.manual_erp
+            : Object.hasOwn(source, "erp")
+                ? source.erp
+                : undefined;
+    const sceneSource = source.sceneWindow ?? source.scene_window;
+    const finiteSource = source.finiteEphemerisRanges ?? source.finite_ephemeris_ranges;
+    return {
+        manualErp: erpSource === undefined
+            ? normalizeManualErpReference(current.manualErp ?? current.manual_erp ?? current.erp)
+            : normalizeManualErpReference(erpSource),
+        sceneWindow: sceneSource === undefined
+            ? normalizeTimeRange(current.sceneWindow ?? current.scene_window)
+            : normalizeTimeRange(sceneSource),
+        finiteEphemerisRanges: finiteSource === undefined
+            ? normalizeFiniteEphemerisRanges(current.finiteEphemerisRanges ?? current.finite_ephemeris_ranges)
+            : normalizeFiniteEphemerisRanges(finiteSource),
+        sceneAlignment: source.sceneAlignment ?? source.scene_alignment ?? current.sceneAlignment ?? current.scene_alignment ?? null
+    };
+}
+
+function formatUtcRangeDate(value) {
+    const date = new Date(value || "");
+    if (Number.isNaN(date.getTime())) return "--";
+    return date.toISOString().replace("T", " ").replace(".000Z", " UTC");
 }
 
 function normalizePreviewReferenceFrame(value, fallback = "eme2000") {
@@ -351,6 +475,15 @@ function createDefaultForm() {
         // This affects only the transient design preview. The input state
         // vector and the confirmed orbit always retain their EME2000 contract.
         previewReferenceFrame: "eme2000",
+        // TIME owns a durable ERP snapshot reference, never the file bytes.
+        // The runtime captures the File only during the explicit upload and
+        // persists the validated snapshot by content identity server-side.
+        timeData: {
+            manualErp: null,
+            sceneWindow: null,
+            finiteEphemerisRanges: [],
+            sceneAlignment: null
+        },
         // Manual inputs are state/element based rather than TLE based, so an
         // ideal two-body model is the reliable starting point. Existing
         // synthetic-TLE records stay visible as unavailable legacy records.
@@ -606,21 +739,29 @@ function inputClassName(extra = "") {
 
 function payloadFor(form) {
     const epochStartUtc = toUtcEpoch(form.epochStartUtc || form.epochUtc);
+    const physicalEpochUtc = toUtcEpoch(form.epochUtc || form.epochStartUtc);
     const propagator = normalizePropagator(form.propagator);
     const propagationOptions = payloadPropagationOptions(form.propagationOptions, {
         propagator
     });
+    const manualErp = normalizeManualErpReference(form.timeData?.manualErp);
     return {
         name: form.name,
         // Kept for the existing editor/runtime bridge. New code should use
         // the explicit range below, which represents the design window.
-        epochUtc: epochStartUtc,
+        epochUtc: physicalEpochUtc,
         epochStartUtc,
         epochEndUtc: toUtcEpoch(form.epochEndUtc),
         groundTrackPreview: form.groundTrackPreview === true,
         previewReferenceFrame: normalizePreviewReferenceFrame(form.previewReferenceFrame),
         designMode: true,
         propagator,
+        // This compact reference lets the runtime and project restore the
+        // exact validated ERP snapshot without exposing its original bytes
+        // through ordinary editor-change events.
+        // `null` is intentional: reset/remove must clear a previous draft's
+        // snapshot rather than let the legacy bridge silently preserve it.
+        manualErp: manualErp || null,
         objectMetadata: normalizeObjectMetadata(form.objectMetadata),
         propagationOptions,
         keplerian: { ...form.keplerian },
@@ -651,6 +792,9 @@ function mergeIncomingForm(current, detail = {}) {
             ? source.epochUtc
             : current.epochStartUtc;
     const epochStartUtc = toDatetimeInput(initialEpoch, current.epochStartUtc);
+    const physicalEpoch = typeof source.epochUtc === "string"
+        ? source.epochUtc
+        : current.epochUtc;
     const epochEndUtc = typeof source.epochEndUtc === "string"
         ? toDatetimeInput(source.epochEndUtc, current.epochEndUtc)
         : current.epochEndUtc;
@@ -677,9 +821,26 @@ function mergeIncomingForm(current, detail = {}) {
         };
     const propagator = normalizePropagator(source.propagator, current.propagator);
     const propagationOptions = normalizePropagationOptions(incomingPropagationOptions, current.propagationOptions);
+    const rawTimeData = source.timeData ?? source.time_data;
+    const timeDataSource = rawTimeData && typeof rawTimeData === "object"
+        ? {
+            ...rawTimeData,
+            ...(Object.hasOwn(source, "manualErp") ? { manualErp: source.manualErp } : {}),
+            ...(Object.hasOwn(source, "manual_erp") ? { manual_erp: source.manual_erp } : {})
+        }
+        : {
+            ...(Object.hasOwn(source, "manualErp") ? { manualErp: source.manualErp } : {}),
+            ...(Object.hasOwn(source, "manual_erp") ? { manual_erp: source.manual_erp } : {}),
+            ...(Object.hasOwn(source, "sceneWindow") ? { sceneWindow: source.sceneWindow } : {}),
+            ...(Object.hasOwn(source, "scene_window") ? { scene_window: source.scene_window } : {}),
+            ...(Object.hasOwn(source, "finiteEphemerisRanges") ? { finiteEphemerisRanges: source.finiteEphemerisRanges } : {}),
+            ...(Object.hasOwn(source, "finite_ephemeris_ranges") ? { finite_ephemeris_ranges: source.finite_ephemeris_ranges } : {}),
+            ...(Object.hasOwn(source, "sceneAlignment") ? { sceneAlignment: source.sceneAlignment } : {}),
+            ...(Object.hasOwn(source, "scene_alignment") ? { scene_alignment: source.scene_alignment } : {})
+        };
     return {
         name: typeof source.name === "string" ? source.name : current.name,
-        epochUtc: epochStartUtc,
+        epochUtc: toDatetimeInput(physicalEpoch, current.epochUtc),
         epochStartUtc,
         epochEndUtc,
         groundTrackPreview: typeof source.groundTrackPreview === "boolean" ? source.groundTrackPreview : current.groundTrackPreview,
@@ -687,6 +848,7 @@ function mergeIncomingForm(current, detail = {}) {
             source.previewReferenceFrame ?? source.preview_reference_frame,
             current.previewReferenceFrame
         ),
+        timeData: normalizeManualOrbitTimeData(timeDataSource, current.timeData),
         propagator,
         objectMetadata: normalizeObjectMetadata(incomingObjectMetadata, current.objectMetadata),
         propagationOptions,
@@ -752,12 +914,14 @@ export default function ManualOrbitPanel() {
     const [open, setOpen] = useState(() => getPersistedManualOrbitState()?.open === true);
     const [activeTab, setActiveTab] = useState(() => {
         const tab = getPersistedManualOrbitState()?.activeTab ?? getPersistedManualOrbitState()?.panelTab;
-        return ["overview", "orbit", "propagation"].includes(tab) ? tab : "overview";
+        return ["overview", "orbit", "time", "propagation"].includes(tab) ? tab : "overview";
     });
     const [definitionTab, setDefinitionTab] = useState(() => getPersistedManualOrbitState()?.tab === "state-vector" ? "state-vector" : "keplerian");
     const [form, setForm] = useState(() => mergeIncomingForm(createDefaultForm(), getPersistedManualOrbitState() || {}));
     const [status, setStatus] = useState(null);
     const [vectorsVisible, setVectorsVisible] = useState(false);
+    const [erpUploadPending, setErpUploadPending] = useState(false);
+    const erpInputRef = useRef(null);
     // The runtime owns the replacement target.  Keeping only its id in the
     // UI lets the same form distinguish a new authored orbit from an edit
     // without ever making catalogue objects editable in React.
@@ -766,6 +930,11 @@ export default function ManualOrbitPanel() {
         return id || null;
     });
     const openRef = useRef(open);
+    const formRef = useRef(form);
+
+    useEffect(() => {
+        formRef.current = form;
+    }, [form]);
 
     const publishPanelState = (nextOpen) => dispatch("orbit:manual-orbit-panel-state", {
         open: nextOpen,
@@ -791,12 +960,14 @@ export default function ManualOrbitPanel() {
         const onClose = () => {
             window.dispatchEvent(new CustomEvent("orbit:manual-orbit-vectors-action", { detail: { visible: false } }));
             setVectorsVisible(false);
+            setErpUploadPending(false);
             setEditingManualOrbitId(null);
             setPanelOpen(false);
         };
         const onCancel = () => {
             window.dispatchEvent(new CustomEvent("orbit:manual-orbit-vectors-action", { detail: { visible: false } }));
             setVectorsVisible(false);
+            setErpUploadPending(false);
             setEditingManualOrbitId(null);
             setPanelOpen(false);
         };
@@ -814,7 +985,7 @@ export default function ManualOrbitPanel() {
             if (typeof detail.open === "boolean") setPanelOpen(detail.open);
             if (detail.tab === "keplerian" || detail.tab === "state-vector") setDefinitionTab(detail.tab);
             const requestedTopLevelTab = detail.activeTab ?? detail.panelTab;
-            if (["overview", "orbit", "propagation"].includes(requestedTopLevelTab)) setActiveTab(requestedTopLevelTab);
+            if (["overview", "orbit", "time", "propagation"].includes(requestedTopLevelTab)) setActiveTab(requestedTopLevelTab);
         };
         const onStatus = (event) => {
             const detail = event.detail || {};
@@ -826,12 +997,39 @@ export default function ManualOrbitPanel() {
             const fallback = kind === "busy" ? "Creating manual orbit…" : kind === "success" ? "Manual orbit created." : "Unable to create the manual orbit.";
             setStatus({ kind, message: String(detail.message || fallback) });
         };
+        const onErpUploadResult = (event) => {
+            const detail = event.detail && typeof event.detail === "object" ? event.detail : {};
+            setErpUploadPending(false);
+            if (detail.ok !== true) {
+                setStatus({
+                    kind: "error",
+                    message: String(detail.message || "No se pudo validar el fichero ERP.")
+                });
+                return;
+            }
+            const manualErp = detail.manualErp ?? detail.manual_erp ?? detail.erp;
+            const suggestedWindow = detail.suggestedDesignWindow ?? detail.suggested_design_window;
+            const fallbackWindow = designWindowFromManualErp(manualErp);
+            updateManualErpReference(manualErp, {
+                designWindow: suggestedWindow ?? (fallbackWindow ? {
+                    startTime: fallbackWindow.startTime,
+                    endTime: fallbackWindow.endTime
+                } : null),
+                sceneAlignment: detail.sceneAlignment ?? detail.scene_alignment ?? null,
+                source: "manual-erp-upload"
+            });
+            setStatus({
+                kind: "success",
+                message: String(detail.message || "ERP validado. La ventana de diseño se ha ajustado a su cobertura UTC.")
+            });
+        };
         window.addEventListener("orbit:manual-orbit-open", onOpen);
         window.addEventListener("orbit:manual-orbit-close", onClose);
         window.addEventListener("orbit:manual-orbit-cancel", onCancel);
         window.addEventListener("orbit:manual-orbit-toggle", onToggle);
         window.addEventListener("orbit:manual-orbit-state", onState);
         window.addEventListener("orbit:manual-orbit-status", onStatus);
+        window.addEventListener("orbit:manual-orbit-erp-upload-result", onErpUploadResult);
         return () => {
             window.removeEventListener("orbit:manual-orbit-open", onOpen);
             window.removeEventListener("orbit:manual-orbit-close", onClose);
@@ -839,6 +1037,7 @@ export default function ManualOrbitPanel() {
             window.removeEventListener("orbit:manual-orbit-toggle", onToggle);
             window.removeEventListener("orbit:manual-orbit-state", onState);
             window.removeEventListener("orbit:manual-orbit-status", onStatus);
+            window.removeEventListener("orbit:manual-orbit-erp-upload-result", onErpUploadResult);
         };
     }, []);
 
@@ -864,7 +1063,7 @@ export default function ManualOrbitPanel() {
         emitChange(group, next, key, value);
     };
     const updateEpochStart = (epochStartUtc) => {
-        const next = { ...form, epochUtc: epochStartUtc, epochStartUtc };
+        const next = { ...form, epochStartUtc };
         setForm(next);
         setStatus((current) => current?.kind === "busy" ? current : null);
         emitChange("epoch-range", next, "epochStartUtc", toUtcEpoch(epochStartUtc));
@@ -874,6 +1073,12 @@ export default function ManualOrbitPanel() {
         setForm(next);
         setStatus((current) => current?.kind === "busy" ? current : null);
         emitChange("epoch-range", next, "epochEndUtc", toUtcEpoch(epochEndUtc));
+    };
+    const updateOrbitEpoch = (epochUtc) => {
+        const next = { ...form, epochUtc };
+        setForm(next);
+        setStatus((current) => current?.kind === "busy" ? current : null);
+        emitChange("epoch", next, "epochUtc", toUtcEpoch(epochUtc));
     };
     const updateGroundTrackPreview = (groundTrackPreview) => {
         const next = { ...form, groundTrackPreview };
@@ -891,6 +1096,71 @@ export default function ManualOrbitPanel() {
         // This is deliberately a geometry-refreshing source. It changes only
         // the transient preview representation, never the authored orbit.
         emitChange("preview-reference-frame", next, "previewReferenceFrame", next.previewReferenceFrame);
+    };
+    const updateManualErpReference = (manualErp, {
+        designWindow = null,
+        sceneAlignment = undefined,
+        source = "manual-erp"
+    } = {}) => {
+        const currentForm = formRef.current || form;
+        const normalizedErp = normalizeManualErpReference(manualErp);
+        const suggestedWindow = normalizeTimeRange(designWindow);
+        const next = {
+            ...currentForm,
+            // An ERP adjusts the visible design range only. The physical
+            // state epoch remains an explicit user input and is guarded by
+            // TIME coverage validation rather than being moved silently.
+            epochUtc: currentForm.epochUtc,
+            epochStartUtc: suggestedWindow ? toDatetimeInput(suggestedWindow.startTime, currentForm.epochStartUtc) : currentForm.epochStartUtc,
+            epochEndUtc: suggestedWindow ? toDatetimeInput(suggestedWindow.endTime, currentForm.epochEndUtc) : currentForm.epochEndUtc,
+            timeData: {
+                ...currentForm.timeData,
+                manualErp: normalizedErp,
+                ...(sceneAlignment === undefined ? {} : { sceneAlignment })
+            }
+        };
+        setForm(next);
+        setStatus((current) => current?.kind === "busy" ? current : null);
+        emitChange(source, next, "timeData.manualErp", normalizedErp);
+    };
+    const requestManualErpUpload = (file) => {
+        if (!file) return;
+        const name = String(file.name || "").trim();
+        if (!/\.erp(?:\.gz)?$/i.test(name)) {
+            setStatus({ kind: "error", message: "Seleccione un fichero ERP (.ERP o .ERP.gz)." });
+            return;
+        }
+        if (!Number.isFinite(Number(file.size)) || file.size <= 0 || file.size > MAX_MANUAL_ERP_FILE_BYTES) {
+            setStatus({ kind: "error", message: "El fichero ERP debe tener entre 1 byte y 32 MiB." });
+            return;
+        }
+        setErpUploadPending(true);
+        setStatus({ kind: "busy", message: "Validando ERP y cobertura temporal…" });
+        // The File is intentionally sent only by this one explicit action.
+        // It is not placed in form state, local storage, or generic panel
+        // events, which prevents accidental project/DOM retention of bytes.
+        dispatch("orbit:manual-orbit-erp-upload-request", {
+            file,
+            name,
+            manualOrbit: payloadFor(form),
+            designWindow: {
+                startTime: toUtcEpoch(form.epochStartUtc || form.epochUtc),
+                endTime: toUtcEpoch(form.epochEndUtc)
+            },
+            sceneWindow: form.timeData?.sceneWindow,
+            finiteEphemerisRanges: form.timeData?.finiteEphemerisRanges || []
+        });
+    };
+    const clearManualErp = () => {
+        setErpUploadPending(false);
+        updateManualErpReference(null, { source: "manual-erp-clear" });
+        dispatch("orbit:manual-orbit-erp-clear", {
+            manualErp: null,
+            manualOrbit: payloadFor({
+            ...form,
+            timeData: { ...form.timeData, manualErp: null }
+            })
+        });
     };
     const updateName = (name) => {
         const next = { ...form, name };
@@ -1077,6 +1347,34 @@ export default function ManualOrbitPanel() {
     const legacyZonalEnabled = activeForceTerms.some((term) => ["j2", "j3", "j4"].includes(term));
     const solarRadiationPressureEnabled = selectedPropagator.value === "cowell-rk4" && activeForceTerms.includes("solar-radiation-pressure");
     const spacecraftPropertiesEnabled = dragEnabled || solarRadiationPressureEnabled;
+    const manualErp = normalizeManualErpReference(form.timeData?.manualErp);
+    const erpCoverage = manualErp?.coverageStart && manualErp?.coverageEnd
+        ? { startTime: manualErp.coverageStart, endTime: manualErp.coverageEnd }
+        : null;
+    const timePolicy = resolveManualOrbitTimePolicy({
+        designWindow: {
+            startTime: form.epochStartUtc || form.epochUtc,
+            endTime: form.epochEndUtc
+        },
+        physicalEpoch: form.epochUtc,
+        erpCoverage,
+        forceTerms: activeForceTerms,
+        sceneWindow: form.timeData?.sceneWindow,
+        finiteEphemerisRanges: form.timeData?.finiteEphemerisRanges || []
+    });
+    const timeBlockMessage = timePolicy.blockingReasons.includes("missing-erp")
+        ? "El modelo de fuerzas seleccionado requiere un ERP manual validado. Cárguelo en TIME."
+        : timePolicy.blockingReasons.includes("erp-does-not-cover-design-window")
+            ? "El ERP manual no cubre toda la ventana de diseño. Seleccione fechas dentro de su cobertura UTC."
+            : timePolicy.blockingReasons.includes("erp-does-not-cover-physical-epoch")
+                ? "El epoch del vector de estado queda fuera de la cobertura ERP. Ajustelo explicitamente en TIME."
+                : timePolicy.blockingReasons.includes("invalid-physical-epoch")
+                    ? "El epoch del vector de estado no es una fecha UTC valida."
+            : timePolicy.blockingReasons.includes("invalid-design-window")
+                ? "La ventana de diseño no es válida."
+                : "";
+    const erpDateMinimum = manualErp?.coverageStart ? toDatetimeInput(manualErp.coverageStart, "") : undefined;
+    const erpDateMaximum = manualErp?.coverageEnd ? toDatetimeInput(manualErp.coverageEnd, "") : undefined;
 
     // The time dock and project-time footer are intentionally hidden while
     // this design panel is open. Keep header/body/footer in independent grid
@@ -1094,9 +1392,10 @@ export default function ManualOrbitPanel() {
         </header>
 
         <div className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-3 pb-5 [scrollbar-color:#355179_transparent] [scrollbar-gutter:stable] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#355179]">
-            <nav className="relative z-[1] grid grid-cols-3 border-b border-[#1c2c43]" aria-label="Manual orbit sections" role="tablist">
+            <nav className="relative z-[1] grid grid-cols-4 border-b border-[#1c2c43]" aria-label="Manual orbit sections" role="tablist">
                 <button className={`relative cursor-pointer border-0 bg-transparent px-0.5 pt-2.5 pb-3 text-[10px] leading-none font-bold ${activeTab === "overview" ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1] hover:text-[#cbd8ec]"}`} type="button" role="tab" aria-selected={activeTab === "overview"} aria-controls="manual-orbit-overview" onClick={() => setActiveTab("overview")}>OVERVIEW</button>
                 <button className={`relative cursor-pointer border-0 bg-transparent px-0.5 pt-2.5 pb-3 text-[10px] leading-none font-bold ${activeTab === "orbit" ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1] hover:text-[#cbd8ec]"}`} type="button" role="tab" aria-selected={activeTab === "orbit"} aria-controls="manual-orbit-orbit" onClick={() => setActiveTab("orbit")}>PARAMETERS</button>
+                <button className={`relative cursor-pointer border-0 bg-transparent px-0.5 pt-2.5 pb-3 text-[10px] leading-none font-bold ${activeTab === "time" ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1] hover:text-[#cbd8ec]"}`} type="button" role="tab" aria-selected={activeTab === "time"} aria-controls="manual-orbit-time" onClick={() => setActiveTab("time")}>TIME</button>
                 <button className={`relative cursor-pointer border-0 bg-transparent px-0.5 pt-2.5 pb-3 text-[10px] leading-none font-bold ${activeTab === "propagation" ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1] hover:text-[#cbd8ec]"}`} type="button" role="tab" aria-selected={activeTab === "propagation"} aria-controls="manual-orbit-propagation" onClick={() => setActiveTab("propagation")}>PROPAGATION</button>
             </nav>
 
@@ -1151,44 +1450,83 @@ export default function ManualOrbitPanel() {
                 </div>
             </section>}
 
-            {activeTab === "propagation" && <>
-            <section id="manual-orbit-propagation" className="mt-3 rounded-lg border border-[#1f3655] bg-[#091526] p-2.5" role="tabpanel" aria-label="Design time window">
-                <div className="flex items-baseline justify-between gap-2">
-                    <h3 className="m-0 text-[11px] leading-none font-bold text-[#dbe9ff]">Design window</h3>
-                    <span className="text-[9px] leading-none font-bold tracking-[.06em] text-[#87a4d1]">UTC</span>
-                </div>
-                <p className="mt-1 mb-2 text-[10px] leading-[1.35] text-[#8498b5]">La órbita creada se propaga exactamente entre estos instantes; la vista previa muestra una revolución inercial en el epoch inicial.</p>
-                <div className="grid grid-cols-2 gap-2">
-                    <label className="grid min-w-0 gap-1 font-[system-ui,sans-serif] text-[10px] font-semibold text-[#c7d5ea]">
-                        <span>Epoch initial</span>
-                        <input className="!h-[33px] !min-w-0 !rounded-lg !border !border-[#294361] !bg-[#0b1728] !px-1.5 !font-[system-ui,sans-serif] !text-[11px] !font-medium !text-[#eaf2ff] !outline-none focus:!border-[#5d8fff] focus:!shadow-[0_0_0_2px_rgba(75,122,255,.16)]" type="datetime-local" value={form.epochStartUtc} onChange={(event) => updateEpochStart(event.target.value)} />
+            {activeTab === "time" && <section id="manual-orbit-time" className="mt-3 grid gap-3" role="tabpanel" aria-label="Tiempo, cobertura ERP y marco de previsualización">
+                <section className="rounded-lg border border-[#1f3655] bg-[#091526] p-2.5" aria-label="Design window">
+                    <div className="flex items-baseline justify-between gap-2">
+                        <h3 className="m-0 text-[11px] leading-none font-bold text-[#dbe9ff]">Design window</h3>
+                        <span className="text-[9px] leading-none font-bold tracking-[.06em] text-[#87a4d1]">UTC</span>
+                    </div>
+                    <p className="mt-1 mb-2 text-[10px] leading-[1.35] text-[#8498b5]">La órbita se propaga exactamente entre estos instantes. Al validar un ERP, esta ventana se ajusta a toda su cobertura UTC; no se recorta silenciosamente al SP3 u OEM de la escena.</p>
+                    <div className="grid grid-cols-2 gap-2">
+                        <label className="grid min-w-0 gap-1 font-[system-ui,sans-serif] text-[10px] font-semibold text-[#c7d5ea]">
+                            <span>Design start</span>
+                            <input className="!h-[33px] !min-w-0 !rounded-lg !border !border-[#294361] !bg-[#0b1728] !px-1.5 !font-[system-ui,sans-serif] !text-[11px] !font-medium !text-[#eaf2ff] !outline-none focus:!border-[#5d8fff] focus:!shadow-[0_0_0_2px_rgba(75,122,255,.16)]" type="datetime-local" min={erpDateMinimum} max={erpDateMaximum} value={form.epochStartUtc} onChange={(event) => updateEpochStart(event.target.value)} />
+                        </label>
+                        <label className="grid min-w-0 gap-1 font-[system-ui,sans-serif] text-[10px] font-semibold text-[#c7d5ea]">
+                            <span>Design end</span>
+                            <input className="!h-[33px] !min-w-0 !rounded-lg !border !border-[#294361] !bg-[#0b1728] !px-1.5 !font-[system-ui,sans-serif] !text-[11px] !font-medium !text-[#eaf2ff] !outline-none focus:!border-[#5d8fff] focus:!shadow-[0_0_0_2px_rgba(75,122,255,.16)]" type="datetime-local" min={form.epochStartUtc > (erpDateMinimum || "") ? form.epochStartUtc : erpDateMinimum} max={erpDateMaximum} value={form.epochEndUtc} onChange={(event) => updateEpochEnd(event.target.value)} />
+                        </label>
+                    </div>
+                    <label className="mt-2 grid min-w-0 gap-1 font-[system-ui,sans-serif] text-[10px] font-semibold text-[#c7d5ea]">
+                        <span className="flex items-center justify-between gap-2"><span>State-vector epoch</span><small className="font-medium text-[#7f94b4]">PHYSICAL UTC</small></span>
+                        <input className="!h-[33px] !min-w-0 !rounded-lg !border !border-[#294361] !bg-[#0b1728] !px-1.5 !font-[system-ui,sans-serif] !text-[11px] !font-medium !text-[#eaf2ff] !outline-none focus:!border-[#5d8fff] focus:!shadow-[0_0_0_2px_rgba(75,122,255,.16)]" type="datetime-local" value={form.epochUtc} onChange={(event) => updateOrbitEpoch(event.target.value)} />
+                        <small className="text-[9px] leading-[1.3] font-medium text-[#7f94b4]">This is the epoch of the EME2000 input state. ERP validation adjusts the design window, never this physical epoch; when Earth-fixed forces are selected it must also lie within ERP coverage.</small>
                     </label>
-                    <label className="grid min-w-0 gap-1 font-[system-ui,sans-serif] text-[10px] font-semibold text-[#c7d5ea]">
-                        <span>Epoch final</span>
-                        <input className="!h-[33px] !min-w-0 !rounded-lg !border !border-[#294361] !bg-[#0b1728] !px-1.5 !font-[system-ui,sans-serif] !text-[11px] !font-medium !text-[#eaf2ff] !outline-none focus:!border-[#5d8fff] focus:!shadow-[0_0_0_2px_rgba(75,122,255,.16)]" type="datetime-local" min={form.epochStartUtc} value={form.epochEndUtc} onChange={(event) => updateEpochEnd(event.target.value)} />
-                    </label>
-                </div>
-                {!epochRangeValid && <p className="mt-2 mb-0 text-[10px] leading-[1.35] font-semibold text-[#ff9cab]" role="alert">El epoch final debe ser posterior al inicial.</p>}
-            </section>
+                    {!epochRangeValid && <p className="mt-2 mb-0 text-[10px] leading-[1.35] font-semibold text-[#ff9cab]" role="alert">El epoch final debe ser posterior al inicial.</p>}
+                    {timePolicy.requiresErp && <p className={`mt-2 mb-0 rounded border px-2 py-1.5 text-[9px] leading-[1.35] font-semibold ${timePolicy.canCreate ? "border-[#2d7252] bg-[#102a22] text-[#b8f1d0]" : "border-[#874252] bg-[#291821] text-[#ffd0d9]"}`} role={timePolicy.canCreate ? "status" : "alert"}>{timePolicy.canCreate ? "La ventana completa está cubierta por el ERP manual requerido para las fuerzas terrestres seleccionadas." : timeBlockMessage}</p>}
+                </section>
 
-            <section className="mt-3 rounded-lg border border-[#1f3655] bg-[#091526] p-2.5" aria-labelledby="manualOrbitPreviewFrameTitle">
-                <div className="flex items-baseline justify-between gap-2">
-                    <h3 id="manualOrbitPreviewFrameTitle" className="m-0 text-[11px] leading-none font-bold text-[#dbe9ff]">Orbit preview frame</h3>
-                    <span className="text-[9px] leading-none font-bold tracking-[.06em] text-[#87a4d1]">DISPLAY ONLY</span>
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-1 rounded-md border border-[#1b304d] bg-[#08111f] p-1" role="radiogroup" aria-label="Orbit preview reference frame">
-                    <button className={`cursor-pointer rounded-[5px] border-0 px-2 py-2 text-left text-[10px] leading-none font-bold ${form.previewReferenceFrame === "eme2000" ? "bg-[#233b69] text-[#f3f7ff] shadow-[inset_0_0_0_1px_rgba(122,161,255,.42)]" : "bg-transparent text-[#93a4bd] hover:bg-[#13223a] hover:text-[#dce7f8]"}`} type="button" role="radio" aria-checked={form.previewReferenceFrame === "eme2000"} onClick={() => updatePreviewReferenceFrame("eme2000")}>
-                        <span className="block">EME2000</span>
-                        <small className="mt-1 block text-[9px] font-medium opacity-75">Inertial trajectory</small>
-                    </button>
-                    <button className={`cursor-pointer rounded-[5px] border-0 px-2 py-2 text-left text-[10px] leading-none font-bold ${form.previewReferenceFrame === "itrf" ? "bg-[#233b69] text-[#f3f7ff] shadow-[inset_0_0_0_1px_rgba(122,161,255,.42)]" : "bg-transparent text-[#93a4bd] hover:bg-[#13223a] hover:text-[#dce7f8]"}`} type="button" role="radio" aria-checked={form.previewReferenceFrame === "itrf"} onClick={() => updatePreviewReferenceFrame("itrf")}>
-                        <span className="block">ITRF</span>
-                        <small className="mt-1 block text-[9px] font-medium opacity-75">Earth-fixed path</small>
-                    </button>
-                </div>
-                <p className="mt-2 mb-0 text-[10px] leading-[1.35] text-[#8498b5]">{previewFrameDescription}</p>
-            </section>
-            </>}
+                <section className="rounded-lg border border-[#315a8d] bg-[#0a182b] p-2.5" aria-labelledby="manualOrbitErpTitle">
+                    <div className="flex items-baseline justify-between gap-2">
+                        <h3 id="manualOrbitErpTitle" className="m-0 text-[11px] leading-none font-bold text-[#dbe9ff]">Manual ERP</h3>
+                        <span className={`text-[9px] leading-none font-bold tracking-[.06em] ${manualErp ? "text-[#8eddb7]" : "text-[#87a4d1]"}`}>{manualErp ? "VALIDATED SNAPSHOT" : "OPTIONAL"}</span>
+                    </div>
+                    <p className="mt-1 mb-2 text-[10px] leading-[1.35] text-[#8498b5]">Adjunte un .ERP o .ERP.gz de hasta 32 MiB. Se valida y guarda por identidad de contenido; el proyecto conserva sólo la referencia, no los bytes.</p>
+                    <input ref={erpInputRef} className="sr-only" type="file" accept=".erp,.erp.gz" onChange={(event) => {
+                        const [file] = Array.from(event.target.files || []);
+                        event.currentTarget.value = "";
+                        requestManualErpUpload(file);
+                    }} />
+                    {manualErp ? <div className="grid gap-2 rounded-md border border-[#284b70] bg-[#0d1d31] p-2">
+                        <div className="flex min-w-0 items-start justify-between gap-2">
+                            <span className="min-w-0"><strong className="block truncate text-[10px] leading-none text-[#e4efff]">{manualErp.filename || "ERP validado"}</strong><small className="mt-1 block text-[9px] leading-[1.3] text-[#86a1c5]">{manualErp.source || "ERP manual"}{manualErp.quality ? ` · ${manualErp.quality}` : ""}</small></span>
+                            <span className="shrink-0 rounded border border-[#2f7455] bg-[#102a22] px-1.5 py-1 text-[8px] leading-none font-bold text-[#a8e8c2]">ERP</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[9px] leading-[1.3] text-[#9db2cf]">
+                            <span>Desde</span><strong className="text-right font-semibold tabular-nums text-[#dbe9ff]">{formatUtcRangeDate(manualErp.coverageStart)}</strong>
+                            <span>Hasta</span><strong className="text-right font-semibold tabular-nums text-[#dbe9ff]">{formatUtcRangeDate(manualErp.coverageEnd)}</strong>
+                            {manualErp.recordCount !== null && <><span>Muestras</span><strong className="text-right font-semibold tabular-nums text-[#dbe9ff]">{manualErp.recordCount}</strong></>}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button className="min-h-8 cursor-pointer rounded-md border border-[#315f96] bg-[#102946] px-2 text-[9px] font-bold text-[#c9e0ff] hover:border-[#5b91ce] hover:bg-[#17395f] disabled:cursor-wait disabled:opacity-55" type="button" disabled={erpUploadPending} onClick={() => erpInputRef.current?.click()}>Reemplazar</button>
+                            <button className="min-h-8 cursor-pointer rounded-md border border-[#634155] bg-[#251824] px-2 text-[9px] font-bold text-[#f1c2ce] hover:border-[#9b6176] hover:bg-[#34202c]" type="button" onClick={clearManualErp}>Quitar</button>
+                        </div>
+                    </div> : <button className="inline-flex min-h-8 w-full cursor-pointer items-center justify-center rounded-md border border-[#315f96] bg-[#102946] px-2 text-[10px] font-bold text-[#c9e0ff] hover:border-[#5b91ce] hover:bg-[#17395f] disabled:cursor-wait disabled:opacity-55" type="button" disabled={erpUploadPending} onClick={() => erpInputRef.current?.click()}>{erpUploadPending ? "Validando ERP…" : "Cargar ERP"}</button>}
+                </section>
+
+                <section className="rounded-lg border border-[#1f3655] bg-[#091526] p-2.5" aria-labelledby="manualOrbitPreviewFrameTitle">
+                    <div className="flex items-baseline justify-between gap-2">
+                        <h3 id="manualOrbitPreviewFrameTitle" className="m-0 text-[11px] leading-none font-bold text-[#dbe9ff]">Orbit preview frame</h3>
+                        <span className="text-[9px] leading-none font-bold tracking-[.06em] text-[#87a4d1]">DISPLAY ONLY</span>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-1 rounded-md border border-[#1b304d] bg-[#08111f] p-1" role="radiogroup" aria-label="Orbit preview reference frame">
+                        <button className={`cursor-pointer rounded-[5px] border-0 px-2 py-2 text-left text-[10px] leading-none font-bold ${form.previewReferenceFrame === "eme2000" ? "bg-[#233b69] text-[#f3f7ff] shadow-[inset_0_0_0_1px_rgba(122,161,255,.42)]" : "bg-transparent text-[#93a4bd] hover:bg-[#13223a] hover:text-[#dce7f8]"}`} type="button" role="radio" aria-checked={form.previewReferenceFrame === "eme2000"} onClick={() => updatePreviewReferenceFrame("eme2000")}>
+                            <span className="block">EME2000</span>
+                            <small className="mt-1 block text-[9px] font-medium opacity-75">Inertial trajectory</small>
+                        </button>
+                        <button className={`cursor-pointer rounded-[5px] border-0 px-2 py-2 text-left text-[10px] leading-none font-bold ${form.previewReferenceFrame === "itrf" ? "bg-[#233b69] text-[#f3f7ff] shadow-[inset_0_0_0_1px_rgba(122,161,255,.42)]" : "bg-transparent text-[#93a4bd] hover:bg-[#13223a] hover:text-[#dce7f8]"}`} type="button" role="radio" aria-checked={form.previewReferenceFrame === "itrf"} onClick={() => updatePreviewReferenceFrame("itrf")}>
+                            <span className="block">ITRF</span>
+                            <small className="mt-1 block text-[9px] font-medium opacity-75">Earth-fixed path</small>
+                        </button>
+                    </div>
+                    <p className="mt-2 mb-0 text-[10px] leading-[1.35] text-[#8498b5]">{previewFrameDescription}</p>
+                </section>
+
+                {timePolicy.sceneRelation !== "not-applicable" && <section className={`rounded-lg border px-2.5 py-2 ${timePolicy.sceneRelation === "disjoint" ? "border-[#79513a] bg-[#281b17]" : "border-[#385879] bg-[#0d1d31]"}`} aria-label="Compatibilidad temporal con la escena">
+                    <strong className={`block text-[10px] leading-none ${timePolicy.sceneRelation === "disjoint" ? "text-[#f4c69a]" : "text-[#c9ddff]"}`}>Compatibilidad temporal de la escena</strong>
+                    {timePolicy.jointWindow ? <p className="mt-1 mb-0 text-[9px] leading-[1.35] text-[#aebfd7]">La órbita manual puede coexistir con los productos activos, pero las operaciones conjuntas deberán usar sólo {formatUtcRangeDate(timePolicy.jointWindow.startTime)} — {formatUtcRangeDate(timePolicy.jointWindow.endTime)}.</p> : <p className="mt-1 mb-0 text-[9px] leading-[1.35] text-[#efc2a5]">No existe una ventana UTC común con el SP3/OEM o rango activo. La órbita puede crearse, pero comparación, análisis conjunto y métricas quedan bloqueados hasta elegir una intersección válida.</p>}
+                </section>}
+            </section>}
 
             {activeTab === "orbit" && <section id="manual-orbit-orbit" className="mt-3" role="tabpanel">
                 <div className="flex items-baseline justify-between gap-2">
@@ -1280,6 +1618,9 @@ export default function ManualOrbitPanel() {
                     </fieldset>
                     {geopotentialEnabled && <div className="grid gap-2 rounded-md border border-[#3e5a83] bg-[#0d1d34] p-2" aria-label="Full geopotential configuration">
                         <p className="m-0 text-[9px] leading-[1.35] font-medium text-[#b8d2f3]">Uses the configured local ICGEM gravity field in ITRF. Degree/order include the field’s zonal coefficients, so J2, J3 and J4 cannot be added separately. Propagation is rejected until the server has a pinned local ICGEM field.</p>
+                        <p className="m-0 rounded border border-[#2b4e78] bg-[#0a1729] px-1.5 py-1 text-[9px] leading-[1.35] font-medium text-[#a9c9ed]">
+                            Límite del campo: hasta 2159 × 2159 (EGM2008). El RK4 actual limita cada etapa a 2.555 coeficientes armónicos: 70 × 70 completo es un ejemplo seguro. Los campos mayores se rechazan antes de propagar hasta disponer de un evaluador optimizado e integrador adaptativo.
+                        </p>
                         <div className="grid grid-cols-2 gap-2">
                             <label className="grid min-w-0 gap-1 text-[9px] font-semibold text-[#c7d5ea]">
                                 <span>Degree N</span>
@@ -1315,7 +1656,7 @@ export default function ManualOrbitPanel() {
                 </div>}
             </section>
 
-            <button className="mt-3 inline-flex min-h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#294d7b] bg-[#0d1d33] px-3 py-2 text-[10px] leading-none font-bold text-[#b7d4ff] hover:border-[#5787c9] hover:bg-[#142a49] hover:text-[#edf5ff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before inspecting ephemerides." : "Inspect the ephemerides over this design window."} disabled={!epochRangeValid || selectedPropagator.unavailable} onClick={openPropagatedParameters}>Ver efemérides</button>
+            <button className="mt-3 inline-flex min-h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#294d7b] bg-[#0d1d33] px-3 py-2 text-[10px] leading-none font-bold text-[#b7d4ff] hover:border-[#5787c9] hover:bg-[#142a49] hover:text-[#edf5ff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before inspecting ephemerides." : timeBlockMessage || "Inspect the ephemerides over this design window."} disabled={!epochRangeValid || !timePolicy.canCreate || selectedPropagator.unavailable} onClick={openPropagatedParameters}>Ver efemérides</button>
             </>}
             <button className="mt-3 w-full cursor-pointer rounded-lg border border-[#39445a] bg-[#111a29] px-3 py-2 text-[10px] leading-none font-bold text-[#b7c5da] hover:border-[#637c9f] hover:bg-[#17253a] hover:text-[#ecf3ff]" type="button" onClick={reset}>Reset values</button>
         </div>
@@ -1326,7 +1667,7 @@ export default function ManualOrbitPanel() {
             </div>
             <footer className="grid grid-cols-2 gap-2 border-t border-[#1b2c43] px-4 pt-2 pb-3">
                 <button className="min-h-[34px] cursor-pointer rounded-lg border border-[#3c3145] bg-[#1b1320] px-3 text-[11px] leading-none font-bold text-[#e1b5c1] hover:border-[#885166] hover:bg-[#2a1721] hover:text-[#ffe2e9]" type="button" onClick={() => requestClose("cancel")}>Cancel</button>
-                <button className="min-h-[34px] cursor-pointer rounded-lg border border-[#476dce] bg-[#3657dc] px-3 text-[11px] leading-none font-bold text-white shadow-[0_6px_16px_rgba(41,76,220,.3)] hover:border-[#6e91ff] hover:bg-[#4668ee] disabled:cursor-wait disabled:opacity-55" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before updating this orbit." : undefined} disabled={status?.kind === "busy" || !epochRangeValid || selectedPropagator.unavailable} onClick={() => dispatch("orbit:manual-orbit-create", payloadFor(form))}>{status?.kind === "busy" ? (isEditingManualOrbit ? "Updating..." : "Creating...") : (isEditingManualOrbit ? "Actualizar \u00f3rbita" : "Crear \u00f3rbita")}</button>
+                <button className="min-h-[34px] cursor-pointer rounded-lg border border-[#476dce] bg-[#3657dc] px-3 text-[11px] leading-none font-bold text-white shadow-[0_6px_16px_rgba(41,76,220,.3)] hover:border-[#6e91ff] hover:bg-[#4668ee] disabled:cursor-wait disabled:opacity-55" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before updating this orbit." : timeBlockMessage || undefined} disabled={status?.kind === "busy" || !epochRangeValid || !timePolicy.canCreate || selectedPropagator.unavailable} onClick={() => dispatch("orbit:manual-orbit-create", payloadFor(form))}>{status?.kind === "busy" ? (isEditingManualOrbit ? "Updating..." : "Creating...") : (isEditingManualOrbit ? "Actualizar \u00f3rbita" : "Crear \u00f3rbita")}</button>
             </footer>
         </div>
     </aside>;

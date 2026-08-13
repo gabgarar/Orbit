@@ -203,6 +203,29 @@ test("full geopotential is exclusive with legacy zonals and new Cowell terms ser
         }),
         OrbitalElementsValidationError
     );
+
+    const completeFieldRequest = normalizeManualOrbitState({
+        propagator: "cowell-rk4",
+        propagationOptions: {
+            forceTerms: ["geopotential"],
+            geopotentialDegree: 2159,
+            geopotentialOrder: 2159
+        }
+    });
+    assert.equal(completeFieldRequest.propagationOptions.geopotentialDegree, 2159);
+    assert.equal(completeFieldRequest.propagationOptions.geopotentialOrder, 2159);
+
+    assert.throws(
+        () => normalizeManualOrbitState({
+            propagator: "cowell-rk4",
+            propagationOptions: {
+                forceTerms: ["geopotential"],
+                geopotentialDegree: 2160,
+                geopotentialOrder: 0
+            }
+        }),
+        OrbitalElementsValidationError
+    );
 });
 
 test("independent atmospheric drag is retained only by the explicit Cowell/RK4 path", () => {
@@ -377,6 +400,30 @@ test("manual-orbit API serialization preserves the authoritative source and nest
         propagationOptions: { forceTerms: ["central", "j2"], numericalIntegrator: "rk4" }
     }));
     assert.equal(cowellPayload.propagation_options.numerical_integrator, "rk4");
+});
+
+test("manual-orbit API serialization retains only an ERP snapshot reference", () => {
+    const state = createDefaultManualOrbitState({ now: "2026-07-20T10:15:00Z" });
+    const payload = toManualOrbitApiPayload(state, {
+        manualErp: {
+            snapshotId: "a".repeat(64),
+            filename: "final.erp",
+            coverageStart: "2026-07-20T00:00:00Z",
+            coverageEnd: "2026-07-21T00:00:00Z",
+            // Deliberately prove that transient browser upload data cannot
+            // leak into a normal preview/create/project request.
+            contentBase64: "must-not-be-serialized"
+        }
+    });
+
+    assert.deepEqual(payload.manual_erp, { snapshot_id: "a".repeat(64) });
+    assert.equal(JSON.stringify(payload).includes("must-not-be-serialized"), false);
+
+    const noSnapshot = toManualOrbitApiPayload({
+        ...state,
+        timeData: { manualErp: { name: "untrusted.erp", contentBase64: "raw" } }
+    });
+    assert.equal(Object.hasOwn(noSnapshot, "manual_erp"), false);
 });
 
 test("manual-orbit state accepts snake-case API responses without losing authored metadata", () => {

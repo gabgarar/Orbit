@@ -38,7 +38,8 @@ import {
     setManualOrbitPreviewGroundTrack,
     clearManualOrbitPreview,
     hasLoadedOemEphemerisTracks,
-    getLoadedOemEphemerisTimeBounds
+    getLoadedOemEphemerisTimeBounds,
+    getLoadedOemEphemerisTimeRanges
 } from "./js/satellites.js";
 import { setupRuntimeConfigPanel } from "./js/configPanel.js";
 import { setupObjectSidebar } from "./js/objectSidebar.js";
@@ -126,6 +127,9 @@ import {
 } from "./js/features/manualOrbit/editorState.js";
 import { normalizeManualOrbitPreviewReferenceFrame } from "./js/features/frames/referenceFrame.js";
 import { resolvePreciseProductFrameStatus } from "./js/features/preciseProducts/frameStatus.js";
+import { arrayBufferToBase64 } from "./js/features/preciseProducts/import.js";
+import { resolveManualOrbitTimePolicy } from "./js/features/manualOrbit/timePolicy.js";
+import { createManualErpUploadGate } from "./js/features/manualOrbit/erpUploadGate.js";
 import { createPropagatedParametersContextBuilder } from "./js/features/propagatedParameters/context.js";
 
 const logger = getLogger("main");
@@ -357,6 +361,7 @@ let manualOrbitDesignSession = null;
 let manualOrbitPreviewTimer = null;
 let manualOrbitPreviewAbortController = null;
 let manualOrbitPreviewRequestId = 0;
+const manualOrbitErpUploadGate = createManualErpUploadGate();
 let manualOrbitDesignSettings = null;
 // Set only while the design editor is modifying an already-confirmed local
 // manual orbit. Catalogue/OEM objects never populate this target.
@@ -4614,9 +4619,16 @@ function focusSatellite(entity) {
 }
 
 function publishManualOrbitState(extra = {}) {
+    const designSettings = getManualOrbitDesignSettings();
     const detail = {
         ...manualOrbitEditorState,
-        ...getManualOrbitDesignSettings(),
+        ...designSettings,
+        timeData: {
+            manualErp: designSettings.manualErp || null,
+            sceneWindow: designSettings.sceneWindow || null,
+            finiteEphemerisRanges: [...(designSettings.finiteEphemerisRanges || [])],
+            sceneAlignment: designSettings.sceneAlignment || null
+        },
         designMode: Boolean(manualOrbitDesignSession?.active),
         // Keep the panel contract self-contained. A React remount can recover
         // from this latest state without waiting for a new editor event.
@@ -4760,6 +4772,143 @@ function publishManualOrbitStatus(kind, message) {
 
 const MANUAL_ORBIT_DEFAULT_WINDOW_HOURS = 24;
 const MANUAL_ORBIT_PREVIEW_DEBOUNCE_MS = 320;
+const MAX_MANUAL_ERP_FILE_BYTES = 32 * 1024 * 1024;
+
+function manualOrbitTimeRecord(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function firstManualOrbitTimeValue(value, keys) {
+    const source = manualOrbitTimeRecord(value);
+    for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(source, key)
+            && source[key] !== undefined
+            && source[key] !== null) {
+            return source[key];
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Retain just server-validated ERP provenance.  In particular, never copy a
+ * `contentBase64` member from an upload command into editor/project state.
+ */
+function normalizeManualOrbitErpReference(value) {
+    if (value === null) return null;
+    const source = manualOrbitTimeRecord(value);
+    const rawSnapshotId = String(firstManualOrbitTimeValue(source, ["snapshotId", "snapshot_id", "id"]) || "").trim();
+    const snapshotId = rawSnapshotId.length <= 96 ? rawSnapshotId : "";
+    const filename = String(firstManualOrbitTimeValue(source, ["filename", "fileName", "file_name", "name"]) || "").trim();
+    const coverageStart = asValidManualOrbitDate(firstManualOrbitTimeValue(source, [
+        "coverageStart", "coverage_start", "startTime", "start_time", "startUtc", "start_utc"
+    ]));
+    const coverageEnd = asValidManualOrbitDate(firstManualOrbitTimeValue(source, [
+        "coverageEnd", "coverage_end", "endTime", "end_time", "endUtc", "end_utc"
+    ]));
+    // A project may intentionally retain a snapshot ID even if an older
+    // project did not save display coverage. Preserve that identity so the
+    // server can reload (or fail closed on) the exact snapshot. TIME policy
+    // still treats missing coverage as insufficient for Earth-fixed forces.
+    if (!snapshotId) {
+        return null;
+    }
+    const integerOrNull = (candidate) => {
+        const numeric = Number(candidate);
+        return Number.isInteger(numeric) && numeric >= 0 ? numeric : null;
+    };
+    return {
+        snapshotId,
+        filename: filename || null,
+        sha256: String(firstManualOrbitTimeValue(source, ["sha256", "sha_256", "sourceSha256", "source_sha256"]) || "").trim() || null,
+        sourceSha256: String(firstManualOrbitTimeValue(source, ["sourceSha256", "source_sha256"]) || "").trim() || null,
+        byteSize: integerOrNull(firstManualOrbitTimeValue(source, ["byteSize", "byte_size", "size"])),
+        recordCount: integerOrNull(firstManualOrbitTimeValue(source, ["recordCount", "record_count", "sampleCount", "sample_count"])),
+        coverageStart: coverageStart && coverageEnd && coverageEnd.getTime() > coverageStart.getTime()
+            ? coverageStart.toISOString()
+            : null,
+        coverageEnd: coverageStart && coverageEnd && coverageEnd.getTime() > coverageStart.getTime()
+            ? coverageEnd.toISOString()
+            : null,
+        source: String(firstManualOrbitTimeValue(source, ["source", "provider"]) || "").trim() || null,
+        version: String(firstManualOrbitTimeValue(source, ["version"]) || "").trim() || null,
+        quality: String(firstManualOrbitTimeValue(source, ["quality", "productClass", "product_class"]) || "").trim() || null
+    };
+}
+
+function manualOrbitTimeRange(value) {
+    const source = manualOrbitTimeRecord(value);
+    const start = asValidManualOrbitDate(firstManualOrbitTimeValue(source, ["startTime", "start_time", "startUtc", "start_utc"]));
+    const end = asValidManualOrbitDate(firstManualOrbitTimeValue(source, ["endTime", "end_time", "endUtc", "end_utc"]));
+    if (!start || !end || end.getTime() <= start.getTime()) return null;
+    return { startTime: start.toISOString(), endTime: end.toISOString() };
+}
+
+function finiteManualOrbitSceneRanges(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((entry) => {
+        const range = manualOrbitTimeRange(entry?.range || entry);
+        if (!range) return null;
+        return {
+            ...range,
+            source: String(entry?.source || entry?.kind || entry?.format || "finite ephemeris").trim() || "finite ephemeris"
+        };
+    }).filter(Boolean);
+}
+
+function manualOrbitErpValueFromPayload(payload = {}) {
+    const source = manualOrbitTimeRecord(payload);
+    for (const key of ["manualErp", "manual_erp"]) {
+        if (Object.prototype.hasOwnProperty.call(source, key)) {
+            return { present: true, value: source[key] };
+        }
+    }
+    const timeData = manualOrbitTimeRecord(source.timeData ?? source.time_data);
+    for (const key of ["manualErp", "manual_erp"]) {
+        if (Object.prototype.hasOwnProperty.call(timeData, key)) {
+            return { present: true, value: timeData[key] };
+        }
+    }
+    return { present: false, value: undefined };
+}
+
+function getManualOrbitSceneTimeContext() {
+    const domain = getFiniteEphemerisDomainState();
+    // A rolling realtime horizon is not an authored finite data interval and
+    // must not masquerade as one. TIME compares against an explicit Range
+    // scene (or a finite SP3/OEM domain) only.
+    const simulationRange = simulationState?.mode === SIMULATION_MODE_RANGE
+        || domain.finiteEphemerisDomainActive
+        ? manualOrbitTimeRange({
+            startTime: simulationState?.startDate,
+            endTime: simulationState?.endDate
+        })
+        : null;
+    const finiteEphemerisRanges = [];
+    if (domain.hasOemDomain) {
+        // Do not collapse multiple OEM tracks to their min/max bounds here:
+        // that aggregate is appropriate for a timeline, but would turn a
+        // gap between products into a fictional common-analysis window.
+        for (const range of getLoadedOemEphemerisTimeRanges()) {
+            finiteEphemerisRanges.push({
+                source: `OEM ${range.id}`,
+                startTime: new Date(range.startTimeMs).toISOString(),
+                endTime: new Date(range.endTimeMs).toISOString()
+            });
+        }
+    }
+    if (domain.preciseCoverage) {
+        finiteEphemerisRanges.push({
+            source: "SP3",
+            startTime: new Date(domain.preciseCoverage.start).toISOString(),
+            endTime: new Date(domain.preciseCoverage.end).toISOString()
+        });
+    }
+    return {
+        sceneWindow: simulationRange,
+        finiteEphemerisRanges
+    };
+}
 
 function asValidManualOrbitDate(value) {
     const candidate = value instanceof Date ? new Date(value.getTime()) : new Date(value || "");
@@ -4790,7 +4939,16 @@ function getManualOrbitDesignSettings() {
         // A design can either show the single EME2000 osculating ellipse or
         // the literal ITRF propagation samples. EME2000 is the clean-design
         // default.
-        previewReferenceFrame: "eme2000"
+        previewReferenceFrame: "eme2000",
+        // The reference is orbit-specific and may be persisted with a manual
+        // orbit. The raw ERP upload is deliberately never retained here.
+        manualErp: null,
+        // These scene values are display/analysis guards only; they are
+        // captured on entering design mode and never become part of a manual
+        // orbit's physical definition.
+        sceneWindow: null,
+        finiteEphemerisRanges: [],
+        sceneAlignment: null
     };
     return { ...manualOrbitDesignSettings };
 }
@@ -4801,6 +4959,28 @@ function updateManualOrbitDesignSettings(payload = {}) {
     const endInput = payload.epochEndUtc ?? payload.endTime ?? payload.end_time;
     const start = startInput === undefined ? null : asValidManualOrbitDate(startInput);
     const end = endInput === undefined ? null : asValidManualOrbitDate(endInput);
+    const manualErpInput = manualOrbitErpValueFromPayload(payload);
+    const timeData = manualOrbitTimeRecord(payload.timeData ?? payload.time_data);
+    const sceneWindowInput = Object.prototype.hasOwnProperty.call(payload, "sceneWindow")
+        ? payload.sceneWindow
+        : Object.prototype.hasOwnProperty.call(payload, "scene_window")
+            ? payload.scene_window
+            : Object.prototype.hasOwnProperty.call(timeData, "sceneWindow")
+                ? timeData.sceneWindow
+                : Object.prototype.hasOwnProperty.call(timeData, "scene_window")
+                    ? timeData.scene_window
+                    : undefined;
+    const finiteRangesInput = Object.prototype.hasOwnProperty.call(payload, "finiteEphemerisRanges")
+        ? payload.finiteEphemerisRanges
+        : Object.prototype.hasOwnProperty.call(payload, "finite_ephemeris_ranges")
+            ? payload.finite_ephemeris_ranges
+            : Object.prototype.hasOwnProperty.call(timeData, "finiteEphemerisRanges")
+                ? timeData.finiteEphemerisRanges
+                : Object.prototype.hasOwnProperty.call(timeData, "finite_ephemeris_ranges")
+                    ? timeData.finite_ephemeris_ranges
+                    : undefined;
+    const alignmentInput = payload.sceneAlignment ?? payload.scene_alignment
+        ?? timeData.sceneAlignment ?? timeData.scene_alignment;
 
     manualOrbitDesignSettings = {
         epochStartUtc: start ? start.toISOString() : current.epochStartUtc,
@@ -4811,7 +4991,17 @@ function updateManualOrbitDesignSettings(payload = {}) {
         previewReferenceFrame: normalizeManualOrbitPreviewReferenceFrame(
             payload.previewReferenceFrame,
             current.previewReferenceFrame
-        )
+        ),
+        manualErp: manualErpInput.present
+            ? normalizeManualOrbitErpReference(manualErpInput.value)
+            : current.manualErp || null,
+        sceneWindow: sceneWindowInput === undefined
+            ? current.sceneWindow || null
+            : manualOrbitTimeRange(sceneWindowInput),
+        finiteEphemerisRanges: finiteRangesInput === undefined
+            ? [...(current.finiteEphemerisRanges || [])]
+            : finiteManualOrbitSceneRanges(finiteRangesInput),
+        sceneAlignment: alignmentInput === undefined ? current.sceneAlignment || null : alignmentInput || null
     };
     return { ...manualOrbitDesignSettings };
 }
@@ -4876,7 +5066,16 @@ function editManualOrbitFromWorkspace(satelliteId) {
         previewReferenceFrame: normalizeManualOrbitPreviewReferenceFrame(
             record.previewReferenceFrame ?? record.preview_reference_frame,
             "eme2000"
-        )
+        ),
+        // This must be the server-validated snapshot reference from the
+        // project entry.  Never put an uploaded File or base64 content in the
+        // design state: an ERP upload is a one-shot preflight transaction.
+        manualErp: normalizeManualOrbitErpReference(
+            manualOrbitRecordValue(record, "manualErp", "manual_erp")
+        ),
+        sceneWindow: null,
+        finiteEphemerisRanges: [],
+        sceneAlignment: null
     };
     manualOrbitEditingTarget = {
         id: record.id,
@@ -4923,6 +5122,53 @@ function publishManualOrbitDesignState(active) {
     }));
 }
 
+/**
+ * Resolve the single UTC policy used by both the React TIME surface and the
+ * legacy runtime before preview/create.  A manual ERP is intentionally not
+ * substituted with any global EOP feed: the saved snapshot is the reproducible
+ * input for this orbit.
+ */
+function getManualOrbitTimePolicy() {
+    const settings = getManualOrbitDesignSettings();
+    const designWindow = {
+        startTime: settings.epochStartUtc,
+        endTime: settings.epochEndUtc
+    };
+    const manualErp = normalizeManualOrbitErpReference(settings.manualErp);
+    return resolveManualOrbitTimePolicy({
+        designWindow,
+        physicalEpoch: manualOrbitEditorState?.epochUtc,
+        erpCoverage: manualErp
+            ? {
+                startTime: manualErp.coverageStart,
+                endTime: manualErp.coverageEnd
+            }
+            : null,
+        forceTerms: manualOrbitEditorState?.propagationOptions?.forceTerms || [],
+        sceneWindow: settings.sceneWindow,
+        finiteEphemerisRanges: settings.finiteEphemerisRanges || []
+    });
+}
+
+function assertManualOrbitTimePolicy() {
+    const policy = getManualOrbitTimePolicy();
+    if (policy.canCreate) return policy;
+
+    if (policy.blockingReasons.includes("missing-erp")) {
+        throw new Error("Adjunta un ERP manual validado en TIME para usar geopotencial o arrastre atmosférico.");
+    }
+    if (policy.blockingReasons.includes("erp-does-not-cover-design-window")) {
+        throw new Error("El intervalo de diseño debe estar completamente cubierto por el ERP manual adjunto.");
+    }
+    if (policy.blockingReasons.includes("erp-does-not-cover-physical-epoch")) {
+        throw new Error("El epoch físico del vector de estado debe estar cubierto por el ERP manual adjunto.");
+    }
+    if (policy.blockingReasons.includes("invalid-physical-epoch")) {
+        throw new Error("El epoch físico del vector de estado no es una fecha UTC válida.");
+    }
+    throw new Error("Define un intervalo temporal válido para la órbita manual.");
+}
+
 function stopManualOrbitPreviewRequest() {
     if (manualOrbitPreviewTimer) {
         clearTimeout(manualOrbitPreviewTimer);
@@ -4933,6 +5179,11 @@ function stopManualOrbitPreviewRequest() {
         manualOrbitPreviewAbortController = null;
     }
     manualOrbitPreviewRequestId += 1;
+}
+
+/** Cancel and invalidate a transient ERP upload/preflight. */
+function stopManualOrbitErpUpload() {
+    manualOrbitErpUploadGate.cancel();
 }
 
 function stopManualOrbitCreateRequest() {
@@ -4980,6 +5231,11 @@ function enterManualOrbitDesignMode() {
     // Capture before hiding a focused layer: hiding it can release a local
     // body camera, which would otherwise overwrite the view to restore.
     const cameraBeforeDesign = captureCameraView();
+    // Capture the existing scene before the design window changes the global
+    // simulation range.  TIME can then disclose a finite SP3/OEM overlap
+    // instead of quietly treating incompatible coverage as comparable.
+    const sceneTimeContext = getManualOrbitSceneTimeContext();
+    updateManualOrbitDesignSettings(sceneTimeContext);
 
     // Earth is a persistent layer, but a previous "hide all" action may have
     // left Cesium's globe disabled. Make the editor's central body explicit
@@ -5036,7 +5292,8 @@ function enterManualOrbitDesignMode() {
             currentDate: new Date(simulationState.currentDate),
             startDate: new Date(simulationState.startDate),
             endDate: new Date(simulationState.endDate)
-        }
+        },
+        sceneTimeContext
     };
 
     viewer.selectedEntity = undefined;
@@ -5080,6 +5337,7 @@ function restoreManualOrbitDesignMode({
     }
 
     stopManualOrbitPreviewRequest();
+    stopManualOrbitErpUpload();
     if (!preserveManualOrbitCreate) {
         stopManualOrbitCreateRequest();
     }
@@ -5141,6 +5399,7 @@ function discardManualOrbitDesignForProjectChange() {
     // old workspace; only invalidate the transient editor requests/entities.
     const hadDesignSession = Boolean(manualOrbitDesignSession?.active);
     stopManualOrbitPreviewRequest();
+    stopManualOrbitErpUpload();
     stopManualOrbitCreateRequest();
     clearManualOrbitPreview();
     manualOrbitDesignSession = null;
@@ -5281,6 +5540,9 @@ function buildManualOrbitRequestPayload(windowRange) {
     } else {
         options.horizonHours = windowRange.horizonHours;
     }
+    // The API serializer reduces this provenance object to `{ snapshot_id }`.
+    // The upload payload is never retained after the ERP preflight succeeds.
+    options.manualErp = getManualOrbitDesignSettings().manualErp || null;
     return toManualOrbitApiPayload(manualOrbitEditorState, options);
 }
 
@@ -5351,6 +5613,9 @@ function normalizePersistedManualOrbitRecord(record) {
             : null,
         groundTrackEnabled,
         previewReferenceFrame,
+        manualErp: normalizeManualOrbitErpReference(
+            manualOrbitRecordValue(record, "manualErp", "manual_erp")
+        ),
         visible: visual.visible !== false,
         visualizationOverrides: { ...overrides }
     };
@@ -5377,7 +5642,8 @@ async function restoreManualOrbitsFromProject(records = []) {
                 source: persisted.source,
                 startTime: persisted.startTime,
                 endTime: persisted.endTime,
-                includeVelocity: true
+                includeVelocity: true,
+                manualErp: persisted.manualErp
             };
             if (persisted.stepSeconds) {
                 options.stepSeconds = persisted.stepSeconds;
@@ -5403,6 +5669,7 @@ async function restoreManualOrbitsFromProject(records = []) {
                 propagator: persisted.state.propagator,
                 definition_source: persisted.source,
                 previewReferenceFrame: persisted.previewReferenceFrame,
+                manualErp: persisted.manualErp,
                 objectMetadata: persisted.state.objectMetadata,
                 propagationOptions: persisted.state.propagationOptions
             });
@@ -5433,8 +5700,12 @@ async function requestManualOrbitPreview() {
 
     let windowRange;
     try {
+        assertManualOrbitTimePolicy();
         windowRange = getManualOrbitPropagationWindow();
     } catch (error) {
+        // A previous path may have used an earlier valid ERP or epoch. Do not
+        // leave it on screen once the active TIME contract is invalid.
+        clearManualOrbitPreview();
         publishManualOrbitStatus("error", extractManualOrbitError(error, "Define un intervalo temporal válido para la órbita."));
         return;
     }
@@ -5604,6 +5875,13 @@ async function createManualOrbitFromEditor(payload = {}) {
         return;
     }
 
+    try {
+        assertManualOrbitTimePolicy();
+    } catch (error) {
+        publishManualOrbitStatus("error", extractManualOrbitError(error));
+        return;
+    }
+
     const designSessionAtRequest = manualOrbitDesignSession;
     // Snapshot the replacement contract before the asynchronous propagation
     // starts. The editor can be closed/cancelled while the request is in
@@ -5667,6 +5945,7 @@ async function createManualOrbitFromEditor(payload = {}) {
             propagator: manualOrbitEditorState.propagator,
             definition_source: manualOrbitDefinitionSource,
             previewReferenceFrame: getManualOrbitDesignSettings().previewReferenceFrame,
+            manualErp: getManualOrbitDesignSettings().manualErp || null,
             objectMetadata: manualOrbitEditorState.objectMetadata,
             propagationOptions: manualOrbitEditorState.propagationOptions,
             groundTrackEnabled
@@ -5772,6 +6051,32 @@ function setupManualOrbitEditorBridge() {
         manualOrbitDefinitionSource = "keplerian";
         synchronizeManualOrbitEditor(event.detail || {}, "keplerian");
         publishManualOrbitStatus(null, "");
+    });
+    window.addEventListener("orbit:manual-orbit-erp-upload-request", (event) => {
+        void previewManualOrbitErpUpload(event.detail || {});
+    });
+    window.addEventListener("orbit:manual-orbit-erp-clear", (event) => {
+        const detail = event.detail || {};
+        // Clear wins over any in-flight replacement upload. Its response is
+        // ignored even if File.arrayBuffer had already completed.
+        stopManualOrbitErpUpload();
+        updateManualOrbitDesignSettings({
+            ...detail,
+            manualErp: null
+        });
+        // A previous request may otherwise resolve after the ERP was removed
+        // and paint a trajectory computed with now-invalid force inputs.
+        if (manualOrbitDesignSession?.active) {
+            stopManualOrbitPreviewRequest();
+            clearManualOrbitPreview();
+            try {
+                applyManualOrbitDesignTimeWindow();
+                scheduleManualOrbitPreview({ immediate: true });
+            } catch (error) {
+                publishManualOrbitStatus("error", extractManualOrbitError(error));
+            }
+        }
+        publishManualOrbitState();
     });
     window.addEventListener("orbit:manual-orbit-create", (event) => {
         void createManualOrbitFromEditor(event.detail || {});
@@ -6036,6 +6341,118 @@ function buildPropagatedParametersTarget(context) {
         referenceFrame: context?.referenceFrame || null,
         rendererReference: context?.preciseRendering || null
     };
+}
+
+function publishManualOrbitErpUploadResult(detail) {
+    window.dispatchEvent(new CustomEvent("orbit:manual-orbit-erp-upload-result", { detail }));
+}
+
+function isManualErpUploadName(name) {
+    return /\.erp(?:\.gz)?$/i.test(String(name || "").trim());
+}
+
+/**
+ * Submit a File exactly once to the ERP preflight endpoint.  Nothing in this
+ * function writes the File/base64 into editor state; on success only the
+ * server-issued snapshot provenance is retained.
+ */
+async function previewManualOrbitErpUpload(detail = {}) {
+    const file = detail?.file;
+    const name = String(detail?.name || file?.name || "").trim();
+    // A replacement/clear/close invalidates every older result. `arrayBuffer`
+    // itself cannot be cancelled on every browser, so guard both sides of it
+    // with a monotonic request id as well as aborting fetch.
+    const request = manualOrbitErpUploadGate.begin();
+    const { controller } = request;
+    try {
+        if (!file || typeof file.arrayBuffer !== "function") {
+            throw new Error("Seleccione un fichero ERP local para validar.");
+        }
+        if (!isManualErpUploadName(name)) {
+            throw new Error("El ERP manual solo admite ficheros .ERP o .ERP.gz.");
+        }
+        const size = Number(file.size);
+        if (!Number.isFinite(size) || size < 1 || size > MAX_MANUAL_ERP_FILE_BYTES) {
+            throw new Error("El fichero ERP debe tener entre 1 byte y 32 MiB.");
+        }
+
+        const settings = getManualOrbitDesignSettings();
+        const sceneContext = {
+            sceneWindow: manualOrbitTimeRange(detail.sceneWindow)
+                || settings.sceneWindow
+                || manualOrbitDesignSession?.sceneTimeContext?.sceneWindow
+                || getManualOrbitSceneTimeContext().sceneWindow,
+            finiteEphemerisRanges: finiteManualOrbitSceneRanges(detail.finiteEphemerisRanges)
+        };
+        const designWindow = manualOrbitTimeRange(detail.designWindow) || {
+            startTime: settings.epochStartUtc,
+            endTime: settings.epochEndUtc
+        };
+        const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
+        if (!request.isCurrent()) return;
+        const response = await fetch("/api/manual-orbits/time/erp-preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+                manualErp: { name, contentBase64 },
+                designWindow,
+                sceneWindow: sceneContext.sceneWindow
+            }),
+            signal: controller.signal
+        });
+        const responsePayload = await response.json().catch(() => null);
+        if (!request.isCurrent()) return;
+        if (!response.ok || responsePayload?.ok !== true) {
+            throw responsePayload || new Error(`HTTP ${response.status}`);
+        }
+
+        const manualErp = normalizeManualOrbitErpReference(
+            responsePayload.manualErp ?? responsePayload.manual_erp
+        );
+        if (!manualErp?.snapshotId) {
+            throw new Error("La validación ERP no devolvió una referencia de snapshot reutilizable.");
+        }
+        const suggestedWindow = manualOrbitTimeRange(
+            responsePayload.suggestedDesignWindow ?? responsePayload.suggested_design_window
+        ) || {
+            startTime: manualErp.coverageStart,
+            endTime: manualErp.coverageEnd
+        };
+        // The full ERP range is the explicit design range; do not silently
+        // trim it to an SP3/OEM scene interval.  The UI policy exposes the
+        // intersection separately for future joint operations.
+        updateManualOrbitDesignSettings({
+            epochStartUtc: suggestedWindow.startTime,
+            epochEndUtc: suggestedWindow.endTime,
+            manualErp,
+            sceneWindow: sceneContext.sceneWindow,
+            finiteEphemerisRanges: sceneContext.finiteEphemerisRanges.length
+                ? sceneContext.finiteEphemerisRanges
+                : settings.finiteEphemerisRanges,
+            sceneAlignment: responsePayload.sceneAlignment ?? responsePayload.scene_alignment ?? null
+        });
+        // Keep the bridge authoritative even if React remounts between the
+        // request and its response. The state contains only provenance.
+        publishManualOrbitState();
+        publishManualOrbitErpUploadResult({
+            ok: true,
+            manualErp,
+            suggestedDesignWindow: suggestedWindow,
+            sceneAlignment: responsePayload.sceneAlignment ?? responsePayload.scene_alignment ?? null,
+            message: responsePayload.message
+        });
+    } catch (error) {
+        if (error?.name === "AbortError" || !request.isCurrent()) {
+            return;
+        }
+        logger.warn("No se pudo validar el ERP manual:", error);
+        publishManualOrbitErpUploadResult({
+            ok: false,
+            message: extractManualOrbitError(error, "No se pudo validar el fichero ERP.")
+        });
+    } finally {
+        request.finish();
+    }
 }
 
 function buildPropagatedParametersManualSource(context) {

@@ -48,6 +48,8 @@ _PRECISE_GNSS_LEAP_SNAPSHOT_ERROR = (
     "ECI preciso requiere una tabla de segundos intercalares local, versionada, "
     "con SHA-256 y fecha de caducidad vigente."
 )
+_PUBLISHED_STRICT_EOP_QUALITIES = frozenset({"final", "rapid"})
+_LOCAL_MANUAL_ERP_QUALITY = "local-validated"
 
 
 class FrameTransformationError(ValueError):
@@ -243,6 +245,13 @@ class FrameTransformService:
             else None
         ) or None
         self.strict_eop = bool(strict_eop)
+        # Process-wide strict transformations always accept only an IERS/IGS
+        # published final or rapid product.  ``local-validated`` is never a
+        # configurable global quality: it is installed exclusively by
+        # ``with_manual_earth_orientation_provider`` below for one manual
+        # orbit with a content-addressed ERP snapshot.
+        self._strict_eop_qualities = _PUBLISHED_STRICT_EOP_QUALITIES
+        self._manual_erp_isolated = False
         if leap_second_table is not None and not isinstance(leap_second_table, LeapSecondTable):
             raise TypeError("leap_second_table debe ser una LeapSecondTable o None")
         # ``None`` is deliberate compatibility mode: resolve the process-wide
@@ -327,6 +336,24 @@ class FrameTransformService:
             leap_second_table=self._leap_second_table,
         )
         clone._terrestrial_transforms = dict(self._terrestrial_transforms)
+        return clone
+
+    def with_manual_earth_orientation_provider(
+        self,
+        provider: EarthOrientationProvider,
+    ) -> "FrameTransformService":
+        """Clone an isolated strict route for one attached manual ERP.
+
+        This is deliberately separate from :meth:`with_earth_orientation_provider`.
+        A local file can be parser-validated and non-extrapolating without
+        claiming a published ``final``/``rapid`` class.  The only accepted
+        exception is the content-addressed manual-orbit route that calls this
+        method after validating the ERP snapshot's provenance.
+        """
+
+        clone = self.with_earth_orientation_provider(provider, strict_eop=True)
+        clone._strict_eop_qualities = frozenset({_LOCAL_MANUAL_ERP_QUALITY})
+        clone._manual_erp_isolated = True
         return clone
 
     def register_terrestrial_realization_transform(
@@ -688,7 +715,7 @@ class FrameTransformService:
         return utc, self.earth_orientation_at(utc)
 
     def _validate_eop(self, orientation: EarthOrientation) -> None:
-        if self.strict_eop and orientation.quality not in {"final", "rapid"}:
+        if self.strict_eop and orientation.quality not in self._strict_eop_qualities:
             raise FrameTransformationError(
                 "La transformación precisa requiere EOP IERS con calidad final o rapid"
             )

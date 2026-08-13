@@ -7,6 +7,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, HTTPException
 
 from orbit_api.application.manual_orbits import ManualOrbitError
+from orbit_api.application.manual_erp import ManualErpRepository
 from orbit_api.application.orbit_parameters import (
     OrbitParametersError,
     build_orbit_parameters,
@@ -21,6 +22,7 @@ def create_orbit_parameters_router(
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
+    manual_erp_repository: ManualErpRepository | None = None,
 ) -> APIRouter:
     """Build the bounded inspector endpoint without leaking renderer frames."""
 
@@ -35,6 +37,7 @@ def create_orbit_parameters_router(
                 ensure_utc=ensure_utc,
                 frame_transformer=frame_transformer,
                 gravity_field=gravity_field,
+                manual_erp_repository=manual_erp_repository,
             )
         except HTTPException:
             # Resolver errors retain their specific contract: unknown loaded

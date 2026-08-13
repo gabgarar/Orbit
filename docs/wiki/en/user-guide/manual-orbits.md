@@ -35,6 +35,29 @@ the project until creation is confirmed.
 The preview is drawn around Earth and is not yet a project layer. On
 confirmation, Orbit creates the manual orbit and it reappears in **Layers**.
 
+## TIME: design window, preview, and ERP
+
+The **TIME** tab separates three decisions which must not be conflated:
+
+| Control | Function |
+| --- | --- |
+| **Design window** | UTC interval propagated and saved with the manual orbit. |
+| **Orbit preview frame** | View of the same ephemeris in `EME2000` or through its terrestrial route; it does not change integration. |
+| **Manual ERP** | Local Earth-orientation file and UTC coverage for Earth-bound forces. |
+
+When a valid ERP is attached, the window is initially set to the file's
+coverage start and end. If **Full geopotential** or **Atmospheric drag** is
+enabled, preview and creation cannot run outside that coverage. An
+inertial-force-only orbit may omit ERP, but that does not thereby obtain a
+rigorous terrestrial transformation.
+
+If the project already contains SP3, OEM, or a simulation range, it is not
+mixing clocks: all instants are UTC. However, comparing or analysing multiple
+layers must use the overlap shown by TIME. If there is no overlap, the manual
+orbit remains valid in its own interval, but no valid joint operation exists
+with those finite ephemerides. See [Time, EOP and ITRF](../operations/time-eop.md)
+for the complete contract.
+
 ## Preview frames
 
 The manual definition and its physical propagation use the `EME2000` inertial

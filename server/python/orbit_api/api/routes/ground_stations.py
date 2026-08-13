@@ -18,6 +18,15 @@ from orbit_api.application.manual_orbits import (
     ManualOrbitError,
     build_manual_orbit_propagator,
     canonical_manual_orbit,
+    manual_erp_frame_transformer,
+    manual_orbit_requires_erp,
+    require_manual_erp_for_force_terms,
+    validate_manual_erp_coverage,
+)
+from orbit_api.application.manual_erp import (
+    ManualErpError,
+    ManualErpRepository,
+    resolve_manual_erp_input,
 )
 from orbit_api.domain.requests import (
     AosLosRequest,
@@ -154,6 +163,7 @@ def create_ground_stations_router(
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
+    manual_erp_repository: ManualErpRepository | None = None,
 ) -> APIRouter:
     """Build access-window routes from orbit application services."""
     router = APIRouter(tags=["ground-stations"])
@@ -239,6 +249,29 @@ def create_ground_stations_router(
             raise HTTPException(status_code=422, detail="La fuente manual requiere manual_orbit")
         try:
             propagator_name = require_manual_orbit_runtime_propagator(manual.propagator)
+            propagation_options = manual.propagation_options.canonical(
+                propagator=propagator_name
+            )
+            manual_erp = resolve_manual_erp_input(
+                manual.manual_erp,
+                manual_erp_repository,
+            )
+            require_manual_erp_for_force_terms(
+                tuple(propagation_options["force_terms"]),
+                manual_erp.provider if manual_erp is not None else None,
+            )
+            if manual_orbit_requires_erp(tuple(propagation_options["force_terms"])):
+                validate_manual_erp_coverage(
+                    frame_transformer=manual_erp_frame_transformer(
+                        frame_transformer,
+                        manual_erp.provider if manual_erp is not None else None,
+                    ),
+                    # AOS/LOS may begin after an epoch that still has to be
+                    # traversed by the RK4 state. Validate that hidden leg as
+                    # well as the requested access window.
+                    start_time=min(manual.epoch, payload.start_time),
+                    end_time=max(manual.epoch, payload.end_time),
+                )
             definition_source, keplerian, state_vector = canonical_manual_orbit(manual)
             runtime_name, propagator, propagator_metadata = build_manual_orbit_propagator(
                 propagator_name,
@@ -246,15 +279,15 @@ def create_ground_stations_router(
                 epoch=manual.epoch,
                 keplerian=keplerian,
                 state_vector=state_vector,
-                propagation_options=manual.propagation_options.canonical(
-                    propagator=propagator_name
-                ),
+                propagation_options=propagation_options,
                 frame_transformer=frame_transformer,
                 gravity_field=gravity_field,
+                manual_erp_provider=manual_erp.provider if manual_erp is not None else None,
+                manual_erp_snapshot_id=manual_erp.snapshot_id if manual_erp is not None else None,
             )
-        except (ManualOrbitError, ValueError) as exc:
+        except (ManualOrbitError, ManualErpError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return manual.name, runtime_name, propagator, {
+        source_metadata = {
             "kind": "manual",
             "name": manual.name,
             "propagator": propagator_metadata["id"],
@@ -267,6 +300,12 @@ def create_ground_stations_router(
             "ephemeris_reference_frame": "ITRF",
             "renderer_target_frame": "ITRF",
         }
+        if manual_erp is not None:
+            # Compact provenance is useful to an access result, but keep the
+            # historical central-force response shape unchanged when no ERP
+            # was selected.
+            source_metadata["manual_erp"] = manual_erp.payload()
+        return manual.name, runtime_name, propagator, source_metadata
 
     def calculate_access_windows(payload: AosLosRequest) -> dict:
         name, runtime_name, propagator, source_metadata = resolve_access_source(payload)
