@@ -183,6 +183,7 @@ plugins:
                 - Visualisation: user-guide/visualization.md
                 - 3D view: user-guide/three-d-view.md
                 - Timeline: user-guide/timeline.md
+                - Master Time Range: user-guide/master-time-range.md
                 - Import: user-guide/import.md
                 - Export: user-guide/export.md
             - Platform:
@@ -387,6 +388,7 @@ nav:
       - Espacio de trabajo: user-guide/workspace.md
       - Conceptos de espacio de trabajo: workspace.md
       - Capas: user-guide/layers.md
+      - Rango temporal maestro: user-guide/master-time-range.md
       - Visualización: user-guide/visualization.md
       - Vista 3D: user-guide/three-d-view.md
       - Línea temporal: user-guide/timeline.md

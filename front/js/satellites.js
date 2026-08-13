@@ -7,6 +7,10 @@ import {
     isPreciseProductRenderingUnavailable,
     resolvePreciseProductFrameStatus
 } from "./features/preciseProducts/frameStatus.js";
+import {
+    isInsideObjectRange,
+    validateObjectRange
+} from "./runtime/simulation/masterTimeRange.js";
 
 const logger = getLogger("satellites");
 
@@ -253,6 +257,13 @@ const oemEphemerisTrackById = new Map();
 // catalogue page only owns TLE/OMM records, while SP3 products need to remain
 // selectable after a catalogue refresh or a browser reload.
 const preciseProductEntryBySatelliteId = new Map();
+// Every finite source keeps its own published/generated coverage separate
+// from the scene-wide timeline. The Master Time Range may be wider than a
+// particular OEM, SP3 or manual propagation; this registry boundary prevents
+// that wider scene from becoming permission to interpolate or extrapolate a
+// finite object. OEM/manual ranges come from accepted samples and SP3 ranges
+// come from the server-validated per-satellite metadata. A rolling WebSocket
+// orbit deliberately never creates an intrinsic range.
 // Catalogue paths received through the WebSocket are rolling, real-time
 // previews. A simulated range needs its own timestamped ITRF ephemeris; it
 // must never reinterpret a rolling polyline as though it had been generated
@@ -305,6 +316,248 @@ let manualOrbitPreviewState = {
     vectorForceTerms: ["central"],
     vectorVelocity: null
 };
+
+function finiteEpochMilliseconds(value) {
+    if (value instanceof Date) {
+        const milliseconds = value.getTime();
+        return Number.isFinite(milliseconds) ? milliseconds : null;
+    }
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? value : null;
+    }
+    const raw = String(value ?? "").trim();
+    if (!raw) return null;
+    if (/^[+-]?\d+(?:\.\d+)?$/.test(raw)) {
+        const milliseconds = Number(raw);
+        return Number.isFinite(milliseconds) ? milliseconds : null;
+    }
+    const milliseconds = Date.parse(raw);
+    return Number.isFinite(milliseconds) ? milliseconds : null;
+}
+
+function intrinsicTimeRangeFromValidation(validation) {
+    if (!validation?.valid || !validation.range) return null;
+    const startTimeMs = validation.range.startDate.getTime();
+    const endTimeMs = validation.range.endDate.getTime();
+    if (!Number.isFinite(startTimeMs) || !Number.isFinite(endTimeMs) || endTimeMs < startTimeMs) {
+        return null;
+    }
+    return Object.freeze({
+        startTimeMs,
+        endTimeMs,
+        startTime: new Date(startTimeMs).toISOString(),
+        endTime: new Date(endTimeMs).toISOString(),
+        coverageStart: new Date(startTimeMs).toISOString(),
+        coverageEnd: new Date(endTimeMs).toISOString()
+    });
+}
+
+function intrinsicTimeRangeFromCandidates(candidates = []) {
+    for (const candidate of candidates) {
+        if (!candidate || typeof candidate !== "object") continue;
+        const normalized = intrinsicTimeRangeFromValidation(validateObjectRange(candidate));
+        if (normalized) return normalized;
+    }
+    return null;
+}
+
+function cloneIntrinsicTimeRange(range) {
+    if (!range) return null;
+    return {
+        startTimeMs: range.startTimeMs,
+        endTimeMs: range.endTimeMs,
+        startTime: range.startTime,
+        endTime: range.endTime,
+        coverageStart: range.coverageStart,
+        coverageEnd: range.coverageEnd
+    };
+}
+
+function trackIntrinsicTimeRange(track) {
+    if (!track || typeof track !== "object") return null;
+    return intrinsicTimeRangeFromCandidates([
+        track.intrinsicTimeRange,
+        track.timeRange,
+        track.coverage,
+        track
+    ]);
+}
+
+function preciseProductIntrinsicTimeRange(id) {
+    const normalizedId = String(id || "").trim();
+    if (!normalizedId) return null;
+    const entry = preciseProductEntryBySatelliteId.get(normalizedId)
+        || catalogEntryMetaBySatelliteId.get(normalizedId)
+        || null;
+    if (!entry || typeof entry !== "object") return null;
+    const inputMetadata = entry.inputMetadata && typeof entry.inputMetadata === "object"
+        ? entry.inputMetadata
+        : null;
+    const sp3 = entry.sp3 && typeof entry.sp3 === "object"
+        ? entry.sp3
+        : (inputMetadata?.sp3 && typeof inputMetadata.sp3 === "object" ? inputMetadata.sp3 : null);
+    // Prefer a satellite's own coverage to product-level coverage. A precise
+    // product may contain a member with a shorter valid sample series.
+    return intrinsicTimeRangeFromCandidates([
+        entry.intrinsicTimeRange,
+        entry.timeRange,
+        entry.coverage,
+        inputMetadata?.intrinsicTimeRange,
+        inputMetadata?.timeRange,
+        inputMetadata?.coverage,
+        sp3?.intrinsicTimeRange,
+        sp3?.timeRange,
+        sp3?.coverage,
+        sp3,
+        inputMetadata,
+        entry
+    ]);
+}
+
+function intrinsicTimeRangeForSatellite(id) {
+    const normalizedId = String(id || "").trim();
+    if (!normalizedId) return null;
+    return trackIntrinsicTimeRange(oemEphemerisTrackById.get(normalizedId))
+        || trackIntrinsicTimeRange(manualOrbitTrackById.get(normalizedId))
+        || preciseProductIntrinsicTimeRange(normalizedId);
+}
+
+function isFiniteEphemerisSource(id) {
+    const normalizedId = String(id || "").trim();
+    return Boolean(normalizedId) && (
+        oemEphemerisTrackById.has(normalizedId)
+        || manualOrbitTrackById.has(normalizedId)
+        || isFinitePreciseProductTrack(normalizedId)
+    );
+}
+
+/** Whether a source may be sampled at all, independent of the current date. */
+function hasValidatedFiniteCoverage(id) {
+    return !isFiniteEphemerisSource(id) || Boolean(intrinsicTimeRangeForSatellite(id));
+}
+
+function temporalDateForSimulationContext(simulationCtx, fallbackMs = Date.now()) {
+    if (simulationCtx?.mode !== "realtime" && simulationCtx?.date instanceof Date
+        && Number.isFinite(simulationCtx.date.getTime())) {
+        return simulationCtx.date;
+    }
+    return new Date(fallbackMs);
+}
+
+function intrinsicTimeStatusForSatellite(id, atTime) {
+    const range = intrinsicTimeRangeForSatellite(id);
+    const checkedAtMs = finiteEpochMilliseconds(atTime);
+    if (!range) {
+        const finiteSource = isFiniteEphemerisSource(id);
+        return {
+            // A finite source has an explicit temporal contract.  Missing or
+            // malformed coverage is not a legacy permission to query it at
+            // wall-clock `now`: the renderer, telemetry and range endpoint
+            // must all fail closed.  Non-finite catalogue sources (TLE/OMM)
+            // intentionally remain usable without an intrinsic interval.
+            status: finiteSource ? "out_of_range" : "active",
+            active: !finiteSource,
+            hasIntrinsicTimeRange: false,
+            range: null,
+            checkedAtMs: Number.isFinite(checkedAtMs) ? checkedAtMs : null,
+            reason: finiteSource ? "intrinsic-time-range-unavailable" : null
+        };
+    }
+    const inRange = Number.isFinite(checkedAtMs) && isInsideObjectRange(range, checkedAtMs);
+    return {
+        status: inRange ? "active" : "out_of_range",
+        active: inRange,
+        hasIntrinsicTimeRange: true,
+        range,
+        checkedAtMs: Number.isFinite(checkedAtMs) ? checkedAtMs : null,
+        reason: inRange ? null : "outside-intrinsic-time-range"
+    };
+}
+
+/**
+ * Return one finite object's non-extrapolable temporal coverage.
+ *
+ * The result is deliberately detached from the internal registry so callers
+ * cannot mutate a loaded OEM/manual/SP3 contract. `null` means that the
+ * source has no finite declared coverage (for example a rolling TLE layer).
+ */
+export function getObjectIntrinsicTimeRange(id) {
+    return cloneIntrinsicTimeRange(intrinsicTimeRangeForSatellite(id));
+}
+
+/** Backwards-friendly explicit alias for callers that operate on layers. */
+export const getSatelliteIntrinsicTimeRange = getObjectIntrinsicTimeRange;
+
+/**
+ * Report whether an object has data at a specific UTC instant without
+ * sampling it. Finite ephemerides fail closed: malformed/missing query time
+ * yields `out_of_range`, never an extrapolated state.
+ */
+export function getObjectMtrStatus(id, atTime = new Date()) {
+    const status = intrinsicTimeStatusForSatellite(id, atTime);
+    return {
+        ...status,
+        range: cloneIntrinsicTimeRange(status.range)
+    };
+}
+
+function normalizedObjectIds(ids) {
+    const values = Array.isArray(ids) ? ids : [ids];
+    return [...new Set(values
+        .map((id) => String(id || "").trim())
+        .filter(Boolean))];
+}
+
+/**
+ * Summarise the outer UTC envelope of the finite objects selected for an
+ * activation/import decision.
+ *
+ * This is deliberately an *envelope*, not a claim that every member has data
+ * in gaps between its samples. `ranges` keeps the individual contracts for a
+ * caller that needs a common-analysis intersection instead. TLE/OMM objects
+ * are open-ended propagators and therefore do not contribute a finite range;
+ * a finite OEM/SP3/manual object with no validated range makes the summary
+ * invalid rather than silently widening the MTR.
+ */
+export function getObjectIntrinsicTimeRangeUnion(ids) {
+    const objectIds = normalizedObjectIds(ids);
+    const finiteIds = [];
+    const missingIds = [];
+    const ranges = [];
+
+    for (const id of objectIds) {
+        if (!isFiniteEphemerisSource(id)) continue;
+        finiteIds.push(id);
+        const range = intrinsicTimeRangeForSatellite(id);
+        if (!range) {
+            missingIds.push(id);
+            continue;
+        }
+        ranges.push({ id, ...cloneIntrinsicTimeRange(range) });
+    }
+
+    const valid = missingIds.length === 0;
+    const union = valid && ranges.length
+        ? intrinsicTimeRangeFromCandidates([{
+            startTimeMs: Math.min(...ranges.map((range) => range.startTimeMs)),
+            endTimeMs: Math.max(...ranges.map((range) => range.endTimeMs))
+        }])
+        : null;
+
+    return {
+        valid,
+        reason: valid ? null : "intrinsic-time-range-unavailable",
+        objectIds: objectIds.slice(),
+        finiteIds: finiteIds.slice(),
+        missingIds: missingIds.slice(),
+        hasFiniteCoverage: ranges.length > 0,
+        range: cloneIntrinsicTimeRange(union),
+        ranges: ranges.map((range) => ({ ...range }))
+    };
+}
+
+/** Compact alias for activation controllers that operate on source ids. */
+export const getIntrinsicTimeRangeUnion = getObjectIntrinsicTimeRangeUnion;
 
 /**
  * Run finite-range ephemeris requests with a small, shared concurrency cap.
@@ -492,6 +745,17 @@ function compactPreciseProductEntry(entry = {}) {
         ["product_class", "productClass", "quality"],
         catalogMetadataText(catalogMeta, ["product_class", "productClass", "quality"], catalogMetadataText(sp3, ["product_class", "productClass", "quality"], ""))
     );
+    const intrinsicTimeRange = intrinsicTimeRangeFromCandidates([
+        entry?.intrinsicTimeRange,
+        entry?.timeRange,
+        entry?.coverage,
+        sp3?.intrinsicTimeRange,
+        sp3?.timeRange,
+        sp3?.coverage,
+        sp3,
+        inputMetadata,
+        entry
+    ]);
 
     return {
         ...entry,
@@ -503,6 +767,7 @@ function compactPreciseProductEntry(entry = {}) {
         tleSource: provider || catalogMetadataText(sp3, ["agency", "originator"], "Producto preciso"),
         dataQuality: productClass || catalogMetadataText(sp3, ["data_quality", "quality", "precision"], "Alta precisión"),
         objectId: catalogMetadataText(entry, ["objectId", "object_id", "satellite_id", "satelliteId"], id),
+        intrinsicTimeRange,
         inputMetadata: {
             ...((inputMetadata && typeof inputMetadata === "object") ? inputMetadata : {}),
             ...catalogMeta,
@@ -519,7 +784,10 @@ function compactPreciseProductEntry(entry = {}) {
             renderer_reference: inputMetadata?.renderer_reference ?? inputMetadata?.rendererReference
                 ?? entry?.renderer_reference ?? entry?.rendererReference ?? sp3.renderer_reference ?? sp3.rendererReference ?? null,
             earth_orientation: inputMetadata?.earth_orientation ?? inputMetadata?.earthOrientation
-                ?? entry?.earth_orientation ?? entry?.earthOrientation ?? sp3.earth_orientation ?? sp3.earthOrientation ?? null
+                ?? entry?.earth_orientation ?? entry?.earthOrientation ?? sp3.earth_orientation ?? sp3.earthOrientation ?? null,
+            // Persist the source member's finite domain through catalogue
+            // refreshes. It never changes the global MTR by itself.
+            intrinsicTimeRange
         }
     };
 }
@@ -557,6 +825,17 @@ function enrichPreciseProductSatelliteEntry(entry, product = null) {
         ?? sourceProduct.productId
         ?? sourceProduct.id
         ?? null;
+    const intrinsicTimeRange = intrinsicTimeRangeFromCandidates([
+        entry?.intrinsicTimeRange,
+        entry?.timeRange,
+        entry?.coverage,
+        sourceSp3?.intrinsicTimeRange,
+        sourceSp3?.timeRange,
+        sourceSp3?.coverage,
+        sourceSp3,
+        sourceProduct?.coverage,
+        sourceProduct
+    ]);
 
     return {
         ...entry,
@@ -564,6 +843,7 @@ function enrichPreciseProductSatelliteEntry(entry, product = null) {
         product_class: productClass,
         product_id: productId,
         product_name: entry.product_name ?? entry.productName ?? sourceProduct.name ?? null,
+        intrinsicTimeRange,
         sp3: {
             ...sourceSp3,
             provider: sourceSp3.provider ?? provider,
@@ -607,7 +887,8 @@ function enrichPreciseProductSatelliteEntry(entry, product = null) {
             eci_conversion: sourceSp3.eci_conversion ?? sourceSp3.eciConversion
                 ?? entry.eci_conversion ?? entry.eciConversion
                 ?? sourceProduct.eci_conversion ?? sourceProduct.eciConversion ?? null,
-            rendering: sourceSp3.rendering ?? entry.rendering ?? sourceProduct.rendering ?? null
+            rendering: sourceSp3.rendering ?? entry.rendering ?? sourceProduct.rendering ?? null,
+            intrinsicTimeRange
         }
     };
 }
@@ -622,6 +903,23 @@ function applyPreciseProductEntry(entry) {
     // new realization/EOP policy. Hide an old cached Cesium entity rather
     // than continuing to present a stale ITRF-looking orbit.
     clearUnavailablePreciseProductRendering(normalized.id);
+    // Project restoration may have activated a persisted SP3 id before the
+    // optional registry hydration completed. Reconcile that deliberately
+    // deferred activation now that its finite coverage and frame contract are
+    // known: SP3 must seed from the MTR, never remain a dangling WebSocket
+    // subscription at wall-clock now.
+    if (activeLayerSatelliteIds.has(normalized.id)) {
+        activeLayerIdsDirty = true;
+        wsClient?.unsubscribe?.([normalized.id]);
+        if (canRenderPreciseProduct(normalized.id) && hasValidatedFiniteCoverage(normalized.id)) {
+            void primeSatelliteTimelineRange(normalized.id);
+        } else {
+            clearUnavailablePreciseProductRendering(normalized.id);
+            const state = satelliteState[normalized.id];
+            if (state) applyOutOfTimeVisualState(normalized.id, state, true);
+        }
+        emitObjectStateChanged({ sourceId: normalized.id, reason: "precise-product-hydration" });
+    }
     return normalized.id;
 }
 
@@ -982,9 +1280,34 @@ function getExactTimelineEphemerisWindow(id, simulationCtx) {
     return null;
 }
 
+function intersectEphemerisWindowWithIntrinsicRange(id, ephemerisWindow) {
+    if (!ephemerisWindow) return null;
+    const range = intrinsicTimeRangeForSatellite(id);
+    // A finite SP3 is never queryable without a validated member coverage.
+    // Treating an old/hydrated record as unrestricted would turn a missing
+    // metadata field into silent extrapolation. TLE/OMM records deliberately
+    // keep the normal open-ended propagator path.
+    if (!range) return isFinitePreciseProductTrack(id) ? null : ephemerisWindow;
+    const startMs = Math.max(ephemerisWindow.startMs, range.startTimeMs);
+    const endMs = Math.min(ephemerisWindow.endMs, range.endTimeMs);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return null;
+    return {
+        ...ephemerisWindow,
+        startMs,
+        endMs,
+        // One exact endpoint is a valid object state but cannot form a
+        // polyline/interpolation request. Treat it as no renderable window.
+        renderable: endMs > startMs,
+        intrinsicRange: range
+    };
+}
+
 function rangeEphemerisKey(id, simulationCtx) {
-    const window = getExactTimelineEphemerisWindow(id, simulationCtx);
-    return window ? `${rangeEphemerisRevision}|${id}|${window.kind}|${window.startMs}|${window.endMs}` : null;
+    const requestedWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
+    const window = intersectEphemerisWindowWithIntrinsicRange(id, requestedWindow);
+    return window && window.renderable !== false
+        ? `${rangeEphemerisRevision}|${id}|${window.kind}|${window.startMs}|${window.endMs}`
+        : null;
 }
 
 function rangeEphemerisStepSeconds(ephemerisWindow) {
@@ -1008,6 +1331,20 @@ function parseRangeEphemeris(payload, key, id = "") {
 
     for (let index = 1; index < parsed.length; index += 1) {
         if (parsed[index].timeMs <= parsed[index - 1].timeMs) return null;
+    }
+
+    const intrinsicRange = intrinsicTimeRangeForSatellite(id);
+    // A finite SP3 response must be traceable to one validated source range.
+    // Cache/network races can still call this parser after a registry refresh,
+    // so enforce the same fail-closed rule here as at request construction.
+    if (isFinitePreciseProductTrack(id) && !intrinsicRange) {
+        return null;
+    }
+    if (intrinsicRange && parsed.some((point) => !isInsideObjectRange(intrinsicRange, point.timeMs))) {
+        // A server response which strays beyond the registered finite source
+        // domain is discarded as a whole. Trimming it here would hide a
+        // contract violation and could bridge a gap with interpolation.
+        return null;
     }
 
     const runtimeFrame = normalizeReferenceFrame(
@@ -1071,7 +1408,10 @@ function applyRangeEphemerisToState(viewer, id, state, ephemeris) {
 }
 
 function requestRangeEphemeris(viewer, id, state, simulationCtx) {
-    const ephemerisWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
+    const ephemerisWindow = intersectEphemerisWindowWithIntrinsicRange(
+        id,
+        getExactTimelineEphemerisWindow(id, simulationCtx)
+    );
     const key = rangeEphemerisKey(id, simulationCtx);
     if (!key || !ephemerisWindow || isLocalEphemerisTrack(id) || !canRenderPreciseProduct(id)) return Promise.resolve(null);
     if (state.rangeEphemeris?.key === key) return Promise.resolve(state.rangeEphemeris);
@@ -1140,7 +1480,10 @@ function requestRangeEphemeris(viewer, id, state, simulationCtx) {
  * the same physical samples.
  */
 function loadRangeEphemerisForBootstrap(id, simulationCtx) {
-    const ephemerisWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
+    const ephemerisWindow = intersectEphemerisWindowWithIntrinsicRange(
+        id,
+        getExactTimelineEphemerisWindow(id, simulationCtx)
+    );
     const key = rangeEphemerisKey(id, simulationCtx);
     if (!key || !ephemerisWindow || isLocalEphemerisTrack(id) || !canRenderPreciseProduct(id)) return Promise.resolve(null);
 
@@ -1259,7 +1602,9 @@ function bootstrapSatelliteRangeState(viewer, id, simulationCtx) {
 }
 
 function primeSatelliteTimelineRange(id) {
-    if (!isFinitePreciseProductTrack(id) || !canRenderPreciseProduct(id)) {
+    if (!isFinitePreciseProductTrack(id)
+        || !hasValidatedFiniteCoverage(id)
+        || !canRenderPreciseProduct(id)) {
         return Promise.resolve(null);
     }
     const simulationCtx = resolveSimulationTimelineContext();
@@ -1363,12 +1708,25 @@ function hasValidSimulationTrackWindow(state) {
     return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs;
 }
 
-function isOutsideSimulationTrackWindow(state, simulationDate) {
-    if (!hasValidSimulationTrackWindow(state) || !(simulationDate instanceof Date)) {
-        return false;
+function isOutsideSimulationTrackWindow(id, state, simulationDate) {
+    if (!(simulationDate instanceof Date)) {
+        return isFiniteEphemerisSource(id);
     }
     const simMs = simulationDate.getTime();
     if (!Number.isFinite(simMs)) {
+        return isFiniteEphemerisSource(id);
+    }
+
+    // The source range is authoritative even when the current local state is
+    // a smaller cached/requested sub-window. This catches a finite SP3 that
+    // has not been materialised yet and prevents manual/OEM realtime paths
+    // from retaining their last marker after their final sample.
+    const intrinsicStatus = intrinsicTimeStatusForSatellite(id, simMs);
+    if (isFiniteEphemerisSource(id)) {
+        return intrinsicStatus.active !== true;
+    }
+
+    if (!hasValidSimulationTrackWindow(state)) {
         return false;
     }
     const startMs = Number(state.rangeEphemerisStartMs ?? state.simTrackStartMs);
@@ -1385,6 +1743,7 @@ function applyOutOfTimeVisualState(id, state, outOfTime) {
     }
 
     state.isOutOfTimeVisualState = outOfTime;
+    state.temporalStatus = outOfTime ? "out_of_range" : "active";
     const entity = state.entity;
 
     if (outOfTime) {
@@ -1425,7 +1784,13 @@ function applySatelliteVisibility(id, state) {
     }
 
     const isActiveLayer = activeLayerSatelliteIds.has(id);
-    const outOfTime = state.isOutOfTimeVisualState === true;
+    const simulationCtx = resolveSimulationTimelineContext();
+    const temporalStatus = intrinsicTimeStatusForSatellite(
+        id,
+        temporalDateForSimulationContext(simulationCtx)
+    );
+    const outOfTime = state.isOutOfTimeVisualState === true || temporalStatus.active !== true;
+    state.temporalStatus = outOfTime ? "out_of_range" : "active";
     const visible = isActiveLayer
         && !hiddenSatelliteIds.has(id)
         && !outOfTime
@@ -2131,8 +2496,15 @@ function startSmoothUpdate(viewer) {
                 continue;
             }
 
-            const outsideTrackWindow = useSimulationOrbit && isOutsideSimulationTrackWindow(state, simulationCtx?.date);
+            const temporalDate = temporalDateForSimulationContext(simulationCtx, now);
+            const outsideTrackWindow = isOutsideSimulationTrackWindow(id, state, temporalDate);
             applyOutOfTimeVisualState(id, state, outsideTrackWindow);
+            if (outsideTrackWindow) {
+                // Do not interpolate a stale last state while the object is
+                // out of its own finite source range. The retained runtime
+                // record only lets it reactivate when the timeline returns.
+                continue;
+            }
 
             // A manual orbit is a local, sampled propagated track rather than a
             // catalogue WebSocket subscription. Keep its marker moving in
@@ -2443,6 +2815,19 @@ function updateSatelliteState(viewer, satData) {
         clearUnavailablePreciseProductRendering(id);
         return;
     }
+    const temporalStatus = intrinsicTimeStatusForSatellite(
+        id,
+        temporalDateForSimulationContext(resolveSimulationTimelineContext(), receivedAtMs)
+    );
+    if (temporalStatus.active !== true) {
+        const existing = satelliteState[id];
+        if (existing) {
+            applyOutOfTimeVisualState(id, existing, true);
+        }
+        // A rolling WebSocket packet is never a substitute for an OEM/SP3/
+        // manual sample outside that object's intrinsic finite domain.
+        return;
+    }
     const isNewSatellite = !satelliteState[id];
 
     // Si el satélite está oculto, ignorar por completo updates para ahorrar CPU.
@@ -2744,6 +3129,79 @@ export function getSatelliteDisplayName(id, fallback = "") {
     return name || String(fallback || normalizedId).trim();
 }
 
+function oemTelemetryDescriptor(track, frameTimeMs) {
+    if (!track || typeof track !== "object") return null;
+    const range = trackIntrinsicTimeRange(track);
+    return {
+        start_time_ms: range?.startTimeMs ?? null,
+        end_time_ms: range?.endTimeMs ?? null,
+        samples: Number.isFinite(Number(track.samples)) ? Number(track.samples) : null,
+        file_name: track.fileName || null,
+        object_name: track.objectName || null,
+        object_id: track.objectId || null,
+        center_name: track.centerName || null,
+        ref_frame: track.refFrame || null,
+        time_system: track.timeSystem || null,
+        start_time_raw: track.startTimeRaw || null,
+        stop_time_raw: track.stopTimeRaw || null,
+        is_in_time_window: range && Number.isFinite(frameTimeMs)
+            ? isInsideObjectRange(range, frameTimeMs)
+            : false
+    };
+}
+
+function outOfRangeTelemetry({
+    id,
+    sourceFormat,
+    sourceOrigin,
+    sp3,
+    frameStatus,
+    oemTrack,
+    frameTimeMs,
+    temporalStatus
+}) {
+    const range = temporalStatus?.range || null;
+    const sourceFrame = sourceFormat === "OEM"
+        ? String(oemTrack?.refFrame || "").trim().toUpperCase() || null
+        : sourceFormat === "SP3"
+            // A native-only product can retain a compatibility-looking
+            // `returnedFrame` diagnostic even though no terrestrial vector
+            // was actually returned. Its intrinsic source realization is
+            // the only truthful frame to show while it is out of range.
+            ? frameStatus?.nativeFrame || frameStatus?.returnedFrame || null
+            : "ITRF";
+    return {
+        id,
+        source_format: sourceFormat,
+        source_origin: sourceOrigin,
+        position: null,
+        position_ecef_m: null,
+        position_frame: sourceFrame,
+        position_frame_display: frameStatus?.displayFrame || sourceFrame,
+        geo: null,
+        velocity: { x: null, y: null, z: null },
+        velocity_frame: sourceFrame,
+        velocity_ecef_m_s: null,
+        acceleration_ecef_m_s2: null,
+        oem: oemTelemetryDescriptor(oemTrack, frameTimeMs),
+        sp3,
+        renderer_reference: frameStatus || null,
+        earth_orientation: frameStatus?.earthOrientation || null,
+        rendering_available: frameStatus?.available ?? null,
+        intrinsic_time_range: cloneIntrinsicTimeRange(range),
+        has_intrinsic_time_range: temporalStatus?.hasIntrinsicTimeRange === true,
+        temporal_status: "out_of_range",
+        object_status: "out_of_range",
+        out_of_range: true,
+        out_of_range_reason: temporalStatus?.reason || "outside-intrinsic-time-range",
+        out_of_range_message: "Este objeto no tiene datos para la época actual.",
+        is_visible: false,
+        is_active: false,
+        runtime_state: "OUT_OF_RANGE",
+        timestamp_ms: frameTimeMs
+    };
+}
+
 export function getSatelliteTelemetry(id) {
     const entryMeta = getCatalogEntryMeta(id) || {};
     const sourceFormat = String(entryMeta.sourceFormat || "TLE").toUpperCase();
@@ -2756,10 +3214,28 @@ export function getSatelliteTelemetry(id) {
     const metadataPreciseFrameStatus = sourceFormat === "SP3"
         ? resolvePreciseProductFrameStatus({ ...entryMeta, sp3 })
         : null;
+    const simulationCtx = resolveSimulationTimelineContext();
+    const usesTimelineFrame = Boolean(simulationCtx && simulationCtx.mode !== "realtime");
+    const nowMs = Date.now();
+    const frameTimeMs = temporalDateForSimulationContext(simulationCtx, nowMs).getTime();
+    const oemTrack = oemEphemerisTrackById.get(id);
+    const temporalStatus = intrinsicTimeStatusForSatellite(id, frameTimeMs);
     // Native-only products remain visible as Layers/Input provenance, but no
     // Cartesian state can be shown or used for station geometry until the
     // backend has explicitly provided a terrestrial realization operation.
     if (metadataPreciseFrameStatus?.available === false) {
+        if (temporalStatus.active !== true) {
+            return outOfRangeTelemetry({
+                id,
+                sourceFormat,
+                sourceOrigin,
+                sp3,
+                frameStatus: metadataPreciseFrameStatus,
+                oemTrack,
+                frameTimeMs,
+                temporalStatus
+            });
+        }
         return {
             id,
             source_format: sourceFormat,
@@ -2777,12 +3253,28 @@ export function getSatelliteTelemetry(id) {
             rendering_available: false,
             runtime_state: "UNAVAILABLE",
             is_visible: !hiddenSatelliteIds.has(id),
-            timestamp_ms: Date.now()
+            is_active: activeLayerSatelliteIds.has(id),
+            intrinsic_time_range: cloneIntrinsicTimeRange(temporalStatus.range),
+            has_intrinsic_time_range: temporalStatus.hasIntrinsicTimeRange === true,
+            temporal_status: temporalStatus.status,
+            timestamp_ms: frameTimeMs
         };
     }
 
     const state = satelliteState[id];
     if (!state || !state.entity) {
+        if (temporalStatus.active !== true) {
+            return outOfRangeTelemetry({
+                id,
+                sourceFormat,
+                sourceOrigin,
+                sp3,
+                frameStatus: metadataPreciseFrameStatus,
+                oemTrack,
+                frameTimeMs,
+                temporalStatus
+            });
+        }
         return null;
     }
     // A range/ephemeris response can carry a newer realization/EOP diagnostic
@@ -2792,8 +3284,18 @@ export function getSatelliteTelemetry(id) {
         ? (state.frameStatus || metadataPreciseFrameStatus)
         : null;
 
-    const simulationCtx = resolveSimulationTimelineContext();
-    const usesTimelineFrame = Boolean(simulationCtx && simulationCtx.mode !== "realtime");
+    if (temporalStatus.active !== true) {
+        return outOfRangeTelemetry({
+            id,
+            sourceFormat,
+            sourceOrigin,
+            sp3,
+            frameStatus: preciseFrameStatus || metadataPreciseFrameStatus,
+            oemTrack,
+            frameTimeMs,
+            temporalStatus
+        });
+    }
     const simulatedKinematics = usesTimelineFrame
         ? sampleSimulationTrackKinematics(state, simulationCtx.date)
         : null;
@@ -2809,7 +3311,6 @@ export function getSatelliteTelemetry(id) {
         return null;
     }
 
-    const oemTrack = oemEphemerisTrackById.get(id);
     const manualTrack = manualOrbitTrackById.get(id);
     // TLE/SGP4 state is converted from TEME to Cesium-compatible ECEF by the
     // backend. An OEM can declare another source frame, so only call it ECEF
@@ -2855,31 +3356,10 @@ export function getSatelliteTelemetry(id) {
 
     const speedKmS = Number.isFinite(speed) ? speed / 1000 : null;
     const speedKmH = Number.isFinite(speed) ? speed * 3.6 : null;
-    const nowMs = Date.now();
-    const frameTimeMs = usesTimelineFrame ? simulationCtx.date.getTime() : nowMs;
     const telemetryAgeMs = usesTimelineFrame ? null : nowMs - (state.lastMessageTime || nowMs);
     const propagationFutureHours = getPropagationHoursForSatellite(id);
 
-    let oem = null;
-    if (sourceFormat === "OEM" && oemTrack) {
-        const startMs = Number(oemTrack.startTimeMs);
-        const endMs = Number(oemTrack.endTimeMs);
-        const hasWindow = Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs;
-        oem = {
-            start_time_ms: hasWindow ? startMs : null,
-            end_time_ms: hasWindow ? endMs : null,
-            samples: Number.isFinite(Number(oemTrack.samples)) ? Number(oemTrack.samples) : null,
-            file_name: oemTrack.fileName || null,
-            object_name: oemTrack.objectName || null,
-            object_id: oemTrack.objectId || null,
-            center_name: oemTrack.centerName || null,
-            ref_frame: oemTrack.refFrame || null,
-            time_system: oemTrack.timeSystem || null,
-            start_time_raw: oemTrack.startTimeRaw || null,
-            stop_time_raw: oemTrack.stopTimeRaw || null,
-            is_in_time_window: hasWindow ? (frameTimeMs >= startMs && frameTimeMs <= endMs) : null
-        };
-    }
+    const oem = sourceFormat === "OEM" ? oemTelemetryDescriptor(oemTrack, frameTimeMs) : null;
     const earthCenterDistanceM = vectorMagnitude(positionVector);
     const footprintAngularRadius = positionEcef ? computeFootprintAngularRadius(positionEcef) : 0;
     const footprintRadiusM = footprintAngularRadius > 0
@@ -2927,7 +3407,13 @@ export function getSatelliteTelemetry(id) {
         // Kept alongside the camel-case catalog metadata for consumers that
         // build their object details directly from telemetry.
         manual_orbit: manualTrack?.manualOrbit ? cloneManualOrbitValue(manualTrack.manualOrbit) : null,
-        is_visible: !hiddenSatelliteIds.has(id),
+        intrinsic_time_range: cloneIntrinsicTimeRange(temporalStatus.range),
+        has_intrinsic_time_range: temporalStatus.hasIntrinsicTimeRange === true,
+        temporal_status: "active",
+        object_status: "active",
+        out_of_range: false,
+        is_visible: !hiddenSatelliteIds.has(id) && isInView,
+        is_active: isActive,
         runtime_state: !isActive ? "IDLE" : isInView ? "ACTIVE" : "OUT OF VIEW",
         telemetry_age_ms: telemetryAgeMs,
         timestamp_ms: frameTimeMs
@@ -2953,18 +3439,23 @@ export function setSatelliteLayerActive(id, active) {
         }
         activeLayerSatelliteIds.add(id);
         activeLayerIdsDirty = true;
-        if (!isLocalEphemerisTrack(id) && canRenderPreciseProduct(id)) {
+        const finitePrecise = isFinitePreciseProductTrack(id);
+        const canSampleFiniteSource = hasValidatedFiniteCoverage(id);
+        if (!isLocalEphemerisTrack(id) && canRenderPreciseProduct(id) && canSampleFiniteSource) {
             wsClient?.subscribe([id]);
         }
         // An SP3 range can be historical, so its WebSocket update at `now`
         // may contain no position. Prime the layer directly from its exact
         // simulation interval when one is active.
-        if (isFinitePreciseProductTrack(id) && canRenderPreciseProduct(id)) {
+        if (finitePrecise && canRenderPreciseProduct(id) && canSampleFiniteSource) {
             void primeSatelliteTimelineRange(id);
-        } else if (isFinitePreciseProductTrack(id)) {
+        } else if (finitePrecise) {
             // Keep the layer and its provenance selectable, but do not make a
-            // native realization appear as a Cesium/ITRF orbit.
+            // native realization or coverage-less finite product appear as a
+            // Cesium/ITRF orbit.
             clearUnavailablePreciseProductRendering(id);
+            const state = satelliteState[id];
+            if (state) applyOutOfTimeVisualState(id, state, true);
         }
         emitObjectStateChanged({ sourceId: id, reason: "activation" });
         return true;
@@ -3016,12 +3507,20 @@ export function setAllSatelliteLayersActive(active) {
         activeLayerSatelliteIds.clear();
         nextIds.forEach((id) => activeLayerSatelliteIds.add(id));
         activeLayerIdsDirty = true;
-        wsClient?.setSubscriptions(nextIds.filter((id) => !isLocalEphemerisTrack(id) && canRenderPreciseProduct(id)));
+        wsClient?.setSubscriptions(nextIds.filter((id) => (
+            !isLocalEphemerisTrack(id)
+            && canRenderPreciseProduct(id)
+            && hasValidatedFiniteCoverage(id)
+        )));
         nextIds.forEach((id) => {
-            if (isFinitePreciseProductTrack(id) && canRenderPreciseProduct(id)) {
+            if (isFinitePreciseProductTrack(id)
+                && canRenderPreciseProduct(id)
+                && hasValidatedFiniteCoverage(id)) {
                 void primeSatelliteTimelineRange(id);
             } else if (isFinitePreciseProductTrack(id)) {
                 clearUnavailablePreciseProductRendering(id);
+                const state = satelliteState[id];
+                if (state) applyOutOfTimeVisualState(id, state, true);
             }
         });
         emitObjectStateChanged({ scope: "all-satellites", reason: "activation" });
@@ -3118,6 +3617,21 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
     }
 
     const simulationCtx = resolveSimulationTimelineContext();
+    const temporalDate = temporalDateForSimulationContext(simulationCtx);
+    const isOutOfIntrinsicRange = isOutsideSimulationTrackWindow(id, state, temporalDate);
+    applyOutOfTimeVisualState(id, state, isOutOfIntrinsicRange);
+    if (isOutOfIntrinsicRange) {
+        // Keep the layer selected but remove every render/interpolation path.
+        // It can reappear only if the shared timeline returns to its own
+        // intrinsic coverage; no old marker or extrapolated polyline survives.
+        state.awaitingRangeEphemeris = false;
+        if (state.orbitEntity) {
+            viewer.entities.remove(state.orbitEntity);
+            state.orbitEntity = null;
+        }
+        remove2DOverlays(viewer, state);
+        return;
+    }
     const rangeKey = rangeEphemerisKey(id, simulationCtx);
     const exactTimelineWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
     const activeRangeEphemeris = rangeKey && state.rangeEphemeris?.key === rangeKey
@@ -3183,22 +3697,6 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
     const effectiveHorizonHours = Number.isFinite(effectiveHorizonHoursRaw) && effectiveHorizonHoursRaw > 0
         ? effectiveHorizonHoursRaw
         : (Number.isFinite(sourceFutureOrbitHours) && sourceFutureOrbitHours > 0 ? sourceFutureOrbitHours : 12);
-
-    const isOutOfTimeInRange = Boolean(
-        simulationCtx
-        && simulationCtx.mode === "range"
-        && isOutsideSimulationTrackWindow(state, simulationCtx.date)
-    );
-
-    applyOutOfTimeVisualState(id, state, isOutOfTimeInRange);
-    if (isOutOfTimeInRange) {
-        if (state.orbitEntity) {
-            viewer.entities.remove(state.orbitEntity);
-            state.orbitEntity = null;
-        }
-        remove2DOverlays(viewer, state);
-        return;
-    }
 
     state.simOrbitPositions = toCartesianArray(horizonClippedOrbit);
     const sourceSampleTimes = normalizedOrbit.sampleTimesMs;
@@ -3330,6 +3828,15 @@ function updateSatelliteOrbit(viewer, satData) {
 
     const state = satelliteState[id];
     if (!state) {
+        return;
+    }
+
+    const temporalStatus = intrinsicTimeStatusForSatellite(
+        id,
+        temporalDateForSimulationContext(resolveSimulationTimelineContext())
+    );
+    if (temporalStatus.active !== true) {
+        applyOutOfTimeVisualState(id, state, true);
         return;
     }
 
@@ -3881,6 +4388,13 @@ export function importOemEphemerisTrack(content, fileName = "") {
 
     const id = buildUniqueCustomTrackId(parsed.objectName);
     const first = parsed.points[0];
+    const intrinsicTimeRange = intrinsicTimeRangeFromCandidates([{
+        startTimeMs: first.timeMs,
+        endTimeMs: parsed.points[parsed.points.length - 1].timeMs
+    }]);
+    if (!intrinsicTimeRange) {
+        throw new Error("OEM inválido: el intervalo temporal de las muestras no es válido.");
+    }
     const firstPosition = new Cesium.Cartesian3(first.x, first.y, first.z);
     const state = ensureSatelliteState(currentViewer, id, firstPosition, Cesium.Quaternion.IDENTITY);
     state.simTrackStartMs = parsed.points[0].timeMs;
@@ -3901,11 +4415,17 @@ export function importOemEphemerisTrack(content, fileName = "") {
         name: parsed.metadata?.objectName || id,
         objectId: parsed.metadata?.objectId || "",
         sourceFormat: "OEM",
-        sourceOrigin: "CUSTOM"
+        sourceOrigin: "CUSTOM",
+        inputMetadata: {
+            start_time: intrinsicTimeRange.startTime,
+            end_time: intrinsicTimeRange.endTime,
+            intrinsicTimeRange
+        }
     }, id));
 
     activeLayerSatelliteIds.add(id);
     oemEphemerisTrackById.set(id, {
+        intrinsicTimeRange,
         startTimeMs: parsed.points[0].timeMs,
         endTimeMs: parsed.points[parsed.points.length - 1].timeMs,
         samples: orbit.length,
@@ -5313,9 +5833,16 @@ export function importManualOrbitTrack(payload = {}) {
     const initialOrientation = shouldUse3DModelForSatellite(id) && initialVelocity
         ? calculateOrientation(initialPoint, initialVelocity)
         : Cesium.Quaternion.IDENTITY;
-    const state = ensureSatelliteState(currentViewer, id, initialPosition, initialOrientation);
     const orbit = points.map(({ x, y, z }) => ({ x, y, z }));
     const spanHours = Math.max(1 / 3600, (points[points.length - 1].timeMs - points[0].timeMs) / 3600000);
+    const intrinsicTimeRange = intrinsicTimeRangeFromCandidates([{
+        startTimeMs: points[0].timeMs,
+        endTimeMs: points[points.length - 1].timeMs
+    }]);
+    if (!intrinsicTimeRange) {
+        throw new Error("La órbita manual no tiene un intervalo temporal válido.");
+    }
+    const state = ensureSatelliteState(currentViewer, id, initialPosition, initialOrientation);
 
     state.previousPosition = initialPosition;
     state.targetPosition = initialPosition;
@@ -5337,6 +5864,7 @@ export function importManualOrbitTrack(payload = {}) {
         }
         : null;
     const manualTrack = {
+        intrinsicTimeRange,
         startTimeMs: points[0].timeMs,
         endTimeMs: points[points.length - 1].timeMs,
         samples: points.length,
@@ -5511,6 +6039,106 @@ export function hasLoadedOemEphemerisTracks() {
     return oemEphemerisTrackById.size > 0;
 }
 
+/** True when the workspace contains at least one generated finite manual track. */
+export function hasLoadedManualOrbitTracks() {
+    return manualOrbitTrackById.size > 0;
+}
+
+function loadedTrackTimeRanges(tracks, source) {
+    return [...tracks.entries()]
+        .map(([id, track]) => {
+            const range = trackIntrinsicTimeRange(track);
+            if (!range) return null;
+            return {
+                id,
+                source,
+                startTimeMs: range.startTimeMs,
+                endTimeMs: range.endTimeMs,
+                startTime: range.startTime,
+                endTime: range.endTime
+            };
+        })
+        .filter(Boolean);
+}
+
+/**
+ * Return each generated manual-orbit domain independently. Do not reduce
+ * these to aggregate bounds for a conjunction/comparison calculation: gaps
+ * between independent propagated arcs are not valid data.
+ */
+export function getLoadedManualOrbitTimeRanges() {
+    return loadedTrackTimeRanges(manualOrbitTrackById, "MANUAL")
+        .sort((left, right) => (
+            left.startTimeMs - right.startTimeMs
+            || left.endTimeMs - right.endTimeMs
+            || String(left.id).localeCompare(String(right.id))
+        ));
+}
+
+export function getLoadedManualOrbitTimeBounds() {
+    const ranges = getLoadedManualOrbitTimeRanges();
+    if (!ranges.length) return null;
+    return {
+        startTimeMs: Math.min(...ranges.map((range) => range.startTimeMs)),
+        endTimeMs: Math.max(...ranges.map((range) => range.endTimeMs))
+    };
+}
+
+/**
+ * Return every active SP3 layer's individual validated coverage. Registered
+ * but inactive products do not constrain the MTR until the operator adds
+ * them to the scene.
+ */
+export function getLoadedPreciseProductTimeRanges({ activeOnly = true } = {}) {
+    return [...preciseProductEntryBySatelliteId.keys()]
+        .filter((id) => !activeOnly || activeLayerSatelliteIds.has(id))
+        .map((id) => {
+            const range = preciseProductIntrinsicTimeRange(id);
+            if (!range) return null;
+            return {
+                id,
+                source: "SP3",
+                startTimeMs: range.startTimeMs,
+                endTimeMs: range.endTimeMs,
+                startTime: range.startTime,
+                endTime: range.endTime
+            };
+        })
+        .filter(Boolean)
+        .sort((left, right) => (
+            left.startTimeMs - right.startTimeMs
+            || left.endTimeMs - right.endTimeMs
+            || String(left.id).localeCompare(String(right.id))
+        ));
+}
+
+/** Whether at least one active SP3 layer contributes a finite domain. */
+export function hasLoadedPreciseProductTracks() {
+    return getLoadedPreciseProductTimeRanges().length > 0;
+}
+
+/**
+ * Aggregate all finite source ranges as individual records. This is the API
+ * MTR consumers should use; callers that need one scene bound may take the
+ * minimum/maximum deliberately, while joint analyses must retain the list.
+ */
+export function getLoadedFiniteEphemerisTimeRanges() {
+    return [
+        ...getLoadedOemEphemerisTimeRanges().map((range) => ({ ...range, source: "OEM" })),
+        ...getLoadedManualOrbitTimeRanges(),
+        ...getLoadedPreciseProductTimeRanges()
+    ].sort((left, right) => (
+        left.startTimeMs - right.startTimeMs
+        || left.endTimeMs - right.endTimeMs
+        || String(left.source).localeCompare(String(right.source))
+        || String(left.id).localeCompare(String(right.id))
+    ));
+}
+
+export function hasLoadedFiniteEphemerisTracks() {
+    return getLoadedFiniteEphemerisTimeRanges().length > 0;
+}
+
 /**
  * Return each valid OEM coverage independently.
  *
@@ -5522,12 +6150,15 @@ export function hasLoadedOemEphemerisTracks() {
 export function getLoadedOemEphemerisTimeRanges() {
     return [...oemEphemerisTrackById.entries()]
         .map(([id, item]) => {
-            const startTimeMs = Number(item?.startTimeMs);
-            const endTimeMs = Number(item?.endTimeMs);
-            if (!Number.isFinite(startTimeMs) || !Number.isFinite(endTimeMs) || endTimeMs <= startTimeMs) {
-                return null;
-            }
-            return { id, startTimeMs, endTimeMs };
+            const range = trackIntrinsicTimeRange(item);
+            if (!range) return null;
+            return {
+                id,
+                startTimeMs: range.startTimeMs,
+                endTimeMs: range.endTimeMs,
+                startTime: range.startTime,
+                endTime: range.endTime
+            };
         })
         .filter(Boolean)
         .sort((left, right) => (

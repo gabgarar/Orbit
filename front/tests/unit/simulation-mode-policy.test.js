@@ -6,6 +6,7 @@ import { resolveSimulationModeRequest } from "../../js/runtime/simulation/modePo
 for (const [label, domains] of [
     ["OEM", { hasOemDomain: true }],
     ["SP3", { hasSp3Domain: true }],
+    ["orbita manual", { hasManualDomain: true }],
     ["OEM y SP3", { hasOemDomain: true, hasSp3Domain: true }]
 ]) {
     test(`${label} finito fuerza Rango cuando se solicita Real time`, () => {

@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildInfoText, getOrbitInfoFromTelemetry } from "../../js/objectSidebar.js";
+import {
+    buildInfoText,
+    getOrbitInfoFromTelemetry,
+    isNativeOemEphemerisFileName
+} from "../../js/objectSidebar.js";
+
+test("every .oem extension is classified as a native finite ephemeris", () => {
+    assert.equal(isNativeOemEphemerisFileName("trajectory.oem"), true);
+    assert.equal(isNativeOemEphemerisFileName("TRAJECTORY.OEM"), true);
+    assert.equal(isNativeOemEphemerisFileName("trajectory.oem.txt"), false);
+    assert.equal(isNativeOemEphemerisFileName("catalog.tle"), false);
+});
 
 test("telemetry orbit fallback returns a detail payload without a catalogue mission helper", () => {
     assert.doesNotThrow(() => getOrbitInfoFromTelemetry({

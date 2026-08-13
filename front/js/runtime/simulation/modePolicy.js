@@ -21,14 +21,16 @@ const SUPPORTED_MODES = new Set([
  */
 export function resolveSimulationModeRequest(requestedMode, {
     hasOemDomain = false,
-    hasSp3Domain = false
+    hasSp3Domain = false,
+    hasManualDomain = false
 } = {}) {
     const requested = SUPPORTED_MODES.has(requestedMode)
         ? requestedMode
         : SIMULATION_MODE_REALTIME;
     const finiteSources = [
         ...(hasOemDomain ? ["OEM"] : []),
-        ...(hasSp3Domain ? ["SP3"] : [])
+        ...(hasSp3Domain ? ["SP3"] : []),
+        ...(hasManualDomain ? ["órbita manual"] : [])
     ];
     const finiteDomainActive = finiteSources.length > 0;
     const isFiniteDomainIncompatibleMode = requested === SIMULATION_MODE_REALTIME
@@ -52,4 +54,3 @@ export function resolveSimulationModeRequest(requestedMode, {
         finiteSources
     };
 }
-

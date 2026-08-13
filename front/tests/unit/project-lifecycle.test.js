@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createProjectLifecycle } from "../../js/runtime/projectLifecycle.js";
 
@@ -370,4 +371,120 @@ test("project lifecycle persists native celestial body layers without persisting
         globalThis.window = previousWindow;
         globalThis.document = previousDocument;
     }
+});
+
+test("project lifecycle omits local OEM ids and safely replays saved SP3 ids after registry hydration", async () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const events = new EventTarget();
+    globalThis.window = events;
+    globalThis.document = { querySelectorAll: () => [] };
+    try {
+        const localOemId = "OEM local source";
+        const preciseId = "precise:project-product:G01";
+        let projectName = "OEM and SP3";
+        let preciseMetadataReady = false;
+        let activeIds = ["ISS", localOemId, preciseId];
+        const activationCalls = [];
+        const restorationNotifications = [];
+        const restorationOrder = [];
+        const alerts = [];
+        const lifecycle = createProjectLifecycle({
+            getProjectName: () => projectName,
+            setProjectName: (value) => { projectName = value; },
+            getProjectFileHandle: () => null,
+            setProjectFileHandle: () => {},
+            getActiveSatelliteIds: () => activeIds.slice(),
+            setAllSatelliteLayersActive: (active) => {
+                if (!active) activeIds = [];
+            },
+            setSatelliteLayerActive: (id, active) => {
+                activationCalls.push([id, active]);
+                if (active && !activeIds.includes(id)) activeIds.push(id);
+                if (!active) activeIds = activeIds.filter((candidate) => candidate !== id);
+                return true;
+            },
+            getGroundStationLayers: () => new Map(),
+            removeGroundStationLayer: () => {},
+            clearDuplicateLayers: () => {},
+            getLayerNameOverrides: () => new Map(),
+            clearSatelliteVisualizationConfigs: () => {},
+            getObjectSidebar: () => null,
+            getSimulationState: () => ({ mode: "range", startDate: new Date(), endDate: new Date() }),
+            applySimulationRange: () => {},
+            restoreSimulation: () => restorationOrder.push("simulation"),
+            shouldPersistSatellite: (id) => id !== localOemId,
+            shouldClearSatelliteOnProjectReset: (id) => id === localOemId,
+            getSatelliteRestoreDisposition: (id) => {
+                if (id === "legacy-oem") return "skip";
+                if (id === preciseId) return preciseMetadataReady ? "restore" : "defer";
+                return "restore";
+            },
+            onSatelliteLayersRestored: (ids, context) => {
+                restorationOrder.push(`layers:${ids.join(",")}`);
+                restorationNotifications.push({ ids, context });
+            },
+            showConfirm: async () => true,
+            showAlert: (message) => alerts.push(message),
+            getAlertTitle: () => "Orbit"
+        });
+
+        const saved = lifecycle.buildDocument();
+        assert.deepEqual(saved.satellites, ["ISS", preciseId]);
+        assert.equal(JSON.stringify(saved).includes("OEM local source"), false, "the project has no local OEM id or bytes");
+
+        const file = {
+            name: "saved-scene.json",
+            text: async () => JSON.stringify({
+                ...saved,
+                satellites: ["ISS", "legacy-oem", preciseId]
+            })
+        };
+        assert.equal(await lifecycle.loadFile(file), true);
+        assert.ok(activationCalls.some(([id, active]) => id === localOemId && active === false), "reset removes the old OEM track before generic cleanup");
+        assert.ok(activationCalls.some(([id, active]) => id === "ISS" && active === true));
+        assert.equal(activationCalls.some(([id, active]) => id === "legacy-oem" && active === true), false);
+        assert.equal(activationCalls.some(([id, active]) => id === preciseId && active === true), false, "SP3 waits for its registry metadata");
+        assert.deepEqual(restorationOrder, ["simulation", "layers:ISS"], "MTR revalidation receives an already-restored simulation state");
+        assert.deepEqual(restorationNotifications, [{ ids: ["ISS"], context: {
+            deferred: false,
+            project: JSON.parse(await file.text()),
+            skipped: ["legacy-oem"]
+        } }]);
+        assert.equal(alerts.length, 1, "a skipped legacy local source is explained once");
+
+        assert.deepEqual(lifecycle.restoreDeferredSatelliteLayers(), {
+            restored: [], deferred: [preciseId], skipped: []
+        });
+        preciseMetadataReady = true;
+        assert.deepEqual(lifecycle.restoreDeferredSatelliteLayers(), {
+            restored: [preciseId], deferred: [], skipped: []
+        });
+        assert.equal(activationCalls.some(([id, active]) => id === preciseId && active === true), true);
+        assert.deepEqual(restorationOrder, ["simulation", "layers:ISS", "layers:precise:project-product:G01"]);
+        assert.deepEqual(lifecycle.restoreDeferredSatelliteLayers(), {
+            restored: [], deferred: [], skipped: []
+        }, "the queued SP3 id is drained exactly once");
+        assert.deepEqual(restorationNotifications.at(-1), {
+            ids: [preciseId],
+            context: { deferred: true, skipped: [] }
+        });
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+    }
+});
+
+test("main revalidates and re-primes hydrated project SP3 layers without an implicit MTR expansion", () => {
+    const source = readFileSync(new URL("../../main.js", import.meta.url), "utf8");
+
+    assert.match(source, /shouldPersistSatellite:\s*shouldPersistSatelliteInProject/);
+    assert.match(source, /getSatelliteRestoreDisposition:\s*getSatelliteRestoreDisposition/);
+    assert.match(source, /onSatelliteLayersRestored:\s*revalidateRestoredProjectSatelliteLayers/);
+    assert.match(source, /projectLifecycle\.restoreDeferredSatelliteLayers\(\)/);
+    assert.match(source, /validateObjectFitsMTR\(getObjectIntrinsicTimeRange\(id\)\)/);
+    assert.match(source, /fit\.requiresExpansion/);
+    assert.match(source, /setSatelliteLayerActive\(id, false\)/);
+    assert.match(source, /applyMasterTimeRangeToSimulation\(\)/);
+    assert.match(source, /refreshSatelliteOverlays\(viewer\)/);
 });

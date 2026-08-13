@@ -12,6 +12,8 @@ import {
 } from "../../../front/js/features/groundStations/rfModel.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
 import FieldHelpTooltip from "./FieldHelpTooltip.jsx";
+import MasterTimeRangeOutOfRangeStatus from "./MasterTimeRangeOutOfRangeStatus.jsx";
+import { resolveMasterTimeRangeObjectStatus } from "../../../front/js/features/masterTimeRange/ui.js";
 
 const standardTabs = [
     ["overview", "OVERVIEW", "Overview"],
@@ -397,6 +399,8 @@ export default function ObjectDetailsPanel() {
     const rows = isGroundStation ? stationRows(detail) : details.rows;
     const stationRfModel = isGroundStation ? getStationRfModel(detail) : null;
     const sourceFormat = detail.sourceFormat || detail.telemetry?.source_format || detail.catalogMeta?.sourceFormat || "";
+    const timeRangeStatus = resolveMasterTimeRangeObjectStatus(detail);
+    const objectActiveForCurrentEpoch = detail.active === true && !timeRangeStatus.outOfRange;
     const secondaryHeader = objectDetailsSecondaryHeader({
         sourceFormat,
         noradId: details.noradId,
@@ -410,9 +414,10 @@ export default function ObjectDetailsPanel() {
             <PanelCloseButton data-testid="object-details-close" className="-mt-1 -mr-1 shrink-0" label="Cerrar detalles" onClick={() => setDismissedId(detail.id)} />
         </header>
         <div className="flex items-center gap-2.5 border-b border-[#1c2c43] pb-[17px] text-[11px] leading-none font-semibold tracking-[.03em] text-[#8fa1ba]">
-            <span className={`inline-flex rounded-[5px] px-2 py-1.5 text-[10px] leading-none font-bold ${details.visible ? "bg-[rgba(39,169,95,.19)] text-[#73e3a0]" : "bg-[rgba(133,75,193,.24)] text-[#d2a8ff]"}`}>{details.visible ? "ACTIVE" : "HIDDEN"}</span>
+            <span className={`inline-flex rounded-[5px] px-2 py-1.5 text-[10px] leading-none font-bold ${timeRangeStatus.outOfRange ? "bg-[rgba(184,136,67,.2)] text-[#e9cb96]" : details.visible ? "bg-[rgba(39,169,95,.19)] text-[#73e3a0]" : "bg-[rgba(133,75,193,.24)] text-[#d2a8ff]"}`}>{timeRangeStatus.outOfRange ? "INACTIVO · FUERA DE RANGO" : details.visible ? "ACTIVE" : "HIDDEN"}</span>
             {secondaryHeader && <span data-testid="object-details-secondary-id" className="min-w-0 truncate" title={secondaryHeader}>{secondaryHeader}</span>}
         </div>
+        <MasterTimeRangeOutOfRangeStatus object={detail} className="mt-2" />
         <nav className={`relative z-[1] my-[11px] mb-[13px] grid ${isGroundStation ? "grid-cols-4" : "grid-cols-5"} border-b border-[#1c2c43]`} aria-label="Secciones de detalle" role="tablist">
             {tabs.map(([key, label, title]) => <button className={`relative min-w-0 cursor-pointer border-0 bg-transparent px-0.5 pt-[9px] pb-[11px] text-[8px] leading-none font-bold tracking-[-.02em] ${tab === key ? "text-[#eaf1ff] after:absolute after:right-0 after:bottom-[-1px] after:left-0 after:h-0.5 after:bg-[#4476ff] after:shadow-[0_0_8px_#4476ff] after:content-['']" : "text-[#8d9bb1]"}`} type="button" key={key} role="tab" title={title} aria-label={title} aria-selected={tab === key} aria-controls={`object-details-${key}`} onClick={() => setTab(key)}>{label}</button>)}
         </nav>
@@ -424,7 +429,7 @@ export default function ObjectDetailsPanel() {
         {isGroundStation && <footer className="mt-auto shrink-0 grid grid-cols-2 gap-2 border-t border-[#1c2c43] pt-3"><button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" onClick={() => window.dispatchEvent(new CustomEvent("orbit:ground-station-passes-open", { detail: { stationId: detail.id } }))}>Tablas AOS / LOS</button><button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" onClick={() => dispatchObjectAction("visualization", detail.id)}>Configurar</button></footer>}
         {!isGroundStation && !isCelestialBody && <footer className={`mt-auto shrink-0 grid ${isManualOrbit ? "grid-cols-2" : "grid-cols-3"} gap-2 border-t border-[#1c2c43] pt-3`}>
             <button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Configuración individual" onClick={() => dispatchObjectAction("visualization", detail.id)}><TuneGlyph /><span className="truncate">Configuración</span></button>
-            <button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title="Ver efemérides" disabled={detail.active !== true} onClick={() => openPropagatedParameters(detail.id)}><PropagationGlyph /><span className="truncate">Efemérides</span></button>
+            <button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title={timeRangeStatus.outOfRange ? "Sin datos para la época actual" : "Ver efemérides"} disabled={!objectActiveForCurrentEpoch} onClick={() => openPropagatedParameters(detail.id)}><PropagationGlyph /><span className="truncate">Efemérides</span></button>
             {!isManualOrbit && <button className="inline-flex min-h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-[7px] border border-[#294464] bg-[#0b1829] px-2 py-2 text-[10px] leading-none font-bold text-[#9dc0ff] hover:border-[#416a9f] hover:bg-[#11213a] hover:text-[#e4eeff]" type="button" title="Ver el archivo o la fuente de entrada" onClick={() => dispatchObjectAction("tle", detail.id)}><TleGlyph /><span className="truncate">Entrada</span></button>}
         </footer>}
     </aside>;

@@ -51,17 +51,80 @@ function remapLayerTree(snapshot, idMap) {
     return { ...snapshot, layerParents };
 }
 
+function normalizeSatelliteRestoreDisposition(value) {
+    const disposition = String(value || "").trim().toLowerCase();
+    return ["restore", "defer", "skip"].includes(disposition) ? disposition : "restore";
+}
+
 export function createProjectLifecycle(deps) {
     const {
         getProjectName, setProjectName, getProjectFileHandle, setProjectFileHandle,
         getActiveSatelliteIds, setAllSatelliteLayersActive, setSatelliteLayerActive,
         getGroundStationLayers, removeGroundStationLayer, clearDuplicateLayers,
         getLayerNameOverrides, clearSatelliteVisualizationConfigs, getObjectSidebar,
-        getSimulationState, applySimulationRange, restoreSimulation = null, showConfirm, showAlert, getAlertTitle,
+        getSimulationState, getMasterTimeRange = () => null, clearMasterTimeRange = () => {}, applySimulationRange, restoreSimulation = null, showConfirm, showAlert, getAlertTitle,
         getManualOrbitEntries = () => [], restoreManualOrbits = async () => ({ restored: [], failed: [] }),
         restoreGroundStations = async () => ({ restored: [], failed: [], idMap: {} }),
-        getCelestialBodies = () => [], restoreCelestialBodies = () => [], clearCelestialBodies = () => {}
+        getCelestialBodies = () => [], restoreCelestialBodies = () => [], clearCelestialBodies = () => {},
+        // Local OEM tracks are intentionally not serialised: their samples
+        // live only in the imported file/runtime. SP3 entries, by contrast,
+        // can be re-registered from the server after project open.
+        shouldPersistSatellite = () => true,
+        shouldClearSatelliteOnProjectReset = () => false,
+        getSatelliteRestoreDisposition = () => "restore",
+        onSatelliteLayersRestored = () => {}
     } = deps;
+
+    // A saved SP3 id can arrive before the optional precise-product registry
+    // has hydrated. Retain only this small identifier queue (never samples or
+    // source bytes) and replay it once the runtime says its metadata exists.
+    const deferredSatelliteIds = new Set();
+
+    const notifySatelliteLayersRestored = (ids, context = {}) => {
+        if (!Array.isArray(ids) || !ids.length) return;
+        try {
+            onSatelliteLayersRestored(ids.slice(), context);
+        } catch {
+            // Project restoration is still useful if a presentation/runtime
+            // callback cannot refresh one optional satellite representation.
+        }
+    };
+
+    const restoreSatelliteIds = (ids, project = null) => {
+        const restored = [];
+        const deferred = [];
+        const skipped = [];
+        const seen = new Set();
+        for (const candidate of Array.isArray(ids) ? ids : []) {
+            const id = String(candidate || "").trim();
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            let disposition = "skip";
+            try {
+                disposition = normalizeSatelliteRestoreDisposition(
+                    getSatelliteRestoreDisposition(id, project)
+                );
+            } catch {
+                // A failed provenance lookup must not fall through to the
+                // permissive catalogue activation path during project open.
+            }
+            if (disposition === "skip") {
+                skipped.push(id);
+                continue;
+            }
+            if (disposition === "defer") {
+                deferredSatelliteIds.add(id);
+                deferred.push(id);
+                continue;
+            }
+            if (setSatelliteLayerActive(id, true) !== false) {
+                restored.push(id);
+            } else {
+                skipped.push(id);
+            }
+        }
+        return { restored, deferred, skipped };
+    };
 
     const buildDocument = () => {
         const simulation = getSimulationState();
@@ -76,7 +139,9 @@ export function createProjectLifecycle(deps) {
             // never re-subscribed as if it were a remote catalogue satellite.
             satellites: getActiveSatelliteIds().filter((id) => {
                 const normalizedId = String(id || "").trim();
-                return !manualIds.has(normalizedId) && !normalizedId.startsWith("manual:");
+                return !manualIds.has(normalizedId)
+                    && !normalizedId.startsWith("manual:")
+                    && shouldPersistSatellite(normalizedId) !== false;
             }),
             manualOrbits,
             celestialBodies: getCelestialBodies(),
@@ -91,7 +156,11 @@ export function createProjectLifecycle(deps) {
                 endDate: simulation.endDate,
                 currentDate: simulation.currentDate,
                 isPlaying: simulation.isPlaying,
-                speed: simulation.speed
+                speed: simulation.speed,
+                // Store the global contract separately from the current
+                // playhead/mode. A restored finite product must not derive a
+                // larger/smaller scene merely from its own intrinsic range.
+                masterTimeRange: getMasterTimeRange()
             }
         });
     };
@@ -109,10 +178,21 @@ export function createProjectLifecycle(deps) {
         || (getObjectSidebar()?.getProjectTree?.().folders.length || 0) > 0;
 
     const clearContents = () => {
+        // `setAllSatelliteLayersActive(false)` deliberately keeps catalogue
+        // metadata around, but an OEM's in-memory samples are local project
+        // state. Remove those tracks first so a New/Open operation cannot
+        // leave an invisible OEM behind or accidentally make its old id
+        // serialisable in the next project.
+        for (const id of getActiveSatelliteIds()) {
+            if (shouldClearSatelliteOnProjectReset(String(id || "").trim()) === true) {
+                setSatelliteLayerActive(id, false);
+            }
+        }
+        deferredSatelliteIds.clear();
         setAllSatelliteLayersActive(false);
         for (const stationId of [...getGroundStationLayers().keys()]) removeGroundStationLayer(stationId);
         clearCelestialBodies(); clearDuplicateLayers(); getLayerNameOverrides().clear(); clearSatelliteVisualizationConfigs();
-        getObjectSidebar()?.clearProjectTree?.(); setProjectFileHandle(null); setProjectName(null);
+        getObjectSidebar()?.clearProjectTree?.(); clearMasterTimeRange(); setProjectFileHandle(null); setProjectName(null);
     };
 
     const startNew = (name = "Untitled project") => {
@@ -157,22 +237,24 @@ export function createProjectLifecycle(deps) {
         const manualIds = new Set(manualOrbits
             .map((entry) => String(entry?.id || "").trim())
             .filter(Boolean));
-        for (const id of project.satellites || []) {
+        const restoreCandidates = (project.satellites || []).filter((id) => {
             const normalizedId = String(id || "").trim();
             // Legacy project files could contain a manual: id in `satellites`.
             // It has no catalogue backing, so activating it would create a
             // dangling WebSocket/catalogue request. New files store it only in
             // `manualOrbits` and restore it below through /api/manual-orbits.
-            if (!normalizedId || manualIds.has(normalizedId) || normalizedId.startsWith("manual:")) {
-                continue;
-            }
-            setSatelliteLayerActive(normalizedId, true);
-        }
+            return normalizedId && !manualIds.has(normalizedId) && !normalizedId.startsWith("manual:");
+        });
+        // Restore the saved simulation/MTR contract before activating any
+        // finite source.  In particular, an SP3 restored after hydration
+        // must be checked against the durable MTR before it can subscribe or
+        // prime an exact ephemeris request.
         if (typeof restoreSimulation === "function") {
             restoreSimulation(project.simulation);
         } else if (project.simulation?.startDate && project.simulation?.endDate) {
             applySimulationRange(new Date(project.simulation.startDate), new Date(project.simulation.endDate));
         }
+        const satelliteRestoration = restoreSatelliteIds(restoreCandidates, project);
         restoreCelestialBodies(project.celestialBodies);
         try {
             const restoration = await restoreManualOrbits(manualOrbits);
@@ -199,12 +281,34 @@ export function createProjectLifecycle(deps) {
         }
         Object.entries(remapLayerNames(project.layerNames, groundStationIdMap))
             .forEach(([id, name]) => getLayerNameOverrides().set(id, name));
+        notifySatelliteLayersRestored(satelliteRestoration.restored, {
+            deferred: false,
+            project,
+            skipped: satelliteRestoration.skipped.slice()
+        });
+        if (satelliteRestoration.skipped.length) {
+            showAlert("El proyecto contiene una fuente de efem\u00e9rides que no se puede restaurar sin su producto de origen. Imp\u00f3rtela de nuevo.", getAlertTitle());
+        }
         getObjectSidebar()?.setProjectTree?.(remapLayerTree(project.layerTree, groundStationIdMap)); updateTitle(); getObjectSidebar()?.renderList?.();
         window.dispatchEvent(new Event("orbit:project-opened")); return true;
+    };
+
+    const restoreDeferredSatelliteLayers = () => {
+        if (!deferredSatelliteIds.size) {
+            return { restored: [], deferred: [], skipped: [] };
+        }
+        const pending = [...deferredSatelliteIds];
+        deferredSatelliteIds.clear();
+        const restoration = restoreSatelliteIds(pending);
+        notifySatelliteLayersRestored(restoration.restored, {
+            deferred: true,
+            skipped: restoration.skipped.slice()
+        });
+        return restoration;
     };
 
     const saveToHandle = async (handle) => saveProjectDocument(handle, buildDocument());
     const exportProject = async () => downloadProjectDocument(buildDocument());
     const openProject = async () => { try { let handle = null; let file = null; if (window.showOpenFilePicker) { [handle] = await window.showOpenFilePicker({ types: [{ description: "Orbit project", accept: { "application/json": [".json"] } }] }); file = await handle.getFile(); } else { file = await selectFileFallback(); if (!file) return; } await loadFile(file, handle); } catch (error) { if (error?.name !== "AbortError") showAlert("No se pudo abrir el proyecto.", getAlertTitle()); } };
-    return { buildDocument, updateTitle, hasOpenProject, clearContents, startNew, loadFile, openProject, saveToHandle, exportProject, getProjectFileHandle };
+    return { buildDocument, updateTitle, hasOpenProject, clearContents, startNew, loadFile, restoreDeferredSatelliteLayers, openProject, saveToHandle, exportProject, getProjectFileHandle };
 }

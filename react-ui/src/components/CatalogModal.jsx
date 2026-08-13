@@ -136,7 +136,7 @@ export default function CatalogModal() {
         ? `Disponible en ${formatCatalogRefreshCountdown(refresh.retryAt, refreshClock)}`
         : "Actualizar catálogo";
 
-    return <div id="catalogModal" data-testid="catalog-modal" className="fixed inset-0 z-[10120] !flex items-center justify-center overflow-hidden bg-[var(--orbit-bg-overlay)] p-4 max-[760px]:!items-start max-[760px]:!p-2 max-[480px]:!p-[6px]" onMouseDown={(event) => event.target === event.currentTarget && action("close")}>
+    return <div id="catalogModal" data-testid="catalog-modal" className="fixed inset-0 z-[10120] !flex items-center justify-center overflow-hidden bg-[var(--orbit-bg-overlay)] p-4 max-[760px]:!items-start max-[760px]:!p-2 max-[480px]:!p-[6px]" onMouseDown={(event) => event.target === event.currentTarget && !headerBusy && action("close")}>
         <section className="grid w-[min(680px,calc(100vw-32px))] max-h-[88vh] gap-2 overflow-hidden rounded-[calc(12px*var(--orbit-ui-scale))] border border-[var(--orbit-border-primary)] bg-[var(--orbit-bg-secondary)] p-[calc(12px*var(--orbit-ui-scale))] text-[var(--orbit-text-primary)] shadow-[0_20px_60px_rgba(0,0,0,.4)] max-[760px]:w-[min(620px,calc(100vw-16px))] max-[760px]:max-h-[calc(100dvh-16px)] max-[760px]:m-auto max-[760px]:gap-[6px] max-[760px]:p-2 max-[480px]:w-[calc(100vw-12px)] max-[480px]:max-h-[calc(100dvh-12px)] max-[480px]:p-2" role="dialog" aria-modal="true" aria-label="Catálogo de objetos">
             <header className="flex items-center justify-between max-[760px]:grid max-[760px]:grid-cols-[minmax(0,1fr)_auto] max-[760px]:items-start max-[760px]:gap-2">
                 <h3 className="m-0 font-[system-ui,sans-serif] text-sm font-bold max-[760px]:pt-[7px]">Catálogo de objetos</h3>
@@ -144,7 +144,7 @@ export default function CatalogModal() {
                     <button data-testid="catalog-filters" className={headerButtonClass} type="button" disabled={headerBusy} onClick={() => action("filters")}>Filtros</button>
                     <button data-testid="catalog-refresh" className={headerButtonClass} type="button" disabled={refreshBlocked} title={refreshTitle} onClick={() => action("refresh")}>Actualizar</button>
                     <button data-testid="catalog-select-all" className={headerButtonClass} type="button" disabled={headerBusy} onClick={() => action("select-all")}>Seleccionar todo</button>
-                    <PanelCloseButton className="max-[760px]:col-start-3 max-[760px]:row-start-1 max-[760px]:justify-self-center" onClick={() => action("close")} />
+                    <PanelCloseButton className="max-[760px]:col-start-3 max-[760px]:row-start-1 max-[760px]:justify-self-center disabled:cursor-not-allowed disabled:opacity-45" disabled={headerBusy} onClick={() => action("close")} />
                 </div>
             </header>
             <CatalogRefreshStatus refresh={refresh} now={refreshClock} />

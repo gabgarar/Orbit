@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+    getObjectMtrStatus,
     getSatelliteTelemetry,
     initSatelliteReceiver,
     refreshSatelliteOverlays,
@@ -157,7 +158,12 @@ test("an active historical SP3 layer seeds Cesium from its aligned range instead
             sourceFormat: "SP3",
             satellite_id: "G01",
             product_id: "igs-final",
-            sp3: { reference_frame: "ITRF", time_scale: "GPS" }
+            sp3: {
+                reference_frame: "ITRF",
+                time_scale: "GPS",
+                start_time: "2026-08-10T12:00:00.000Z",
+                end_time: "2026-08-10T12:01:00.000Z"
+            }
         }]);
         initSatelliteReceiver(viewer);
 
@@ -323,7 +329,12 @@ test("a multi-satellite SP3 import bounds exact-range requests while every layer
             sourceFormat: "SP3",
             satellite_id: id.slice(-3),
             product_id: "queue-test",
-            sp3: { reference_frame: "ITRF", time_scale: "GPS" }
+            sp3: {
+                reference_frame: "ITRF",
+                time_scale: "GPS",
+                start_time: "2026-08-10T12:00:00.000Z",
+                end_time: "2026-08-10T12:01:00.000Z"
+            }
         })));
         initSatelliteReceiver(viewer);
 
@@ -446,7 +457,12 @@ test("an SP3 Earth-centre missing-state record never reaches Cesium orbit geomet
             sourceFormat: "SP3",
             satellite_id: "C08",
             product_id: "missing-state",
-            sp3: { reference_frame: "ITRF", time_scale: "GPS" }
+            sp3: {
+                reference_frame: "ITRF",
+                time_scale: "GPS",
+                start_time: "2026-08-10T12:00:00.000Z",
+                end_time: "2026-08-10T12:02:00.000Z"
+            }
         }]);
         initSatelliteReceiver(viewer);
         assert.equal(setSatelliteLayerActive(stationId, true), true);
@@ -484,6 +500,123 @@ test("an SP3 Earth-centre missing-state record never reaches Cesium orbit geomet
         )));
     } finally {
         setSatelliteLayerActive(stationId, false);
+        setSimulationTimelineProvider(null);
+        setOrbitConfig({
+            satellite_use_3d_model: true,
+            orbit_future_show: true,
+            orbit_ground_track_show: true,
+            propagation_hours: 12
+        });
+        for (const [name, value] of Object.entries(previous)) {
+            if (value === undefined) delete globalThis[name];
+            else globalThis[name] = value;
+        }
+    }
+});
+
+test("SP3 entries without valid member coverage fail closed and never request ephemerides", async () => {
+    const previous = {
+        Cesium: globalThis.Cesium,
+        window: globalThis.window,
+        WebSocket: globalThis.WebSocket,
+        fetch: globalThis.fetch,
+        requestAnimationFrame: globalThis.requestAnimationFrame
+    };
+    const missingId = "precise:coverage-missing:G11";
+    const malformedId = "precise:coverage-malformed:G12";
+    let ephemerisRequests = 0;
+
+    class TestWebSocket {
+        static OPEN = 1;
+        constructor() {
+            this.readyState = TestWebSocket.OPEN;
+        }
+        close() {}
+        send() {}
+    }
+
+    const viewer = {
+        entities: {
+            add(entity) { return entity; },
+            remove() { return true; }
+        }
+    };
+
+    try {
+        globalThis.Cesium = createCesiumTestDouble();
+        globalThis.window = { location: { protocol: "http:", host: "orbit.test" } };
+        globalThis.WebSocket = TestWebSocket;
+        globalThis.requestAnimationFrame = () => 0;
+        globalThis.fetch = async () => {
+            ephemerisRequests += 1;
+            return { ok: true, json: async () => ({ points: [] }) };
+        };
+        setOrbitConfig({
+            satellite_use_3d_model: false,
+            orbit_future_show: false,
+            orbit_ground_track_show: false,
+            propagation_hours: 1
+        });
+        setSimulationTimelineProvider(() => ({
+            mode: "range",
+            date: new Date("2026-08-10T12:00:30.000Z"),
+            rangeStart: new Date("2026-08-10T12:00:00.000Z"),
+            rangeEnd: new Date("2026-08-10T12:01:00.000Z")
+        }));
+        registerPreciseProductSatelliteEntries([
+            {
+                id: missingId,
+                name: "GPS 11",
+                sourceFormat: "SP3",
+                satellite_id: "G11",
+                product_id: "coverage-missing",
+                sp3: { reference_frame: "ITRF", time_scale: "GPS" }
+            },
+            {
+                id: malformedId,
+                name: "GPS 12",
+                sourceFormat: "SP3",
+                satellite_id: "G12",
+                product_id: "coverage-malformed",
+                sp3: {
+                    reference_frame: "ITRF",
+                    time_scale: "GPS",
+                    start_time: "not-a-utc-date",
+                    end_time: "2026-08-10T12:01:00.000Z"
+                }
+            }
+        ]);
+        initSatelliteReceiver(viewer);
+
+        assert.equal(setSatelliteLayerActive(missingId, true), true);
+        assert.equal(setSatelliteLayerActive(malformedId, true), true);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        refreshSatelliteOverlays(viewer);
+
+        assert.equal(ephemerisRequests, 0);
+        for (const id of [missingId, malformedId]) {
+            const status = getObjectMtrStatus(id, "2026-08-10T12:00:30.000Z");
+            assert.equal(status.status, "out_of_range");
+            assert.equal(status.active, false);
+            assert.equal(status.hasIntrinsicTimeRange, false);
+            assert.equal(status.reason, "intrinsic-time-range-unavailable");
+
+            const telemetry = getSatelliteTelemetry(id);
+            assert.equal(telemetry.runtime_state, "OUT_OF_RANGE");
+            assert.equal(telemetry.position, null);
+            assert.equal(telemetry.out_of_range_reason, "intrinsic-time-range-unavailable");
+        }
+
+        // A normal catalogue source has no finite coverage contract and must
+        // remain usable instead of inheriting the SP3 fail-closed policy.
+        const tleStatus = getObjectMtrStatus("catalogue-tle-control", "2026-08-10T12:00:30.000Z");
+        assert.equal(tleStatus.status, "active");
+        assert.equal(tleStatus.active, true);
+        assert.equal(tleStatus.reason, null);
+    } finally {
+        setSatelliteLayerActive(missingId, false);
+        setSatelliteLayerActive(malformedId, false);
         setSimulationTimelineProvider(null);
         setOrbitConfig({
             satellite_use_3d_model: true,

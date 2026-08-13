@@ -18,6 +18,7 @@ límites que afectan a la conservación de datos y a la interpretación técnica
 | [Vista 3D](three-d-view.md) | Cambiar proyección, navegación, cámara y grabación local. |
 | [Línea temporal](timeline.md) | Trabajar en modo estático, tiempo real o simulación de rango. |
 | [Estaciones de tierra](ground-stations.md) | Configurar estaciones y consultar visibilidad muestreada. |
+| [Rango temporal maestro](master-time-range.md) | Mantener una ventana UTC coherente para objetos con cobertura finita. |
 | [Importar](import.md) | Incorporar datos orbitales y estaciones GeoJSON, Orbit JSON o CSV dentro de los límites disponibles. |
 | [Exportar](export.md) | Descargar proyectos, elementos, efemérides y estaciones. |
 

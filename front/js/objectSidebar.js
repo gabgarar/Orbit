@@ -6,6 +6,7 @@ import { deriveTleOrbitalMetrics } from "./features/objectDetails/tleMetrics.js"
 import { tleEpochAgeMs, tleEpochToDate } from "./features/objectDetails/tleEpoch.js";
 import { getCatalogRefreshRetryAt } from "./features/catalog/refreshStatus.js";
 import { toManualOrbitApiPayload } from "./features/manualOrbit/editorState.js";
+import { resolveMasterTimeRangeObjectStatus } from "./features/masterTimeRange/ui.js";
 import {
     PRECISE_PRODUCT_FILE_SLOTS,
     PRECISE_PRODUCT_IMPORT_ERRORS,
@@ -31,6 +32,21 @@ import { preciseProductSatelliteEntriesFromPayload } from "./satellites.js";
 
 export const PRECISE_PRODUCT_PREVIEW_ACTION_LABEL = "Previsualizar satélites";
 export const PRECISE_PRODUCT_PREVIEW_BUSY_LABEL = "Analizando…";
+// A batch callback can return this sentinel when a user explicitly cancels a
+// confirmation that gates the remaining work.  `false` remains a normal
+// callback result, which keeps this helper safe for existing non-activation
+// callers.
+export const BULK_PROCESS_ABORTED = Symbol("orbit-bulk-process-aborted");
+const BULK_PROCESS_CHUNK = 60;
+
+/**
+ * An OEM is always a finite state-sample product, even if it also includes
+ * TLE_LINE1/TLE_LINE2 comments for external compatibility.  It must never
+ * enter the catalogue/TLE path and lose its intrinsic time range.
+ */
+export function isNativeOemEphemerisFileName(fileName) {
+    return /\.oem$/i.test(String(fileName || "").trim());
+}
 
 /**
  * Keep the import-dialog action deterministic across preview sessions.
@@ -49,6 +65,60 @@ export function derivePreciseProductPreviewActionState({
         label: analysing ? PRECISE_PRODUCT_PREVIEW_BUSY_LABEL : PRECISE_PRODUCT_PREVIEW_ACTION_LABEL,
         ariaBusy: analysing ? "true" : null
     };
+}
+
+/**
+ * Run a large UI batch without monopolising the browser event loop.
+ *
+ * Returning `BULK_PROCESS_ABORTED` from `processItem` is an intentional,
+ * successful cancellation: no later item is started and the caller receives
+ * a deterministic outcome instead of having to turn a user decision into an
+ * exception.  Real errors still reject the returned promise.
+ */
+export function processInChunks(items, processItem, onProgress) {
+    const queue = Array.isArray(items) ? items : [];
+    const scheduleFrame = typeof globalThis.requestAnimationFrame === "function"
+        ? globalThis.requestAnimationFrame.bind(globalThis)
+        : (callback) => setTimeout(callback, 0);
+
+    return new Promise((resolve, reject) => {
+        let index = 0;
+        const total = queue.length;
+
+        const finish = (cancelled = false) => resolve({
+            cancelled,
+            processed: index,
+            total
+        });
+
+        const next = async () => {
+            try {
+                const end = Math.min(index + BULK_PROCESS_CHUNK, total);
+                while (index < end) {
+                    const outcome = await Promise.resolve(processItem(queue[index]));
+                    index += 1;
+                    if (outcome === BULK_PROCESS_ABORTED) {
+                        onProgress?.(index, total);
+                        finish(true);
+                        return;
+                    }
+                }
+
+                onProgress?.(index, total);
+
+                if (index < total) {
+                    scheduleFrame(() => { void next(); });
+                    return;
+                }
+
+                finish(false);
+            } catch (error) {
+                reject(error);
+            }
+        };
+
+        scheduleFrame(() => { void next(); });
+    });
 }
 
 function visibilityIconMarkup(isVisible) {
@@ -1001,6 +1071,7 @@ export function setupObjectSidebar({
     getCatalogEntryMeta,
     onRefreshCatalog,
     onRegisterPreciseProductEntries = () => [],
+    onApprovePreciseProductTimeDomain = async () => ({ accepted: true }),
     onAlignToPreciseProductTimeDomain = () => false,
     onImportOemEphemeris,
     getLoadedOemTimeBounds,
@@ -1035,8 +1106,6 @@ export function setupObjectSidebar({
 
     const CATALOG_PAGE_SIZE = 200;
     const CATALOG_BULK_PAGE_SIZE = 1000;
-    const BULK_PROCESS_CHUNK = 60;
-
     let catalogRenderToken = 0;
     let catalogQueryToken = 0;
     let catalogSearchDebounce = null;
@@ -2430,6 +2499,10 @@ export function setupObjectSidebar({
     };
 
     const closeCatalogModal = () => {
+        // The React modal can otherwise receive an overlay/X close while an
+        // async activation is awaiting the MTR decision. Keep the operation
+        // visible and its selected candidates recoverable until it settles.
+        if (catalogBusy) return;
         catalogRenderToken += 1;
         stopCatalogRefreshProgressTimer();
         setCatalogRefreshState({ visible: false, text: "", value: 0 });
@@ -3861,6 +3934,31 @@ export function setupObjectSidebar({
             });
             return;
         }
+        // Discovering the GNSS members is non-persistent, so this is the
+        // only safe point to ask whether a product outside the MTR may grow
+        // the scene. Declining leaves the selection/files intact and sends no
+        // import request to the server.
+        const previewEntries = (pendingPreciseProductPreview?.satellites || [])
+            .filter((satellite) => selectedIds.includes(String(satellite?.id || "").trim()));
+        let mtrApproval;
+        try {
+            mtrApproval = await onApprovePreciseProductTimeDomain(
+                previewEntries,
+                { product: pendingPreciseProductPreview?.product || null }
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setPreciseProductPreviewStatus(`No se pudo comprobar el rango temporal: ${message}`, "error");
+            showPreciseProductValidationFailure(message, {
+                phase: "import",
+                focusId: "preciseProductPreviewConfirmBtn"
+            });
+            return;
+        }
+        if (mtrApproval?.accepted !== true) {
+            setPreciseProductPreviewStatus("Importación cancelada: se mantuvo el rango temporal maestro actual.", "ready");
+            return;
+        }
         preciseProductImportBusy = true;
         const files = [...pendingPreciseProductFiles];
         const initialButtonLabel = preciseProductPreviewConfirmBtn.textContent;
@@ -4180,19 +4278,75 @@ export function setupObjectSidebar({
 
         const idsToAdd = candidates;
 
+        const addedIds = [];
         setCatalogBusyState(true, `Anadiendo importados... 0/${idsToAdd.length}`);
-        await processInChunks(
+        const batchResult = await processInChunks(
             idsToAdd,
-            (id) => onToggleObjectLayer(id, true),
+            async (id) => {
+                const activated = await Promise.resolve(onToggleObjectLayer(id, true));
+                if (activated === false) {
+                    return BULK_PROCESS_ABORTED;
+                }
+                if (activated !== false) {
+                    addedIds.push(id);
+                }
+            },
             (done, total) => setCatalogBusyState(true, `Anadiendo importados... ${done}/${total}`, { publish: false })
         );
 
-        if (idsToAdd.length > 0) {
-            selectedId = idsToAdd[0];
+        if (addedIds.length > 0) {
+            selectedId = addedIds[0];
             onSelectObject?.(selectedId);
         }
 
-        return { added: idsToAdd.length, requested: uniqueIds.length };
+        return {
+            added: addedIds.length,
+            requested: uniqueIds.length,
+            cancelled: batchResult.cancelled
+        };
+    }
+
+    async function importNativeOemEphemeris(content, fileName, { beforeFormats, announce }) {
+        if (typeof onImportOemEphemeris !== "function") {
+            // Failing closed is deliberate: accepting a finite OEM as a TLE
+            // catalogue entry would discard its [t0, t1] and bypass MTR.
+            throw new Error("La importación nativa de efemérides OEM no está disponible.");
+        }
+
+        const importedTrack = await onImportOemEphemeris(content, fileName);
+        // A declined MTR expansion is an intentional cancellation. Keep the
+        // scene and catalogue untouched and do not replace it with an error.
+        if (!importedTrack) {
+            return null;
+        }
+
+        const importedId = String(importedTrack?.id || "").trim();
+        if (!importedId) {
+            throw new Error("El importador OEM no devolvió una órbita temporal válida.");
+        }
+
+        const aligned = onAlignToOemTimeDomain?.() === true;
+        if (beforeFormats.nonOem > 0) {
+            const msg = aligned
+                ? "Aviso: al mezclar OEM con TLE/OMM, la simulacion pasa al dominio temporal OEM y las orbitas no OEM se propagan en ese rango."
+                : "Aviso: se ha cargado OEM junto a TLE/OMM; el dominio temporal objetivo es OEM para propagacion. Revisa el rango temporal activo.";
+            showErrorPopup(msg);
+        }
+
+        const oemBounds = getLoadedOemTimeBounds?.() || null;
+        const activeIdsNow = Array.isArray(getLayerIds?.()) ? getLayerIds() : [];
+        const nonOemCandidates = activeIdsNow.filter((id) => getSourceFormatForId(id) !== "OEM");
+        await warnTemporalIncompatibilitiesWithOemRange(nonOemCandidates, oemBounds);
+
+        selectedId = importedId;
+        onSelectObject?.(selectedId);
+        renderList();
+        renderInfo();
+        renderCatalogList();
+        if (announce) {
+            showInfoPopup(`OEM importado como orbita temporal: ${importedId} (${importedTrack?.points || 0} muestras).`);
+        }
+        return importedTrack;
     }
 
     async function importCatalogFile(file, { autoAddToView = false, announce = true } = {}) {
@@ -4207,6 +4361,14 @@ export function setupObjectSidebar({
 
         try {
             const content = await file.text();
+            if (isNativeOemEphemerisFileName(file.name)) {
+                // This must precede `/api/catalog/import`: a provider may
+                // embed TLE comments in a genuine OEM, but its state samples
+                // and finite coverage remain the authoritative source.
+                setCatalogBusyState(true, "Importando efemérides OEM...");
+                await importNativeOemEphemeris(content, file.name, { beforeFormats, announce });
+                return;
+            }
             setCatalogBusyState(true, "Importando catalogo...");
             const response = await fetch("/api/catalog/import", {
                 method: "POST",
@@ -4214,38 +4376,6 @@ export function setupObjectSidebar({
                 body: JSON.stringify({ fileName: file.name, content, merge: true })
             });
             const payload = await response.json().catch(() => ({}));
-            const isOemNoTleError =
-                file.name.toLowerCase().endsWith(".oem")
-                && String(payload?.error || "").includes("OEM no contiene TLE embebido");
-
-            if ((!response.ok || payload?.ok === false) && isOemNoTleError && typeof onImportOemEphemeris === "function") {
-                const importedTrack = onImportOemEphemeris(content, file.name);
-                const importedId = String(importedTrack?.id || "").trim();
-                if (importedId) {
-                    const aligned = onAlignToOemTimeDomain?.() === true;
-                    if (beforeFormats.nonOem > 0) {
-                        const msg = aligned
-                            ? "Aviso: al mezclar OEM con TLE/OMM, la simulacion pasa al dominio temporal OEM y las orbitas no OEM se propagan en ese rango."
-                            : "Aviso: se ha cargado OEM junto a TLE/OMM; el dominio temporal objetivo es OEM para propagacion. Revisa el rango temporal activo.";
-                        showErrorPopup(msg);
-                    }
-
-                    const oemBounds = getLoadedOemTimeBounds?.() || null;
-                    const activeIdsNow = Array.isArray(getLayerIds?.()) ? getLayerIds() : [];
-                    const nonOemCandidates = activeIdsNow.filter((id) => getSourceFormatForId(id) !== "OEM");
-                    await warnTemporalIncompatibilitiesWithOemRange(nonOemCandidates, oemBounds);
-
-                    selectedId = importedId;
-                    onSelectObject?.(selectedId);
-                    renderList();
-                    renderInfo();
-                    renderCatalogList();
-                    if (announce) {
-                        showInfoPopup(`OEM importado como orbita temporal: ${importedId} (${importedTrack?.points || 0} muestras).`);
-                    }
-                    return;
-                }
-            }
 
             if (!response.ok || payload?.ok === false) {
                 throw new Error(payload?.error || `HTTP ${response.status}`);
@@ -4890,9 +5020,9 @@ export function setupObjectSidebar({
 
         let firstAddedId = null;
         try {
-            await processInChunks(
+            const batchResult = await processInChunks(
                 idsToAdd,
-                (id) => {
+                async (id) => {
                     if (getObjectLayerActive(id) && typeof onRequestDuplicateLayer === "function") {
                         const duplicated = onRequestDuplicateLayer(id);
                         if (!firstAddedId && duplicated) {
@@ -4900,21 +5030,46 @@ export function setupObjectSidebar({
                         }
                         return;
                     }
-                    onToggleObjectLayer(id, true);
-                    if (!firstAddedId) {
+                    const activated = await Promise.resolve(onToggleObjectLayer(id, true));
+                    // `false` is the explicit outcome for a declined MTR
+                    // expansion (or an activation refused by the runtime).
+                    // Do not keep prompting for later candidates after that
+                    // deliberate user decision.
+                    if (activated === false) {
+                        return BULK_PROCESS_ABORTED;
+                    }
+                    if (activated !== false && !firstAddedId) {
                         firstAddedId = id;
                     }
                 },
                 (done, total) => setCatalogBusyState(true, `${uiText("addingLayers")} ${done}/${total}`, { publish: false })
             );
+
+            if (batchResult.cancelled) {
+                if (firstAddedId) {
+                    selectedId = firstAddedId;
+                    onSelectObject?.(selectedId);
+                }
+                // Retain the selected candidates and leave the modal open.
+                // The operator can retry after changing the Master Time
+                // Range, without having to rebuild a potentially long list.
+                setCatalogBusyState(false);
+                renderList();
+                renderInfo();
+                renderCatalogList();
+                showInfoPopup("No se añadieron más capas: se mantuvo el rango temporal maestro actual.");
+                return;
+            }
         } catch (error) {
             setCatalogBusyState(false);
             showErrorPopup(`No se pudieron añadir las capas: ${error instanceof Error ? error.message : String(error)}`);
             return;
         }
 
-        selectedId = firstAddedId;
-        onSelectObject?.(selectedId);
+        if (firstAddedId) {
+            selectedId = firstAddedId;
+            onSelectObject?.(selectedId);
+        }
         selectedCatalogIds.clear();
         catalogAnchorIndex = null;
         layerFilterText = "";
@@ -5080,36 +5235,6 @@ export function setupObjectSidebar({
         }
 
         return allIds;
-    }
-
-    function processInChunks(items, processItem, onProgress) {
-        return new Promise((resolve, reject) => {
-            let index = 0;
-            const total = items.length;
-
-            const next = () => {
-                try {
-                    const end = Math.min(index + BULK_PROCESS_CHUNK, total);
-                    while (index < end) {
-                        processItem(items[index]);
-                        index += 1;
-                    }
-
-                    onProgress?.(index, total);
-
-                    if (index < total) {
-                        requestAnimationFrame(next);
-                        return;
-                    }
-
-                    resolve();
-                } catch (error) {
-                    reject(error);
-                }
-            };
-
-            requestAnimationFrame(next);
-        });
     }
 
     function setCatalogBusyState(isBusy, text = "", { publish = true } = {}) {
@@ -5355,10 +5480,14 @@ export function setupObjectSidebar({
             const layerType = getLayerTypeForId(id);
             const presentation = getLayerPresentation(layerType, id);
             const isPermanentEarth = isEarthLayer(layerType, id);
+            const timeRangeStatus = presentation.isBody
+                ? resolveMasterTimeRangeObjectStatus(null)
+                : resolveMasterTimeRangeObjectStatus(getObjectTelemetry?.(id));
             const rowEl = document.createElement("div");
-            rowEl.className = `object-list-row${id === selectedId ? " active" : ""}${isPermanentEarth ? " is-permanent" : ""}`;
+            rowEl.className = `object-list-row${id === selectedId ? " active" : ""}${isPermanentEarth ? " is-permanent" : ""}${timeRangeStatus.outOfRange ? " is-out-of-range" : ""}`;
             rowEl.dataset.layerId = id;
             rowEl.dataset.layerType = layerType;
+            rowEl.dataset.temporalStatus = timeRangeStatus.status;
             rowEl.draggable = !presentation.isBody;
             if (!presentation.isBody) {
                 rowEl.addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", id));
@@ -5367,12 +5496,15 @@ export function setupObjectSidebar({
             const item = document.createElement("button");
             item.type = "button";
             item.draggable = !presentation.isBody;
-            item.className = `object-list-item${id === selectedId ? " active" : ""}`;
+            item.className = `object-list-item${id === selectedId ? " active" : ""}${timeRangeStatus.outOfRange ? " is-out-of-range" : ""}`;
             const displayName = typeof getLayerDisplayName === "function"
                 ? String(getLayerDisplayName(id) || id)
                 : String(id || "");
-            item.title = `${presentation.label}: ${displayName}`;
-            item.setAttribute("aria-label", `${presentation.label}: ${displayName}`);
+            const temporalDescription = timeRangeStatus.outOfRange
+                ? ` ${timeRangeStatus.label}. ${timeRangeStatus.message}`
+                : "";
+            item.title = `${presentation.label}: ${displayName}.${temporalDescription}`;
+            item.setAttribute("aria-label", `${presentation.label}: ${displayName}.${temporalDescription}`);
             const typeIcon = document.createElement("span");
             typeIcon.className = `layer-type-icon is-${presentation.key}`;
             typeIcon.title = presentation.label;
@@ -5392,6 +5524,14 @@ export function setupObjectSidebar({
                 formatBadge.textContent = String(listEntryMeta.sourceFormat || "TLE").toUpperCase();
                 formatBadge.title = `Formato: ${formatBadge.textContent}`;
                 item.appendChild(formatBadge);
+            }
+            if (timeRangeStatus.outOfRange) {
+                const timeRangeBadge = document.createElement("span");
+                timeRangeBadge.className = "layer-time-range-status";
+                timeRangeBadge.textContent = timeRangeStatus.label;
+                timeRangeBadge.title = timeRangeStatus.message;
+                timeRangeBadge.setAttribute("aria-label", `${timeRangeStatus.label}. ${timeRangeStatus.message}`);
+                item.appendChild(timeRangeBadge);
             }
             item.addEventListener("click", () => {
                 selectObject(id);

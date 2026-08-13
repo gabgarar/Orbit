@@ -1200,6 +1200,30 @@ body.with-toolbars #cesiumContainer {
     letter-spacing: .055em;
 }
 
+/* A finite ephemeris can remain a valid project layer while having no state
+   at the current epoch. Keep that fail-closed distinction visible in the
+   compact tree without replacing the object's source-format badge. */
+#leftSatellitesPanel .object-sidebar-body-compact .object-list-row.is-out-of-range .layer-display-name {
+    color: #e4cb98;
+}
+
+#leftSatellitesPanel .object-sidebar-body-compact .layer-time-range-status {
+    display: inline-block;
+    min-width: 0;
+    max-width: 122px;
+    overflow: hidden;
+    padding: 2px 5px;
+    border: 1px solid rgba(184, 136, 67, .72);
+    border-radius: 4px;
+    color: #efd49e;
+    background: rgba(73, 48, 19, .46);
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 #leftSatellitesPanel .layer-tree-folder-body,
 #leftSatellitesPanel .layer-tree-body-section-rows {
     border-left-color: rgba(58, 110, 168, .48);
@@ -1380,6 +1404,7 @@ aside[aria-label="Operaciones de estaciones terrestres"],
 .react-simulation-dock,
 .orbit-floating-panel,
 #appDialogPanel,
+#masterTimeRangeDialogPanel,
 #satelliteVizPanel,
 .tle-info-panel,
 #catalogModal > section,
@@ -1672,6 +1697,7 @@ aside[aria-label="Operaciones de estaciones terrestres"],
     .react-simulation-dock,
     .orbit-floating-panel,
     #appDialogPanel,
+    #masterTimeRangeDialogPanel,
     #satelliteVizPanel,
     .tle-info-panel,
     #catalogModal > section,
@@ -1708,6 +1734,7 @@ aside[aria-label="Operaciones de estaciones terrestres"],
     .react-simulation-dock,
     .orbit-floating-panel,
     #appDialogPanel,
+    #masterTimeRangeDialogPanel,
     #satelliteVizPanel,
     .tle-info-panel,
     #catalogModal > section,

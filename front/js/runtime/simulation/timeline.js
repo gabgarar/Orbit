@@ -6,14 +6,18 @@ export function getTimelineRatio(dateValue, startDate, endDate) {
     const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
     const startMs = new Date(startDate).getTime();
     const endMs = new Date(endDate).getTime();
-    const span = Math.max(1000, endMs - startMs);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return 0;
+    if (endMs <= startMs) return 0;
+    const span = endMs - startMs;
     return clamp((date.getTime() - startMs) / span, 0, 1);
 }
 
 export function getDateAtTimelineRatio(ratio, startDate, endDate) {
     const startMs = new Date(startDate).getTime();
     const endMs = new Date(endDate).getTime();
-    const span = Math.max(1000, endMs - startMs);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return new Date(NaN);
+    if (endMs <= startMs) return new Date(startMs);
+    const span = endMs - startMs;
     return new Date(startMs + span * clamp(Number(ratio) || 0, 0, 1));
 }
 

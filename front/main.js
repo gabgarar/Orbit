@@ -25,12 +25,15 @@ import {
     clearAllSatelliteVisualizationConfigs,
     setSatelliteVectorVisualization,
     setSimulationTimelineProvider,
+    parseOemEphemerisContent,
     importOemEphemerisTrack,
     importManualOrbitTrack,
     replaceManualOrbitTrack,
     registerPreciseProductSatelliteEntries,
     hydratePreciseProductSatelliteEntries,
     getSatelliteDisplayName,
+    getObjectIntrinsicTimeRange,
+    getObjectIntrinsicTimeRangeUnion,
     getManualOrbitProjectEntries,
     getManualOrbitProjectEntry,
     renderManualOrbitPreview,
@@ -39,7 +42,9 @@ import {
     clearManualOrbitPreview,
     hasLoadedOemEphemerisTracks,
     getLoadedOemEphemerisTimeBounds,
-    getLoadedOemEphemerisTimeRanges
+    getLoadedOemEphemerisTimeRanges,
+    getLoadedManualOrbitTimeRanges,
+    getLoadedPreciseProductTimeRanges
 } from "./js/satellites.js";
 import { setupRuntimeConfigPanel } from "./js/configPanel.js";
 import { setupObjectSidebar } from "./js/objectSidebar.js";
@@ -78,6 +83,10 @@ import {
     ManualAosLosRequestError,
     manualAosLosSignature
 } from "./js/features/groundStations/manualAosLos.js";
+import {
+    assessFiniteEphemerisAnalysisRange,
+    finiteEphemerisAnalysisRangeMessage
+} from "./js/features/groundStations/timeRangeContract.js";
 import { createProjectLifecycle } from "./js/runtime/projectLifecycle.js";
 import { setupCameraActions } from "./js/runtime/camera/actions.js";
 import { createFreeCameraKeyboardControls } from "./js/runtime/camera/freeKeyboardControls.js";
@@ -85,7 +94,18 @@ import { formatDurationCompact, parseTleEpochDate } from "./js/runtime/simulatio
 import { createSimulationState, setSimulationRange, SIMULATION_MODE_RANGE, SIMULATION_MODE_REALTIME, SIMULATION_MODE_STATIC } from "./js/runtime/simulation/simulationState.js";
 import { createSimulationController } from "./js/runtime/simulation/simulationController.js";
 import { resolveSimulationModeRequest } from "./js/runtime/simulation/modePolicy.js";
+import {
+    clearMasterTimeRange,
+    clampToMasterRange,
+    expandMasterTimeRange,
+    getMasterTimeRange,
+    isInsideMasterRange,
+    setMasterTimeRange,
+    validateObjectFitsMTR,
+    validateObjectRange
+} from "./js/runtime/simulation/masterTimeRange.js";
 import { clamp, getDateAtTimelineRatio, getRangeHours, getTimelineRatio } from "./js/runtime/simulation/timeline.js";
+import { requestMasterTimeRangeExpansion } from "./js/features/masterTimeRange/ui.js";
 import { createTychoSkyDome } from "./js/rendering/tychoSkyDome.js";
 import { createNightImageryLayer } from "./js/rendering/nightImageryLayer.js";
 import { createEarthBasemapManager } from "./js/rendering/earthBasemap.js";
@@ -405,6 +425,10 @@ const simulationController = createSimulationController({
     state: simulationState,
     onDateChange: applySimulationDateToViewer
 });
+// The precise-products endpoint is optional, but its completion state is
+// still needed to fail closed when a saved `precise:` id is no longer present.
+// Until it completes, project restoration keeps only a deferred identifier.
+let preciseProductRegistryHydrated = false;
 // The controller below owns every change to currentTime. Leave Cesium's
 // autonomous clock disabled so it cannot drift between controller ticks or
 // move the scene while Real time is paused.
@@ -434,8 +458,14 @@ const projectLifecycle = createProjectLifecycle({
     restoreManualOrbits: restoreManualOrbitsFromProject,
     restoreGroundStations: restoreGroundStationsFromProject,
     getSimulationState: () => simulationState,
+    getMasterTimeRange: () => masterTimeRangeDetail(),
+    clearMasterTimeRange: clearMasterTimeRangeForProject,
     applySimulationRange,
     restoreSimulation: restoreProjectSimulationState,
+    shouldPersistSatellite: shouldPersistSatelliteInProject,
+    shouldClearSatelliteOnProjectReset: shouldClearSatelliteOnProjectReset,
+    getSatelliteRestoreDisposition: getSatelliteRestoreDisposition,
+    onSatelliteLayersRestored: revalidateRestoredProjectSatelliteLayers,
     showConfirm: showAppConfirm,
     showAlert: showAppAlert,
     getAlertTitle: () => uiText("alertTitle")
@@ -700,6 +730,26 @@ async function confirmLargeSimulationRangeIfNeeded(startDate, endDate) {
     return showAppConfirm(message, uiText("confirmTitle"));
 }
 
+/** Explicit user edit of the timeline is an MTR change, never a second range. */
+async function requestMasterTimeRangeFromTimeline(startDate, endDate) {
+    const candidate = { startDate, endDate };
+    const approval = await approveObjectRangeForMasterTimeRange(candidate, {
+        objectName: "Rango seleccionado"
+    });
+    if (!approval.accepted) return false;
+    const finalRange = approval.action === "expand" && approval.fit.masterRange
+        ? {
+            startDate: new Date(Math.min(approval.fit.masterRange.startDate.getTime(), startDate.getTime())),
+            endDate: new Date(Math.max(approval.fit.masterRange.endDate.getTime(), endDate.getTime()))
+        }
+        : candidate;
+    if (!await confirmLargeSimulationRangeIfNeeded(finalRange.startDate, finalRange.endDate)) {
+        return false;
+    }
+    commitObjectRangeToMasterTimeRange(candidate);
+    return applyMasterTimeRangeToSimulation({ resetCurrent: true });
+}
+
 function isManualOrbitDesignActive() {
     return manualOrbitDesignSession?.active === true;
 }
@@ -775,6 +825,28 @@ function formatObjectTimeRangeHours(hours) {
 // domain with the selected-object payload so the details card never presents
 // stale bootstrap dates as its start/end range.
 function getObjectTimeRange(layerId, telemetry) {
+    // A finite source's published/generated coverage is distinct from the
+    // (possibly wider) Master Time Range. Prefer it in object details so an
+    // SP3/OEM/manual layer never appears to have data throughout the scene
+    // merely because another object expanded the MTR.
+    const intrinsicValidation = validateObjectRange(
+        telemetry?.intrinsic_time_range
+        ?? telemetry?.intrinsicTimeRange
+        ?? telemetry?.coverage
+        ?? null
+    );
+    if (intrinsicValidation.valid) {
+        const startDate = intrinsicValidation.range.startDate;
+        const endDate = intrinsicValidation.range.endDate;
+        const coverageHours = getRangeHours(startDate, endDate);
+        return {
+            mode: SIMULATION_MODE_RANGE,
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString(),
+            oemRangeHours: coverageHours,
+            label: `${formatObjectTimeRangeHours(coverageHours)} (cobertura propia)`
+        };
+    }
     // A confirmed manual orbit owns an explicit design interval.  Keep that
     // interval on its Overview card even after the workspace returns to real
     // time, instead of replacing it with the global future-line horizon.
@@ -858,16 +930,7 @@ function asPreciseProductCoverageTime(value) {
 }
 
 function resolvePreciseProductCoverage(entries = [], payload = {}) {
-    const products = [];
-    for (const entry of Array.isArray(entries) ? entries : []) {
-        if (!entry || typeof entry !== "object") continue;
-        products.push(entry, entry.sp3, entry.metadata, entry.inputMetadata, entry.input_metadata);
-    }
-    if (payload?.product && typeof payload.product === "object") {
-        products.push(payload.product, payload.product.sp3, payload.product.metadata);
-    }
-
-    const ranges = products.map((item) => {
+    const coverageFrom = (item) => {
         if (!item || typeof item !== "object") return null;
         const start = asPreciseProductCoverageTime(
             item.start_time_ms ?? item.startTimeMs ?? item.start_time ?? item.startTime ?? item.coverage_start ?? item.coverageStart
@@ -875,16 +938,40 @@ function resolvePreciseProductCoverage(entries = [], payload = {}) {
         const end = asPreciseProductCoverageTime(
             item.end_time_ms ?? item.endTimeMs ?? item.end_time ?? item.endTime ?? item.coverage_end ?? item.coverageEnd ?? item.stop_time
         );
-        return Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
-    }).filter(Boolean);
+        return Number.isFinite(start) && Number.isFinite(end) && end >= start ? { start, end } : null;
+    };
+
+    const selectedEntries = (Array.isArray(entries) ? entries : [])
+        .filter((entry) => entry && typeof entry === "object");
+    // Members, not a product-wide intersection, define the object set that
+    // the operator selected.  An SP3 product may legitimately have members
+    // with different first/last usable epochs: MTR must contain their outer
+    // envelope, while each member remains inactive in its own gaps.
+    const memberRanges = selectedEntries.map((entry) => (
+        coverageFrom(entry.intrinsicTimeRange)
+        || coverageFrom(entry.intrinsic_time_range)
+        || coverageFrom(entry.coverage)
+        || coverageFrom(entry.timeRange)
+        || coverageFrom(entry.time_range)
+        || coverageFrom(entry.sp3)
+        || coverageFrom(entry.inputMetadata)
+        || coverageFrom(entry.input_metadata)
+        || coverageFrom(entry)
+    ));
+    if (selectedEntries.length && memberRanges.some((range) => !range)) {
+        return null;
+    }
+
+    const product = payload?.product && typeof payload.product === "object" ? payload.product : null;
+    const ranges = selectedEntries.length
+        ? memberRanges.filter(Boolean)
+        : [coverageFrom(product), coverageFrom(product?.sp3), coverageFrom(product?.metadata)].filter(Boolean);
     if (!ranges.length) return null;
 
-    // A single product normally gives the same interval for every GNSS
-    // satellite. Taking the intersection remains correct if a future import
-    // bundles multiple related files with slightly different coverage.
-    const start = Math.max(...ranges.map((range) => range.start));
-    const end = Math.min(...ranges.map((range) => range.end));
-    return end > start ? { start, end } : null;
+    return {
+        start: Math.min(...ranges.map((range) => range.start)),
+        end: Math.max(...ranges.map((range) => range.end))
+    };
 }
 
 function getActivePreciseProductEntries() {
@@ -905,29 +992,236 @@ function getActivePreciseProductEntries() {
 
 function getFiniteEphemerisDomainState() {
     const preciseEntries = getActivePreciseProductEntries();
-    const hasOemDomain = hasLoadedOemEphemerisTracks();
-    const hasSp3Domain = preciseEntries.length > 0;
+    const oemRanges = getLoadedOemEphemerisTimeRanges();
+    const preciseRanges = getLoadedPreciseProductTimeRanges();
+    const hasOemDomain = oemRanges.length > 0;
+    const hasSp3Domain = preciseRanges.length > 0;
+    const manualRanges = getLoadedManualOrbitTimeRanges();
+    const hasManualDomain = manualRanges.length > 0;
     return {
         hasOemDomain,
         hasSp3Domain,
-        finiteEphemerisDomainActive: hasOemDomain || hasSp3Domain,
+        hasManualDomain,
+        finiteEphemerisDomainActive: hasOemDomain || hasSp3Domain || hasManualDomain,
         finiteSources: [
             ...(hasOemDomain ? ["OEM"] : []),
-            ...(hasSp3Domain ? ["SP3"] : [])
+            ...(hasSp3Domain ? ["SP3"] : []),
+            ...(hasManualDomain ? ["órbita manual"] : [])
         ],
-        preciseCoverage: hasSp3Domain ? resolvePreciseProductCoverage(preciseEntries) : null
+        preciseCoverage: hasSp3Domain ? resolvePreciseProductCoverage(preciseEntries) : null,
+        manualRanges,
+        oemRanges,
+        preciseRanges
     };
 }
 
 function finiteEphemerisDomainLabel(domain = getFiniteEphemerisDomainState()) {
-    if (domain.hasOemDomain && domain.hasSp3Domain) return "OEM y SP3";
-    if (domain.hasSp3Domain) return "SP3";
-    return "OEM";
+    return domain.finiteSources.join(", ") || "efemérides finitas";
+}
+
+function masterTimeRangeDetail() {
+    const range = getMasterTimeRange();
+    if (!range) return null;
+    return {
+        startDate: range.startDate.toISOString(),
+        endDate: range.endDate.toISOString()
+    };
+}
+
+/**
+ * Apply the authoritative Master Time Range to the interactive timeline.
+ * Direct callers never get to substitute an object-local interval here: that
+ * is how a second SP3/OEM used to silently shrink the global scene.
+ */
+function applyMasterTimeRangeToSimulation({ resetCurrent = false } = {}) {
+    const range = getMasterTimeRange();
+    if (!range) return false;
+    const startMs = range.startDate.getTime();
+    const endMs = range.endDate.getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+        return false;
+    }
+
+    const priorTime = resetCurrent
+        ? startMs
+        : getDisplayedSimulationDate().getTime();
+    if (!setSimulationRange(simulationState, range.startDate, range.endDate)) {
+        return false;
+    }
+    simulationState.currentDate = clampToMasterRange(priorTime) || new Date(startMs);
+    simulationState.mode = SIMULATION_MODE_RANGE;
+    simulationState.isPlaying = false;
+    simulationState.playing = false;
+    simulationState.rewind = false;
+    simulationState.lastTickTimestamp = Date.now();
+    applySimulationDateToViewer(simulationState.currentDate);
+    syncViewerClockPlayback();
+    refreshSatelliteOverlays(viewer);
+    return true;
+}
+
+/**
+ * Ask before an import/generation would grow the MTR.  This deliberately
+ * does not mutate the store: an I/O or propagation failure must not leave a
+ * phantom interval behind.
+ */
+async function approveObjectRangeForMasterTimeRange(range, { objectName = "Objeto" } = {}) {
+    const fit = validateObjectFitsMTR(range);
+    if (!fit.valid) {
+        throw new Error("El objeto no declara un intervalo temporal UTC válido.");
+    }
+    if (fit.accepted) {
+        return { accepted: true, action: fit.requiresInitialization ? "initialize" : "none", fit };
+    }
+
+    const decision = await requestMasterTimeRangeExpansion({
+        objectName,
+        range: fit.range,
+        masterRange: fit.masterRange
+    });
+    return { accepted: decision.accepted === true, action: decision.accepted ? "expand" : "cancel", fit };
+}
+
+/** Commit an already approved finite object only after its import succeeds. */
+function commitObjectRangeToMasterTimeRange(range) {
+    const fit = validateObjectFitsMTR(range);
+    if (!fit.valid) {
+        throw new Error("El objeto no declara un intervalo temporal UTC válido.");
+    }
+    if (fit.requiresInitialization) {
+        return setMasterTimeRange(fit.range.startDate, fit.range.endDate);
+    }
+    if (fit.requiresExpansion) {
+        return expandMasterTimeRange(fit.range.startDate, fit.range.endDate);
+    }
+    return getMasterTimeRange();
+}
+
+function clearMasterTimeRangeForProject() {
+    clearMasterTimeRange();
+    const now = new Date();
+    const start = new Date(now.getTime() - (60 * 60 * 1000));
+    const end = new Date(now.getTime() + (60 * 60 * 1000));
+    setSimulationRange(simulationState, start, end);
+    simulationState.mode = SIMULATION_MODE_REALTIME;
+    simulationState.currentDate = now;
+    simulationState.isPlaying = true;
+    simulationState.playing = true;
+    simulationState.rewind = false;
+    simulationState.lastTickTimestamp = Date.now();
+}
+
+function projectSatelliteSourceFormat(id) {
+    const sourceId = getSatelliteSourceIdFromLayerId(String(id || "").trim());
+    return String(
+        getCatalogEntryMeta(sourceId)?.sourceFormat
+        ?? getCatalogEntryMeta(sourceId)?.source_format
+        ?? ""
+    ).trim().toUpperCase();
+}
+
+/**
+ * OEM samples are local runtime data. Persisting their layer id without their
+ * bytes creates a fake, dangling object after a browser/project reload, so a
+ * project keeps neither the id nor a substitute trajectory.
+ */
+function shouldPersistSatelliteInProject(id) {
+    return projectSatelliteSourceFormat(id) !== "OEM";
+}
+
+/** Remove the in-memory OEM track before the generic layer reset retains it. */
+function shouldClearSatelliteOnProjectReset(id) {
+    return projectSatelliteSourceFormat(id) === "OEM";
+}
+
+/**
+ * Precise-product ids are content-addressed and their metadata is loaded
+ * asynchronously from the server registry. They must wait for that registry
+ * rather than being activated as a generic catalogue/TLE id.
+ */
+function getSatelliteRestoreDisposition(id) {
+    const sourceFormat = projectSatelliteSourceFormat(id);
+    if (sourceFormat === "OEM") return "skip";
+    const isPrecise = sourceFormat === "SP3" || /^precise:/i.test(String(id || "").trim());
+    if (isPrecise) {
+        if (!preciseProductRegistryHydrated) return "defer";
+
+        // The project lifecycle restores its saved MTR before asking this
+        // question.  Do not briefly activate a finite product and only then
+        // reject it: missing coverage and an out-of-contract coverage are
+        // both fail-closed before any subscription/render request exists.
+        const fit = validateObjectFitsMTR(getObjectIntrinsicTimeRange(id));
+        if (!fit.valid || fit.requiresExpansion) return "skip";
+        // A persisted MTR already exists at this point.  Put the simulation
+        // in that bounded Range mode before `setSatelliteLayerActive` can
+        // subscribe/prime the restored SP3 entry.
+        if (!fit.requiresInitialization) {
+            applyMasterTimeRangeToSimulation();
+        }
+        return "restore";
+    }
+    return "restore";
+}
+
+/**
+ * A delayed SP3 hydration changes an id into a finite ephemeris source only
+ * after its metadata arrives. Recheck its declared coverage against the MTR
+ * before it can draw or request exact samples. Restoration never expands a
+ * saved MTR implicitly: an incompatible current registry product stays out
+ * of the scene until the operator explicitly imports/approves it again.
+ */
+function revalidateRestoredProjectSatelliteLayers(ids, { deferred = false } = {}) {
+    const accepted = [];
+    const rejected = [];
+    const seen = new Set();
+    for (const candidate of Array.isArray(ids) ? ids : []) {
+        const id = String(candidate || "").trim();
+        if (!id || seen.has(id) || projectSatelliteSourceFormat(id) !== "SP3") continue;
+        seen.add(id);
+
+        const fit = validateObjectFitsMTR(getObjectIntrinsicTimeRange(id));
+        if (!fit.valid || fit.requiresExpansion) {
+            // Do not allow an old saved id to silently broaden the scene or
+            // to create a finite layer with an unknown range. Removing only
+            // the activation retains its registry metadata for inspection.
+            setSatelliteLayerActive(id, false);
+            rejected.push(id);
+            continue;
+        }
+        if (fit.requiresInitialization) {
+            commitObjectRangeToMasterTimeRange(fit.range);
+        }
+        accepted.push(id);
+    }
+
+    if (accepted.length) {
+        // This both forces the valid finite mode and re-primes historical
+        // SP3 layers from exact range ephemerides after metadata hydration.
+        applyMasterTimeRangeToSimulation();
+        refreshSatelliteOverlays(viewer);
+        objectSidebar?.renderList?.();
+        emitObjectStateChanged({
+            scope: "precise-products",
+            reason: deferred ? "project-hydration" : "project-restore"
+        });
+    }
+
+    if (rejected.length) {
+        showAppAlert(
+            "No se restaur\u00f3 un producto SP3 porque su cobertura no coincide con el rango temporal maestro guardado. Importe el producto de nuevo o ajuste el rango de forma expl\u00edcita.",
+            uiText("alertTitle")
+        );
+    }
+    return { accepted, rejected };
 }
 
 function forceFiniteEphemerisRange(domain = getFiniteEphemerisDomainState()) {
     if (!domain.finiteEphemerisDomainActive) {
         return false;
+    }
+
+    if (applyMasterTimeRangeToSimulation()) {
+        return true;
     }
 
     if (domain.hasOemDomain) {
@@ -960,11 +1254,13 @@ function reconcileFiniteEphemerisDomainAfterLayerChange() {
 
 function alignSimulationToPreciseProductCoverage(entries, payload) {
     const coverage = resolvePreciseProductCoverage(entries, payload);
-    if (!coverage || !applySimulationRange(new Date(coverage.start), new Date(coverage.end), { preferRequestedRange: true })) {
+    if (!coverage) {
         return false;
     }
-    setSimulationMode(SIMULATION_MODE_RANGE);
-    return true;
+    // The import was pre-approved before bytes were persisted. Commit only
+    // now, after the product is known to have been registered successfully.
+    commitObjectRangeToMasterTimeRange({ startTime: coverage.start, endTime: coverage.end });
+    return applyMasterTimeRangeToSimulation({ resetCurrent: true });
 }
 
 function getTimelineRatioByDate(dateValue) {
@@ -1007,9 +1303,18 @@ function pauseRealtimeClock() {
 
 function resumeRealtimeClock() {
     if (simulationState.mode !== SIMULATION_MODE_REALTIME) return false;
+    const now = new Date();
+    if (getMasterTimeRange() && !isInsideMasterRange(now)) {
+        applyMasterTimeRangeToSimulation();
+        void showAppAlert(
+            "No se puede reanudar Real time: la época actual queda fuera del rango temporal maestro. Usa modo Simulated.",
+            uiText("alertTitle")
+        );
+        return false;
+    }
     // Realtime deliberately resumes at the current wall-clock instant rather
     // than integrating the duration for which it was paused.
-    simulationState.currentDate = new Date();
+    simulationState.currentDate = now;
     simulationState.isPlaying = true;
     simulationState.playing = true;
     simulationState.rewind = false;
@@ -1356,6 +1661,15 @@ const groundStationTelemetryService = createGroundStationTelemetryService({
     calculateSatelliteDownlink,
     calculateRfModel: calculateStationRfModel,
     getPasses: async (satelliteId, station, startDate, endDate) => {
+        const finiteRangeAssessment = assessFiniteEphemerisAnalysisRange(
+            getObjectIntrinsicTimeRange(satelliteId),
+            { startDate, endDate }
+        );
+        if (!finiteRangeAssessment.allowed) return [];
+        // A locally imported OEM has no server-side state provider. Do not
+        // submit its display id to the catalogue route and accidentally get
+        // an unrelated TLE-based pass prediction.
+        if (String(getCatalogEntryMeta(satelliteId)?.sourceFormat || "").toUpperCase() === "OEM") return [];
         const request = createGroundStationPassRequest(station, satelliteId, startDate, endDate, {
             stepSeconds: GROUND_STATION_BACKGROUND_PASS_STEP_SECONDS,
             includeSamples: false
@@ -1527,10 +1841,10 @@ function setCompositeLayerActive(layerId, active) {
     if (changed) {
         syncGroundStationVisibilityLinks();
         const sourceId = getSatelliteSourceIdFromLayerId(layerId);
-        if (isPreciseProductLayer(sourceId)) {
-            // A finite SP3 may be activated from Layers or while restoring a
-            // project.  In both cases it owns an explicit coverage interval,
-            // never wall-clock realtime or an unconstrained static instant.
+        if (!isActive && isPreciseProductLayer(sourceId)) {
+            // Activation is intentionally handled by the asynchronous MTR
+            // approval wrapper below.  Deactivation remains local and may
+            // only reconcile the currently active finite-domain policy.
             reconcileFiniteEphemerisDomainAfterLayerChange();
         }
     }
@@ -2598,13 +2912,11 @@ async function selectSatelliteFromGlobalSearch(item) {
 
     const alreadyActive = isSatelliteLayerActive(satId);
     if (!alreadyActive) {
-        const added = setSatelliteLayerActive(satId, true);
+        const added = await setCompositeLayerActiveWithMasterTimeRange(satId, true);
         if (!added) {
-            await showAppAlert(`No hay hueco para activar la capa de ${satId}.`, uiText("alertTitle"));
+            // A cancelled MTR expansion is intentional.  Do not replace its
+            // explicit dialog with a misleading generic capacity warning.
             return;
-        }
-        if (isPreciseProductLayer(satId)) {
-            reconcileFiniteEphemerisDomainAfterLayerChange();
         }
     }
 
@@ -2732,6 +3044,7 @@ function setupTopSearchAutocomplete() {
 }
 
 function updateSimulationTimelineUi(finiteDomain = getFiniteEphemerisDomainState()) {
+    const masterTimeRange = masterTimeRangeDetail();
     // React owns the visible controls and receives a complete state snapshot.
     window.dispatchEvent(new CustomEvent("orbit:simulation-state", {
         detail: {
@@ -2741,8 +3054,11 @@ function updateSimulationTimelineUi(finiteDomain = getFiniteEphemerisDomainState
             speed: simulationState.speed,
             oemDomainActive: finiteDomain.hasOemDomain,
             sp3DomainActive: finiteDomain.hasSp3Domain,
+            manualDomainActive: finiteDomain.hasManualDomain,
             finiteEphemerisDomainActive: finiteDomain.finiteEphemerisDomainActive,
             finiteEphemerisSources: finiteDomain.finiteSources,
+            masterTimeRange,
+            masterTimeRangeActive: Boolean(masterTimeRange),
             currentDate: getDisplayedSimulationDate().toISOString(),
             startDate: simulationState.startDate.toISOString(),
             endDate: simulationState.endDate.toISOString(),
@@ -2779,8 +3095,23 @@ function setSimulationMode(mode) {
     const previousMode = simulationState.mode;
     const displayedDate = getDisplayedSimulationDate();
     const finiteDomain = getFiniteEphemerisDomainState();
+    const masterRange = getMasterTimeRange();
     const request = resolveSimulationModeRequest(mode, finiteDomain);
     const normalized = request.mode;
+
+    // A wall-clock stream is meaningful only while its present epoch belongs
+    // to the global simulation contract.  Do not merely freeze it at an old
+    // value: move the scene back to the MTR so all objects share one clock.
+    if (request.requestedMode === SIMULATION_MODE_REALTIME
+        && masterRange
+        && !isInsideMasterRange(new Date())) {
+        applyMasterTimeRangeToSimulation();
+        void showAppAlert(
+            "No se puede usar Real time: la época actual queda fuera del rango temporal maestro. Usa modo Simulated.",
+            uiText("alertTitle")
+        );
+        return;
+    }
 
     if (request.restricted) {
         forceFiniteEphemerisRange(finiteDomain);
@@ -2841,12 +3172,15 @@ function setSimulationMode(mode) {
 function applySimulationRange(startDate, endDate, { preferRequestedRange = false } = {}) {
     let startMs = startDate.getTime();
     let endMs = endDate.getTime();
+    const masterRange = getMasterTimeRange();
 
-    // OEM normally owns the active simulation domain. A newly imported SP3
-    // is different: it has an explicit, finite published coverage and must
-    // never be silently moved to an unrelated OEM interval before its first
-    // runtime subscription.
-    if (!preferRequestedRange && hasLoadedOemEphemerisTracks()) {
+    // Once established, the Master Time Range is the only global timeline
+    // interval. Object-local OEM/SP3 ranges remain intrinsic availability
+    // domains and must not silently shrink or replace it.
+    if (masterRange) {
+        startMs = masterRange.startDate.getTime();
+        endMs = masterRange.endDate.getTime();
+    } else if (!preferRequestedRange && hasLoadedOemEphemerisTracks()) {
         const bounds = getLoadedOemEphemerisTimeBounds();
         if (bounds) {
             startMs = Number(bounds.startTimeMs);
@@ -2854,13 +3188,23 @@ function applySimulationRange(startDate, endDate, { preferRequestedRange = false
         }
     }
 
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
         return false;
     }
 
     const displayedTimeMs = getDisplayedSimulationDate().getTime();
     if (!setSimulationRange(simulationState, new Date(startMs), new Date(endMs))) {
         return false;
+    }
+
+    // Static and paused controls must never preserve a stale current epoch
+    // outside the master range. The inclusive clamp is also applied on a
+    // restored project whose old UI state predates MTR.
+    if (masterRange) {
+        const clampedDate = clampToMasterRange(simulationState.currentDate);
+        if (clampedDate) {
+            simulationState.currentDate = clampedDate;
+        }
     }
     cancelGroundStationPassAnalysis();
     simulationState.currentDate = new Date(clamp(displayedTimeMs, startMs, endMs));
@@ -3315,10 +3659,134 @@ function isPreciseProductLayer(satelliteId) {
     return String(getCatalogEntryMeta(satelliteId)?.sourceFormat || "").toUpperCase() === "SP3";
 }
 
+function activationObjectName(layerIds = []) {
+    const uniqueIds = [...new Set((Array.isArray(layerIds) ? layerIds : [layerIds])
+        .map((layerId) => String(layerId || "").trim())
+        .filter(Boolean))];
+    if (uniqueIds.length === 1) {
+        return String(getLayerDisplayName(uniqueIds[0]) || getSatelliteDisplayName(uniqueIds[0]) || uniqueIds[0]);
+    }
+    return `${uniqueIds.length} capas`;
+}
+
+/**
+ * Establish the MTR decision before a local finite object becomes active.
+ * The returned envelope is deliberately only an activation/MTR envelope;
+ * each individual source keeps its own intrinsic range for interpolation and
+ * analysis, so no gap is ever treated as ephemeris coverage.
+ */
+async function approveSatelliteActivationForMasterTimeRange(layerIds, { objectName = null } = {}) {
+    const sourceIds = [...new Set((Array.isArray(layerIds) ? layerIds : [layerIds])
+        .map((layerId) => getSatelliteSourceIdFromLayerId(String(layerId || "").trim()))
+        .map((sourceId) => String(sourceId || "").trim())
+        .filter(Boolean))];
+    const union = getObjectIntrinsicTimeRangeUnion(sourceIds);
+    if (!union.valid) {
+        await showAppAlert(
+            "No se puede activar una efeméride finita sin una cobertura temporal válida. Vuelve a importar su producto fuente.",
+            uiText("alertTitle")
+        );
+        return { accepted: false, union, approval: null };
+    }
+    if (!union.hasFiniteCoverage) {
+        return { accepted: true, union, approval: null };
+    }
+
+    const approval = await approveObjectRangeForMasterTimeRange(union.range, {
+        objectName: objectName || activationObjectName(sourceIds)
+    });
+    return { accepted: approval.accepted === true, union, approval };
+}
+
+async function setCompositeLayerActiveWithMasterTimeRange(layerId, active) {
+    const isActive = active === true;
+    if (!isActive) {
+        return setCompositeLayerActive(layerId, false);
+    }
+    if (isSatelliteDuplicateLayerId(layerId) || isCompositeLayerActive(layerId)) {
+        return setCompositeLayerActive(layerId, true);
+    }
+
+    const activation = await approveSatelliteActivationForMasterTimeRange([layerId]);
+    if (!activation.accepted) {
+        return false;
+    }
+
+    const changed = setCompositeLayerActive(layerId, true);
+    if (changed && activation.union.hasFiniteCoverage) {
+        // The layer is now known to be active, so the previously approved
+        // decision becomes durable.  Cancellation and invalid metadata leave
+        // both the scene and the MTR untouched.
+        commitObjectRangeToMasterTimeRange(activation.union.range);
+        applyMasterTimeRangeToSimulation({ resetCurrent: activation.approval?.action === "initialize" });
+    }
+    return changed;
+}
+
+async function activateAllSatelliteLayersWithMasterTimeRange() {
+    const candidates = getSatelliteIds().filter((id) => !isSatelliteLayerActive(id));
+    const activation = await approveSatelliteActivationForMasterTimeRange(candidates, {
+        objectName: "Las capas seleccionadas"
+    });
+    if (!activation.accepted) {
+        return { added: 0, skipped: candidates.length, cancelled: true };
+    }
+
+    const result = setAllSatelliteLayersActive(true);
+    if (activation.union.hasFiniteCoverage) {
+        commitObjectRangeToMasterTimeRange(activation.union.range);
+        applyMasterTimeRangeToSimulation({ resetCurrent: activation.approval?.action === "initialize" });
+    } else {
+        reconcileFiniteEphemerisDomainAfterLayerChange();
+    }
+    return result;
+}
+
 function unavailablePreciseGroundPassMessage(frameStatus) {
     const native = frameStatus?.nativeFrame || "el marco nativo del producto";
     const reason = String(frameStatus?.reason || "No hay una transformación terrestre disponible.").trim();
     return `No se pueden calcular AOS/LOS para ${native}: ${reason}`;
+}
+
+/** Emit one explicit, non-partial result when finite data do not cover AOS/LOS. */
+function emitGroundStationOutOfRangeResult({
+    station,
+    stationId,
+    satelliteLayerId,
+    satelliteId,
+    frameStatus,
+    assessment
+}) {
+    clearGroundStationAnalysisVisuals();
+    window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+        detail: {
+            error: finiteEphemerisAnalysisRangeMessage(assessment),
+            passes: [],
+            samples: [],
+            temporal_status: "out_of_range",
+            object_status: "out_of_range",
+            out_of_range: true,
+            out_of_range_reason: assessment.reason,
+            intrinsicTimeRange: assessment.sourceRange || null,
+            analysisWindow: assessment.analysisRange
+                ? {
+                    startTime: assessment.analysisRange.startTime,
+                    endTime: assessment.analysisRange.endTime,
+                    source: "requested"
+                }
+                : null,
+            stationName: String(station.name || stationId),
+            satelliteName: String(getLayerDisplayName(satelliteLayerId) || satelliteId),
+            stationTimeZone: station.time_zone || "UTC",
+            referenceFrame: frameStatus?.returnedFrame || frameStatus?.nativeFrame || "",
+            referenceFrameLabel: frameStatus?.displayFrame || "",
+            rendererReference: frameStatus || null,
+            renderingAvailable: frameStatus?.available ?? null,
+            timeScale: "UTC",
+            analysisSelection: { stationId, satelliteLayerId },
+            visibleNow: false
+        }
+    }));
 }
 
 async function analyzeGroundStationPasses(detail = {}) {
@@ -3386,6 +3854,49 @@ async function analyzeGroundStationPasses(detail = {}) {
             manualOrbitSignature: request.manualOrbitSignature,
             analysisWindow
         };
+        // A finite SP3/OEM/manual source either supports the full requested
+        // AOS/LOS window or it supports none of it.  Never shorten the window
+        // behind the operator's back: doing so would make the pass result
+        // describe another analysis than the one selected in the scene.
+        const finiteRangeAssessment = assessFiniteEphemerisAnalysisRange(
+            getObjectIntrinsicTimeRange(satelliteId),
+            { startDate, endDate }
+        );
+        if (!finiteRangeAssessment.allowed) {
+            if (isCurrentGroundStationPassAnalysis(requestContext)) {
+                emitGroundStationOutOfRangeResult({
+                    station,
+                    stationId,
+                    satelliteLayerId,
+                    satelliteId,
+                    frameStatus: declaredFrameStatus,
+                    assessment: finiteRangeAssessment
+                });
+            }
+            return;
+        }
+        // OEM files are intentionally local-only at present. They have no
+        // backend provider to answer the catalogue AOS/LOS endpoint, so fail
+        // explicitly instead of accidentally substituting a TLE trajectory.
+        if (String(getCatalogEntryMeta(satelliteId)?.sourceFormat || "").toUpperCase() === "OEM") {
+            if (isCurrentGroundStationPassAnalysis(requestContext)) {
+                clearGroundStationAnalysisVisuals();
+                window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+                    detail: {
+                        error: "AOS/LOS no está disponible para una OEM local. Importe una fuente con proveedor de análisis o use la futura herramienta de comparación.",
+                        passes: [],
+                        samples: [],
+                        runtime_state: "UNAVAILABLE",
+                        stationName: String(station.name || stationId),
+                        satelliteName: String(getLayerDisplayName(satelliteLayerId) || satelliteId),
+                        stationTimeZone: station.time_zone || "UTC",
+                        analysisSelection: { stationId, satelliteLayerId },
+                        visibleNow: false
+                    }
+                }));
+            }
+            return;
+        }
         const { linkContract } = request;
         if (!linkContract.available) {
             if (isCurrentGroundStationPassAnalysis(requestContext)) {
@@ -3526,6 +4037,32 @@ function restoreProjectSimulationState(snapshot) {
         return false;
     }
 
+    // New projects persist the MTR explicitly. For a v1 project written
+    // before MTR existed, a saved simulated interval is the only durable
+    // finite scene contract available, so adopt it conservatively as the
+    // compatibility MTR rather than resurrecting an unbounded realtime view.
+    const savedMasterRange = snapshot.masterTimeRange ?? snapshot.master_time_range;
+    const explicitMasterValidation = savedMasterRange
+        ? validateObjectRange(savedMasterRange)
+        : null;
+    if (explicitMasterValidation?.valid) {
+        setMasterTimeRange(
+            explicitMasterValidation.range.startDate,
+            explicitMasterValidation.range.endDate
+        );
+    } else if (!savedMasterRange && snapshot.mode === SIMULATION_MODE_RANGE) {
+        const legacyRangeValidation = validateObjectRange({
+            startDate: snapshot.startDate,
+            endDate: snapshot.endDate
+        });
+        if (legacyRangeValidation.valid) {
+            setMasterTimeRange(
+                legacyRangeValidation.range.startDate,
+                legacyRangeValidation.range.endDate
+            );
+        }
+    }
+
     const requestedMode = [SIMULATION_MODE_REALTIME, SIMULATION_MODE_RANGE, SIMULATION_MODE_STATIC].includes(snapshot.mode)
         ? snapshot.mode
         : SIMULATION_MODE_RANGE;
@@ -3542,7 +4079,7 @@ function restoreProjectSimulationState(snapshot) {
     const savedEnd = new Date(snapshot.endDate);
     const hasSavedRange = !Number.isNaN(savedStart.getTime())
         && !Number.isNaN(savedEnd.getTime())
-        && savedEnd > savedStart;
+        && savedEnd >= savedStart;
 
     if (hasSavedRange) {
         applySimulationRange(savedStart, savedEnd);
@@ -3561,6 +4098,10 @@ function restoreProjectSimulationState(snapshot) {
     }
 
     if (requestedMode === SIMULATION_MODE_REALTIME) {
+        if (getMasterTimeRange() && !isInsideMasterRange(new Date())) {
+            applyMasterTimeRangeToSimulation();
+            return true;
+        }
         simulationState.mode = SIMULATION_MODE_REALTIME;
         simulationState.currentDate = new Date();
         simulationState.isPlaying = true;
@@ -3584,6 +4125,11 @@ function restoreProjectSimulationState(snapshot) {
         simulationState.speed = Number.isFinite(savedSpeed) && savedSpeed > 0 ? savedSpeed : 1;
     }
 
+    if (getMasterTimeRange()) {
+        simulationState.currentDate = clampToMasterRange(simulationState.currentDate)
+            || new Date(simulationState.startDate);
+    }
+
     simulationState.lastTickTimestamp = Date.now();
     applySimulationDateToViewer(getDisplayedSimulationDate());
     syncViewerClockPlayback();
@@ -3598,7 +4144,21 @@ function restoreProjectSimulationState(snapshot) {
 }
 
 function tickSimulationClock() {
+    if (simulationState.mode === SIMULATION_MODE_REALTIME
+        && getMasterTimeRange()
+        && !isInsideMasterRange(new Date())) {
+        // Time can cross an MTR boundary while the application is open. Do
+        // this in the tick path as well as the mode command path so a live
+        // layer cannot run past the declared scene contract between clicks.
+        applyMasterTimeRangeToSimulation();
+        return simulationState.currentDate;
+    }
     simulationController.tick();
+    if (getMasterTimeRange() && simulationState.mode !== SIMULATION_MODE_REALTIME) {
+        simulationState.currentDate = clampToMasterRange(simulationState.currentDate)
+            || new Date(simulationState.startDate);
+    }
+    return simulationState.currentDate;
 }
 
 // React owns the visible controls. Keep command handling here so it talks to
@@ -3639,6 +4199,12 @@ window.addEventListener("orbit:simulation-action", async (event) => {
         refreshSimulationControlsUi();
         updateTopToolbarTime();
     } else if (type === "rewind") {
+        if (getMasterTimeRange()) {
+            applyMasterTimeRangeToSimulation({ resetCurrent: true });
+            refreshSimulationControlsUi();
+            updateTopToolbarTime();
+            return;
+        }
         simulationState.currentDate = simulationState.mode === SIMULATION_MODE_RANGE
             ? new Date(simulationState.startDate)
             : new Date();
@@ -3657,7 +4223,8 @@ window.addEventListener("orbit:simulation-action", async (event) => {
         updateTopToolbarTime();
     } else if (type === "timeline") {
         const ratio = clamp(Number(value) / SIMULATION_TIMELINE_STEPS, 0, 1);
-        simulationState.currentDate = getDateFromTimelineRatio(ratio);
+        simulationState.currentDate = clampToMasterRange(getDateFromTimelineRatio(ratio))
+            || getDateFromTimelineRatio(ratio);
         simulationState.isPlaying = false;
         simulationState.playing = false;
         if (simulationState.mode === SIMULATION_MODE_REALTIME) {
@@ -3680,7 +4247,7 @@ window.addEventListener("orbit:simulation-action", async (event) => {
         if (Number.isNaN(targetDate.getTime())
             || Number.isNaN(startDate.getTime())
             || Number.isNaN(endDate.getTime())
-            || endDate <= startDate
+            || endDate < startDate
             || targetDate < startDate
             || targetDate > endDate) {
             return;
@@ -3701,11 +4268,8 @@ window.addEventListener("orbit:simulation-action", async (event) => {
     } else if (type === "range") {
         const startDate = new Date(value?.startDate);
         const endDate = new Date(value?.endDate);
-        if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime()) && endDate > startDate) {
-            const confirmed = await confirmLargeSimulationRangeIfNeeded(startDate, endDate);
-            if (confirmed && applySimulationRange(startDate, endDate)) {
-                setSimulationMode(SIMULATION_MODE_RANGE);
-            }
+        if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime()) && endDate >= startDate) {
+            await requestMasterTimeRangeFromTimeline(startDate, endDate);
         }
     } else if (type === "record-toggle") {
         toggleSessionRecording();
@@ -3848,6 +4412,7 @@ function updateTopToolbarState() {
 
 function updateTopToolbarTime() {
     const finiteDomain = getFiniteEphemerisDomainState();
+    const masterTimeRange = masterTimeRangeDetail();
     updateSimulationTimelineUi(finiteDomain);
     window.dispatchEvent(new CustomEvent("orbit:time-context", {
         detail: {
@@ -3857,8 +4422,11 @@ function updateTopToolbarTime() {
             isPaused: simulationState.isPlaying === false,
             oemDomainActive: finiteDomain.hasOemDomain,
             sp3DomainActive: finiteDomain.hasSp3Domain,
+            manualDomainActive: finiteDomain.hasManualDomain,
             finiteEphemerisDomainActive: finiteDomain.finiteEphemerisDomainActive,
-            finiteEphemerisSources: finiteDomain.finiteSources
+            finiteEphemerisSources: finiteDomain.finiteSources,
+            masterTimeRange,
+            masterTimeRangeActive: Boolean(masterTimeRange)
         }
     }));
 }
@@ -5150,9 +5718,26 @@ function getManualOrbitTimePolicy() {
     });
 }
 
-function assertManualOrbitTimePolicy() {
+function getManualOrbitMasterTimeRangeFit() {
+    const design = getManualOrbitDesignWindow();
+    return validateObjectFitsMTR({
+        startTime: design.startTime,
+        endTime: design.endTime
+    });
+}
+
+function assertManualOrbitTimePolicy({ allowApprovedMasterExpansion = false } = {}) {
     const policy = getManualOrbitTimePolicy();
-    if (policy.canCreate) return policy;
+    if (policy.canCreate) {
+        const fit = getManualOrbitMasterTimeRangeFit();
+        if (!fit.valid) {
+            throw new Error("El intervalo de diseño no define un rango temporal UTC válido.");
+        }
+        if (!fit.accepted && !allowApprovedMasterExpansion) {
+            throw new Error("El intervalo de diseño queda fuera del rango temporal maestro. Ajusta TIME o pulsa Crear para decidir si deseas ampliarlo.");
+        }
+        return policy;
+    }
 
     if (policy.blockingReasons.includes("missing-erp")) {
         throw new Error("Adjunta un ERP manual validado en TIME para usar geopotencial o arrastre atmosférico.");
@@ -5203,6 +5788,17 @@ function applyManualOrbitDesignTimeWindow() {
         return;
     }
     const windowRange = getManualOrbitDesignWindow();
+    const masterFit = validateObjectFitsMTR({
+        startTime: windowRange.startTime,
+        endTime: windowRange.endTime
+    });
+    if (masterFit.valid && !masterFit.accepted && masterFit.hasMasterTimeRange) {
+        // Editing an invalid future/past range must not move the shared
+        // scene outside MTR. The explicit expansion decision occurs when the
+        // user confirms creation, never while typing into TIME.
+        applyMasterTimeRangeToSimulation();
+        throw new Error("El intervalo de diseño queda fuera del rango temporal maestro. Ajusta TIME o pulsa Crear para ampliarlo.");
+    }
     setSimulationRange(simulationState, windowRange.startTime, windowRange.endTime);
     simulationState.mode = SIMULATION_MODE_RANGE;
     simulationState.currentDate = new Date(windowRange.startTime);
@@ -5358,7 +5954,14 @@ function restoreManualOrbitDesignMode({
     if (useRealtime) {
         setSimulationMode(SIMULATION_MODE_REALTIME);
     } else {
-        simulationState.mode = session.simulation.mode;
+        const masterRange = getMasterTimeRange();
+        const now = new Date();
+        const requestedMode = session.simulation.mode;
+        const restoreRealtime = requestedMode === SIMULATION_MODE_REALTIME
+            && (!masterRange || isInsideMasterRange(now));
+        simulationState.mode = restoreRealtime
+            ? SIMULATION_MODE_REALTIME
+            : (masterRange ? SIMULATION_MODE_RANGE : requestedMode);
         simulationState.isPlaying = session.simulation.isPlaying;
         simulationState.playing = session.simulation.playing;
         simulationState.rewind = session.simulation.rewind;
@@ -5366,6 +5969,11 @@ function restoreManualOrbitDesignMode({
         simulationState.currentDate = new Date(session.simulation.currentDate);
         simulationState.startDate = new Date(session.simulation.startDate);
         simulationState.endDate = new Date(session.simulation.endDate);
+        if (masterRange) {
+            applyMasterTimeRangeToSimulation();
+        } else if (simulationState.mode === SIMULATION_MODE_REALTIME) {
+            simulationState.currentDate = now;
+        }
         simulationState.lastTickTimestamp = Date.now();
         applySimulationDateToViewer(getDisplayedSimulationDate());
         refreshSimulationControlsUi();
@@ -5683,12 +6291,32 @@ async function restoreManualOrbitsFromProject(records = []) {
                 ...persisted.visualizationOverrides
             });
             setSatelliteVisible(imported.id, persisted.visible);
+            // A persisted MTR is a durable scene contract, not a hint.  A
+            // regenerated manual trajectory may differ at its endpoints from
+            // an older project definition, but restoration must never widen
+            // the saved range silently.  Keep it only if it fits; the
+            // operator can explicitly expand MTR after opening the project.
+            const importedRange = getObjectIntrinsicTimeRange(imported.id);
+            if (!importedRange) {
+                throw new Error("La orbita manual restaurada no declaro una cobertura temporal valida.");
+            }
+            const masterFit = validateObjectFitsMTR(importedRange);
+            if (!masterFit.valid || masterFit.requiresExpansion) {
+                setSatelliteLayerActive(imported.id, false);
+                throw new Error("La orbita manual restaurada queda fuera del rango temporal maestro guardado.");
+            }
+            if (masterFit.requiresInitialization) {
+                commitObjectRangeToMasterTimeRange(masterFit.range);
+            }
             restored.push(imported.id);
         } catch (error) {
             const recordName = String(record?.name || record?.id || "orbita manual").trim();
             failed.push({ id: record?.id || null, error: extractManualOrbitError(error) });
             logger.warn(`No se pudo restaurar la orbita manual '${recordName}':`, error);
         }
+    }
+    if (restored.length && getMasterTimeRange()) {
+        applyMasterTimeRangeToSimulation();
     }
     return { restored, failed };
 }
@@ -5700,6 +6328,9 @@ async function requestManualOrbitPreview() {
 
     let windowRange;
     try {
+        // Preview must stay inside an already established MTR. It never
+        // prompts or expands the scene; only the explicit Create action can
+        // make that durable global decision.
         assertManualOrbitTimePolicy();
         windowRange = getManualOrbitPropagationWindow();
     } catch (error) {
@@ -5804,7 +6435,10 @@ function isManualOrbitMetadataOnlySource(source) {
     ].includes(normalized);
 }
 
-function synchronizeManualOrbitEditor(payload, source, { publish = true } = {}) {
+function synchronizeManualOrbitEditor(payload, source, {
+    publish = true,
+    applyTimeWindow = true
+} = {}) {
     try {
         const resolvedSource = normalizeManualOrbitDefinitionSource(source, "");
         manualOrbitEditorState = synchronizeManualOrbitState(manualOrbitEditorState, payload || {}, source);
@@ -5828,7 +6462,7 @@ function synchronizeManualOrbitEditor(payload, source, { publish = true } = {}) 
         const shouldRefreshPreview = !isManualOrbitMetadataOnlySource(source)
             && source !== "preview"
             && source !== "ground-track";
-        if (manualOrbitDesignSession?.active && shouldRefreshPreview) {
+        if (manualOrbitDesignSession?.active && shouldRefreshPreview && applyTimeWindow) {
             try {
                 applyManualOrbitDesignTimeWindow();
                 scheduleManualOrbitPreview();
@@ -5871,12 +6505,33 @@ async function createManualOrbitFromEditor(payload = {}) {
     // The Create event contains both tabs. Preserve the last representation
     // actually edited so a state-vector definition never gets silently
     // replaced by stale Keplerian fields from the inactive tab.
-    if (!synchronizeManualOrbitEditor(payload, manualOrbitDefinitionSource, { publish: false })) {
+    // Do not apply the draft interval to the scene before the explicit MTR
+    // decision below.  Otherwise an out-of-range TIME edit is rejected by
+    // the preview guard and the required Expand/Cancel dialog is unreachable.
+    if (!synchronizeManualOrbitEditor(payload, manualOrbitDefinitionSource, {
+        publish: false,
+        applyTimeWindow: false
+    })) {
         return;
     }
 
+    let approvedMasterRange = null;
     try {
-        assertManualOrbitTimePolicy();
+        const designWindow = getManualOrbitDesignWindow();
+        const masterRangeAtRequest = {
+            startTime: designWindow.startTime,
+            endTime: designWindow.endTime
+        };
+        approvedMasterRange = await approveObjectRangeForMasterTimeRange(masterRangeAtRequest, {
+            objectName: String(payload?.name || manualOrbitEditorState?.name || "Órbita manual").trim() || "Órbita manual"
+        });
+        if (!approvedMasterRange.accepted) {
+            publishManualOrbitStatus("info", "No se creó la órbita: se mantuvo el rango temporal maestro actual.");
+            return;
+        }
+        assertManualOrbitTimePolicy({
+            allowApprovedMasterExpansion: approvedMasterRange.action === "expand"
+        });
     } catch (error) {
         publishManualOrbitStatus("error", extractManualOrbitError(error));
         return;
@@ -5956,6 +6611,18 @@ async function createManualOrbitFromEditor(payload = {}) {
         const imported = editingTargetAtRequest
             ? replaceManualOrbitTrack(editingTargetAtRequest.id, committedPayload)
             : importManualOrbitTrack(committedPayload);
+        // The generated samples, rather than the requested design window,
+        // are authoritative. A propagation service may reject or truncate an
+        // endpoint, and the MTR must never promise data beyond the finite
+        // track that was actually registered.
+        const importedRange = getObjectIntrinsicTimeRange(imported.id);
+        if (!importedRange) {
+            throw new Error("La orbita manual generada no declaro una cobertura temporal valida.");
+        }
+        // The propagation service and local registration both succeeded.
+        // Commit at this exact point so an unsuccessful request cannot leave
+        // a phantom MTR expansion behind.
+        commitObjectRangeToMasterTimeRange(importedRange);
         const manualPropagationHours = Math.max(
             1 / 3600,
             (Number(imported.endTimeMs) - Number(imported.startTimeMs)) / 3_600_000
@@ -6683,7 +7350,7 @@ function setupPropagatedParametersInspector() {
             propagatedParametersRangeError(error);
         }
     });
-    window.addEventListener("orbit:propagated-parameters-apply-simulation", (event) => {
+    window.addEventListener("orbit:propagated-parameters-apply-simulation", async (event) => {
         const context = propagatedParametersLastContext;
         if (!context) {
             return;
@@ -6712,25 +7379,18 @@ function setupPropagatedParametersInspector() {
             return;
         }
 
-        // This command intentionally applies immediately: the dates were
-        // already explicitly entered in the inspector, and the same runtime
-        // path updates Cesium, the timeline and telemetry context together.
-        if (!applySimulationRange(
+        // The inspector is another timeline entry point, not a second scene
+        // range.  It therefore uses the exact same expansion/cancel decision
+        // as imports and the primary timeline.  Within MTR it preserves the
+        // authoritative bounds; outside it never silently substitutes them.
+        const applied = await requestMasterTimeRangeFromTimeline(
             new Date(requestedRange.startTime),
             new Date(requestedRange.endTime)
-        )) {
+        );
+        if (!applied) {
             propagatedParametersRangeError(new Error("No se pudo aplicar el intervalo de simulacion."));
             return;
         }
-        setSimulationMode(SIMULATION_MODE_RANGE);
-        simulationState.currentDate = new Date(simulationState.startDate);
-        simulationState.isPlaying = false;
-        simulationState.playing = false;
-        simulationState.rewind = false;
-        simulationState.lastTickTimestamp = Date.now();
-        applySimulationDateToViewer(simulationState.currentDate);
-        refreshSimulationControlsUi();
-        updateTopToolbarTime();
 
         try {
             // Drop the local override after it becomes the shared range, so a
@@ -6938,15 +7598,13 @@ function setupPropagatedParametersInspector() {
             return true;
         },
         getObjectLayerActive: (id) => isCompositeLayerActive(id),
-        onToggleObjectLayer: (id, active) => {
+        onToggleObjectLayer: async (id, active) => {
             if (isManualOrbitDesignActive()) return false;
-            return setCompositeLayerActive(id, active);
+            return setCompositeLayerActiveWithMasterTimeRange(id, active);
         },
-        onAddAllLayers: () => {
+        onAddAllLayers: async () => {
             if (isManualOrbitDesignActive()) return false;
-            const result = setAllSatelliteLayersActive(true);
-            reconcileFiniteEphemerisDomainAfterLayerChange();
-            return result;
+            return activateAllSatelliteLayersWithMasterTimeRange();
         },
         onRemoveAllLayers: () => {
             if (isManualOrbitDesignActive()) return false;
@@ -7088,24 +7746,40 @@ function setupPropagatedParametersInspector() {
         getCatalogEntryMeta: (id) => getCompositeLayerMeta(id),
         onRefreshCatalog: () => refreshSatelliteCatalog(catalogUrl),
         onRegisterPreciseProductEntries: (entries) => registerPreciseProductSatelliteEntries(entries),
+        onApprovePreciseProductTimeDomain: async (entries, payload) => {
+            const coverage = resolvePreciseProductCoverage(entries, payload);
+            if (!coverage) {
+                throw new Error("El producto SP3 no declara una cobertura temporal UTC válida.");
+            }
+            return approveObjectRangeForMasterTimeRange({
+                startTime: coverage.start,
+                endTime: coverage.end
+            }, {
+                objectName: String(payload?.product?.name || payload?.product?.id || "Producto SP3")
+            });
+        },
         onAlignToPreciseProductTimeDomain: (entries, payload) => alignSimulationToPreciseProductCoverage(entries, payload),
         getLoadedOemTimeBounds: () => getLoadedOemEphemerisTimeBounds(),
-        onAlignToOemTimeDomain: () => {
-            const bounds = getLoadedOemEphemerisTimeBounds();
-            if (!bounds) {
-                return false;
-            }
-            applySimulationRange(new Date(bounds.startTimeMs), new Date(bounds.endTimeMs));
-            setSimulationMode(SIMULATION_MODE_RANGE);
-            return true;
-        },
-        onImportOemEphemeris: (content, fileName) => {
+        onAlignToOemTimeDomain: () => applyMasterTimeRangeToSimulation({ resetCurrent: true }),
+        onImportOemEphemeris: async (content, fileName) => {
+            // Parse once into an isolated preview to obtain the intrinsic
+            // domain before mutating the scene. The import is cancelled if
+            // the operator declines an MTR expansion.
+            const preview = parseOemEphemerisContent(content, fileName);
+            const first = preview?.points?.[0];
+            const last = preview?.points?.at?.(-1);
+            const objectRange = { startTime: first?.timeMs, endTime: last?.timeMs };
+            const approval = await approveObjectRangeForMasterTimeRange(objectRange, {
+                objectName: String(preview?.metadata?.objectName || fileName || "OEM")
+            });
+            if (!approval.accepted) return null;
             const imported = importOemEphemerisTrack(content, fileName);
-            const bounds = getLoadedOemEphemerisTimeBounds();
-            if (bounds) {
-                applySimulationRange(new Date(bounds.startTimeMs), new Date(bounds.endTimeMs));
+            const importedRange = getObjectIntrinsicTimeRange(imported.id);
+            if (!importedRange) {
+                throw new Error("La ephemeride OEM importada no declaro una cobertura temporal valida.");
             }
-            setSimulationMode(SIMULATION_MODE_RANGE);
+            commitObjectRangeToMasterTimeRange(importedRange);
+            applyMasterTimeRangeToSimulation({ resetCurrent: true });
             return imported;
         },
         getUiText: () => uiText,
@@ -7172,10 +7846,26 @@ function setupPropagatedParametersInspector() {
         {
             // Layers can absorb product metadata after the normal workspace
             // is usable. A late result refreshes the tree without changing
-            // the project, active layers or the New/Open command path.
+            // the New/Open command path. Saved `precise:` ids are replayed
+            // only now, once their real finite coverage is known.
             onFulfilled: (ids) => {
-                if (!Array.isArray(ids) || !ids.length) {
-                    return;
+                preciseProductRegistryHydrated = true;
+                const hydratedIds = Array.isArray(ids) ? ids : [];
+                const deferredRestore = projectLifecycle.restoreDeferredSatelliteLayers();
+                const replayed = new Set(deferredRestore.restored);
+                // Cover a project opened during this request whose historic
+                // id did not need the prefix-based defer path. The same
+                // revalidation prevents it from masquerading as a generic
+                // live layer once the SP3 metadata appears.
+                const activeHydratedIds = hydratedIds.filter((id) => (
+                    !replayed.has(id) && isSatelliteLayerActive(id)
+                ));
+                revalidateRestoredProjectSatelliteLayers(activeHydratedIds, { deferred: true });
+                if (deferredRestore.skipped.length) {
+                    showAppAlert(
+                        "No se restaur\u00f3 un producto SP3 guardado porque ya no est\u00e1 disponible en el registro de productos precisos. Importe su fichero fuente de nuevo.",
+                        uiText("alertTitle")
+                    );
                 }
                 objectSidebar?.renderList?.();
                 emitObjectStateChanged({ scope: "precise-products", reason: "hydration" });
