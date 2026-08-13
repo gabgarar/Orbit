@@ -2,9 +2,9 @@
 
 [Home](../index.md) · [Propagation](index.md) · [Propagators](overview.md) · [RK4](rk4.md)
 
-## Method description
+## What an integrator does
 
-A numerical integrator approximates the solution of an initial-value problem:
+A numerical integrator approximates the solution of:
 
 $$
 \dot{\mathbf y}=\mathbf f(t,\mathbf y),
@@ -12,11 +12,14 @@ $$
 \mathbf y(t_0)=\mathbf y_0.
 $$
 
-The integrator does not define dynamics or select physical terms. It receives the derivative \(\mathbf f\) from a propagator and advances the state between two instants. Orbit currently provides classical fixed-step fourth-order Runge–Kutta (RK4).
+It does not define physics: it receives Cowell's derivative and advances the
+state. New force models must be evaluated at each stage epoch, but they do not
+by themselves change the method or turn a fixed step into an adaptive one.
 
-## RK4 equations
+## Available integrator
 
-For a step \(h\), RK4 evaluates four slopes and forms a weighted average:
+Orbit uses classical fixed-step fourth-order Runge–Kutta (RK4) for
+<code>CowellPropagator</code>. For step \(h\):
 
 $$
 \begin{aligned}
@@ -24,41 +27,39 @@ $$
 \mathbf k_2 &= \mathbf f\!\left(t_n+\frac{h}{2},\mathbf y_n+\frac{h}{2}\mathbf k_1\right),\\
 \mathbf k_3 &= \mathbf f\!\left(t_n+\frac{h}{2},\mathbf y_n+\frac{h}{2}\mathbf k_2\right),\\
 \mathbf k_4 &= \mathbf f(t_n+h,\mathbf y_n+h\mathbf k_3),\\
-\mathbf y_{n+1} &= \mathbf y_n+\frac{h}{6}\left(\mathbf k_1+2\mathbf k_2+2\mathbf k_3+\mathbf k_4\right).
+\mathbf y_{n+1} &= \mathbf y_n+\frac{h}{6}(\mathbf k_1+2\mathbf k_2+2\mathbf k_3+\mathbf k_4).
 \end{aligned}
 $$
 
-| Symbol | Meaning | Orbit units |
-| --- | --- | --- |
-| \(t_n\) | Step start instant. | s from the integrated epoch. |
-| \(h\) | Step magnitude and direction. | s. |
-| \(\mathbf y_n\) | State at the start of the step. | For a Cartesian state: km and km/s. |
-| \(\mathbf f\) | Derivative supplied by the propagator. | For a Cartesian state: km/s and km/s². |
-| \(\mathbf k_1\ldots\mathbf k_4\) | Intermediate slopes. | Same units as \(\mathbf f\). |
+| Symbol | Orbit use and units |
+| --- | --- |
+| \(t_n\) | Stage instant, s from integrated epoch. |
+| \(h\) | Integration step, s; nominally 60 s. |
+| \(\mathbf y_n\) | Cartesian state, km and km/s. |
+| \(\mathbf f\) | Derivative, km/s and km/s². |
+| \(\mathbf k_1\ldots\mathbf k_4\) | Derivative evaluations at their own epochs. |
 
-For a Cartesian state, the first part of \(\mathbf f\) is velocity and the second is acceleration. This interpretation does not alter RK4: the method operates on any state vector and compatible derivative.
+The last step is shortened to reach requested instant exactly. Backward
+propagation uses \(h<0\).
 
-## Application in Orbit
+## What remains deferred
 
-`CowellPropagator` uses the RK4 core with `integration_step_seconds = 60`. The propagator builds its state derivative, and the integrator evaluates it without knowing the origin of its components.
+| Capability | Why it is not claimed yet |
+| --- | --- |
+| Adaptive Dormand–Prince / RKF45 | Needs tolerances, error estimator, step rejection, and performance contract. |
+| Event location | Needs root finding for eclipse, impact, AOS/LOS, or maneuver. |
+| Symplectic / multistep integrators | Need stability study and interaction with time-dependent forces. |
+| STM and covariance | Need variational equations and uncertainty contract. |
+| Maneuvers | Need events, frames, and explicit mass/impulse. |
 
-The final step is reduced when needed to reach the requested instant exactly. For backward propagation, \(h\) is negative. The inspection route limits requests to an estimated 7200 internal 60 s steps, including distance from the epoch and requested samples. This is an inspector operational limit; it does not alter the RK4 method or define an accuracy tolerance.
+In particular, cylindrical SRP eclipse is discontinuous. With fixed RK4, its
+transition is resolved only at step granularity; a mission tool must add event
+detection and adaptive control before claiming shadow-entry or exit timing
+precision.
 
-## Limitations
+## Validation
 
-Fixed-step RK4 does not provide:
-
-- adaptive local or global error control;
-- automatic step-size changes for rapid state changes;
-- symplectic, multistep, or Gauss–Jackson integration;
-- event location through root finding;
-- state-transition-matrix or covariance propagation.
-
-Accuracy depends on the integrated interval, fixed step, and derivative given to the integrator. It must be validated for each use case; Orbit publishes no general tolerance for this numerical path.
-
-## Implementation notes
-
-- The nominal step is expressed in seconds and preserves the interval sign.
-- The four evaluations are computed sequentially for each RK4 step.
-- No interpolation is performed between steps: a final reduced step is used when the target instant does not align with the nominal mesh.
-- The integrator does not itself retain states, cache, or provenance; those responsibilities belong to the propagator that uses it.
+Accuracy must be validated for each arc, step, and force composition. Tests must
+check point reproduction, convergence when reducing step, expected conservation
+for conservative models, and comparison against a reference ephemeris when
+needed. Orbit publishes no general accuracy tolerance for Cowell/RK4.

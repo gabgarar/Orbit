@@ -1,31 +1,33 @@
-# Earth albedo
+# Earth albedo and infrared
 
 [Home](../index.md) · [Propagation](index.md) · [Force models](force-models.md) · [Solar radiation pressure](solar-radiation-pressure.md)
 
-## Support status
+## Status
 
-Orbit does not implement radiation pressure reflected by Earth, known as albedo. It is a non-gravitational effect: the acceleration comes from reflected-photon momentum, not from gravitational potential.
+Earth albedo and Earth infrared (IR) remain deferred. They are not enabled by
+direct SRP: they are distinct radiation sources with their own surface geometry
+and data.
 
-!!! warning "Equation planned for future implementation"
+## What a physical model requires
 
-    A simplified model could integrate reflected irradiance \(E_{\mathrm{alb}}\) over the visible Earth:
+A useful model needs at least:
 
-    $$
-    \mathbf a_{\mathrm{alb}}=
-    -\frac{C_R A}{m c}\,E_{\mathrm{alb}}\,\hat{\mathbf s}_{\mathrm{alb}}.
-    $$
+| Deferred component | Reason |
+| --- | --- |
+| Reflectivity map or model | Albedo depends on ocean, land, clouds, season, and solar angle. |
+| Earth IR emission | Earth temperature and emissivity, not solar reflection alone. |
+| Sun–Earth–satellite geometry | Visibility, occultation, illumination, and resulting direction. |
+| Attitude or effective area | Receiving area is usually not constant for a real satellite. |
+| Epoch terrestrial frame | Earth map must be evaluated in ITRF, not on a fixed Earth in <code>EME2000</code>. |
+| Reference validation | Independent cases and declared tolerances. |
 
-    | Symbol | Meaning | Unit |
-    | --- | --- | --- |
-    | \(\mathbf a_{\mathrm{alb}}\) | Acceleration from reflected terrestrial radiation. | m/s². |
-    | \(C_R\) | Effective satellite reflectivity coefficient. | Dimensionless. |
-    | \(A\), \(m\) | Exposed area and satellite mass. | m², kg. |
-    | \(c\) | Speed of light. | m/s. |
-    | \(E_{\mathrm{alb}}\) | Integrated reflected irradiance. | W/m². |
-    | \(\hat{\mathbf s}_{\mathrm{alb}}\) | Resultant reflected-radiation direction. | Dimensionless. |
+A schematic formulation would be:
 
-    The equation is not evaluated today. It would require Sun–Earth–satellite geometry, an Earth reflectivity map, occultation, and attitude or an effective area.
+$$
+\mathbf a_{\mathrm{alb/IR}}=
+-\frac{C_R A}{mc}\int_{\mathrm{visible\ Earth}}
+E(\mathbf q,t)\,\hat{\mathbf s}(\mathbf q,t)\,d\Omega.
+$$
 
-## Relation to SRP
-
-Albedo is not a replacement for direct SRP: it uses radiation reflected by Earth and a resultant direction that depends on terrestrial geometry.
+It is not executed currently. Direct-SRP cannonball model does not provide the
+integral, maps, or orientation needed.

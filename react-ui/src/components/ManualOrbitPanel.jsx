@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
 
+// This mirrors the server-side execution budget for the current pure-Python,
+// fixed-step Cowell evaluator.  A local ICGEM file can contain more degrees,
+// but the UI must not advertise an unbounded synchronous calculation.
+const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 70;
+
 /**
  * UI/event boundary for manually authored orbits.
  *
@@ -108,10 +113,16 @@ const FORCE_TERM_OPTIONS = [
     { value: "j2", label: "J2", description: "Earth oblateness" },
     { value: "j3", label: "J3", description: "North–south asymmetry" },
     { value: "j4", label: "J4", description: "Higher zonal harmonic" },
-    { value: "drag", label: "Atmospheric drag", description: "Density-based perturbation" }
+    { value: "drag", label: "Atmospheric drag", description: "Density-based perturbation" },
+    { value: "geopotential", label: "Full geopotential", description: "Local ICGEM field; includes J2/J3/J4" },
+    { value: "third-body-sun", label: "Sun third body", description: "Differential solar gravity" },
+    { value: "third-body-moon", label: "Moon third body", description: "Differential lunar gravity" },
+    { value: "solar-radiation-pressure", label: "Solar radiation pressure", description: "Cannonball SRP with eclipse" },
+    { value: "relativity", label: "Relativity", description: "First-order Schwarzschild term" }
 ];
 
 const FORCE_TERM_VALUES = FORCE_TERM_OPTIONS.map((option) => option.value);
+const LEGACY_FORCE_TERM_VALUES = new Set(["central", "j2", "j3", "j4", "drag"]);
 // Start new designs from the physical baseline. Higher-order harmonics are
 // explicit opt-ins, rather than dormant values that a Two-body orbit would
 // appear to use without actually applying them.
@@ -220,6 +231,11 @@ function normalizeForceTerm(value) {
     if (["j3", "j-3"].includes(normalized)) return "j3";
     if (["j4", "j-4"].includes(normalized)) return "j4";
     if (["drag", "atmospheric-drag", "atmosphericdrag"].includes(normalized)) return "drag";
+    if (["geopotential", "gravity-field", "full-geopotential", "fullgeopotential"].includes(normalized)) return "geopotential";
+    if (["third-body-sun", "sun", "solar-gravity"].includes(normalized)) return "third-body-sun";
+    if (["third-body-moon", "moon", "lunar-gravity"].includes(normalized)) return "third-body-moon";
+    if (["solar-radiation-pressure", "solar-pressure", "srp", "solarradiationpressure"].includes(normalized)) return "solar-radiation-pressure";
+    if (["relativity", "schwarzschild"].includes(normalized)) return "relativity";
     // Keep a future term intact when an older UI opens the project. It is not
     // rendered as a checkbox until this build supports it, but must never be
     // silently discarded merely because the user adjusts J2 or drag.
@@ -254,7 +270,12 @@ function parseForceTerms(value) {
         j2: ["j2"],
         j3: ["j3"],
         j4: ["j4"],
-        drag: ["drag", "atmosphericDrag", "atmospheric_drag"]
+        drag: ["drag", "atmosphericDrag", "atmospheric_drag"],
+        geopotential: ["geopotential", "fullGeopotential", "full_geopotential"],
+        "third-body-sun": ["thirdBodySun", "third_body_sun", "sun"],
+        "third-body-moon": ["thirdBodyMoon", "third_body_moon", "moon"],
+        "solar-radiation-pressure": ["solarRadiationPressure", "solar_radiation_pressure", "srp"],
+        relativity: ["relativity", "schwarzschild"]
     };
     const terms = Object.entries(knownKeys).flatMap(([term, keys]) => keys.some((key) => value[key] === true) ? [term] : []);
     const present = Object.values(knownKeys).some((keys) => keys.some((key) => Object.hasOwn(value, key)));
@@ -271,8 +292,14 @@ function normalizeForceTerms(value, fallback = DEFAULT_FORCE_TERMS, legacyGravit
             : forceTermsForLegacyGravityModel(legacyGravityModel, legacyAtmosphericDrag);
     const unique = new Set(rawTerms.filter(Boolean));
     unique.add("central");
+    const known = FORCE_TERM_VALUES.filter((term) => unique.has(term));
+    // The ICGEM geopotential already contains J2/J3/J4. Keeping the legacy
+    // zonal terms as well would double-count them, so use one gravity path.
+    const mutuallyExclusiveKnown = known.includes("geopotential")
+        ? known.filter((term) => !["j2", "j3", "j4"].includes(term))
+        : known;
     return [
-        ...FORCE_TERM_VALUES.filter((term) => unique.has(term)),
+        ...mutuallyExclusiveKnown,
         ...[...unique].filter((term) => !FORCE_TERM_VALUES.includes(term))
     ];
 }
@@ -288,7 +315,7 @@ function forceTermsForLegacyGravityModel(value, atmosphericDrag = false) {
 
 function legacyGravityModelForForceTerms(forceTerms) {
     const terms = new Set(normalizeForceTerms(forceTerms, ["central"], "two-body", false));
-    const unsupported = [...terms].filter((term) => !FORCE_TERM_VALUES.includes(term));
+    const unsupported = [...terms].filter((term) => !LEGACY_FORCE_TERM_VALUES.has(term));
     if (unsupported.length) return null;
     if (terms.has("j3") || terms.has("j4")) {
         return terms.has("j2") && terms.has("j3") && terms.has("j4")
@@ -342,6 +369,9 @@ function createDefaultForm() {
             dragCoefficient: 2.2,
             areaM2: 1,
             massKg: 100,
+            geopotentialDegree: 4,
+            geopotentialOrder: 0,
+            solarRadiationCoefficient: 1.2,
             cowellGravityModel: "two-body"
         },
         keplerian: {
@@ -462,6 +492,12 @@ function boundedNumber(value, fallback, min, max) {
     return clamp(asNumber(value, fallback), min, max);
 }
 
+function boundedWholeNumber(value, fallback, min, max) {
+    const numeric = Number(value);
+    if (!Number.isInteger(numeric)) return fallback;
+    return clamp(numeric, min, max);
+}
+
 function normalizePropagationOptions(value, fallback = {}) {
     const source = value && typeof value === "object" ? value : {};
     const rawForceTerms = source.forceTerms ?? source.force_terms ?? source.gravityTerms ?? source.gravity_terms;
@@ -498,6 +534,19 @@ function normalizePropagationOptions(value, fallback = {}) {
                 fallbackGravityModel,
                 normalizeBoolean(fallbackAtmosphericDrag)
             );
+    const geopotentialMinimumDegree = forceTerms.includes("geopotential") ? 2 : 0;
+    const geopotentialDegree = boundedWholeNumber(
+        source.geopotentialDegree ?? source.geopotential_degree,
+        fallback.geopotentialDegree ?? fallback.geopotential_degree ?? 4,
+        geopotentialMinimumDegree,
+        MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE
+    );
+    const geopotentialOrder = boundedWholeNumber(
+        source.geopotentialOrder ?? source.geopotential_order,
+        fallback.geopotentialOrder ?? fallback.geopotential_order ?? 0,
+        0,
+        geopotentialDegree
+    );
     const cowellGravityModel = legacyGravityModelForForceTerms(forceTerms);
     return {
         numericalIntegrator: normalizeNumericalIntegrator(
@@ -511,6 +560,9 @@ function normalizePropagationOptions(value, fallback = {}) {
         dragCoefficient: boundedNumber(source.dragCoefficient ?? source.drag_coefficient, fallback.dragCoefficient ?? fallback.drag_coefficient ?? 2.2, 0.01, 10),
         areaM2: boundedNumber(source.areaM2 ?? source.area_m2, fallback.areaM2 ?? fallback.area_m2 ?? 1, 0.0001, 100000),
         massKg: boundedNumber(source.massKg ?? source.mass_kg, fallback.massKg ?? fallback.mass_kg ?? 100, 0.001, 1000000),
+        geopotentialDegree,
+        geopotentialOrder,
+        solarRadiationCoefficient: boundedNumber(source.solarRadiationCoefficient ?? source.solar_radiation_coefficient ?? source.reflectivityCoefficient ?? source.reflectivity_coefficient ?? source.cr, fallback.solarRadiationCoefficient ?? fallback.solar_radiation_coefficient ?? 1.2, 0.01, 5),
         cowellGravityModel
     };
 }
@@ -537,6 +589,13 @@ function payloadPropagationOptions(value, { propagator }) {
     };
     if (supportsDrag) {
         result.numericalIntegrator = options.numericalIntegrator;
+        if (forceTerms.includes("geopotential")) {
+            result.geopotentialDegree = options.geopotentialDegree;
+            result.geopotentialOrder = options.geopotentialOrder;
+        }
+        if (forceTerms.includes("solar-radiation-pressure")) {
+            result.solarRadiationCoefficient = options.solarRadiationCoefficient;
+        }
     }
     return result;
 }
@@ -676,15 +735,16 @@ function NumericRangeField({ field, value, onChange }) {
     </label>;
 }
 
-function ForceTermToggle({ option, checked, onChange, required = false }) {
+function ForceTermToggle({ option, checked, onChange, required = false, disabled = false, disabledReason = "" }) {
     const inputId = `manual-orbit-force-${option.value}`;
-    return <label title={option.description} className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-0.5 rounded-md border px-2 py-1.5 transition-colors ${checked ? "border-[#466ead] bg-[#132745]" : "border-[#263b59] bg-[#0a1627] hover:border-[#3a587e]"} ${required ? "cursor-not-allowed opacity-85" : "cursor-pointer"}`} htmlFor={inputId}>
-        <input id={inputId} className="peer sr-only" type="checkbox" checked={checked} disabled={required} onChange={(event) => onChange(event.target.checked)} />
+    const unavailable = required || disabled;
+    return <label title={disabledReason || option.description} className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-0.5 rounded-md border px-2 py-1.5 transition-colors ${checked ? "border-[#466ead] bg-[#132745]" : "border-[#263b59] bg-[#0a1627] hover:border-[#3a587e]"} ${unavailable ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`} htmlFor={inputId}>
+        <input id={inputId} className="peer sr-only" type="checkbox" checked={checked} disabled={unavailable} onChange={(event) => onChange(event.target.checked)} />
         <span className={`relative row-span-2 inline-flex h-4 w-4 items-center justify-center rounded border transition-colors ${checked ? "border-[#7399ff] bg-[#4268de]" : "border-[#526b91] bg-[#0c1b30]"}`} aria-hidden="true">
             {checked && <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none"><path d="M2.2 6.2 4.7 8.5 9.8 3.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </span>
         <span className="min-w-0 text-[10px] leading-none font-semibold text-[#dce8fb]">{option.label}{required && <small className="ml-1 text-[8px] font-bold tracking-[.06em] text-[#8eabdc]">REQUIRED</small>}</span>
-        <small className="min-w-0 truncate text-[9px] leading-none font-medium text-[#7f96b8]">{option.description}</small>
+        <small className="min-w-0 truncate text-[9px] leading-none font-medium text-[#7f96b8]">{disabledReason || option.description}</small>
     </label>;
 }
 
@@ -875,12 +935,21 @@ export default function ManualOrbitPanel() {
         emitChange("object-metadata", next, `objectMetadata.${key}`, value);
     };
     const updatePropagationOption = (key, value) => {
+        const propagationOptions = {
+            ...form.propagationOptions,
+            [key]: value
+        };
+        // The order is meaningful only within the selected maximum degree.
+        // Keep the local draft valid while the user lowers degree N.
+        if (key === "geopotentialDegree") {
+            propagationOptions.geopotentialOrder = Math.min(
+                boundedWholeNumber(propagationOptions.geopotentialOrder, 0, 0, value),
+                value
+            );
+        }
         const next = {
             ...form,
-            propagationOptions: {
-                ...form.propagationOptions,
-                [key]: value
-            }
+            propagationOptions
         };
         setForm(next);
         setStatus((current) => current?.kind === "busy" ? current : null);
@@ -893,6 +962,14 @@ export default function ManualOrbitPanel() {
         if (enabled) nextTerms.add(term);
         else nextTerms.delete(term);
         nextTerms.add("central");
+        if (enabled && term === "geopotential") {
+            nextTerms.delete("j2");
+            nextTerms.delete("j3");
+            nextTerms.delete("j4");
+        }
+        if (enabled && ["j2", "j3", "j4"].includes(term)) {
+            nextTerms.delete("geopotential");
+        }
         // Keep not-yet-renderable future terms (for example SRP) while this
         // build edits a known checkbox. Their execution remains backend
         // authoritative, but changing J2 must not erase project data.
@@ -901,10 +978,18 @@ export default function ManualOrbitPanel() {
             ...currentTerms.filter((value) => !FORCE_TERM_VALUES.includes(value) && nextTerms.has(value))
         ];
         const cowellGravityModel = legacyGravityModelForForceTerms(forceTerms);
+        const nextGeopotentialDegree = term === "geopotential" && enabled
+            ? Math.max(2, form.propagationOptions.geopotentialDegree)
+            : form.propagationOptions.geopotentialDegree;
         const next = {
             ...form,
             propagationOptions: {
                 ...form.propagationOptions,
+                geopotentialDegree: nextGeopotentialDegree,
+                geopotentialOrder: Math.min(
+                    form.propagationOptions.geopotentialOrder,
+                    nextGeopotentialDegree
+                ),
                 forceTerms,
                 atmosphericDrag: forceTerms.includes("drag"),
                 cowellGravityModel
@@ -988,6 +1073,10 @@ export default function ManualOrbitPanel() {
             : "border-[#776035] bg-[#2d2617] text-[#f5d38e]";
     const isEditingManualOrbit = Boolean(editingManualOrbitId);
     const dragEnabled = selectedPropagator.value === "cowell-rk4" && activeForceTerms.includes("drag");
+    const geopotentialEnabled = selectedPropagator.value === "cowell-rk4" && activeForceTerms.includes("geopotential");
+    const legacyZonalEnabled = activeForceTerms.some((term) => ["j2", "j3", "j4"].includes(term));
+    const solarRadiationPressureEnabled = selectedPropagator.value === "cowell-rk4" && activeForceTerms.includes("solar-radiation-pressure");
+    const spacecraftPropertiesEnabled = dragEnabled || solarRadiationPressureEnabled;
 
     // The time dock and project-time footer are intentionally hidden while
     // this design panel is open. Keep header/body/footer in independent grid
@@ -1174,18 +1263,45 @@ export default function ManualOrbitPanel() {
                         <p id="manualOrbitForceTermsDescription" className="m-0 text-[9px] leading-[1.3] font-medium text-[#7f94b4]">Combine perturbations independently. Central gravity is the mandatory base term.</p>
                         {unsupportedForceTerms.length > 0 && <p className="m-0 rounded border border-[#66543a] bg-[#251f16] px-1.5 py-1 text-[9px] leading-[1.3] font-medium text-[#f0d39d]" role="status">Unsupported terms are preserved: {unsupportedForceTerms.join(", ")}. This build cannot edit or propagate them yet.</p>}
                         <div className="grid grid-cols-2 gap-1.5">
-                            {FORCE_TERM_OPTIONS.map((option) => <div key={option.value} className={option.value === "drag" ? "col-span-2" : ""}>
-                                <ForceTermToggle option={option} checked={activeForceTerms.includes(option.value)} required={option.value === "central"} onChange={(enabled) => updateForceTerm(option.value, enabled)} />
-                            </div>)}
+                            {FORCE_TERM_OPTIONS.map((option) => {
+                                const isLegacyZonal = ["j2", "j3", "j4"].includes(option.value);
+                                const disabled = (option.value === "geopotential" && legacyZonalEnabled)
+                                    || (isLegacyZonal && geopotentialEnabled);
+                                const disabledReason = option.value === "geopotential" && legacyZonalEnabled
+                                    ? "Disable J2/J3/J4 before selecting full geopotential"
+                                    : isLegacyZonal && geopotentialEnabled
+                                        ? "Included in the selected full geopotential"
+                                        : "";
+                                return <div key={option.value} className={["drag", "geopotential", "solar-radiation-pressure"].includes(option.value) ? "col-span-2" : ""}>
+                                    <ForceTermToggle option={option} checked={activeForceTerms.includes(option.value)} required={option.value === "central"} disabled={disabled} disabledReason={disabledReason} onChange={(enabled) => updateForceTerm(option.value, enabled)} />
+                                </div>;
+                            })}
                         </div>
                     </fieldset>
-                    {dragEnabled && <div className="grid gap-2 rounded-md border border-[#31506f] bg-[#0d1d34] p-2" aria-label="Atmospheric drag parameters">
-                        <p className="m-0 text-[9px] leading-[1.35] font-medium text-[#b8d2f3]">Density-based drag is integrated with the selected force terms. Its effect becomes weak above 600 km and negligible above 1,500 km.</p>
-                        <div className="grid grid-cols-3 gap-2">
+                    {geopotentialEnabled && <div className="grid gap-2 rounded-md border border-[#3e5a83] bg-[#0d1d34] p-2" aria-label="Full geopotential configuration">
+                        <p className="m-0 text-[9px] leading-[1.35] font-medium text-[#b8d2f3]">Uses the configured local ICGEM gravity field in ITRF. Degree/order include the field’s zonal coefficients, so J2, J3 and J4 cannot be added separately. Propagation is rejected until the server has a pinned local ICGEM field.</p>
+                        <div className="grid grid-cols-2 gap-2">
                             <label className="grid min-w-0 gap-1 text-[9px] font-semibold text-[#c7d5ea]">
+                                <span>Degree N</span>
+                                <input className={inputClassName("!h-[31px] !px-1.5 !text-[11px]")} type="number" min="2" max={MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE} step="1" inputMode="numeric" value={form.propagationOptions.geopotentialDegree} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePropagationOption("geopotentialDegree", boundedWholeNumber(value, form.propagationOptions.geopotentialDegree, 2, MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE)); }} />
+                            </label>
+                            <label className="grid min-w-0 gap-1 text-[9px] font-semibold text-[#c7d5ea]">
+                                <span>Order M</span>
+                                <input className={inputClassName("!h-[31px] !px-1.5 !text-[11px]")} type="number" min="0" max={form.propagationOptions.geopotentialDegree} step="1" inputMode="numeric" value={form.propagationOptions.geopotentialOrder} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePropagationOption("geopotentialOrder", boundedWholeNumber(value, form.propagationOptions.geopotentialOrder, 0, form.propagationOptions.geopotentialDegree)); }} />
+                            </label>
+                        </div>
+                    </div>}
+                    {spacecraftPropertiesEnabled && <div className="grid gap-2 rounded-md border border-[#31506f] bg-[#0d1d34] p-2" aria-label="Spacecraft physical parameters">
+                        <p className="m-0 text-[9px] leading-[1.35] font-medium text-[#b8d2f3]">{dragEnabled && solarRadiationPressureEnabled ? "Drag and SRP use the same reference area and mass." : dragEnabled ? "Density-based drag is integrated with the selected force terms. Its effect becomes weak above 600 km and negligible above 1,500 km." : "Cannonball SRP uses reference area, mass and reflectivity Cr; eclipse handling is part of the force model."}</p>
+                        <div className="grid grid-cols-2 gap-2">
+                            {dragEnabled && <label className="grid min-w-0 gap-1 text-[9px] font-semibold text-[#c7d5ea]">
                                 <span>Cd</span>
                                 <input className={inputClassName("!h-[31px] !px-1.5 !text-[11px]")} type="number" min="0.01" max="10" step="0.01" inputMode="decimal" value={form.propagationOptions.dragCoefficient} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) updatePropagationOption("dragCoefficient", boundedNumber(value, form.propagationOptions.dragCoefficient, 0.01, 10)); }} />
-                            </label>
+                            </label>}
+                            {solarRadiationPressureEnabled && <label className="grid min-w-0 gap-1 text-[9px] font-semibold text-[#c7d5ea]">
+                                <span>Cr</span>
+                                <input className={inputClassName("!h-[31px] !px-1.5 !text-[11px]")} type="number" min="0.01" max="5" step="0.01" inputMode="decimal" value={form.propagationOptions.solarRadiationCoefficient} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) updatePropagationOption("solarRadiationCoefficient", boundedNumber(value, form.propagationOptions.solarRadiationCoefficient, 0.01, 5)); }} />
+                            </label>}
                             <label className="grid min-w-0 gap-1 text-[9px] font-semibold text-[#c7d5ea]">
                                 <span>Area (m²)</span>
                                 <input className={inputClassName("!h-[31px] !px-1.5 !text-[11px]")} type="number" min="0.0001" max="100000" step="0.01" inputMode="decimal" value={form.propagationOptions.areaM2} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value)) updatePropagationOption("areaM2", boundedNumber(value, form.propagationOptions.areaM2, 0.0001, 100000)); }} />

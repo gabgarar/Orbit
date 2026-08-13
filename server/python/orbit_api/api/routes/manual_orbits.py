@@ -14,11 +14,12 @@ from orbit_api.application.manual_orbits import (
     canonical_manual_orbit,
 )
 from orbit_api.domain.requests import (
+    MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
     ManualOrbitRequest,
     require_manual_orbit_runtime_propagator,
 )
 from orbit_api.frames import FrameTransformService
-
+from orbit_api.orbits.forces import GravityFieldModel
 
 DEFAULT_MANUAL_ORBIT_HORIZON_HOURS = 24.0
 
@@ -131,6 +132,9 @@ def _camel_propagation_options(options: dict) -> dict:
         ("drag_coefficient", "dragCoefficient"),
         ("area_m2", "areaM2"),
         ("mass_kg", "massKg"),
+        ("geopotential_degree", "geopotentialDegree"),
+        ("geopotential_order", "geopotentialOrder"),
+        ("solar_radiation_coefficient", "solarRadiationCoefficient"),
     ):
         if snake_case in options:
             result[camel_case] = options[snake_case]
@@ -147,10 +151,79 @@ def create_manual_orbits_router(
     build_ephemeris: Callable,
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None = None,
+    gravity_field: GravityFieldModel | None = None,
 ) -> APIRouter:
     """Build the HTTP adapter for transient manual orbit engines."""
 
     router = APIRouter(tags=["manual-orbits"])
+
+    @router.get("/manual-orbits/capabilities")
+    def manual_orbit_capabilities() -> dict:
+        """Expose installed force data without implying epoch coverage.
+
+        Per-epoch EOP, leap-second and celestial coverage remains validated at
+        propagation time.  This endpoint only lets a client explain why the
+        configurable full field is or is not currently selectable.
+        """
+
+        leap_seconds = (
+            frame_transformer.leap_second_table if frame_transformer is not None else None
+        )
+        return {
+            "cowell": {
+                "force_terms": [
+                    "central", "j2", "j3", "j4", "drag", "geopotential",
+                    "third-body-sun", "third-body-moon", "solar-radiation-pressure",
+                    "relativity",
+                ],
+                "geopotential": {
+                    "available": gravity_field is not None,
+                    "requires": [
+                        "local ICGEM .gfc with SHA-256",
+                        "strict local EOP coverage",
+                        "versioned unexpired leap-second snapshot",
+                        "pyerfa/SOFA IAU 2006/2000A",
+                    ],
+                    "model": (
+                        {
+                            "id": gravity_field.model_id,
+                            "source": gravity_field.source,
+                            "version": gravity_field.version,
+                            "sha256": gravity_field.sha256,
+                            "max_degree": gravity_field.max_degree,
+                            "max_active_degree": min(
+                                gravity_field.max_degree,
+                                MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
+                            ),
+                            "execution_limit": {
+                                "max_degree": MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
+                                "reason": (
+                                    "bounded pure-Python RK4 evaluation; higher degrees require "
+                                    "a validated optimized evaluator"
+                                ),
+                            },
+                            "normalization": gravity_field.normalization,
+                            "tide_system": gravity_field.tide_system,
+                        }
+                        if gravity_field is not None else None
+                    ),
+                },
+                "temporal_route": {
+                    "strict_eop": bool(frame_transformer and frame_transformer.strict_eop),
+                    "iau2006_2000a": bool(frame_transformer and frame_transformer.has_iau2006_2000a),
+                    "leap_second_snapshot": (
+                        {
+                            "source": leap_seconds.source,
+                            "version": leap_seconds.version,
+                            "sha256": leap_seconds.sha256,
+                            "expires_at": leap_seconds.expires_at.isoformat() if leap_seconds.expires_at else None,
+                        }
+                        if leap_seconds is not None else None
+                    ),
+                    "epoch_coverage_validated_on_propagation": True,
+                },
+            }
+        }
 
     @router.post("/manual-orbits")
     def create_manual_orbit(payload: ManualOrbitRequest) -> dict:
@@ -175,6 +248,7 @@ def create_manual_orbits_router(
                 state_vector=state_vector,
                 propagation_options=propagation_options,
                 frame_transformer=frame_transformer,
+                gravity_field=gravity_field,
             )
         except (ManualOrbitError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

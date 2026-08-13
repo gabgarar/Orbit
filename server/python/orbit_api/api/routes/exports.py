@@ -6,11 +6,6 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from orbit_api.application.manual_orbits import (
-    ManualOrbitError,
-    build_manual_orbit_propagator,
-    canonical_manual_orbit,
-)
 from orbit_api.application.exporters import (
     ephemeris_csv_text,
     ephemeris_oem_text,
@@ -28,8 +23,17 @@ from orbit_api.application.geospatial_exports import (
     geospatial_extension,
     orbital_geospatial_features,
 )
-from orbit_api.domain.requests import ManualOrbitRequest, require_manual_orbit_runtime_propagator
+from orbit_api.application.manual_orbits import (
+    ManualOrbitError,
+    build_manual_orbit_propagator,
+    canonical_manual_orbit,
+)
+from orbit_api.domain.requests import (
+    ManualOrbitRequest,
+    require_manual_orbit_runtime_propagator,
+)
 from orbit_api.frames import FrameTransformService
+from orbit_api.orbits.forces import GravityFieldModel
 
 
 def _serialize_ephemeris_product(
@@ -153,6 +157,7 @@ def _build_manual_export_ephemeris(
     build_ephemeris: Callable,
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None,
+    gravity_field: GravityFieldModel | None,
 ) -> tuple[dict, datetime.datetime, datetime.datetime, str]:
     """Propagate a manual source exactly as the manual-orbit endpoint does."""
 
@@ -168,6 +173,7 @@ def _build_manual_export_ephemeris(
             state_vector=state_vector,
             propagation_options=propagation_options,
             frame_transformer=frame_transformer,
+            gravity_field=gravity_field,
         )
         start_time, end_time = _resolve_manual_export_range(payload, ensure_utc)
         result = build_ephemeris(
@@ -195,6 +201,7 @@ def create_exports_router(
     build_ephemeris: Callable,
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None = None,
+    gravity_field: GravityFieldModel | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["exports"])
 
@@ -285,6 +292,7 @@ def create_exports_router(
             build_ephemeris,
             ensure_utc,
             frame_transformer,
+            gravity_field,
         )
         result.update({"source_format": "MANUAL", "propagator": propagator})
         return _serialize_ephemeris_product(

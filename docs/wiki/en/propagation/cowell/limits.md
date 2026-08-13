@@ -37,7 +37,13 @@ An event is something that happens between two instants, such as crossing an alt
 
 ### It does not include all orbital physics
 
-Today it can compose only central gravity, J2, J3, J4, and exponential atmospheric drag. There are no third bodies, solar radiation pressure, relativity, full geopotential, tides, or high-fidelity atmosphere. If an absent effect matters for the studied arc, the trajectory will not reflect it; that does not mean the effect is zero in the real world.
+Cowell can compose central gravity, legacy J2/J3/J4 zonals, strict-ITRF
+exponential drag, configured static ICGEM geopotential, approximate solar/lunar
+third bodies, cannonball SRP with cylindrical umbra, and Schwarzschild
+correction. Tides, albedo/IR, high-fidelity atmosphere, attitude, penumbra,
+precision events, and maneuver dynamics remain absent. If an absent effect
+matters for the studied arc, the trajectory will not reflect it; that does not
+mean the effect is zero in the real world.
 
 ### It does not calculate uncertainty
 
@@ -59,7 +65,8 @@ Cowell is appropriate when the goal is to understand how a force composition aff
 Do not use the current Cowell/RK4 path as a final result for:
 
 - highly eccentric orbits, where perigee can require steps much shorter than 60 s;
-- realistic GEO orbits, because without SRP, third bodies, and other effects the long-term behaviour is not representative;
+- mission GEO or long arcs, because the available model still lacks tides,
+  albedo/IR, attitude, penumbra, and adaptive error control;
 - resonant or fast-time-scale dynamics;
 - trajectories with strong drag, re-entry prediction, or detailed atmospheric analysis;
 - long-period propagation, where fixed-step error and omitted effects accumulate;

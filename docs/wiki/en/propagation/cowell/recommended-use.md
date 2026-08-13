@@ -18,7 +18,8 @@ Cowell is appropriate when the goal is to understand how a force composition cha
 Do not use the current Cowell/RK4 path as a final result for:
 
 - highly eccentric orbits, where perigee can require steps much shorter than 60 s;
-- realistic GEO orbits, because without SRP, third bodies, and other effects the long-term behaviour is not representative;
+- mission GEO or long arcs, because tides, albedo/IR, attitude, penumbra, and
+  adaptive error control are still absent;
 - resonant or fast-time-scale dynamics;
 - trajectories with strong drag, re-entry prediction, or detailed atmospheric analysis;
 - long-period propagation, where fixed-step error and omitted effects accumulate;

@@ -33,6 +33,9 @@ test("manual-orbit editor defaults to one canonical ECI/Kep state", () => {
         dragCoefficient: 2.2,
         areaM2: 1,
         massKg: 100,
+        geopotentialDegree: 4,
+        geopotentialOrder: 0,
+        solarRadiationCoefficient: 1.2,
         forceTerms: ["central"],
         cowellGravityModel: "two-body",
         numericalIntegrator: "rk4"
@@ -121,9 +124,9 @@ test("force terms are authoritative, ordered, and derive legacy compatibility al
 
     const futureForce = normalizeManualOrbitState({
         propagator: "cowell-rk4",
-        propagationOptions: { forceTerms: ["central", "j2", "srp"] }
+        propagationOptions: { forceTerms: ["central", "j2", "future-force"] }
     });
-    assert.deepEqual(futureForce.propagationOptions.forceTerms, ["central", "j2", "srp"]);
+    assert.deepEqual(futureForce.propagationOptions.forceTerms, ["central", "j2", "future-force"]);
     assert.equal(futureForce.propagationOptions.cowellGravityModel, null);
     assert.equal("cowell_gravity_model" in toManualOrbitApiPayload(futureForce).propagation_options, false);
 
@@ -144,6 +147,62 @@ test("force terms are authoritative, ordered, and derive legacy compatibility al
         assert.equal(fixedEngine.propagationOptions.cowellGravityModel, "two-body");
         assert.equal(fixedEngine.propagationOptions.atmosphericDrag, false);
     }
+});
+
+test("full geopotential is exclusive with legacy zonals and new Cowell terms serialize their options", () => {
+    const state = normalizeManualOrbitState({
+        propagator: "cowell-rk4",
+        propagation_options: {
+            force_terms: ["central", "j2", "j3", "full-geopotential", "sun", "moon", "srp", "schwarzschild"],
+            geopotential_degree: 60,
+            geopotential_order: 30,
+            solar_radiation_coefficient: 1.37
+        }
+    });
+
+    assert.deepEqual(state.propagationOptions.forceTerms, [
+        "central",
+        "geopotential",
+        "third-body-sun",
+        "third-body-moon",
+        "solar-radiation-pressure",
+        "relativity"
+    ]);
+    assert.equal(state.propagationOptions.cowellGravityModel, null);
+    assert.equal(state.propagationOptions.geopotentialDegree, 60);
+    assert.equal(state.propagationOptions.geopotentialOrder, 30);
+    assert.equal(state.propagationOptions.solarRadiationCoefficient, 1.37);
+
+    const payload = toManualOrbitApiPayload(state);
+    assert.equal(payload.propagation_options.geopotential_degree, 60);
+    assert.equal(payload.propagation_options.geopotential_order, 30);
+    assert.equal(payload.propagation_options.solar_radiation_coefficient, 1.37);
+    assert.equal("cowell_gravity_model" in payload.propagation_options, false);
+
+    assert.throws(
+        () => normalizeManualOrbitState({
+            propagator: "cowell-rk4",
+            propagationOptions: { geopotentialDegree: 8, geopotentialOrder: 9 }
+        }),
+        OrbitalElementsValidationError
+    );
+    assert.throws(
+        () => normalizeManualOrbitState({
+            propagator: "cowell-rk4",
+            propagationOptions: { solarRadiationCoefficient: 5.01 }
+        }),
+        OrbitalElementsValidationError
+    );
+    assert.throws(
+        () => normalizeManualOrbitState({
+            propagator: "cowell-rk4",
+            propagationOptions: {
+                forceTerms: ["geopotential"],
+                geopotentialDegree: 1
+            }
+        }),
+        OrbitalElementsValidationError
+    );
 });
 
 test("independent atmospheric drag is retained only by the explicit Cowell/RK4 path", () => {
@@ -264,6 +323,9 @@ test("synchronization derives the opposite representation and ignores stale geom
         dragCoefficient: 2.35,
         areaM2: 3.4,
         massKg: 420,
+        geopotentialDegree: 4,
+        geopotentialOrder: 0,
+        solarRadiationCoefficient: 1.2,
         forceTerms: ["central", "j2", "drag"],
         cowellGravityModel: "j2",
         numericalIntegrator: "rk4"
@@ -362,6 +424,9 @@ test("manual-orbit state accepts snake-case API responses without losing authore
         dragCoefficient: 1.9,
         areaM2: 4.5,
         massKg: 820,
+        geopotentialDegree: 4,
+        geopotentialOrder: 0,
+        solarRadiationCoefficient: 1.2,
         forceTerms: ["central", "j2", "j3", "j4", "drag"],
         cowellGravityModel: "j2-j3-j4",
         numericalIntegrator: "rk4"

@@ -13,12 +13,14 @@ from orbit_api.application.orbit_parameters import (
 )
 from orbit_api.domain.requests import OrbitParametersRequest
 from orbit_api.frames import FrameTransformService
+from orbit_api.orbits.forces import GravityFieldModel
 
 
 def create_orbit_parameters_router(
     resolve_propagator: Callable,
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None = None,
+    gravity_field: GravityFieldModel | None = None,
 ) -> APIRouter:
     """Build the bounded inspector endpoint without leaking renderer frames."""
 
@@ -32,6 +34,7 @@ def create_orbit_parameters_router(
                 resolve_propagator=resolve_propagator,
                 ensure_utc=ensure_utc,
                 frame_transformer=frame_transformer,
+                gravity_field=gravity_field,
             )
         except HTTPException:
             # Resolver errors retain their specific contract: unknown loaded

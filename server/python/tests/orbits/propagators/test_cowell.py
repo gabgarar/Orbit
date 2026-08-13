@@ -2,20 +2,49 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import math
+from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from orbit_api.application.manual_orbits import keplerian_to_state_vector
 from orbit_api.domain.requests import ManualKeplerianInput
+from orbit_api.frames import FrameTransformService
 from orbit_api.orbits.propagators.classical import EARTH_MU_KM3_S2
 from orbit_api.orbits.propagators.cowell import CowellPropagator
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
-
+from orbit_api.timekeeping import (
+    EarthOrientation,
+    LeapSecondTable,
+    StaticEarthOrientationProvider,
+)
 
 EPOCH = datetime(2026, 7, 20, 12, tzinfo=UTC)
+
+
+def strict_force_transformer() -> FrameTransformService:
+    """Return local time/frame data for an Earth-fixed drag regression."""
+
+    return FrameTransformService(
+        StaticEarthOrientationProvider(
+            EarthOrientation(
+                dut1_seconds=0.17,
+                xp_radians=1.0e-6,
+                yp_radians=-0.8e-6,
+                source="Cowell drag fixture",
+                version="r1",
+                quality="final",
+            )
+        ),
+        strict_eop=True,
+        leap_second_table=LeapSecondTable(
+            entries=((datetime(2025, 1, 1, tzinfo=UTC), 38),),
+            source="fixture leap seconds",
+            version="fixture-2025",
+            sha256="c" * 64,
+            expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+        ),
+    )
 
 
 def circular_definition(radius_km: float = 6878.0) -> tuple[dict[str, float], dict[str, object]]:
@@ -78,6 +107,7 @@ def test_atmospheric_drag_lowers_orbital_energy_and_the_derived_semi_major_axis(
         drag_coefficient=2.2,
         area_m2=8.0,
         mass_kg=250.0,
+        frame_transformer=strict_force_transformer(),
     )
     target = EPOCH + timedelta(hours=6)
 
@@ -199,6 +229,7 @@ def test_drag_membership_is_authoritative_and_central_is_inserted_when_missing()
         drag_coefficient=2.2,
         area_m2=8.0,
         mass_kg=250.0,
+        frame_transformer=strict_force_transformer(),
     )
     without_drag = CowellPropagator(EPOCH, state_vector, force_terms=("central",))
     target = EPOCH + timedelta(hours=6)
@@ -217,7 +248,7 @@ def test_nearest_state_cache_bounds_a_7200_point_preview_to_one_history_pass(mon
     propagator = CowellPropagator(EPOCH, state_vector, gravity_model="two-body")
     durations: list[float] = []
 
-    def fake_integrate(state, duration_seconds):
+    def fake_integrate(state, duration_seconds, *_start_offset):
         durations.append(duration_seconds)
         return state
 

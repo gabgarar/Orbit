@@ -18,7 +18,8 @@ Cowell es apropiado cuando se quiere comprender cómo una composición de fuerza
 No use la ruta Cowell/RK4 actual como resultado final para:
 
 - órbitas muy excéntricas, donde el perigeo puede requerir pasos mucho menores que 60 s;
-- órbitas GEO realistas, porque sin SRP, terceros cuerpos y otros efectos el comportamiento a largo plazo no es representativo;
+- órbitas GEO de misión o arcos largos, porque siguen faltando mareas,
+  albedo/IR, actitud, penumbra y control adaptativo de error;
 - órbitas resonantes o dinámicas con escalas temporales rápidas;
 - trayectorias con drag fuerte, predicción de reentrada o análisis detallado de la atmósfera;
 - propagación de largo periodo, donde el error de paso fijo y los efectos omitidos se acumulan;

@@ -92,6 +92,10 @@ provenance contract.
 | ORBIT_PYTHON_STARTUP_TIMEOUT_MS | Python-backend startup budget: `180000` ms by default; only integer values from `10000` to `600000` are accepted. Leave enough time to rehydrate strict local GNSS products (SP3/ERP) before the service is declared available. |
 | ORBIT_EOP_* | Policy and origin of the local C04 snapshot. |
 | ORBIT_LEAP_SECONDS_* | Local UTC–TAI table policy. |
+| ORBIT_GRAVITY_FIELD_PATH | In-container path to a local static ICGEM `.gfc` field. No field is downloaded and no full-field default exists. |
+| ORBIT_GRAVITY_FIELD_SHA256 | Mandatory SHA-256 when a field is configured; startup fails on mismatch. |
+| ORBIT_GRAVITY_FIELD_SOURCE | Optional human/published ICGEM-field provenance; otherwise controlled local provenance is derived. |
+| ORBIT_GRAVITY_FIELD_VERSION | Optional ICGEM field publication version or identifier; otherwise header `modelname` is used. |
 | ORBIT_TERRESTRIAL_REALIZATION | Output terrestrial realization; Compose defaults to `ITRF2020`. |
 | ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT | Enables, together with `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`, the published IGS20/IGb20/IGc20→ITRF2020 operation for satellite-orbit states; Compose defaults to `true`. |
 
@@ -104,6 +108,20 @@ before enabling it.
 Temporary and implementation variables do not belong in the interface JSON.
 They are injected into Compose when starting the process; your contract is documented in
 [Time and EOP](time-eop.md).
+
+### Local gravity field
+
+`geopotential` is enabled only when the four `ORBIT_GRAVITY_FIELD_*` variables
+above describe a local file that the container can access. It must be a static
+ICGEM `.gfc` field with `fully_normalized` convention; header, coefficient
+completeness, and digest are validated. URLs are not accepted, there is no
+automatic download, and missing field is not replaced with J2/J3/J4. Mount the
+directory containing the file under `/app/config` or another container-visible
+path and use that internal path in `ORBIT_GRAVITY_FIELD_PATH`.
+
+The term also requires `ORBIT_EOP_STRICT=true`, EOP coverage, a valid leap-
+second table, and ERFA/SOFA. The same strict contract applies to `drag` because
+its atmosphere is evaluated in ITRF at each RK4 stage.
 
 `restart-orbit` waits for the configured budget, rounded up to seconds, plus
 60 s for the gateway and healthcheck cadence. The default therefore waits up

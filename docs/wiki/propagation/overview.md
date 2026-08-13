@@ -24,15 +24,16 @@ flowchart LR
 
 ## Propagadores disponibles
 
-Un propagador define cómo evoluciona el estado. Los términos como J2, J3, J4 y
-arrastre son [modelos de fuerza](force-models.md), no propagadores: Cowell los
-compone y el integrador [RK4](rk4.md) resuelve el sistema numérico.
+Un propagador define cómo evoluciona el estado. Los términos como zonales,
+arrastre, geopotencial, terceros cuerpos, SRP y relatividad son
+[modelos de fuerza](force-models.md), no propagadores: Cowell los compone y el
+integrador [RK4](rk4.md) resuelve el sistema numérico.
 
 | Propagador | Origen | Estado nativo | Dinámica | Disponibilidad operativa |
 | --- | --- | --- | --- | --- |
 | [SGP4](sgp4.md) | TLE | TEME, UTC | Implementación SGP4 de `sgp4.api.Satrec`. | Sólo catálogo TLE. |
 | [Dos cuerpos](two-body.md) | Elementos manuales | EME2000, UTC | Kepler elíptico analítico. | Órbita manual. |
-| [Cowell](cowell.md) | Estado manual | EME2000, UTC | RK4 fijo, central/J2/J3/J4/drag. | Órbita manual. |
+| [Cowell](cowell.md) | Estado manual | EME2000, UTC | RK4 fijo con composición de fuerzas validada; incluye ICGEM, Sol/Luna, SRP y Schwarzschild cuando se seleccionan. | Órbita manual. |
 | J2+J3+J4 | Estado manual | EME2000, UTC | Preset RK4 fijo sin drag. | Compatibilidad manual. |
 
 El registro de propagadores usado por el catálogo contiene solo `sgp4`. No hay
@@ -94,8 +95,10 @@ fueran elementos medios NORAD no es una conversión de marco válida.
 
 - No hay determinación de órbita, estimación de parámetros, maniobras ni
   propagación de covarianza.
-- No hay integrador adaptativo, eventos de precisión, terceros cuerpos, SRP,
-  relatividad ni geopotencial completo.
+- No hay integrador adaptativo, eventos de precisión, STM/covarianza, maniobras,
+  mareas, albedo/IR, atmósfera de alta fidelidad ni SRP dependiente de actitud.
+- Las fuerzas disponibles no convierten el RK4 fijo de 60 s en una efeméride de
+  misión; requieren sus datos auxiliares y una validación frente a referencia.
 - El lector OEM/SP3 es una fuente tabulada Python; no es un propagador
   registrado en `OrbitRuntime` ni una carga de producto UI/API.
 

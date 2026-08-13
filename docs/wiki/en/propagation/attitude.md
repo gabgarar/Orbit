@@ -2,33 +2,29 @@
 
 [Home](../index.md) · [Propagation](index.md) · [Resonances](resonances.md)
 
-## Support status
+## Status
 
-Orbit does not propagate attitude. There is no quaternion state, rigid-body
-dynamics, actuator model or coupling between attitude, exposed area and force.
+Orbit does not propagate attitude. The planned SRP cannonball model uses fixed
+effective area; it must not be interpreted as rigid-body dynamics or as a
+substitute for quaternions.
 
-!!! warning "Equation planned for future implementation"
+## Deferred work
 
-    An attitude model would require at least quaternion kinematics and the
-    Euler equation for a rigid body:
+| Capability | Later use |
+| --- | --- |
+| Quaternion state and kinematics | Orient body without Euler singularities. |
+| Euler equations and inertia tensor | Rigid rotation and torque response. |
+| Actuators and control laws | Wheels, magnetorquers, propulsion, and maneuvers. |
+| Plate geometry | Projected drag/SRP area, self-shadow, and temperature. |
+| Translation–attitude coupling | Orientation-dependent forces at every stage. |
+| Events and validation | Eclipse entry/exit, saturation, and reference cases. |
 
-    $$
-    \dot{\mathbf q}=\frac{1}{2}\Omega(\mathbf\omega)\mathbf q,
-    \qquad I\dot{\mathbf\omega}+\mathbf\omega\times(I\mathbf\omega)=\mathbf\tau.
-    $$
+Future mathematical basis requires:
 
-    | Symbol | Meaning | Unit |
-    | --- | --- | --- |
-    | \(\mathbf q\) | Attitude quaternion. | Dimensionless. |
-    | \(\mathbf\omega\), \(\dot{\mathbf\omega}\) | Angular velocity and acceleration. | rad/s, rad/s². |
-    | \(\Omega\) | Kinematic matrix constructed from \(\mathbf\omega\). | s⁻¹. |
-    | \(I\) | Inertia tensor. | kg·m². |
-    | \(\mathbf\tau\) | Applied torque. | N·m. |
+$$
+\dot{\mathbf q}=\frac{1}{2}\Omega(\mathbf\omega)\mathbf q,
+\qquad I\dot{\mathbf\omega}+\mathbf\omega\times(I\mathbf\omega)=\mathbf\tau.
+$$
 
-    Orbit does not execute this: it has no attitude state or force-orientation
-    coupling.
-
-## Future scope
-
-Attitude is required before enabling multi-surface SRP, variable drag area, or
-physically consistent sensor and actuator models.
+Until then, drag/SRP mass and area are constant parameters, and orientation is
+not part of state uncertainty or provenance.

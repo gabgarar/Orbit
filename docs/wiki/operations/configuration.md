@@ -92,6 +92,10 @@ contrato de importación y procedencia.
 | ORBIT_PYTHON_STARTUP_TIMEOUT_MS | Presupuesto de arranque del backend Python: `180000` ms por defecto; solo acepta enteros entre `10000` y `600000`. Dé margen suficiente para rehidratar localmente productos GNSS estrictos (SP3/ERP) antes de declarar el servicio disponible. |
 | ORBIT_EOP_* | Política y procedencia del snapshot C04 local. |
 | ORBIT_LEAP_SECONDS_* | Política de la tabla UTC–TAI local. |
+| ORBIT_GRAVITY_FIELD_PATH | Ruta, dentro del contenedor, a un fichero ICGEM estático `.gfc` local. No se descargan campos por red ni hay campo completo predeterminado. |
+| ORBIT_GRAVITY_FIELD_SHA256 | SHA-256 obligatorio cuando se configura el campo; el arranque falla si no coincide. |
+| ORBIT_GRAVITY_FIELD_SOURCE | Procedencia humana/publicada opcional del campo ICGEM; si falta se deriva como procedencia local controlada. |
+| ORBIT_GRAVITY_FIELD_VERSION | Versión o identificador de publicación opcional; si falta se usa `modelname` del encabezado ICGEM. |
 | ORBIT_TERRESTRIAL_REALIZATION | Realización terrestre de salida; Compose usa `ITRF2020` por defecto. |
 | ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT | Activa, junto a `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`, la operación publicada IGS20/IGb20/IGc20→ITRF2020 para estados orbitales de satélite; Compose usa `true` por defecto. |
 
@@ -105,6 +109,21 @@ antes de habilitarla.
 Las variables temporales y de realización no pertenecen al JSON de interfaz.
 Se inyectan en Compose al iniciar el proceso; su contrato se documenta en
 [Tiempo y EOP](time-eop.md).
+
+### Campo de gravedad local
+
+`geopotential` se habilita únicamente si las cuatro variables
+`ORBIT_GRAVITY_FIELD_*` anteriores describen un fichero local accesible para el
+contenedor. Debe ser un ICGEM `.gfc` estático con normalización
+`fully_normalized`; se valida encabezado, completitud de coeficientes y huella.
+No se acepta URL, no hay descarga automática y no se sustituye por J2/J3/J4 si
+falta el campo. Monte el directorio que contiene el fichero dentro de
+`/app/config` o de otra ruta visible para el contenedor y use esa ruta interna
+en `ORBIT_GRAVITY_FIELD_PATH`.
+
+El término también exige `ORBIT_EOP_STRICT=true`, EOP con cobertura, tabla de
+segundos intercalares válida y ERFA/SOFA. El mismo contrato estricto se aplica
+al arrastre `drag`, porque su atmósfera se evalúa en ITRF por etapa RK4.
 
 `restart-orbit` espera el presupuesto configurado, redondeado a segundos, más
 60 s para el gateway y la cadencia del healthcheck. Por ejemplo, el valor

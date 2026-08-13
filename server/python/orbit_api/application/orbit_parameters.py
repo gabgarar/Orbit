@@ -21,15 +21,17 @@ from orbit_api.application.manual_orbits import (
     build_manual_orbit_propagator,
     canonical_manual_orbit,
 )
-from orbit_api.domain.requests import OrbitParametersRequest
-from orbit_api.domain.requests import require_manual_orbit_runtime_propagator
+from orbit_api.domain.requests import (
+    OrbitParametersRequest,
+    require_manual_orbit_runtime_propagator,
+)
 from orbit_api.frames import FrameTransformService, StateVector
+from orbit_api.orbits.forces import GravityFieldModel
 from orbit_api.orbits.propagators.classical import (
     EARTH_EQUATORIAL_RADIUS_KM,
     EARTH_MU_KM3_S2,
 )
 from orbit_api.timekeeping import ensure_utc as normalize_utc
-
 
 _TWO_PI = 2.0 * math.pi
 _RAD_TO_DEG = 180.0 / math.pi
@@ -364,6 +366,7 @@ def _catalog_source(payload: OrbitParametersRequest, resolve_propagator: Callabl
 def _manual_source(
     payload: OrbitParametersRequest,
     frame_transformer: FrameTransformService | None = None,
+    gravity_field: GravityFieldModel | None = None,
 ) -> tuple[str, Callable, str, float, dict[str, Any], dict[str, Any]]:
     manual = payload.source.manual_orbit
     if manual is None:  # Defensive narrowing; the request model already rejects this.
@@ -383,6 +386,7 @@ def _manual_source(
             propagator=propagator_name
         ),
         frame_transformer=frame_transformer,
+        gravity_field=gravity_field,
     )
     frame = "EME2000"
     model = {
@@ -414,6 +418,7 @@ def build_orbit_parameters(
     resolve_propagator: Callable,
     ensure_utc: Callable[[datetime.datetime], datetime.datetime] | None = None,
     frame_transformer: FrameTransformService | None = None,
+    gravity_field: GravityFieldModel | None = None,
 ) -> dict[str, Any]:
     """Propagate a source at evenly spaced instants and derive its elements."""
 
@@ -429,6 +434,7 @@ def build_orbit_parameters(
         name, state_at, frame, mu, model, identity = _manual_source(
             payload,
             frame_transformer,
+            gravity_field,
         )
     else:
         name, state_at, frame, mu, model, identity = _catalog_source(payload, resolve_propagator)

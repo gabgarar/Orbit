@@ -1,22 +1,22 @@
 # Modelos de gravedad
 
-[Inicio](../index.md) · [Ingeniería](index.md) · [Modelos de la Tierra](earth-models.md) · [Modelos de fuerza](../propagation/force-models.md)
+[Inicio](../index.md) · [Ingeniería](index.md) · [Modelos de Tierra](earth-models.md) · [Modelos de fuerza](../propagation/force-models.md)
 
-## Modelos disponibles
+## Capas de gravedad en Orbit
 
-Los modelos de gravedad se aplican en la propagación manual. El catálogo TLE
+Los modelos de gravedad se usan únicamente en propagación manual. Un objeto TLE
 usa SGP4 y no acepta esta composición como selector operativo.
 
-| Modelo | Implementación | Uso |
-| --- | --- | --- |
-| Central | \(-\mu\mathbf r/r^3\) | Dos cuerpos y término obligatorio de Cowell. |
-| J2, J3, J4 numéricos | Armónicos zonales no normalizados WGS-84 | Términos independientes de Cowell o preset histórico. |
-| Geopotencial completo | No disponible | No hay coeficientes \(C_{nm},S_{nm}\) ni grado/orden configurable. |
+| Modelo | Identificador | Estado | Uso |
+| --- | --- | --- | --- |
+| Punto masa | `central` | Disponible. | Dos cuerpos y término obligatorio de Cowell. |
+| Zonales J2/J3/J4 | `j2`, `j3`, `j4` | Disponible por compatibilidad. | Estudios manuales heredados. |
+| Armónicos esféricos ICGEM | `geopotential` | Disponible con campo local configurado. | Campo configurable hasta grado/orden con ruta ITRF estricta. |
 
-## Términos zonales de Cowell
+## Zonales heredados
 
-Cowell mantiene siempre la gravedad central y puede componer `j2`, `j3` y
-`j4`. Los coeficientes incluidos son:
+Cowell conserva términos zonales independientes con los coeficientes WGS-84
+internos:
 
 | Coeficiente | Valor |
 | --- | ---: |
@@ -24,24 +24,54 @@ Cowell mantiene siempre la gravedad central y puede componer `j2`, `j3` y
 | \(J_3\) | \(-2.53265648533224\times10^{-6}\) |
 | \(J_4\) | \(-1.61962159136700\times10^{-6}\) |
 
-El potencial zonal se implementa a partir de los polinomios de Legendre para
-los grados 2 a 4. El eje \(z\) de los términos se trata como eje de giro
-terrestre compatible con el marco inercial de primer orden; no se introduce
-una transformación dinámica completa de las fuerzas al marco terrestre.
+Se evalúan como una implementación de compatibilidad en `EME2000`, tratando su
+eje \(Z\) como eje terrestre fijo. Son útiles para conservar resultados y para
+estudios de primer orden, pero no equivalen a rotar un campo ligado a la Tierra
+en cada etapa de integración.
 
-## Selección
+## Campo armónico configurable
 
-| Ruta | Selección disponible |
-| --- | --- |
-| Dos cuerpos | Solo gravedad central. |
-| `cowell-rk4` | `central`, `j2`, `j3`, `j4` y `drag` como términos explícitos. |
-| `j2-j3-j4` | Preset histórico fijo J2+J3+J4, sin drag. |
+El modelo nuevo se define mediante un fichero ICGEM `.gfc` y una selección de
+grado \(N\) y orden \(M\). Solo se aceptan coeficientes completamente
+normalizados. La relación zonal es:
 
-Los nombres heredados `two-body`, `j2` y `j2-j3-j4` se normalizan a su
-composición Cowell cuando se utilizan como preset de `cowell-rk4`.
+$$
+J_n=-\sqrt{2n+1}\;\bar C_{n0}.
+$$
 
-!!! warning "No es un geopotencial de misión"
+Esto explica por qué J2, J3 y J4 ya están incluidos si el campo contiene esos
+grados. J1 no se expone: en un sistema geocéntrico de centro de masas representa
+un desplazamiento de origen, no una perturbación física que deba activarse.
 
-    La composición J2/J3/J4 no representa un campo completo ni sustituye una
-    propagación de alta fidelidad, OD o validación de misión. No hay términos
-    tesseral/sectorial, mareas, variación temporal ni grado y orden configurables.
+El término armónico aporta la parte no central de la aceleración. `central`
+sigue siendo obligatorio, y `geopotential` se excluye mutuamente con los
+interruptores J2/J3/J4 para evitar doble conteo.
+
+## Marco correcto de evaluación
+
+Los coeficientes \(\bar C_{nm},\bar S_{nm}\) describen la distribución de masa
+respecto a la Tierra. La latitud y longitud con las que se evalúan deben ser de
+un ITRF instantáneo. En cada etapa RK4 Orbit debe:
+
+1. transformar el estado de `EME2000` a ITRF con EOP, UT1 y TT adecuados;
+2. calcular el gradiente armónico analítico en ITRF;
+3. rotar la aceleración libre de nuevo a `EME2000`.
+
+No se debe integrar la dinámica en ITRF salvo que se implementen explícitamente
+las fuerzas ficticias de marco rotante. Consulte [Geopotencial configurable](../propagation/full-geopotential.md).
+
+## Requisitos de trazabilidad
+
+Un resultado que usa un campo armónico debe registrar campo, fuente, huella,
+normalización, \(\mu\), radio de referencia, grado, orden, EOP, leap seconds,
+realización terrestre y método de transformación. Si algún requisito falta, el
+modelo debe quedar deshabilitado y el resultado no se puede presentar como
+ITRF/ECI riguroso.
+
+## Límites actuales y siguientes incrementos
+
+El campo estático no cubre mareas, variación temporal, carga atmosférica ni
+correcciones estacionales. Tampoco sustituye un integrador adaptativo ni una
+validación frente a una efeméride de referencia. Esos elementos se mantienen
+explícitamente pendientes en [Mareas](../propagation/tides.md) y
+[Integradores numéricos](../propagation/numerical-integrators.md).

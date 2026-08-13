@@ -6666,9 +6666,9 @@
 <h1 id="propagacion">Propagación</h1>
 <p><a href="../">Inicio</a> · <a href="../engineering/">Ingeniería</a> · <a href="../formats/">Formatos</a></p>
 <p>Orbit distingue entre el modelo que genera el estado nativo y la transformación
-posterior para una vista terrestre. La disponibilidad del motor depende del
-origen: el catálogo registra SGP4; las órbitas manuales disponen de rutas
-analíticas y numéricas delimitadas.</p>
+posterior para una vista terrestre. El catálogo registra SGP4; las órbitas
+manuales disponen de rutas analíticas y numéricas con contratos explícitos de
+marco, tiempo, datos y límites.</p>
 <h2 id="mapa-de-propagadores-y-modelos">Mapa de propagadores y modelos</h2>
 <table>
 <thead>
@@ -6696,55 +6696,52 @@ analíticas y numéricas delimitadas.</p>
 </tr>
 <tr>
 <td><a href="numerical-integrators/">Integradores numéricos</a></td>
-<td>RK4 fijo y límites de uso.</td>
+<td>RK4 fijo; adaptativo, eventos y covarianza pendientes.</td>
 </tr>
 <tr>
 <td><a href="force-models/">Modelos de fuerza</a></td>
-<td>Composición disponible.</td>
+<td>Composición, marcos y procedencia.</td>
 </tr>
 <tr>
 <td><a href="point-mass/">Masa puntual</a></td>
 <td>Gravedad central.</td>
 </tr>
 <tr>
-<td><a href="j2/">J2</a></td>
-<td>Ruta analítica y término numérico.</td>
+<td><a href="j2/">J2</a>, <a href="j3/">J3</a>, <a href="j4/">J4</a></td>
+<td>Términos zonales de compatibilidad.</td>
 </tr>
 <tr>
-<td><a href="j3/">J3</a></td>
-<td>Término zonal numérico de Cowell.</td>
-</tr>
-<tr>
-<td><a href="j4/">J4</a></td>
-<td>Término zonal numérico de Cowell.</td>
-</tr>
-<tr>
-<td><a href="full-geopotential/">Geopotencial completo</a></td>
-<td>Estado de soporte: no disponible.</td>
+<td><a href="full-geopotential/">Geopotencial configurable</a></td>
+<td>Disponible con ICGEM local, grado/orden e ITRF estricto.</td>
 </tr>
 <tr>
 <td><a href="third-bodies/">Terceros cuerpos</a></td>
-<td>Estado de soporte: no disponible.</td>
+<td>Disponible para Sol (<code>eraEpv00</code>) y Luna (<code>eraMoon98</code>) aproximados.</td>
 </tr>
 <tr>
 <td><a href="atmospheric-drag/">Arrastre atmosférico</a></td>
-<td>Término Cowell de primer orden.</td>
+<td>Término Cowell exploratorio de primer orden.</td>
 </tr>
 <tr>
 <td><a href="solar-radiation-pressure/">Presión de radiación solar</a></td>
-<td>Estado de soporte: no disponible.</td>
+<td>Disponible: cannonball y umbra cilíndrica.</td>
 </tr>
 <tr>
 <td><a href="relativity/">Relatividad</a></td>
-<td>Estado de soporte: no disponible.</td>
+<td>Disponible: Schwarzschild terrestre.</td>
+</tr>
+<tr>
+<td><a href="tides/">Mareas</a>, <a href="albedo/">albedo</a>, <a href="attitude/">actitud</a></td>
+<td>Pendientes y documentados sin prometer disponibilidad.</td>
 </tr>
 </tbody>
 </table>
 <div class="admonition warning">
 <p class="admonition-title">Ámbito científico</p>
 <p>Los motores manuales no son una cadena de alta fidelidad ni un sistema de
-determinación de órbita. La selección de un propagador no activa fuerzas
-que no se indiquen expresamente en su contrato.</p>
+determinación de órbita. Seleccionar un propagador o ver una sección de
+documentación no activa una fuerza: el runtime debe declarar la capacidad,
+validar los datos auxiliares y registrar la procedencia efectiva.</p>
 </div>
 
 

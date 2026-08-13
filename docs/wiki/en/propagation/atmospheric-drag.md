@@ -4,14 +4,19 @@
 
 ## Availability
 
-Drag is only available as `drag` term of `cowell-rk4`.
-Not available in two bodies, the fixed J2+J3+J4 preset, or
-SGP4 configurable from Orbit.
+Drag is available as the <code>drag</code> term of <code>cowell-rk4</code>. It
+is not available in two body, the fixed J2+J3+J4 preset, or configurable SGP4
+from Orbit.
 
-## Model applied
+Unlike historical zonals, drag is evaluated in instantaneous ITRF **at every
+RK4 stage**. It therefore fails closed if a strict EOP, leap-second, and
+ERFA/SOFA route is absent. It does not fall back to a fixed <code>EME2000</code>
+atmosphere.
 
-With \(B=C_DA/m\), \(\rho\) density and velocity relative to one atmosphere
-corrotant \(\mathbf v_{rel}\), Cowell applies:
+## Applied model
+
+With \(B=C_DA/m\), density \(\rho\), and velocity relative to a co-rotating
+atmosphere \(\mathbf v_{rel}\), Cowell applies:
 
 $$
 \mathbf a_{drag}=-\frac{1}{2}B\rho\lVert\mathbf v_{rel}\rVert\mathbf v_{rel}.
@@ -19,77 +24,55 @@ $$
 
 | Symbol | Meaning | Unit |
 | --- | --- | --- |
-| \(\mathbf a_{drag}\) | Drag acceleration applied by Cowell. | km/s² in the core; SI when publishing `StateVector`. |
-| \(B=C_DA/m\) | Area-normalised ballistic coefficient. | m²/kg. |
+| \(\mathbf a_{drag}\) | Drag acceleration added to Cowell. | km/s². |
+| \(B=C_DA/m\) | Area-normalized ballistic coefficient. | m²/kg. |
 | \(C_D\) | Drag coefficient. | Dimensionless. |
 | \(A\), \(m\) | Reference area and mass. | m², kg. |
 | \(\rho\) | Atmospheric density. | kg/m³. |
-| \(\mathbf v_{rel}\) | Velocity relative to the co-rotating atmosphere. | m/s during drag calculation. |
+| \(\mathbf v_{rel}\) | Velocity against co-rotating atmosphere. | m/s during calculation. |
 
-The implementation calculates the relative speed using the term
-Earth's rotation and evaluates a layered exponential density using the
-height WGS-84. The internal calculation preserves km and km/s, with conversions for
-maintain dimensional consistency with the drag parameters in SI.
+## Frame and stage sequence
 
-$$
-\mathbf v_{rel}=\mathbf v-\mathbf\omega_\oplus\times\mathbf r,
-\qquad
-\rho(h)=\rho_0\exp\left(-\frac{h-h_0}{H}\right).
-$$
+For every RK4 evaluation \(f(t,\mathbf y)\), Orbit:
 
-| Symbol | Meaning | Unit |
-| --- | --- | --- |
-| \(\mathbf v\), \(\mathbf r\) | Cowell state velocity and position. | km/s, km; converted to SI where required. |
-| \(\mathbf\omega_\oplus\) | Earth angular velocity. | rad/s. |
-| \(h\), \(h_0\), \(H\) | Height, layer base, and exponential scale height. | One common length unit. |
-| \(\rho_0\) | Density at the layer base. | kg/m³. |
+1. transforms position and velocity from <code>EME2000</code> to ITRF at the
+   stage epoch;
+2. computes WGS-84 height, layer density, and
+   \(\mathbf v_{rel}=\mathbf v-\boldsymbol\omega_\oplus\times\mathbf r\) in ITRF;
+3. computes \(\mathbf a_{drag,ITRF}\) in SI and converts it to km/s²;
+4. rotates free acceleration to <code>EME2000</code> before adding the
+   derivative.
 
-Orbit evaluates \(\rho\) in WGS-84 layers and computes the cross product
-before evaluating \(\lVert\mathbf v_{rel}\rVert\); none of these conversions
-is left implicit in the UI.
+Velocity is transformed as a state — including time derivative of the matrix —
+whereas drag acceleration returns as a free vector. Orbit does not integrate in
+ITRF and therefore does not implicitly mix Coriolis, centrifugal, or Euler
+fictitious terms.
+
+The route requires EOP coverage, DUT1 and polar motion, a local versioned valid
+leap-second table, and ERFA/SOFA IAU 2006/2000A. If any is absent, selecting
+<code>drag</code> must return an explicit error before integration.
 
 ## Parameters
 
-### Variables, units and Orbit use
-
-Internal \(\mathbf r\) and \(\mathbf v\) use km and km/s; to evaluate \(\mathbf v_{rel}\), \(\rho\), and \(B=C_DA/m\), Orbit converts the required quantities to SI. \(\rho\) is kg/m³, \(C_D\) is dimensionless, \(A\) is m², \(m\) is kg, and acceleration returns to km/s² before Cowell adds it. \(h\), \(h_0\), and \(H\) use one common layer-length unit.
-
-| Parameter | Unit | Restriction |
+| Parameter | Unit | Constraint |
 | --- | --- | --- |
-| `drag_coefficient` | — | Finite and greater than zero; default value 2.2. |
-| `area_m2` | m² | Finite and greater than zero; default value 1. |
-| `mass_kg` | kg | Finite and greater than zero; default value 100. |
+| <code>drag_coefficient</code> | — | Finite and greater than zero; default 2.2. |
+| <code>area_m2</code> | m² | Finite and greater than zero; default 1. |
+| <code>mass_kg</code> | kg | Finite and greater than zero; default 100. |
 
-The ballistic coefficient used is \(C_DA/m\). If `force_terms` is used, you must
-include `drag`; the inherited boolean `atmospheric_drag` does not add the term to
-an explicit composition.
+The coefficient used is \(C_DA/m\). If <code>force_terms</code> is used, it
+must include <code>drag</code>; legacy boolean <code>atmospheric_drag</code>
+does not add the term to explicit composition.
 
 ## Limits
 
-- The density is set to zero from 1500 km.
-- There is no solar flux, geomagnetic indices, wind, attitude, variable area or
-  model NRLMSISE/JB2008/DTM.
-- No decay precision or re-entry time is provided.
+- Density is zero above 1500 km.
+- It is a WGS-84 layered exponential atmosphere; there is no solar flux,
+  geomagnetic indices, winds, attitude, variable area, NRLMSISE, JB2008, or DTM.
+- It publishes no decay, re-entry, or operational-drag accuracy.
+- Fixed-step RK4 does not locate exact re-entry time or resolve rapid density
+  changes.
 
-The model is useful to explore the qualitative effect of drag on orbits
-manuals, not for operational prediction. See
-[Atmospheric model](../engineering/atmospheric-models.md).
-
-!!! warning "Equation planned for future implementation"
-
-    **Advanced drag.** The current runtime includes neither MSIS nor
-    solar-geomagnetic forcing. A future model could evaluate:
-
-    $$
-    \rho=\rho_{\mathrm{MSIS}}(h,\phi,\lambda,t,F_{10.7},\overline{F}_{10.7},A_p).
-    $$
-
-    | Symbol | Meaning | Unit |
-    | --- | --- | --- |
-    | \(\rho_{\mathrm{MSIS}}\) | Density estimated by the MSIS model. | kg/m³. |
-    | \(h\) | Geodetic height. | km or m, depending on the MSIS adapter. |
-    | \(\phi\), \(\lambda\) | Geodetic latitude and longitude. | rad. |
-    | \(t\) | Evaluation epoch. | Explicit UTC/UT1. |
-    | \(F_{10.7}\), \(\overline{F}_{10.7}\), \(A_p\) | Solar and geomagnetic indices. | MSIS product units. |
-
-    It is not evaluated by the current runtime; a future adapter must convert its output to kg/m³ before applying Cowell's drag equation.
+The model allows drag exploration in a physically coherent terrestrial frame,
+but its density remains low fidelity. Rigorous EOP do not replace a mission
+atmospheric model.

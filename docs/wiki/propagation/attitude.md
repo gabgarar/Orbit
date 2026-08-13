@@ -2,33 +2,29 @@
 
 [Inicio](../index.md) · [Propagación](index.md) · [Resonancias](resonances.md)
 
-## Estado de soporte
+## Estado
 
-Orbit no propaga actitud. No existe estado de cuaternión, dinámica rígida,
-modelo de actuadores ni acoplamiento entre actitud, área expuesta y fuerzas.
+Orbit no propaga actitud. El modelo SRP *cannonball* previsto usa un área
+efectiva fija; no debe interpretarse como una dinámica de vehículo rígido ni
+como una sustitución de cuaternios.
 
-!!! warning "Ecuación prevista para implementación futura"
+## Trabajo pendiente
 
-    Un modelo de actitud requeriría al menos la cinemática del cuaternión y la
-    ecuación de Euler para el cuerpo rígido:
+| Capacidad | Uso posterior |
+| --- | --- |
+| Estado de cuaternión y cinemática | Orientar el cuerpo sin singularidades de Euler. |
+| Ecuaciones de Euler y tensor de inercia | Rotación rígida y respuesta a pares. |
+| Actuadores y leyes de control | Ruedas, magnetorquers, propulsión y maniobras. |
+| Geometría de placas | Área de drag/SRP proyectada, auto-sombra y temperatura. |
+| Acoplamiento traslación–actitud | Fuerzas dependientes de orientación en cada etapa. |
+| Eventos y validación | Entrada/salida de eclipse, saturación y casos de referencia. |
 
-    $$
-    \dot{\mathbf q}=\frac{1}{2}\Omega(\mathbf\omega)\mathbf q,
-    \qquad I\dot{\mathbf\omega}+\mathbf\omega\times(I\mathbf\omega)=\mathbf\tau.
-    $$
+La base matemática futura requiere:
 
-    | Símbolo | Significado | Unidad |
-    | --- | --- | --- |
-    | \(\mathbf q\) | Cuaternión de actitud. | Adimensional. |
-    | \(\mathbf\omega\), \(\dot{\mathbf\omega}\) | Velocidad y aceleración angular. | rad/s, rad/s². |
-    | \(\Omega\) | Matriz cinemática construida con \(\mathbf\omega\). | s⁻¹. |
-    | \(I\) | Tensor de inercia. | kg·m². |
-    | \(\mathbf\tau\) | Par aplicado. | N·m. |
+$$
+\dot{\mathbf q}=\frac{1}{2}\Omega(\mathbf\omega)\mathbf q,
+\qquad I\dot{\mathbf\omega}+\mathbf\omega\times(I\mathbf\omega)=\mathbf\tau.
+$$
 
-    No se ejecuta en Orbit: no existe estado de actitud ni acoplamiento de
-    fuerzas a orientación.
-
-## Alcance futuro
-
-La actitud será necesaria antes de habilitar un SRP por superficies, área de
-arrastre variable o modelos de sensores y actuadores físicamente consistentes.
+Hasta entonces, la masa y el área de drag/SRP son parámetros constantes y la
+orientación no forma parte de la incertidumbre ni de la procedencia del estado.

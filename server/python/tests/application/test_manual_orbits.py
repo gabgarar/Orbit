@@ -1,12 +1,10 @@
 """Manual-orbit conversion, native-engine selection, and route adapter tests."""
 
-from datetime import UTC, datetime
 import math
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import HTTPException
-from pydantic import ValidationError
-
 from orbit_api.api.routes.manual_orbits import create_manual_orbits_router
 from orbit_api.application.manual_orbits import (
     ManualOrbitError,
@@ -19,9 +17,11 @@ from orbit_api.domain.requests import (
     MANUAL_ORBIT_SGP4_UNAVAILABLE_MESSAGE,
     ManualOrbitRequest,
 )
+from orbit_api.orbits.forces.geopotential import GravityFieldModel
 from orbit_api.orbits.propagators.cowell import CowellPropagator
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
+from pydantic import ValidationError
 
 
 def keplerian_payload(**overrides):
@@ -220,7 +220,7 @@ def test_fixed_engines_ignore_future_non_drag_cowell_controls(
 
 def test_cowell_rejects_future_non_installed_force_terms():
     future_options = {
-        "forceTerms": ["central", "srp"],
+        "forceTerms": ["central", "experimental-tide"],
         "numericalIntegrator": "dopri8",
     }
     with pytest.raises(ValidationError, match="Cowell no compatible"):
@@ -228,6 +228,119 @@ def test_cowell_rejects_future_non_installed_force_terms():
             propagator="cowell-rk4",
             propagationOptions=future_options,
         ))
+
+
+def test_cowell_accepts_new_physical_force_terms_and_rejects_geopotential_double_counting():
+    request = ManualOrbitRequest(**keplerian_payload(
+        propagator="cowell-rk4",
+        propagationOptions={
+            "forceTerms": [
+                "geopotential",
+                "third-body-sun",
+                "third-body-moon",
+                "solar-radiation-pressure",
+                "relativity",
+            ],
+            "geopotentialDegree": 12,
+            "geopotentialOrder": 8,
+            "solarRadiationCoefficient": 1.35,
+            "areaM2": 4.0,
+            "massKg": 200.0,
+        },
+    ))
+
+    canonical = request.propagation_options.canonical(propagator="cowell-rk4")
+    assert canonical["force_terms"] == [
+        "central", "geopotential", "third-body-sun", "third-body-moon",
+        "solar-radiation-pressure", "relativity",
+    ]
+    assert canonical["geopotential_degree"] == 12
+    assert canonical["geopotential_order"] == 8
+    assert canonical["solar_radiation_coefficient"] == 1.35
+
+    with pytest.raises(ValidationError, match="no puede combinarse"):
+        ManualOrbitRequest(**keplerian_payload(
+            propagator="cowell-rk4",
+            propagationOptions={"forceTerms": ["geopotential", "j2"]},
+        ))
+    with pytest.raises(ValidationError, match="degree >= 2"):
+        ManualOrbitRequest(**keplerian_payload(
+            propagator="cowell-rk4",
+            propagationOptions={
+                "forceTerms": ["geopotential"],
+                "geopotentialDegree": 1,
+                "geopotentialOrder": 0,
+            },
+        ))
+
+
+def test_public_cowell_geopotential_degree_has_a_bounded_execution_budget():
+    """The HTTP/editor contract cannot schedule an unbounded RK4 workload."""
+
+    with pytest.raises(ValidationError, match="less than or equal to 70"):
+        ManualOrbitRequest(**keplerian_payload(
+            propagator="cowell-rk4",
+            propagationOptions={
+                "forceTerms": ["geopotential"],
+                "geopotentialDegree": 71,
+                "geopotentialOrder": 0,
+            },
+        ))
+
+
+def test_cowell_builder_exposes_configured_geopotential_provenance():
+    request = ManualOrbitRequest(**keplerian_payload(
+        propagator="cowell-rk4",
+        propagationOptions={
+            "forceTerms": ["geopotential"],
+            "geopotentialDegree": 4,
+            "geopotentialOrder": 0,
+        },
+    ))
+    _source, keplerian, state_vector = canonical_manual_orbit(request)
+    name, propagator, metadata = build_manual_orbit_propagator(
+        request.propagator,
+        name=request.name,
+        epoch=request.epoch,
+        keplerian=keplerian,
+        state_vector=state_vector,
+        propagation_options=request.propagation_options.canonical(propagator="cowell-rk4"),
+        gravity_field=GravityFieldModel.wgs84_zonal_degree4(),
+    )
+
+    assert name.startswith("manual:cowell-rk4:")
+    assert isinstance(propagator, CowellPropagator)
+    assert metadata["geopotential"]["degree"] == 4
+    assert metadata["geopotential"]["evaluation_frame"] == "ITRF"
+
+
+def test_manual_force_capabilities_report_absent_or_pinned_gravity_data_without_claiming_epoch_coverage():
+    router = create_manual_orbits_router(
+        lambda *_args: {"points": []},
+        lambda value: value,
+    )
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits/capabilities")
+    absent = endpoint()
+
+    assert absent["cowell"]["geopotential"]["available"] is False
+    assert absent["cowell"]["temporal_route"]["epoch_coverage_validated_on_propagation"] is True
+
+    model = GravityFieldModel.wgs84_zonal_degree4()
+    configured_router = create_manual_orbits_router(
+        lambda *_args: {"points": []},
+        lambda value: value,
+        gravity_field=model,
+    )
+    configured_endpoint = next(
+        route.endpoint for route in configured_router.routes
+        if route.path == "/manual-orbits/capabilities"
+    )
+    configured = configured_endpoint()
+
+    assert configured["cowell"]["geopotential"]["available"] is True
+    assert configured["cowell"]["geopotential"]["model"]["id"] == model.model_id
+    assert configured["cowell"]["geopotential"]["model"]["max_active_degree"] == 4
+    assert configured["cowell"]["geopotential"]["model"]["execution_limit"]["max_degree"] == 70
 
 
 def test_two_body_preserves_the_eme2000_epoch_state():

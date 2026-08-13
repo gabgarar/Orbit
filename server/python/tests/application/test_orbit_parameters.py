@@ -2,24 +2,57 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import math
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
-from pydantic import ValidationError
-
 from orbit_api.api.routes.orbit_parameters import create_orbit_parameters_router
 from orbit_api.application.manual_orbits import ManualOrbitError
-from orbit_api.application.orbit_parameters import OrbitParametersError, build_orbit_parameters
+from orbit_api.application.orbit_parameters import (
+    OrbitParametersError,
+    build_orbit_parameters,
+)
 from orbit_api.domain.requests import (
     MANUAL_ORBIT_SGP4_UNAVAILABLE_MESSAGE,
     OrbitParametersRequest,
 )
+from orbit_api.frames import FrameTransformService
+from orbit_api.orbits.forces import GravityFieldModel
 from orbit_api.orbits.propagators.sgp4.propagator import SGP4Propagator
-
+from orbit_api.timekeeping import (
+    EarthOrientation,
+    LeapSecondTable,
+    StaticEarthOrientationProvider,
+)
+from pydantic import ValidationError
 
 EPOCH = datetime(2026, 7, 20, 12, tzinfo=UTC)
+
+
+def strict_force_transformer() -> FrameTransformService:
+    """Provide deterministic EOP/leap data for Earth-fixed drag tests."""
+
+    return FrameTransformService(
+        StaticEarthOrientationProvider(
+            EarthOrientation(
+                dut1_seconds=0.17,
+                xp_radians=1.0e-6,
+                yp_radians=-0.8e-6,
+                source="orbit-parameters drag fixture",
+                version="r1",
+                quality="final",
+            )
+        ),
+        strict_eop=True,
+        leap_second_table=LeapSecondTable(
+            entries=((datetime(2025, 1, 1, tzinfo=UTC), 38),),
+            source="fixture leap seconds",
+            version="fixture-2025",
+            sha256="b" * 64,
+            expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+        ),
+    )
 
 
 def manual_payload(*, propagator: str = "two-body", options: dict | None = None) -> dict:
@@ -249,7 +282,12 @@ def test_cowell_drag_on_and_off_show_a_measurable_leo_decay_difference():
         endTime=(EPOCH + timedelta(hours=6)).isoformat(),
         samples=3,
     )
-    with_drag = build_orbit_parameters(request, resolve_propagator=native_only_resolver)
+    frame_transformer = strict_force_transformer()
+    with_drag = build_orbit_parameters(
+        request,
+        resolve_propagator=native_only_resolver,
+        frame_transformer=frame_transformer,
+    )
     without_drag_payload = {
         **payload,
         "propagationOptions": {**payload["propagationOptions"], "atmosphericDrag": False},
@@ -262,6 +300,7 @@ def test_cowell_drag_on_and_off_show_a_measurable_leo_decay_difference():
             samples=3,
         ),
         resolve_propagator=native_only_resolver,
+        frame_transformer=frame_transformer,
     )
 
     initial = with_drag["samples"][0]["elements"]["semi_major_axis_km"]
@@ -305,9 +344,11 @@ def test_cowell_drag_is_negligible_for_the_same_ballistic_body_at_1000_km():
         "endTime": (EPOCH + timedelta(hours=12)).isoformat(),
         "samples": 2,
     }
+    frame_transformer = strict_force_transformer()
     with_drag = build_orbit_parameters(
         OrbitParametersRequest(source={"kind": "manual", "manualOrbit": payload}, **request_fields),
         resolve_propagator=native_only_resolver,
+        frame_transformer=frame_transformer,
     )
     without_drag_payload = {
         **payload,
@@ -316,11 +357,37 @@ def test_cowell_drag_is_negligible_for_the_same_ballistic_body_at_1000_km():
     without_drag = build_orbit_parameters(
         OrbitParametersRequest(source={"kind": "manual", "manualOrbit": without_drag_payload}, **request_fields),
         resolve_propagator=native_only_resolver,
+        frame_transformer=frame_transformer,
     )
 
     final_with_drag = with_drag["samples"][-1]["elements"]["semi_major_axis_km"]
     final_without_drag = without_drag["samples"][-1]["elements"]["semi_major_axis_km"]
     assert abs(final_with_drag - final_without_drag) < 0.05
+
+
+def test_inspector_rebuilds_a_configured_geopotential_manual_orbit():
+    payload = manual_payload(
+        propagator="cowell-rk4",
+        options={
+            "forceTerms": ["geopotential"],
+            "geopotentialDegree": 4,
+            "geopotentialOrder": 0,
+        },
+    )
+    response = build_orbit_parameters(
+        OrbitParametersRequest(
+            source={"kind": "manual", "manualOrbit": payload},
+            startTime=EPOCH.isoformat(),
+            endTime=(EPOCH + timedelta(minutes=2)).isoformat(),
+            samples=2,
+        ),
+        resolve_propagator=native_only_resolver,
+        frame_transformer=strict_force_transformer(),
+        gravity_field=GravityFieldModel.wgs84_zonal_degree4(),
+    )
+
+    assert response["model"]["force_terms"] == ["central", "geopotential"]
+    assert response["model"]["geopotential"]["evaluation_frame"] == "ITRF"
 
 
 def test_catalog_sgp4_inspection_keeps_the_raw_teme_label():

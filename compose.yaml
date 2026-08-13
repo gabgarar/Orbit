@@ -45,6 +45,15 @@ services:
       # Explicit opt-in for the current IGS20/IGb20/IGc20 satellite-frame
       # family. It requires ORBIT_TERRESTRIAL_REALIZATION=ITRF2020.
       ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT: "${ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT:-true}"
+      # Optional local ICGEM gravity field for Cowell's configurable
+      # degree/order geopotential.  Set the path, SHA-256 and provenance
+      # together; the backend refuses a configured field without its digest.
+      # The file stays under the mounted ./config volume and is never fetched
+      # by the running service.
+      ORBIT_GRAVITY_FIELD_PATH: "${ORBIT_GRAVITY_FIELD_PATH:-}"
+      ORBIT_GRAVITY_FIELD_SHA256: "${ORBIT_GRAVITY_FIELD_SHA256:-}"
+      ORBIT_GRAVITY_FIELD_SOURCE: "${ORBIT_GRAVITY_FIELD_SOURCE:-}"
+      ORBIT_GRAVITY_FIELD_VERSION: "${ORBIT_GRAVITY_FIELD_VERSION:-}"
     volumes:
       # Conserva cambios de configuración y catálogos fuera de la imagen.
       - ./config:/app/config

@@ -2,40 +2,67 @@
 
 [Inicio](../index.md) · [Propagación](index.md) · [Modelos de fuerza](force-models.md) · [Terceros cuerpos](third-bodies.md)
 
-## Estado de soporte
+## Alcance y estado
 
-Orbit no implementa presión de radiación solar (SRP) en ningún propagador.
+El término canónico disponible es <code>solar-radiation-pressure</code>.
+Es un modelo *cannonball*: representa el satélite por un área efectiva fija,
+coeficiente de reflexión \(C_R\) y masa. Incluye una fracción de iluminación de
+eclipse cilíndrico; no modela aún actitud ni penumbra.
 
-No existen parámetros de coeficiente de reflectividad, área iluminada,
-ocultación, eclipse, geometría Sol–satélite, efemérides solares para fuerza ni
-modelo de actitud asociado. La visualización del Sol no es una fuente de SRP.
+<code>srp</code> es solo un alias de entrada. La presencia del Sol en la
+visualización no activa SRP y <code>drag</code> no es un sustituto físico de la
+radiación solar.
 
-## Alternativas
+## Modelo aplicado
 
-- Para arcos ya calculados externamente, use los lectores Python de
-  [OEM](../formats/oem.md) o [SP3](../formats/sp3.md), sin asumir integración
-  de producto UI/API.
-- Para estudios manuales dentro de Orbit, limite la interpretación a las
-  fuerzas documentadas en [Cowell](cowell.md).
+Sea \(\mathbf r_\odot\) el vector geocéntrico Tierra→Sol y \(\mathbf r\) el
+vector Tierra→satélite. La dirección de los fotones en el satélite es el vector
+Sol→satélite, \(\hat{\mathbf u}=(\mathbf r-\mathbf r_\odot)/d\). La aceleración
+aplicada es:
 
-No se debe representar `drag` como sustituto de SRP: son términos con origen,
-dirección y dependencia física diferentes.
+$$
+\mathbf a_{SRP}=\nu\,P_0\left(\frac{AU}{d}\right)^2
+\frac{C_R A}{m}\,\hat{\mathbf u},
+$$
 
-!!! warning "Ecuación prevista para implementación futura"
+donde \(\nu\in[0,1]\) es la fracción de iluminación. El resultado se calcula
+en SI y se convierte a km/s² antes de sumarse en Cowell.
 
-    Un modelo SRP por múltiples superficies podría sumar las caras iluminadas:
+| Símbolo | Significado | Unidad |
+| --- | --- | --- |
+| \(P_0\) | Presión solar de referencia a 1 AU. | N/m². |
+| \(AU\), \(d\) | Unidad astronómica y distancia Sol–satélite. | m. |
+| \(C_R\) | Coeficiente de reflexión efectivo. | Adimensional. |
+| \(A\), \(m\) | Área de referencia y masa. | m², kg. |
+| \(\nu\) | Iluminación por eclipse. | 0 a 1. |
+| \(\mathbf a_{SRP}\) | Aceleración de radiación solar. | km/s² en Cowell. |
 
-    $$
-    \mathbf a_{\mathrm{SRP}}=-P_\odot\left(\frac{\mathrm{AU}}{d_\odot}\right)^2
-    \frac{1}{m}\sum_i A_i\max(0,\hat{\mathbf n}_i\cdot\hat{\mathbf s})
-    C_{R,i}\hat{\mathbf s}.
-    $$
+## Eclipse cilíndrico
 
-    | Símbolo | Significado | Unidad |
-    | --- | --- | --- |
-    | \(P_\odot\) | Presión solar de referencia. | N/m². |
-    | \(\mathrm{AU}\), \(d_\odot\) | Unidad astronómica y distancia Sol–satélite. | Misma unidad de longitud. |
-    | \(m\), \(A_i\) | Masa y área de la cara \(i\). | kg, m². |
-    | \(\hat{\mathbf n}_i\), \(\hat{\mathbf s}\) | Normal de la cara y dirección solar. | Adimensionales. |
-    | \(C_{R,i}\) | Coeficiente de reflectividad. | Adimensional. |
-    | \(\mathbf a_{\mathrm{SRP}}\) | Aceleración SRP. | m/s², convertida a km/s² en Cowell. |
+El eclipse se determina geométricamente con un cilindro de radio terrestre
+alineado con la dirección Sol→Tierra. Si el satélite está detrás de la Tierra y
+su distancia perpendicular al eje Sol–Tierra es menor que el radio elegido, se
+usa \(\nu=0\); fuera se usa \(\nu=1\). El modelo debe rechazar geometría no
+finita o degenerada.
+
+Este método es discontinuo y no representa penumbra, diámetro solar,
+achatamiento de la Tierra ni refracción. Es apropiado como modelo declarado de
+primer orden, no para transiciones fotométricas o fuerzas de precisión de
+misión.
+
+## Validación y procedencia
+
+- <code>area_m2</code>, <code>mass_kg</code> y
+  <code>solar_radiation_coefficient</code> deben ser finitos y positivos.
+- La posición solar debe proceder del mismo proveedor/época que el término
+  solar de terceros cuerpos y respetar su cobertura.
+- La aceleración debe apuntar alejándose del Sol cuando \(\nu>0\).
+- La procedencia registra \(C_R\), área, masa, presión de referencia, modelo de
+  eclipse, radio usado y proveedor solar.
+
+## Lo que sigue pendiente
+
+No hay SRP por placas, cuaternios, área proyectada variable, auto-sombra,
+penumbra/antumbra, absorción térmica ni reemisión. Estos incrementos dependen
+de un modelo de [Actitud](attitude.md), geometría del vehículo y un integrador
+con control de error cerca de las discontinuidades de eclipse.

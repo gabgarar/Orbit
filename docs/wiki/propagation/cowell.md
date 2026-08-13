@@ -4,7 +4,8 @@
 
 `CowellPropagator` es la ruta numérica configurable para estados manuales
 terrestres. Integra directamente la ecuación de movimiento y entrega estados
-nativos `EME2000`. Está pensada para vistas y estudios manuales acotados.
+nativos `EME2000`. Está pensada para diseño, visualización y estudios acotados;
+no certifica una efeméride operacional por sí sola.
 
 ## Secciones
 
@@ -12,80 +13,67 @@ nativos `EME2000`. Está pensada para vistas y estudios manuales acotados.
 | --- | --- |
 | [Entrada y fuerzas](cowell/input-and-forces.md) | Estado inicial, términos admitidos y presets. |
 | [Integración y caché](cowell/integration.md) | RK4 de paso fijo y reutilización de estados. |
-| [Tiempo y marcos](cowell/time-and-frames.md) | UTC, TT, UT1, EOP y transformación de EME2000 a ITRF. |
+| [Tiempo y marcos](cowell/time-and-frames.md) | UTC, TT, UT1, EOP y evaluación terrestre por etapa. |
 | [Salida y procedencia](cowell/output.md) | Métodos de consulta y metadatos del estado publicado. |
 | [Uso recomendado](cowell/recommended-use.md) | Casos de uso adecuados y situaciones que requieren otra herramienta. |
 | [Fallos y límites](cowell/limits.md) | Fronteras de fidelidad y condiciones de rechazo. |
 
 $$
 \frac{d}{dt}\begin{bmatrix}\mathbf r\\\mathbf v\end{bmatrix}
-=\begin{bmatrix}\mathbf v\\\mathbf a_{\mathrm{central}}+\sum_{i\in\mathcal T}\mathbf a_i\end{bmatrix}.
+=\begin{bmatrix}\mathbf v\\\mathbf a_{\mathrm{central}}+
+\sum_{i\in\mathcal T}\mathbf a_i\end{bmatrix}.
 $$
 
 ## Interpretación de la ecuación
 
-El estado que recibe Cowell es \(\mathbf y=[\mathbf r,\mathbf v]^T\). Su derivada tiene dos partes: la derivada de la posición es la velocidad, y la derivada de la velocidad es la aceleración total. Cowell construye esa función \(\mathbf f(t,\mathbf y)=\dot{\mathbf y}\); [RK4](rk4.md) únicamente la evalúa para avanzar el estado.
+El estado es \(\mathbf y=[\mathbf r,\mathbf v]^T\). Su derivada tiene dos
+partes: posición a velocidad y velocidad a aceleración total. Cowell construye
+\(\mathbf f(t,\mathbf y)=\dot{\mathbf y}\); [RK4](rk4.md) solo evalúa esa
+función para avanzar el estado.
 
-| Símbolo | Significado | Unidades internas de Cowell |
+| Símbolo | Significado | Unidades internas |
 | --- | --- | --- |
-| \(t\) | Instante de integración. | s respecto a la época inicial. |
-| \(\mathbf r\) | Vector de posición del objeto. | km. |
-| \(\mathbf v\) | Vector de velocidad del objeto. | km/s. |
-| \(\mathbf a_{\mathrm{central}}\) | Aceleración por gravedad central, siempre presente. | km/s². |
-| \(\mathcal T\) | Conjunto de términos opcionales solicitados en `force_terms`. | No aplica. |
-| \(\mathbf a_i\) | Aceleración aportada por cada término \(i\) de \(\mathcal T\). | km/s². |
+| \(t\) | Instante de integración. | s desde la época inicial. |
+| \(\mathbf r\), \(\mathbf v\) | Posición y velocidad del objeto. | km, km/s. |
+| \(\mathbf a_{\mathrm{central}}\) | Gravedad central, siempre presente. | km/s². |
+| \(\mathcal T\) | Conjunto de `force_terms` adicionales. | No aplica. |
+| \(\mathbf a_i\) | Aceleración de cada término opcional. | km/s². |
 
-La suma contiene solo términos seleccionados. La ecuación expresa la física del propagador; no describe el algoritmo RK4 ni impone por sí sola un paso de integración.
+## Marco de la dinámica y marco de cada fuerza
 
-## Formulación cartesiana y modelos analíticos
+El estado y la derivada final se mantienen en `EME2000`. Esto no significa que
+cada modelo se evalúe físicamente en ese marco:
 
-Cowell es un propagador de dinámica cartesiana: integra directamente \(\mathbf r\) y \(\mathbf v\) mediante \(\ddot{\mathbf r}=\mathbf a(\mathbf r,\mathbf v,t)\) en `EME2000`. Puede recibir una órbita manual que se haya descrito originalmente con elementos, pero durante la integración no usa esos elementos como variables de estado.
-
-Por tanto, este camino no integra ecuaciones de Gauss ni de Lagrange, no resuelve Kepler perturbado y no mantiene un plano orbital o un sistema nodal como parte del estado numérico. Esas formulaciones pertenecen a propagadores analíticos o variacionales; Cowell solo necesita la aceleración cartesiana total en cada evaluación.
-
-## Marco de evaluación de las fuerzas
-
-Durante la integración, Cowell mantiene el estado y suma las aceleraciones en `EME2000`, usando km, km/s y km/s². El paso posterior a `ITRF` pertenece al servicio de transformación de marcos y ocurre después de obtener el estado nativo integrado.
-
-| Término | Marco usado hoy | Interpretación |
+| Término | Marco de evaluación | Situación |
 | --- | --- | --- |
-| Gravedad central | `EME2000`. | Es invariante ante una rotación del sistema de coordenadas. |
-| J2, J3 y J4 | `EME2000`. | Son términos zonales \(m=0\); la implementación de compatibilidad trata el eje \(Z\) de `EME2000` como eje de giro terrestre. |
-| Arrastre atmosférico | `EME2000`. | Calcula \(\mathbf v_{rel}=\mathbf v-\omega_\oplus\times\mathbf r\) para una atmósfera corrotante y estima la altura WGS-84 con esas mismas coordenadas. |
+| Central | `EME2000`. | Invariante ante rotación. |
+| `j2`, `j3`, `j4` | Compatibilidad en `EME2000`. | Heredado; aproxima el eje terrestre como fijo. |
+| `drag` | `ITRF` instantáneo, devuelto a `EME2000`. | Disponible; atmósfera exponencial exploratoria, con EOP, leap seconds y ERFA estrictos. |
+| `geopotential` | `ITRF` instantáneo, devuelto a `EME2000`. | Disponible con ICGEM local y EOP, leap seconds y ERFA estrictos. |
+| Sol, Luna, SRP y relatividad | Marco celeste/inercial coherente con `EME2000`. | Disponibles con contratos propios de época, cobertura y procedencia. |
 
-Esta elección mantiene una única derivada en el marco nativo y es suficiente para el alcance de diseño interactivo actual. No equivale a evaluar cada término terrestre en una realización ITRF instantánea: no aplica precesión, nutación, rotación terrestre ni movimiento polar dentro de cada evaluación de fuerza.
-
-!!! warning "Arquitectura de marcos prevista para implementación futura"
-
-    Para una propagación de mayor fidelidad, el estado seguirá integrándose en un marco celeste o inercial, pero los términos ligados a la Tierra se evaluarán temporalmente en un marco terrestre:
-
-    $$
-    \mathbf a_{\mathrm{inercial}}=R_{\mathrm{ITRF}\rightarrow\mathrm{inercial}}(t)\;\mathbf a_{\mathrm{ITRF}}.
-    $$
-
-    | Elemento | Uso previsto |
-    | --- | --- |
-    | \(R_{\mathrm{ITRF}\rightarrow\mathrm{inercial}}(t)\) | Rotación terrestre dependiente de época, basada en EOP y escalas temporales adecuadas. |
-    | \(\mathbf a_{\mathrm{ITRF}}\) | Aceleración evaluada en el marco terrestre; aplicable a drag, geopotencial de grado y orden alto, mareas y albedo. |
-    | \(\mathbf a_{\mathrm{inercial}}\) | Aceleración rotada al marco en el que se integra el estado. |
-
-    Este flujo todavía no se ejecuta en Cowell. Tampoco están implementados geopotencial completo, mareas ni albedo; su presencia en la documentación no habilita esos términos.
+Para un término terrestre de alta fidelidad, Cowell no integra en un marco
+rotante. En cada una de las cuatro etapas RK4 transforma la posición —y la
+velocidad cuando el modelo la necesita— a ITRF, evalúa la fuerza, y rota la
+aceleración libre al marco inercial. Véase [Tiempo y marcos](cowell/time-and-frames.md).
 
 ## Cómo encaja Cowell en Orbit
 
-Cowell no es una única fórmula ni RK4 es un modelo de órbita. Cada componente tiene una responsabilidad separada:
-
 | Pieza | Responsabilidad |
 | --- | --- |
-| Estado en `EME2000` | Define dónde está el objeto y cómo se mueve en el marco inercial de integración. |
-| Modelo de fuerzas | Define la aceleración total: gravedad central obligatoria y los términos seleccionados. |
-| Cowell | Convierte el estado y las fuerzas en la derivada cartesiana \(\mathbf f(t,\mathbf y)\). Es el propagador físico. |
-| RK4 | Evalúa cuatro veces esa derivada para avanzar un paso. Es el integrador numérico. |
-| Caché de estados | Reutiliza el estado integrado más cercano para no repetir todo el arco en consultas sucesivas. No modifica la física ni mejora la precisión. |
-| Transformación de marcos | Convierte el estado nativo integrado a `ITRF` u otro marco solicitado para su consumo. |
+| Estado `EME2000` | Define el estado inercial integrado. |
+| Modelo de fuerzas | Construye aceleración total y declara sus datos/procedencia. |
+| Cowell | Convierte estado y fuerzas en \(\mathbf f(t,\mathbf y)\). |
+| RK4 | Evalúa cuatro veces la derivada para avanzar un paso. |
+| Caché de estados | Reutiliza estados cercanos; no altera la física ni la precisión. |
+| Servicio de marcos | Proporciona la orientación de época requerida por términos y por salida. |
 
-En una consulta, Orbit parte del estado manual en `EME2000`, Cowell construye la aceleración con el modelo de fuerzas, RK4 avanza el estado y el resultado nativo se guarda en caché. Solo después se transforma el estado al marco que pide el renderer, la API o una exportación. Separar estas responsabilidades evita confundir una fuerza con un integrador o una transformación de coordenadas con propagación física.
+En una consulta, Orbit parte del estado manual en `EME2000`, compone las
+aceleraciones válidas para cada etapa, integra, conserva el estado nativo en
+caché y solo entonces publica el marco solicitado por renderer, API o
+exportación. Separar esas responsabilidades evita confundir una fuerza, un
+integrador y una transformación de coordenadas.
 
-Consulte también [Modelos de fuerza](force-models.md),
-[Arrastre atmosférico](atmospheric-drag.md) y
-[Modelos de gravedad](../engineering/gravity-models.md).
+Consulte [Modelos de fuerza](force-models.md),
+[Geopotencial configurable](full-geopotential.md) y
+[Arrastre atmosférico](atmospheric-drag.md).

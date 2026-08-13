@@ -80,7 +80,27 @@ _COWELL_GRAVITY_MODEL_ALIASES = {
 # drag are independently selectable additions. The order is part of the
 # persisted representation so semantically identical requests have one stable
 # cache/project identity.
-COWELL_FORCE_TERMS = ("central", "j2", "j3", "j4", "drag")
+COWELL_FORCE_TERMS = (
+    "central",
+    "j2",
+    "j3",
+    "j4",
+    "drag",
+    "geopotential",
+    "third-body-sun",
+    "third-body-moon",
+    "solar-radiation-pressure",
+    "relativity",
+)
+# The full ICGEM evaluator is intentionally pure Python and is evaluated at
+# every RK4 stage.  Letting an HTTP request select an arbitrary high-degree
+# (for example a degree-2190 field at full order) would turn a normal preview
+# into an unbounded synchronous CPU operation.  This is a public execution
+# safety limit, not a statement about the highest degree contained in a local
+# field file.  The low-level, explicitly invoked science primitive remains
+# able to inspect a complete field; a future compiled/adaptive evaluator can
+# raise this operational ceiling with its own validated cost model.
+MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 70
 # Start new designs from the smallest physically complete model. Additional
 # harmonics are opt-in force terms of Cowell/RK4; they are never implied by an
 # unrelated propagation family such as two-body.
@@ -96,6 +116,20 @@ _COWELL_FORCE_TERM_ALIASES = {
     "drag": "drag",
     "atmospheric-drag": "drag",
     "atmospheric": "drag",
+    "geopotential": "geopotential",
+    "gravity-field": "geopotential",
+    "full-geopotential": "geopotential",
+    "third-body-sun": "third-body-sun",
+    "sun": "third-body-sun",
+    "solar-gravity": "third-body-sun",
+    "third-body-moon": "third-body-moon",
+    "moon": "third-body-moon",
+    "lunar-gravity": "third-body-moon",
+    "solar-radiation-pressure": "solar-radiation-pressure",
+    "srp": "solar-radiation-pressure",
+    "solar-pressure": "solar-radiation-pressure",
+    "relativity": "relativity",
+    "schwarzschild": "relativity",
 }
 _LEGACY_GRAVITY_MODEL_FORCE_TERMS = {
     "two-body": ("central",),
@@ -897,8 +931,10 @@ class ManualPropagationOptions(BaseModel):
     """First-order configuration for native manual propagation.
 
     ``force_terms`` is the canonical force composition for ``cowell-rk4``:
-    ``central`` is always present, while ``j2``, ``j3``, ``j4`` and ``drag``
-    can be independently enabled. ``atmospheric_drag`` and the former
+    ``central`` is always present.  Legacy ``j2``/``j3``/``j4`` and ``drag``
+    remain independent compatibility terms.  New physical terms are the
+    configured ICGEM ``geopotential``, Sun/Moon third bodies, cannonball SRP
+    and first-order Schwarzschild relativity. ``atmospheric_drag`` and the former
     ``cowell_gravity_model``/``forceModel`` fields are accepted as derived
     compatibility inputs only. ``numerical_integrator`` independently selects
     the integration algorithm. ``drag_coefficient * area_m2 / mass_kg`` is
@@ -941,6 +977,30 @@ class ManualPropagationOptions(BaseModel):
         validation_alias=AliasChoices("mass_kg", "massKg"),
         gt=0,
         le=10_000_000,
+    )
+    geopotential_degree: int = Field(
+        default=4,
+        validation_alias=AliasChoices("geopotential_degree", "geopotentialDegree"),
+        ge=0,
+        le=MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
+    )
+    geopotential_order: int = Field(
+        default=0,
+        validation_alias=AliasChoices("geopotential_order", "geopotentialOrder"),
+        ge=0,
+        le=MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
+    )
+    solar_radiation_coefficient: float = Field(
+        default=1.2,
+        validation_alias=AliasChoices(
+            "solar_radiation_coefficient",
+            "solarRadiationCoefficient",
+            "reflectivity_coefficient",
+            "reflectivityCoefficient",
+            "cr",
+        ),
+        gt=0,
+        le=5,
     )
 
     @model_validator(mode="before")
@@ -1041,7 +1101,7 @@ class ManualPropagationOptions(BaseModel):
         candidate = str(value or "").strip()
         return candidate or "rk4"
 
-    @field_validator("drag_coefficient", "area_m2", "mass_kg")
+    @field_validator("drag_coefficient", "area_m2", "mass_kg", "solar_radiation_coefficient")
     @classmethod
     def validate_finite_value(cls, value: float) -> float:
         if not math.isfinite(value):
@@ -1053,6 +1113,13 @@ class ManualPropagationOptions(BaseModel):
         """Keep the old boolean readable without giving it authority."""
 
         self.atmospheric_drag = "drag" in self.force_terms
+        if self.geopotential_order > self.geopotential_degree:
+            raise ValueError("geopotential_order no puede superar geopotential_degree")
+        if "geopotential" in self.force_terms and self.geopotential_degree < 2:
+            raise ValueError(
+                "geopotential requiere geopotential_degree >= 2; "
+                "J1 no es un término seleccionable en un campo centrado en el centro de masas"
+            )
         return self
 
     @property
@@ -1065,7 +1132,7 @@ class ManualPropagationOptions(BaseModel):
         self,
         *,
         propagator: str | None = None,
-    ) -> dict[str, bool | float | str | list[str] | None]:
+    ) -> dict[str, bool | float | int | str | list[str] | None]:
         """Return the force configuration actually applied by an engine.
 
         Without a propagator this remains the standalone Cowell configuration
@@ -1105,12 +1172,19 @@ class ManualPropagationOptions(BaseModel):
         # This intentionally rejects future values for Cowell while allowing
         # fixed engines above to ignore stale non-drag project fields safely.
         strict_force_terms = normalize_cowell_force_terms(self.force_terms)
+        if "geopotential" in strict_force_terms and any(
+            term in strict_force_terms for term in ("j2", "j3", "j4")
+        ):
+            raise ValueError(
+                "geopotential no puede combinarse con j2, j3 o j4; "
+                "el campo de grado/orden ya incluye esos armónicos"
+            )
         strict_integrator = normalize_numerical_integrator(self.numerical_integrator)
         atmospheric_drag = "drag" in strict_force_terms
         legacy_gravity_model = legacy_cowell_gravity_model_from_force_terms(
             strict_force_terms
         )
-        canonical: dict[str, bool | float | str | list[str] | None] = {
+        canonical: dict[str, bool | float | int | str | list[str] | None] = {
             "force_terms": list(strict_force_terms),
             "atmospheric_drag": atmospheric_drag,
             "numerical_integrator": strict_integrator,
@@ -1118,6 +1192,13 @@ class ManualPropagationOptions(BaseModel):
             "area_m2": float(self.area_m2),
             "mass_kg": float(self.mass_kg),
         }
+        if "geopotential" in strict_force_terms:
+            canonical["geopotential_degree"] = int(self.geopotential_degree)
+            canonical["geopotential_order"] = int(self.geopotential_order)
+        if "solar-radiation-pressure" in strict_force_terms:
+            canonical["solar_radiation_coefficient"] = float(
+                self.solar_radiation_coefficient
+            )
         # Retain the old scalar only where it represents the composition
         # exactly. A null/custom pseudo-preset would be misleading and could
         # not safely round-trip through an older client.

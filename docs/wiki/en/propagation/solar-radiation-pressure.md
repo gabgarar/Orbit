@@ -2,40 +2,65 @@
 
 [Home](../index.md) · [Propagation](index.md) · [Force models](force-models.md) · [Third bodies](third-bodies.md)
 
-## Support status
+## Scope and status
 
-Orbit does not implement solar radiation pressure (SRP) in any propagators.
+The available canonical term is <code>solar-radiation-pressure</code>.
+It is a *cannonball* model: the satellite is represented by fixed effective
+area, reflection coefficient \(C_R\), and mass. It includes a cylindrical-
+eclipse illumination factor; it does not yet model attitude or penumbra.
 
-There are no parameters for reflectivity coefficient, illuminated area,
-occultation, eclipse, Sun-satellite geometry, solar ephemeris for force nor
-associated attitude model. Viewing the Sun is not a source of SRP.
+<code>srp</code> is an input alias only. The Sun appearing in visualization
+does not enable SRP, and <code>drag</code> is not a physical substitute for
+solar radiation.
 
-## Alternatives
+## Applied model
 
-- For arcs already calculated externally, use Python readers from
-  [OEM](../formats/oem.md) or [SP3](../formats/sp3.md), without assuming integration
-  Product UI/API.
-- For manual studies within Orbit, limit interpretation to the
-  forces documented in [Cowell](cowell.md).
+Let \(\mathbf r_\odot\) be the Earth→Sun geocentric vector and \(\mathbf r\)
+the Earth→satellite vector. Photon direction at the satellite is the
+Sun→satellite vector, \(\hat{\mathbf u}=(\mathbf r-\mathbf r_\odot)/d\). The
+applied acceleration is:
 
-`drag` should not be represented as a substitute for SRP: they are terms with origin,
-different direction and physical dependence.
+$$
+\mathbf a_{SRP}=\nu\,P_0\left(\frac{AU}{d}\right)^2
+\frac{C_R A}{m}\,\hat{\mathbf u},
+$$
 
-!!! warning "Equation planned for future implementation"
+where \(\nu\in[0,1]\) is illumination fraction. The result is computed in SI
+and converted to km/s² before it is added to Cowell.
 
-    A multi-surface SRP model could sum the illuminated faces:
+| Symbol | Meaning | Unit |
+| --- | --- | --- |
+| \(P_0\) | Reference solar pressure at 1 AU. | N/m². |
+| \(AU\), \(d\) | Astronomical unit and Sun–satellite distance. | m. |
+| \(C_R\) | Effective reflection coefficient. | Dimensionless. |
+| \(A\), \(m\) | Reference area and mass. | m², kg. |
+| \(\nu\) | Eclipse illumination. | 0 to 1. |
+| \(\mathbf a_{SRP}\) | Solar-radiation acceleration. | km/s² in Cowell. |
 
-    $$
-    \mathbf a_{\mathrm{SRP}}=-P_\odot\left(\frac{\mathrm{AU}}{d_\odot}\right)^2
-    \frac{1}{m}\sum_i A_i\max(0,\hat{\mathbf n}_i\cdot\hat{\mathbf s})
-    C_{R,i}\hat{\mathbf s}.
-    $$
+## Cylindrical eclipse
 
-    | Symbol | Meaning | Unit |
-    | --- | --- | --- |
-    | \(P_\odot\) | Reference solar pressure. | N/m². |
-    | \(\mathrm{AU}\), \(d_\odot\) | Astronomical unit and Sun–satellite distance. | Same length unit. |
-    | \(m\), \(A_i\) | Mass and area of face \(i\). | kg, m². |
-    | \(\hat{\mathbf n}_i\), \(\hat{\mathbf s}\) | Face normal and solar direction. | Dimensionless. |
-    | \(C_{R,i}\) | Reflectivity coefficient. | Dimensionless. |
-    | \(\mathbf a_{\mathrm{SRP}}\) | SRP acceleration. | m/s², converted to km/s² in Cowell. |
+Eclipse is determined geometrically with an Earth-radius cylinder aligned with
+the Sun→Earth direction. If the satellite is behind Earth and its perpendicular
+distance to the Sun–Earth axis is below the selected radius, \(\nu=0\); outside
+it, \(\nu=1\). The model must reject non-finite or degenerate geometry.
+
+This method is discontinuous and does not represent penumbra, solar diameter,
+Earth oblateness, or refraction. It is suitable as a declared first-order model,
+not for photometric transitions or mission-precision forces.
+
+## Validation and provenance
+
+- <code>area_m2</code>, <code>mass_kg</code>, and
+  <code>solar_radiation_coefficient</code> must be finite and positive.
+- Solar position must come from the same provider/epoch as the solar third-body
+  term and honor its coverage.
+- Acceleration must point away from the Sun when \(\nu>0\).
+- Provenance records \(C_R\), area, mass, reference pressure, eclipse model,
+  radius used, and solar provider.
+
+## What remains deferred
+
+There is no plate SRP, quaternions, variable projected area, self-shadow,
+penumbra/antumbra, thermal absorption, or re-emission. These increments depend
+on an [Attitude](attitude.md) model, spacecraft geometry, and an error-
+controlled integrator near eclipse discontinuities.

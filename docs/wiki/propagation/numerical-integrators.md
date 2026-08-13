@@ -2,9 +2,9 @@
 
 [Inicio](../index.md) · [Propagación](index.md) · [Propagadores](overview.md) · [RK4](rk4.md)
 
-## Descripción del método
+## Qué hace un integrador
 
-Un integrador numérico aproxima la solución de un problema de valor inicial:
+Un integrador numérico aproxima la solución de:
 
 $$
 \dot{\mathbf y}=\mathbf f(t,\mathbf y),
@@ -12,11 +12,14 @@ $$
 \mathbf y(t_0)=\mathbf y_0.
 $$
 
-El integrador no define la dinámica ni selecciona términos físicos. Recibe la derivada \(\mathbf f\) de un propagador y avanza el estado entre dos instantes. En Orbit, el integrador numérico disponible es Runge–Kutta clásico de cuarto orden (RK4), de paso fijo.
+No define la física: recibe la derivada de Cowell y avanza el estado. Los nuevos
+modelos de fuerzas deben evaluarse con la época de cada etapa, pero no cambian
+por sí mismos el método ni convierten un paso fijo en uno adaptativo.
 
-## Ecuaciones de RK4
+## Integrador disponible
 
-Para un paso \(h\), RK4 evalúa cuatro pendientes y forma una media ponderada:
+Orbit usa Runge–Kutta clásico de cuarto orden (RK4) de paso fijo para
+<code>CowellPropagator</code>. Para un paso \(h\):
 
 $$
 \begin{aligned}
@@ -24,41 +27,40 @@ $$
 \mathbf k_2 &= \mathbf f\!\left(t_n+\frac{h}{2},\mathbf y_n+\frac{h}{2}\mathbf k_1\right),\\
 \mathbf k_3 &= \mathbf f\!\left(t_n+\frac{h}{2},\mathbf y_n+\frac{h}{2}\mathbf k_2\right),\\
 \mathbf k_4 &= \mathbf f(t_n+h,\mathbf y_n+h\mathbf k_3),\\
-\mathbf y_{n+1} &= \mathbf y_n+\frac{h}{6}\left(\mathbf k_1+2\mathbf k_2+2\mathbf k_3+\mathbf k_4\right).
+\mathbf y_{n+1} &= \mathbf y_n+\frac{h}{6}(\mathbf k_1+2\mathbf k_2+2\mathbf k_3+\mathbf k_4).
 \end{aligned}
 $$
 
-| Símbolo | Significado | Unidades en Orbit |
-| --- | --- | --- |
-| \(t_n\) | Instante inicial del paso. | s respecto a la época integrada. |
-| \(h\) | Tamaño y sentido del paso. | s. |
-| \(\mathbf y_n\) | Estado al inicio del paso. | Para el estado cartesiano: km y km/s. |
-| \(\mathbf f\) | Derivada entregada por el propagador. | Para el estado cartesiano: km/s y km/s². |
-| \(\mathbf k_1\ldots\mathbf k_4\) | Pendientes intermedias. | Las mismas que \(\mathbf f\). |
+| Símbolo | Uso y unidades en Orbit |
+| --- | --- |
+| \(t_n\) | Instante de etapa, s desde la época integrada. |
+| \(h\) | Paso de integración, s; nominalmente 60 s. |
+| \(\mathbf y_n\) | Estado cartesiano, km y km/s. |
+| \(\mathbf f\) | Derivada, km/s y km/s². |
+| \(\mathbf k_1\ldots\mathbf k_4\) | Evaluaciones de la derivada en sus épocas propias. |
 
-En un estado cartesiano, la primera parte de \(\mathbf f\) es la velocidad y la segunda es la aceleración. Esa interpretación no altera RK4: el método opera sobre cualquier vector de estado y su derivada compatible.
+El último paso se reduce para alcanzar exactamente el instante solicitado. La
+propagación hacia atrás usa \(h<0\).
 
-## Aplicación en Orbit
+## Qué queda pendiente
 
-`CowellPropagator` utiliza el núcleo RK4 con `integration_step_seconds = 60`. El propagador construye su derivada de estado y el integrador la evalúa sin conocer el origen de sus componentes.
+| Capacidad | Motivo para no prometerla aún |
+| --- | --- |
+| Dormand–Prince / RKF45 adaptativo | Necesita tolerancias, estimador de error, rechazos de paso y contrato de rendimiento. |
+| Localización de eventos | Requiere búsqueda de raíces para eclipse, impacto, AOS/LOS o maniobra. |
+| Integradores simplécticos / multistep | Requieren estudio de estabilidad y de interacción con fuerzas dependientes del tiempo. |
+| STM y covarianza | Requieren ecuaciones variacionales y contrato de incertidumbre. |
+| Maniobras | Requieren eventos, marcos y masa/impulso explícitos. |
 
-El último paso se reduce cuando es necesario para llegar exactamente al instante solicitado. Para una propagación hacia el pasado, \(h\) es negativo. La ruta de inspección limita las solicitudes a 7200 pasos internos estimados de 60 s, contando la distancia desde la época y las muestras pedidas. Es un límite operativo del inspector; no cambia el método RK4 ni es una tolerancia de precisión.
+En particular, el eclipse cilíndrico de SRP es discontinuo. Con RK4 fijo, su
+transición solo se resuelve a la granularidad del paso; una herramienta de
+misión deberá añadir detección de eventos y control adaptativo antes de declarar
+precisión en el instante de entrada o salida de sombra.
 
-## Limitaciones
+## Validación
 
-RK4 de paso fijo no proporciona:
-
-- control adaptativo de error local o global;
-- variación automática de paso ante cambios rápidos del estado;
-- integración simpléctica, multistep o Gauss–Jackson;
-- localización de eventos mediante búsqueda de raíces;
-- propagación de matriz de transición de estado o covarianza.
-
-La precisión depende del intervalo integrado, del paso fijo y de la derivada que reciba el integrador. Debe validarse para cada caso de uso; Orbit no publica una tolerancia general para este camino numérico.
-
-## Notas de implementación
-
-- El paso nominal se expresa en segundos y mantiene el signo del intervalo.
-- Las cuatro evaluaciones se calculan de forma secuencial para cada paso RK4.
-- No se interpola entre pasos: el integrador ejecuta un último paso reducido cuando el instante de destino no coincide con la malla nominal.
-- El integrador no conserva por sí mismo estados, caché ni procedencia; esas responsabilidades pertenecen al propagador que lo utiliza.
+La precisión debe validarse para cada arco, paso y composición de fuerzas. Las
+pruebas deben comprobar reproducción de puntos, convergencia al reducir paso,
+conservación esperada para modelos conservativos y comparación contra una
+efeméride de referencia cuando el caso lo requiera. Orbit no publica una
+tolerancia general de precisión para la ruta Cowell/RK4.

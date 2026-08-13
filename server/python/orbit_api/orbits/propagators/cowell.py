@@ -3,9 +3,11 @@
 The existing Two-body and first-order J2 engines are analytical and therefore
 very fast. They cannot, however, apply a force that changes orbital energy.
 This module is the deliberately configurable numerical path selected as
-``cowell-rk4``. It always includes central gravity and composes J2, J3, J4
-and atmospheric drag as independent force terms. Historical gravity presets
-remain accepted only as compatibility input and normalize to that composition.
+``cowell-rk4``. It always includes central gravity and composes legacy zonals,
+drag, a rigorously Earth-fixed configurable geopotential, Sun/Moon third
+bodies, cannonball SRP and first-order relativity as independent force terms.
+Historical gravity presets remain accepted only as compatibility input and
+normalize to their legacy composition.
 
 States remain in the explicit EME2000 compatibility frame in km and km/s
 internally. The renderer contract is still ITRF metres/metres/s and is
@@ -22,14 +24,31 @@ import math
 import threading
 from collections.abc import Iterable, Mapping
 
+from orbit_api.frames import FrameId, FrameTransformService, StateVector
+from orbit_api.orbits.forces.celestial import (
+    MOON_BODY,
+    MOON_GRAVITATIONAL_PARAMETER_M3_S2,
+    SUN_BODY,
+    SUN_GRAVITATIONAL_PARAMETER_M3_S2,
+    CelestialEphemeris,
+    CelestialEphemerisError,
+    cannonball_solar_radiation_pressure_acceleration,
+    cylindrical_umbra_eclipse_factor,
+    differential_third_body_acceleration,
+)
+from orbit_api.orbits.forces.context import ForceEvaluationContext, ForceEvaluationError
+from orbit_api.orbits.forces.geopotential import (
+    GeopotentialConfiguration,
+    GravityFieldError,
+    GravityFieldModel,
+    geopotential_perturbation_acceleration_itrf,
+)
+from orbit_api.timekeeping import ensure_utc, utc_now
+
 from .classical import (
     EARTH_EQUATORIAL_RADIUS_KM,
     EARTH_MU_KM3_S2,
-    EARTH_ROTATION_RATE_RAD_S,
 )
-from orbit_api.frames import FrameId, FrameTransformService, StateVector
-from orbit_api.timekeeping import ensure_utc, utc_now
-
 
 # WGS-84 unnormalised zonal gravity coefficients.  The gravity field's z axis
 # is treated as Earth-fixed spin axis, which is also the conventional ECI z
@@ -86,7 +105,18 @@ _GRAVITY_MODELS = {
     "j2": ("central", "j2"),
     "j2-j3-j4": ("central", "j2", "j3", "j4"),
 }
-_FORCE_TERM_ORDER = ("central", "j2", "j3", "j4", "drag")
+_FORCE_TERM_ORDER = (
+    "central",
+    "j2",
+    "j3",
+    "j4",
+    "drag",
+    "geopotential",
+    "third-body-sun",
+    "third-body-moon",
+    "solar-radiation-pressure",
+    "relativity",
+)
 _FORCE_TERM_ALIASES = {
     "central": "central",
     "central-gravity": "central",
@@ -98,7 +128,23 @@ _FORCE_TERM_ALIASES = {
     "drag": "drag",
     "atmospheric-drag": "drag",
     "atmospheric": "drag",
+    "geopotential": "geopotential",
+    "gravity-field": "geopotential",
+    "full-geopotential": "geopotential",
+    "third-body-sun": "third-body-sun",
+    "sun": "third-body-sun",
+    "solar-gravity": "third-body-sun",
+    "third-body-moon": "third-body-moon",
+    "moon": "third-body-moon",
+    "lunar-gravity": "third-body-moon",
+    "solar-radiation-pressure": "solar-radiation-pressure",
+    "srp": "solar-radiation-pressure",
+    "solar-pressure": "solar-radiation-pressure",
+    "relativity": "relativity",
+    "schwarzschild": "relativity",
 }
+
+_SPEED_OF_LIGHT_KM_S = 299_792.458
 
 
 def _finite(value: object, label: str) -> float:
@@ -269,6 +315,11 @@ class CowellPropagator:
         drag_coefficient: float = 2.2,
         area_m2: float = 1.0,
         mass_kg: float = 100.0,
+        geopotential_model: GravityFieldModel | None = None,
+        geopotential_degree: int = 4,
+        geopotential_order: int = 0,
+        solar_radiation_coefficient: float = 1.2,
+        celestial_ephemeris: CelestialEphemeris | None = None,
         frame_transformer: FrameTransformService | None = None,
     ) -> None:
         if force_terms is None:
@@ -286,7 +337,12 @@ class CowellPropagator:
             terms = _normalize_force_terms(force_terms)
         self.epoch = ensure_utc(epoch)
         self.force_terms = terms
-        self.gravity_terms = tuple(term for term in terms if term not in {"central", "drag"})
+        if "geopotential" in terms and any(term in terms for term in ("j2", "j3", "j4")):
+            raise ValueError(
+                "geopotential no puede combinarse con j2, j3 o j4; "
+                "el campo de grado/orden ya incluye esos arm\\u00f3nicos"
+            )
+        self.gravity_terms = tuple(term for term in terms if term in {"j2", "j3", "j4"})
         self.atmospheric_drag = "drag" in terms
         # Preserve the historical attribute for callers that only understand
         # the three old preset names. Custom independent combinations are
@@ -298,12 +354,57 @@ class CowellPropagator:
         # if it were the fixed J2/J3/J4 preset.
         self.model_id = "cowell-rk4"
         self.drag_coefficient = _finite(drag_coefficient, "El coeficiente de arrastre")
-        self.area_m2 = _finite(area_m2, "El Ã¡rea de referencia")
+        self.area_m2 = _finite(area_m2, "El \\u00e1rea de referencia")
         self.mass_kg = _finite(mass_kg, "La masa")
+        self.solar_radiation_coefficient = _finite(
+            solar_radiation_coefficient,
+            "El coeficiente de reflexi\\u00f3n solar",
+        )
         if self.drag_coefficient <= 0 or self.area_m2 <= 0 or self.mass_kg <= 0:
-            raise ValueError("Los parÃ¡metros de arrastre deben ser mayores que cero")
+            raise ValueError("Los par\\u00e1metros de arrastre deben ser mayores que cero")
+        if self.solar_radiation_coefficient <= 0:
+            raise ValueError("El coeficiente de reflexi\\u00f3n solar debe ser mayor que cero")
         self.ballistic_coefficient_m2_kg = self.drag_coefficient * self.area_m2 / self.mass_kg
         self._frame_transformer = frame_transformer or FrameTransformService()
+        self.geopotential_model = geopotential_model
+        if "geopotential" in terms:
+            if geopotential_model is None:
+                raise ValueError(
+                    "geopotential requiere un campo ICGEM local configurado y verificado"
+                )
+            if geopotential_degree < 2:
+                raise ValueError(
+                    "geopotential requiere grado >= 2; J1 no es un término seleccionable "
+                    "en un campo centrado en el centro de masas"
+                )
+            try:
+                self.geopotential_configuration = GeopotentialConfiguration(
+                    geopotential_degree,
+                    geopotential_order,
+                )
+                self.geopotential_configuration.validate_for(geopotential_model)
+            except GravityFieldError as exc:
+                raise ValueError(str(exc)) from exc
+        else:
+            self.geopotential_configuration = None
+        self._celestial_ephemeris = celestial_ephemeris
+        self._requires_celestial_ephemeris = bool(
+            {"third-body-sun", "third-body-moon", "solar-radiation-pressure"}
+            .intersection(terms)
+        )
+        if self._requires_celestial_ephemeris and celestial_ephemeris is not None:
+            if not isinstance(celestial_ephemeris, CelestialEphemeris):
+                raise TypeError("celestial_ephemeris debe ser CelestialEphemeris")
+            # ``ForceEvaluationContext`` validates the transformer's local
+            # UTC-to-TT snapshot at every RK stage.  An injected provider
+            # must use the *same immutable table*, otherwise the guard and
+            # the ERFA ephemeris could silently evaluate different TT epochs.
+            if celestial_ephemeris.leap_seconds != self._frame_transformer.leap_second_table:
+                raise ValueError(
+                    "celestial_ephemeris debe usar la misma tabla local de segundos "
+                    "intercalares que frame_transformer"
+                )
+            self._celestial_ephemeris = celestial_ephemeris
         initial = _state_from_mapping(state_vector)
         self._lock = threading.RLock()
         self._offsets: list[float] = [0.0]
@@ -317,12 +418,203 @@ class CowellPropagator:
     def frame_transformer(self) -> FrameTransformService:
         return self._frame_transformer
 
-    def _acceleration(self, state: _STATE) -> tuple[float, float, float]:
+    @property
+    def celestial_ephemeris(self) -> CelestialEphemeris:
+        """Return the local ERFA source pinned to this Cowell instance."""
+
+        if self._celestial_ephemeris is None:
+            leap_seconds = self._frame_transformer.leap_second_table
+            self._celestial_ephemeris = CelestialEphemeris(
+                leap_seconds=leap_seconds,
+                require_unexpired_leap_seconds=True,
+            )
+        return self._celestial_ephemeris
+
+    def _force_context(self, offset_seconds: float) -> ForceEvaluationContext:
+        return ForceEvaluationContext(
+            self.epoch + datetime.timedelta(seconds=float(offset_seconds)),
+            self._frame_transformer,
+        )
+
+    @staticmethod
+    def _add_vector(
+        total: tuple[float, float, float],
+        addition: tuple[float, float, float],
+    ) -> tuple[float, float, float]:
+        return tuple(
+            total[index] + addition[index] for index in range(3)
+        )  # type: ignore[return-value]
+
+    def _geopotential_acceleration(
+        self,
+        state: _STATE,
+        offset_seconds: float,
+    ) -> tuple[float, float, float]:
+        if self.geopotential_model is None or self.geopotential_configuration is None:
+            raise ValueError("geopotential requiere un campo ICGEM configurado")
+        try:
+            context = self._force_context(offset_seconds)
+            position_itrf_km, _velocity_itrf = context.eme2000_state_to_itrf(state[:3], state[3:])
+            perturbation_itrf = geopotential_perturbation_acceleration_itrf(
+                position_itrf_km,
+                self.geopotential_model,
+                self.geopotential_configuration,
+            )
+            return context.itrf_free_vector_to_eme2000(perturbation_itrf)
+        except (ForceEvaluationError, GravityFieldError) as exc:
+            raise ValueError(f"No se pudo evaluar geopotential: {exc}") from exc
+
+    def _earth_fixed_drag_acceleration(
+        self,
+        state: _STATE,
+        offset_seconds: float,
+    ) -> tuple[float, float, float]:
+        """Evaluate the simple co-rotating atmosphere in ITRF.
+
+        The density law remains an intentionally first-order engineering
+        approximation, but its latitude/altitude and relative velocity are
+        evaluated in the rotating Earth frame at the actual RK-stage epoch.
+        A strict IAU/EOP route is mandatory; the old inertial-axis shortcut is
+        not used for newly evaluated drag.
+        """
+
+        try:
+            context = self._force_context(offset_seconds)
+            position_itrf_km, velocity_itrf_km_s = context.eme2000_state_to_itrf(
+                state[:3], state[3:]
+            )
+            if velocity_itrf_km_s is None:  # State has a velocity by contract.
+                raise ValueError("La velocidad ITRF es obligatoria para el arrastre")
+            density_kg_m3 = _atmospheric_density_kg_m3(
+                _geodetic_altitude_km(*position_itrf_km)
+            )
+            if density_kg_m3 == 0.0:
+                return 0.0, 0.0, 0.0
+            speed_m_s = 1_000.0 * math.sqrt(sum(
+                component * component for component in velocity_itrf_km_s
+            ))
+            multiplier = -0.5 * self.ballistic_coefficient_m2_kg * density_kg_m3 * speed_m_s
+            drag_itrf = tuple(
+                multiplier * component for component in velocity_itrf_km_s
+            )
+            return context.itrf_free_vector_to_eme2000(drag_itrf)
+        except ForceEvaluationError as exc:
+            raise ValueError(f"No se pudo evaluar drag: {exc}") from exc
+
+    def _celestial_position_eme2000_m(
+        self,
+        body: str,
+        offset_seconds: float,
+    ) -> tuple[float, float, float]:
+        """Transform one local ERFA body state into the Cowell native frame."""
+
+        context = self._force_context(offset_seconds)
+        # A third-body/SRP vector stays in an inertial frame. It requires
+        # ERFA and an auditable UTC-to-TT table, but not UT1/polar motion or an
+        # ITRF EOP sample: those belong only to Earth-fixed forces.
+        context.require_inertial_time_route()
+        try:
+            eme2000_state = self.celestial_ephemeris.eme2000_state_at(
+                body,
+                context.epoch_utc,
+            )
+        except (CelestialEphemerisError, ForceEvaluationError) as exc:
+            raise ValueError(f"No se pudo evaluar la efem\\u00e9ride {body}: {exc}") from exc
+        return eme2000_state.position_m
+
+    def _celestial_acceleration(
+        self,
+        state: _STATE,
+        offset_seconds: float,
+    ) -> tuple[float, float, float]:
+        satellite_m = tuple(component * 1_000.0 for component in state[:3])
+        total_m_s2 = (0.0, 0.0, 0.0)
+        try:
+            sun_position_m: tuple[float, float, float] | None = None
+            if any(
+                term in self.force_terms
+                for term in ("third-body-sun", "solar-radiation-pressure")
+            ):
+                sun_position_m = self._celestial_position_eme2000_m(SUN_BODY, offset_seconds)
+            if "third-body-sun" in self.force_terms:
+                total_m_s2 = self._add_vector(
+                    total_m_s2,
+                    differential_third_body_acceleration(
+                        satellite_m,
+                        sun_position_m,
+                        SUN_GRAVITATIONAL_PARAMETER_M3_S2,
+                    ),
+                )
+            if "third-body-moon" in self.force_terms:
+                moon_position_m = self._celestial_position_eme2000_m(MOON_BODY, offset_seconds)
+                total_m_s2 = self._add_vector(
+                    total_m_s2,
+                    differential_third_body_acceleration(
+                        satellite_m,
+                        moon_position_m,
+                        MOON_GRAVITATIONAL_PARAMETER_M3_S2,
+                    ),
+                )
+            if "solar-radiation-pressure" in self.force_terms:
+                if sun_position_m is None:  # Defensive invariant above.
+                    raise ValueError("Falta la posici\\u00f3n solar para SRP")
+                eclipse = cylindrical_umbra_eclipse_factor(satellite_m, sun_position_m)
+                total_m_s2 = self._add_vector(
+                    total_m_s2,
+                    cannonball_solar_radiation_pressure_acceleration(
+                        satellite_m,
+                        sun_position_m,
+                        reflectivity_coefficient=self.solar_radiation_coefficient,
+                        area_m2=self.area_m2,
+                        mass_kg=self.mass_kg,
+                        eclipse_factor=eclipse,
+                    ),
+                )
+        except CelestialEphemerisError as exc:
+            raise ValueError(f"No se pudo evaluar la fuerza celeste: {exc}") from exc
+        return tuple(component / 1_000.0 for component in total_m_s2)  # type: ignore[return-value]
+
+    @staticmethod
+    def _schwarzschild_acceleration(state: _STATE) -> tuple[float, float, float]:
+        """Return the first-order Schwarzschild correction in km/s\\u00b2.
+
+        This is the standard non-spinning monopole term in a geocentric
+        inertial frame.  It is intentionally a separate selectable force and
+        does not claim to model Earth spin, multipoles or relativistic tides.
+        """
+
+        position = state[:3]
+        velocity = state[3:]
+        radius = math.sqrt(sum(component * component for component in position))
+        if radius <= 0.0:
+            raise ValueError("La correcci\\u00f3n relativista no admite el origen terrestre")
+        velocity_squared = sum(component * component for component in velocity)
+        radial_velocity = sum(
+            position[index] * velocity[index] for index in range(3)
+        )
+        factor = EARTH_MU_KM3_S2 / ((_SPEED_OF_LIGHT_KM_S ** 2) * (radius ** 3))
+        acceleration = tuple(
+            factor
+            * (
+                ((4.0 * EARTH_MU_KM3_S2 / radius) - velocity_squared) * position[index]
+                + (4.0 * radial_velocity * velocity[index])
+            )
+            for index in range(3)
+        )
+        if not all(math.isfinite(component) for component in acceleration):
+            raise ValueError("La correcci\\u00f3n relativista no es finita")
+        return acceleration  # type: ignore[return-value]
+
+    def _acceleration(
+        self,
+        state: _STATE,
+        offset_seconds: float = 0.0,
+    ) -> tuple[float, float, float]:
         x, y, z, vx, vy, vz = state
         radius_sq = (x * x) + (y * y) + (z * z)
         radius = math.sqrt(radius_sq)
         if radius <= WGS84_POLAR_RADIUS_KM:
-            raise ValueError("La propagaciÃ³n intersecta la Tierra; reduce el intervalo o desactiva el arrastre")
+            raise ValueError("La propagaci\\u00f3n intersecta la Tierra; reduce el intervalo o desactiva el arrastre")
         inv_radius_cubed = 1.0 / (radius_sq * radius)
         ax = -EARTH_MU_KM3_S2 * x * inv_radius_cubed
         ay = -EARTH_MU_KM3_S2 * y * inv_radius_cubed
@@ -344,51 +636,77 @@ class CowellPropagator:
                 ay += scale * y * transverse / (radius ** (degree + 3))
                 az += scale * vertical / (radius ** (degree + 2))
 
+        if "geopotential" in self.force_terms:
+            geopotential = self._geopotential_acceleration(state, offset_seconds)
+            ax += geopotential[0]
+            ay += geopotential[1]
+            az += geopotential[2]
+
         if self.atmospheric_drag:
-            altitude_km = _geodetic_altitude_km(x, y, z)
-            density_kg_m3 = _atmospheric_density_kg_m3(altitude_km)
-            if density_kg_m3:
-                # The atmosphere co-rotates with Earth.  ECI velocity minus
-                # omega x r is the velocity seen by the neutral atmosphere.
-                relative_vx = vx + (EARTH_ROTATION_RATE_RAD_S * y)
-                relative_vy = vy - (EARTH_ROTATION_RATE_RAD_S * x)
-                relative_vz = vz
-                speed_m_s = 1000.0 * math.sqrt(
-                    (relative_vx * relative_vx) + (relative_vy * relative_vy) + (relative_vz * relative_vz)
-                )
-                multiplier = -0.5 * self.ballistic_coefficient_m2_kg * density_kg_m3 * speed_m_s
-                # multiplier [1/s] times relative velocity [km/s] yields
-                # acceleration [km/s^2], matching the internal state units.
-                ax += multiplier * relative_vx
-                ay += multiplier * relative_vy
-                az += multiplier * relative_vz
+            drag = self._earth_fixed_drag_acceleration(state, offset_seconds)
+            ax += drag[0]
+            ay += drag[1]
+            az += drag[2]
+        if self._requires_celestial_ephemeris:
+            celestial = self._celestial_acceleration(state, offset_seconds)
+            ax += celestial[0]
+            ay += celestial[1]
+            az += celestial[2]
+        if "relativity" in self.force_terms:
+            relativity = self._schwarzschild_acceleration(state)
+            ax += relativity[0]
+            ay += relativity[1]
+            az += relativity[2]
         return ax, ay, az
 
-    def _derivative(self, state: _STATE) -> _STATE:
-        ax, ay, az = self._acceleration(state)
+    def _derivative(self, state: _STATE, offset_seconds: float = 0.0) -> _STATE:
+        ax, ay, az = self._acceleration(state, offset_seconds)
         return state[3], state[4], state[5], ax, ay, az
 
     @staticmethod
     def _advance(state: _STATE, derivative: _STATE, seconds: float) -> _STATE:
         return tuple(value + (seconds * rate) for value, rate in zip(state, derivative, strict=True))  # type: ignore[return-value]
 
-    def _rk4_step(self, state: _STATE, seconds: float) -> _STATE:
-        first = self._derivative(state)
-        second = self._derivative(self._advance(state, first, seconds / 2.0))
-        third = self._derivative(self._advance(state, second, seconds / 2.0))
-        fourth = self._derivative(self._advance(state, third, seconds))
+    def _rk4_step(
+        self,
+        state: _STATE,
+        seconds: float,
+        start_offset_seconds: float = 0.0,
+    ) -> _STATE:
+        """Take one RK4 step, evaluating time-dependent forces at each stage."""
+
+        first = self._derivative(state, start_offset_seconds)
+        second = self._derivative(
+            self._advance(state, first, seconds / 2.0),
+            start_offset_seconds + (seconds / 2.0),
+        )
+        third = self._derivative(
+            self._advance(state, second, seconds / 2.0),
+            start_offset_seconds + (seconds / 2.0),
+        )
+        fourth = self._derivative(
+            self._advance(state, third, seconds),
+            start_offset_seconds + seconds,
+        )
         return tuple(
             value + (seconds / 6.0) * (one + (2.0 * two) + (2.0 * three) + four)
             for value, one, two, three, four in zip(state, first, second, third, fourth, strict=True)
         )  # type: ignore[return-value]
 
-    def _integrate(self, initial: _STATE, duration_seconds: float) -> _STATE:
+    def _integrate(
+        self,
+        initial: _STATE,
+        duration_seconds: float,
+        start_offset_seconds: float = 0.0,
+    ) -> _STATE:
         remaining = float(duration_seconds)
         state = initial
+        current_offset = float(start_offset_seconds)
         while abs(remaining) > 1e-9:
             step = math.copysign(min(self.integration_step_seconds, abs(remaining)), remaining)
-            state = self._rk4_step(state, step)
+            state = self._rk4_step(state, step, current_offset)
             remaining -= step
+            current_offset += step
         return state
 
     def _state_at_offset(self, target_offset_seconds: float) -> _STATE:
@@ -404,7 +722,11 @@ class CowellPropagator:
             if insertion < len(self._offsets):
                 candidates.append(self._offsets[insertion])
             source_offset = min(candidates, key=lambda value: abs(value - target))
-            propagated = self._integrate(self._states[source_offset], target - source_offset)
+            propagated = self._integrate(
+                self._states[source_offset],
+                target - source_offset,
+                source_offset,
+            )
             self._states[target] = propagated
             self._offsets.insert(insertion, target)
             return propagated
@@ -436,7 +758,11 @@ class CowellPropagator:
                 "propagator": self.model_id,
                 "native_frame": "EME2000",
                 "legacy_input_assumption": "previous ECI manual states are interpreted as EME2000",
-                "model_limit": "Earth-fixed force terms use the compatibility inertial-axis model",
+                "model_limit": (
+                    "Legacy j2/j3/j4 use the compatibility inertial-axis model; "
+                    "Earth-fixed drag and configured geopotential are evaluated through "
+                    "strict EME2000 -> ITRF -> EME2000"
+                ),
             },
         )
 

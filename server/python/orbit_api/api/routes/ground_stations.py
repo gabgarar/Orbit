@@ -9,15 +9,15 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, ValidationError
 
-from orbit_api.application.manual_orbits import (
-    ManualOrbitError,
-    build_manual_orbit_propagator,
-    canonical_manual_orbit,
-)
 from orbit_api.application.geospatial_exports import (
     GeospatialExportError,
     geospatial_content_type,
     geospatial_export_bytes,
+)
+from orbit_api.application.manual_orbits import (
+    ManualOrbitError,
+    build_manual_orbit_propagator,
+    canonical_manual_orbit,
 )
 from orbit_api.domain.requests import (
     AosLosRequest,
@@ -35,6 +35,7 @@ from orbit_api.ground_stations.visibility import (
     extract_passes,
     slant_range_km,
 )
+from orbit_api.orbits.forces import GravityFieldModel
 from orbit_api.timekeeping import utc_now
 
 
@@ -152,6 +153,7 @@ def create_ground_stations_router(
     build_ephemeris: Callable,
     ensure_utc: Callable,
     frame_transformer: FrameTransformService | None = None,
+    gravity_field: GravityFieldModel | None = None,
 ) -> APIRouter:
     """Build access-window routes from orbit application services."""
     router = APIRouter(tags=["ground-stations"])
@@ -248,6 +250,7 @@ def create_ground_stations_router(
                     propagator=propagator_name
                 ),
                 frame_transformer=frame_transformer,
+                gravity_field=gravity_field,
             )
         except (ManualOrbitError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

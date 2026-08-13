@@ -1,60 +1,145 @@
-# Geopotencial completo
+# Geopotencial de grado y orden configurable
 
-[Inicio](../index.md) · [Propagación](index.md) · [Modelos de gravedad](../engineering/gravity-models.md) · [J2](j2.md)
+[Inicio](../index.md) · [Propagación](index.md) · [Modelos de fuerzas](force-models.md) · [Modelos de gravedad](../engineering/gravity-models.md)
 
-## Estado de soporte
+## Objetivo y estado
 
-Orbit no implementa un geopotencial completo.
+El término canónico disponible es `geopotential`. Evalúa un campo gravitatorio
+terrestre de armónicos esféricos hasta un **grado** \(N\) y un **orden** \(M\)
+configurables, con \(0\leq M\leq N\). El runtime solo lo habilita cuando hay un
+campo local válido y la ruta de marcos estricta; los zonales históricos `j2`,
+`j3` y `j4` siguen disponibles como compatibilidad independiente.
 
-No hay lector de coeficientes armónicos \(C_{nm}\) y \(S_{nm}\), selección de
-modelo, grado, orden, normalización, mareas, variación temporal ni evaluación
-de términos tesseral y sectorial. Las únicas perturbaciones gravitatorias
-numéricas disponibles son los armónicos zonales J2, J3 y J4 del modelo Cowell.
+No habrá una degradación silenciosa a J2/J3/J4 cuando se solicite
+`geopotential`. Si el producto de gravedad o la ruta de marcos no cumplen el
+contrato, la operación debe rechazar la solicitud.
 
-## Consecuencia operativa
+## Campo y configuración
 
-No se debe interpretar una composición J2/J3/J4 como un truncamiento
-configurable de un campo gravitatorio completo. Los coeficientes disponibles
-son constantes internas, no un producto de gravedad versionado ni una API de
-modelo de Tierra.
+El campo se carga de un fichero ICGEM `.gfc` identificado. El lector admite
+únicamente coeficientes **completamente normalizados** y debe conservar:
 
-## Alternativas disponibles
+- nombre y fuente publicados del modelo;
+- huella criptográfica del fichero;
+- \(\mu\), radio de referencia \(R_\oplus\), normalización y grado máximo del
+  encabezado;
+- coeficientes \(\bar C_{nm}\), \(\bar S_{nm}\) y su intervalo válido si el
+  producto lo publica;
+- grado y orden efectivamente seleccionados.
 
-- [Dos cuerpos](two-body.md) para una órbita idealizada.
-- [J2](j2.md) para la aproximación secular o el término numérico J2.
-- [Cowell](cowell.md) con J2/J3/J4 para una sensibilidad de primer orden.
-- [OEM](../formats/oem.md) o [SP3](../formats/sp3.md) cuando se necesita
-  consumir una trayectoria ya tabulada por un sistema externo.
+La carga debe rechazar un encabezado incompleto, una normalización no admitida,
+coeficientes no finitos, un grado/orden fuera del campo o una huella esperada
+que no coincida. No se cambia de normalización ni se inventan coeficientes en
+segundo plano.
 
-!!! warning "No sustituye validación externa"
+| Ajuste | Significado | Restricción |
+| --- | --- | --- |
+| `degree` | Máximo \(n\) evaluado. | Entero \(2\leq N\leq \min(N_{campo},70)\) en la API y la interfaz públicas; 0/1 se conservan solo como valores inactivos de compatibilidad. |
+| `order` | Máximo \(m\) por grado. | Entero \(0\leq M\leq \min(N,M_{campo})\). |
+| `geopotential` | Activa la suma armónica no central. | No combinar con `j2`, `j3` o `j4`. |
 
-    Los análisis que requieran geopotencial de grado y orden controlado deben
-    realizarse en una herramienta o servicio que implemente y documente ese
-    modelo. Orbit no ofrece una aproximación silenciosa.
+La gravedad central se mantiene como término `central` separado y obligatorio.
+Así no se suma dos veces el término \(n=0\). El runtime rechaza con 422 un
+grado menor que 2 cuando `geopotential` está activo.
 
-!!! warning "Ecuación prevista para implementación futura"
+!!! warning "Presupuesto de ejecución actual"
 
-    Un geopotencial hasta grado y orden \(N\) requeriría una expansión de
-    armónicos esféricos y su gradiente:
+    El evaluador de armónicos y el RK4 actual se ejecutan en Python y evalúan
+    el campo en cada una de sus cuatro etapas por paso. Por seguridad
+    operativa, Orbit limita el grado público a **70**, incluso si el fichero
+    ICGEM contiene más coeficientes. No es un límite científico del campo ni
+    una truncación silenciosa: una solicitud mayor se rechaza antes de iniciar
+    la propagación. Para habilitar grados superiores se necesita un evaluador
+    optimizado y un integrador con presupuesto de coste/errores validado.
 
-    $$
-    U(r,\phi,\lambda)=\frac{\mu}{r}\left[1+\sum_{n=2}^{N}
-    \left(\frac{R_\oplus}{r}\right)^n\sum_{m=0}^{n}\bar P_{nm}(\sin\phi)
-    \left(\bar C_{nm}\cos m\lambda+\bar S_{nm}\sin m\lambda\right)\right],
-    \qquad \mathbf a=-\nabla U.
-    $$
+## J1, J2 y J3
 
-    | Símbolo | Significado | Unidad |
-    | --- | --- | --- |
-    | \(U\) | Potencial gravitatorio. | km²/s². |
-    | \(r\) | Distancia geocéntrica del objeto. | km. |
-    | \(\phi\), \(\lambda\) | Latitud geocéntrica y longitud. | rad. |
-    | \(\mu\) | Parámetro gravitatorio terrestre. | km³/s². |
-    | \(R_\oplus\) | Radio ecuatorial de referencia. | km. |
-    | \(n\), \(m\), \(N\) | Grado, orden y límite de la expansión. | Adimensionales. |
-    | \(\bar P_{nm}\), \(\bar C_{nm}\), \(\bar S_{nm}\) | Polinomio de Legendre normalizado y coeficientes armónicos. | Adimensionales. |
-    | \(\mathbf a\) | Aceleración resultante. | km/s². |
+Los armónicos zonales están incluidos de forma natural cuando el campo y el
+grado seleccionado los contienen. Con coeficientes completamente normalizados,
+la relación habitual para el zonal es:
 
-    Orbit no evalúa aún esta expresión: `cowell-rk4` solo aplica central,
-    J2, J3, J4 y drag. La tabla fija las unidades que deberá respetar una
-    implementación futura antes de normalizar el estado de salida a SI.
+$$
+J_n=-\sqrt{2n+1}\;\bar C_{n0}.
+$$
+
+Por tanto, J2 y J3 no serán interruptores adicionales al usar
+`geopotential`. J1 tampoco se ofrece como fuerza seleccionable: en un modelo de
+la Tierra cuyo origen es su centro de masas, el grado uno representa un
+desplazamiento del origen y debe ser nulo (salvo redondeo documentado). Activar
+J1 sobre un origen ya centrado introduciría una aceleración espuria, no más
+fidelidad.
+
+## Evaluación física y marcos
+
+Los coeficientes de un geopotencial terrestre están ligados a la Tierra. Por
+eso no se evalúan con la longitud de un vector `EME2000` como si el eje de giro
+fuese fijo. Para **cada** evaluación \(f(t,\mathbf y)\) de RK4:
+
+1. Orbit transforma \((\mathbf r,\mathbf v)\) de `EME2000` a `ITRF` en la época
+   de la etapa.
+2. Evalúa la aceleración no central \(\mathbf a_{ITRF}\) en el ITRF instantáneo.
+3. Rota la aceleración libre a `EME2000`:
+
+   $$
+   \mathbf a_{EME2000}=R_{ITRF\rightarrow EME2000}(t)\mathbf a_{ITRF}.
+   $$
+
+4. Suma \(\mathbf a_{EME2000}\) a la derivada que se integra.
+
+El estado no se integra en ITRF; eso exigiría términos ficticios de Coriolis,
+centrífugo y Euler. La rotación anterior aplica únicamente a la aceleración
+física del geopotencial y mantiene la ecuación de movimiento en el marco
+inercial de Cowell.
+
+La transformación debe usar EOP, UT1−UTC, movimiento polar, una tabla de
+segundos intercalares válida y ERFA/SOFA con la reducción IAU 2006/2000A. Si el
+producto usa una realización distinta de ITRF, también debe existir una ruta de
+alineación declarada. Sin esos datos, el marco correcto es aproximado y el
+término `geopotential` no debe habilitarse.
+
+## Ecuación y unidades
+
+El potencial completo es:
+
+$$
+U(r,\phi,\lambda)=\frac{\mu}{r}\left[1+
+\sum_{n=2}^{N}\left(\frac{R_\oplus}{r}\right)^n
+\sum_{m=0}^{\min(n,M)}\bar P_{nm}(\sin\phi)
+\left(\bar C_{nm}\cos m\lambda+\bar S_{nm}\sin m\lambda\right)\right],
+\qquad \mathbf a=-\nabla U.
+$$
+
+| Símbolo | Significado | Unidad |
+| --- | --- | --- |
+| \(U\) | Potencial gravitatorio. | km²/s². |
+| \(r,\phi,\lambda\) | Radio, latitud y longitud geocéntricos en ITRF. | km, rad, rad. |
+| \(N,M\) | Grado y orden aplicados. | Enteros. |
+| \(\bar P_{nm}\), \(\bar C_{nm}\), \(\bar S_{nm}\) | Legendre y coeficientes completamente normalizados. | Adimensionales. |
+| \(\mathbf a\) | Aceleración no central retornada al núcleo Cowell. | km/s². |
+
+La implementación debe calcular el gradiente analíticamente; no mediante
+diferencias finitas. Se comprueba contra los términos zonales J2/J3/J4 en
+puntos no polares y se rechaza cualquier resultado no finito.
+
+## Validaciones numéricas obligatorias
+
+- La matriz de rotación debe ser ortonormal dentro de la tolerancia numérica:
+  \(R^TR\simeq I\).
+- La norma de un vector libre debe conservarse al rotarlo:
+  \(\lVert\mathbf a_{ITRF}\rVert\simeq\lVert\mathbf a_{EME2000}\rVert\).
+- La configuración de grado/orden debe pertenecer al campo cargado.
+- El modelo de prueba zonal de orden cero debe reproducir los términos
+  históricos J2/J3/J4 en los puntos y tolerancias documentados por las pruebas.
+- Cada etapa RK4 debe usar su propia época, incluidas las dos medias etapas.
+
+## Lo que aún no incluye
+
+Este geopotencial estático no incluye correcciones de marea sólida, marea
+oceánica, carga atmosférica, variaciones temporales \(\dot C_{nm},\dot S_{nm}\)
+y coeficientes estacionales. Esas correcciones requieren convenciones IERS,
+efemérides coherentes de Sol/Luna y una política explícita de producto; se
+tratan en [Mareas](tides.md).
+
+Tampoco convierte por sí mismo la integración RK4 de 60 s en una solución de
+precisión de misión. Para arcos largos, perigeos rápidos o un grado alto habrá
+que añadir control adaptativo de error y comparar contra una referencia.

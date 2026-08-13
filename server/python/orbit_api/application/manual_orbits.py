@@ -23,11 +23,11 @@ from orbit_api.domain.requests import (
     require_manual_orbit_runtime_propagator,
 )
 from orbit_api.frames import FrameTransformService
+from orbit_api.orbits.forces import GravityFieldModel
 from orbit_api.orbits.propagators.cowell import CowellPropagator
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
 from orbit_api.timekeeping import ensure_utc
-
 
 EARTH_MU_KM3_S2 = 398600.4418
 EARTH_EQUATORIAL_RADIUS_KM = 6378.137
@@ -90,7 +90,18 @@ _MANUAL_PROPAGATOR_METADATA = {
         "integrator_label": "Runge-Kutta 4 (RK4, fixed maximum step 60 s)",
         "force_model_configurable": True,
         "force_terms_configurable": True,
-        "force_term_options": ["central", "j2", "j3", "j4", "drag"],
+        "force_term_options": [
+            "central",
+            "j2",
+            "j3",
+            "j4",
+            "drag",
+            "geopotential",
+            "third-body-sun",
+            "third-body-moon",
+            "solar-radiation-pressure",
+            "relativity",
+        ],
         "required_force_terms": ["central"],
         "atmospheric_drag_supported": True,
         "inspector_requires_numerical_budget": True,
@@ -103,6 +114,11 @@ _COWELL_FORCE_TERM_LABELS = {
     "j3": "J3",
     "j4": "J4",
     "drag": "first-order atmospheric drag",
+    "geopotential": "configured ICGEM degree/order geopotential",
+    "third-body-sun": "Sun differential third-body gravity (ERFA local ephemeris)",
+    "third-body-moon": "Moon differential third-body gravity (ERFA local ephemeris)",
+    "solar-radiation-pressure": "cannonball solar radiation pressure with cylindrical umbra",
+    "relativity": "first-order Schwarzschild relativity",
 }
 
 
@@ -438,6 +454,7 @@ def build_manual_orbit_propagator(
     state_vector: dict[str, Any],
     propagation_options: dict[str, Any] | None = None,
     frame_transformer: FrameTransformService | None = None,
+    gravity_field: GravityFieldModel | None = None,
 ) -> tuple[str, Any, dict[str, Any]]:
     """Instantiate the selected manual propagation engine.
 
@@ -491,6 +508,12 @@ def build_manual_orbit_propagator(
                 drag_coefficient=float(options["drag_coefficient"]),
                 area_m2=float(options["area_m2"]),
                 mass_kg=float(options["mass_kg"]),
+                geopotential_model=gravity_field,
+                geopotential_degree=int(options.get("geopotential_degree", 4)),
+                geopotential_order=int(options.get("geopotential_order", 0)),
+                solar_radiation_coefficient=float(
+                    options.get("solar_radiation_coefficient", 1.2)
+                ),
                 frame_transformer=frame_transformer,
             )
     except ValueError as exc:
@@ -499,13 +522,47 @@ def build_manual_orbit_propagator(
         metadata.update({
             "integrator_id": numerical_integrator,
             "force_terms": list(force_terms),
-            "gravity_terms": [term for term in force_terms if term != "drag"],
+            "gravity_terms": [
+                term for term in force_terms
+                if term in {
+                    "central", "j2", "j3", "j4", "geopotential",
+                    "third-body-sun", "third-body-moon", "relativity",
+                }
+            ],
             "force_model_id": legacy_force_model_id or "+".join(force_terms),
             "gravity_model": _describe_cowell_force_terms(force_terms),
             "atmospheric_drag": atmospheric_drag,
             "atmospheric_drag_model": (
                 "First-order exponential neutral atmosphere co-rotating with Earth"
                 if atmospheric_drag else None
+            ),
+            "geopotential": (
+                {
+                    "degree": int(options["geopotential_degree"]),
+                    "order": int(options["geopotential_order"]),
+                    "model_id": gravity_field.model_id,
+                    "source": gravity_field.source,
+                    "version": gravity_field.version,
+                    "sha256": gravity_field.sha256,
+                    "normalization": gravity_field.normalization,
+                    "tide_system": gravity_field.tide_system,
+                    "evaluation_frame": "ITRF",
+                    "native_force_route": "EME2000 -> ITRF -> EME2000",
+                    "requires": "strict local EOP, versioned leap seconds and ERFA/SOFA",
+                }
+                if "geopotential" in force_terms and gravity_field is not None
+                else None
+            ),
+            "solar_radiation_pressure": (
+                {
+                    "coefficient": float(options["solar_radiation_coefficient"]),
+                    "area_m2": float(options["area_m2"]),
+                    "mass_kg": float(options["mass_kg"]),
+                    "shadow_model": "binary cylindrical umbra",
+                    "ephemeris": "local ERFA approximate Sun",
+                }
+                if "solar-radiation-pressure" in force_terms
+                else None
             ),
         })
     return _manual_runtime_identity(canonical, epoch, state_vector, options), propagator, metadata

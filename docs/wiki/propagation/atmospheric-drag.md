@@ -4,9 +4,14 @@
 
 ## Disponibilidad
 
-El arrastre está disponible únicamente como término `drag` de `cowell-rk4`.
-No está disponible en dos cuerpos, el preset fijo J2+J3+J4 ni
-SGP4 configurable desde Orbit.
+El arrastre está disponible como término <code>drag</code> de
+<code>cowell-rk4</code>. No está disponible en dos cuerpos, el preset fijo
+J2+J3+J4 ni SGP4 configurable desde Orbit.
+
+A diferencia de los zonales históricos, el arrastre se evalúa en ITRF
+instantáneo **en cada etapa RK4**. Por ello falla de forma segura si no hay ruta
+estricta de EOP, segundos intercalares y ERFA/SOFA. No se degrada a una
+atmósfera fija en <code>EME2000</code>.
 
 ## Modelo aplicado
 
@@ -19,78 +24,55 @@ $$
 
 | Símbolo | Significado | Unidad |
 | --- | --- | --- |
-| \(\mathbf a_{drag}\) | Aceleración de arrastre aplicada por Cowell. | km/s² dentro del núcleo; SI al publicar `StateVector`. |
+| \(\mathbf a_{drag}\) | Aceleración de arrastre añadida a Cowell. | km/s². |
 | \(B=C_DA/m\) | Coeficiente balístico por área. | m²/kg. |
 | \(C_D\) | Coeficiente de arrastre. | Adimensional. |
 | \(A\), \(m\) | Área de referencia y masa. | m², kg. |
 | \(\rho\) | Densidad atmosférica. | kg/m³. |
-| \(\mathbf v_{rel}\) | Velocidad respecto a la atmósfera corrotante. | m/s durante el cálculo de drag. |
+| \(\mathbf v_{rel}\) | Velocidad frente a la atmósfera corrotante. | m/s durante el cálculo. |
 
-La implementación calcula la velocidad relativa mediante el término de
-rotación terrestre y evalúa una densidad exponencial por capas usando la
-altura WGS-84. El cálculo interno conserva km y km/s, con conversiones para
-mantener coherencia dimensional con los parámetros de arrastre en SI.
+## Marco y secuencia por etapa
 
-$$
-\mathbf v_{rel}=\mathbf v-\mathbf\omega_\oplus\times\mathbf r,
-\qquad
-\rho(h)=\rho_0\exp\left(-\frac{h-h_0}{H}\right).
-$$
+Para cada evaluación \(f(t,\mathbf y)\) de RK4, Orbit:
 
-| Símbolo | Significado | Unidad |
-| --- | --- | --- |
-| \(\mathbf v\), \(\mathbf r\) | Velocidad y posición del estado Cowell. | km/s, km; convertidas a SI donde corresponde. |
-| \(\mathbf\omega_\oplus\) | Velocidad angular terrestre. | rad/s. |
-| \(h\), \(h_0\), \(H\) | Altura, base y escala de la capa exponencial. | Misma unidad de longitud. |
-| \(\rho_0\) | Densidad en la base de la capa. | kg/m³. |
+1. transforma posición y velocidad de <code>EME2000</code> a ITRF en la época de
+   la etapa;
+2. calcula altura WGS-84, densidad por capas y
+   \(\mathbf v_{rel}=\mathbf v-\boldsymbol\omega_\oplus\times\mathbf r\) en ITRF;
+3. calcula \(\mathbf a_{drag,ITRF}\) en SI y la convierte a km/s²;
+4. rota la aceleración libre a <code>EME2000</code> antes de sumar la derivada.
 
-Orbit evalúa \(\rho\) por capas WGS-84 y calcula el producto vectorial antes
-de evaluar la norma de \(\mathbf v_{rel}\); ninguna de estas conversiones se
-deja implícita en la interfaz.
+La velocidad se transforma como estado —incluye la derivada temporal de la
+matriz—; la aceleración de drag vuelve como vector libre. Orbit no integra en
+ITRF y por tanto no mezcla implícitamente términos ficticios de Coriolis,
+centrífuga o Euler.
+
+La ruta requiere EOP con cobertura, DUT1 y movimiento polar, una tabla local
+versionada y vigente de segundos intercalares, y ERFA/SOFA IAU 2006/2000A. Si
+falta cualquiera de ellos, la selección de <code>drag</code> debe devolver un
+error explícito antes de integrar.
 
 ## Parámetros
 
-### Variables, unidades y uso en Orbit
-
-El vector interno \(\mathbf r\) y \(\mathbf v\) usa km y km/s; para evaluar \(\mathbf v_{rel}\), \(\rho\) y \(B=C_DA/m\), Orbit convierte las magnitudes necesarias a SI. \(\rho\) es kg/m³, \(C_D\) es adimensional, \(A\) m², \(m\) kg y la aceleración vuelve a km/s² antes de sumarse en Cowell. \(h\), \(h_0\) y \(H\) se comparan en la misma unidad de longitud de la capa exponencial.
-
 | Parámetro | Unidad | Restricción |
 | --- | --- | --- |
-| `drag_coefficient` | — | Finito y mayor que cero; valor predeterminado 2,2. |
-| `area_m2` | m² | Finito y mayor que cero; valor predeterminado 1. |
-| `mass_kg` | kg | Finito y mayor que cero; valor predeterminado 100. |
+| <code>drag_coefficient</code> | — | Finito y mayor que cero; valor predeterminado 2,2. |
+| <code>area_m2</code> | m² | Finito y mayor que cero; valor predeterminado 1. |
+| <code>mass_kg</code> | kg | Finito y mayor que cero; valor predeterminado 100. |
 
-El coeficiente balístico usado es \(C_DA/m\). Si se usa `force_terms`, debe
-incluirse `drag`; el booleano heredado `atmospheric_drag` no añade el término a
-una composición explícita.
+El coeficiente usado es \(C_DA/m\). Si se usa <code>force_terms</code>, debe
+incluirse <code>drag</code>; el booleano heredado
+<code>atmospheric_drag</code> no añade el término a una composición explícita.
 
 ## Límites
 
 - La densidad se fija a cero a partir de 1500 km.
-- No hay flujo solar, índices geomagnéticos, viento, actitud, área variable ni
-  modelo NRLMSISE/JB2008/DTM.
-- No se ofrece una precisión de decaimiento ni tiempo de reentrada.
+- Es una atmósfera exponencial por capas WGS-84; no hay flujo solar, índices
+  geomagnéticos, vientos, actitud, área variable, NRLMSISE, JB2008 ni DTM.
+- No se publica precisión de decaimiento, reentrada o arrastre operacional.
+- El paso RK4 fijo no localiza el instante exacto de reentrada ni resuelve
+  cambios rápidos de densidad.
 
-El modelo es útil para explorar el efecto cualitativo del arrastre en órbitas
-manuales, no para predicción operacional. Véase
-[Modelo atmosférico](../engineering/atmospheric-models.md).
-
-!!! warning "Ecuación prevista para implementación futura"
-
-    **Arrastre avanzado.** El runtime actual no incorpora MSIS ni forzamientos
-    solar-geomagnéticos. Un modelo futuro podría evaluar:
-
-    $$
-    \rho=\rho_{\mathrm{MSIS}}(h,\phi,\lambda,t,F_{10.7},\overline{F}_{10.7},A_p).
-    $$
-
-    | Símbolo | Significado | Unidad |
-    | --- | --- | --- |
-    | \(\rho_{\mathrm{MSIS}}\) | Densidad estimada por el modelo MSIS. | kg/m³. |
-    | \(h\) | Altura geodésica. | km o m, según el adaptador MSIS. |
-    | \(\phi\), \(\lambda\) | Latitud y longitud geodésicas. | rad. |
-    | \(t\) | Época de evaluación. | UTC/UT1 explícito. |
-    | \(F_{10.7}\), \(\overline{F}_{10.7}\), \(A_p\) | Índices solar y geomagnético. | Unidades del producto MSIS. |
-
-    No se evalúa en el runtime actual; un adaptador futuro deberá convertir su
-    salida a kg/m³ antes de aplicar la ecuación de arrastre de Cowell.
+El modelo permite explorar un arrastre con marco terrestre físicamente
+coherente, pero su densidad sigue siendo de baja fidelidad. EOP rigurosos no
+sustituyen un modelo atmosférico de misión.

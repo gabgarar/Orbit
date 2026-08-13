@@ -37,7 +37,13 @@ Un evento es algo que sucede entre dos instantes, por ejemplo cruzar una altura,
 
 ### No incluye toda la física orbital
 
-Actualmente solo puede componer gravedad central, J2, J3, J4 y arrastre atmosférico exponencial. No hay terceros cuerpos, presión de radiación solar, relatividad, geopotencial completo, mareas ni atmósfera de alta fidelidad. Si un efecto ausente es importante para el arco estudiado, la trayectoria no lo reflejará; no significa que el efecto sea cero en el mundo real.
+Cowell puede componer gravedad central, los zonales heredados J2/J3/J4, arrastre
+exponencial en ITRF estricto, geopotencial estático ICGEM configurado, terceros
+cuerpos solar/lunar aproximados, SRP *cannonball* con umbra cilíndrica y la
+corrección Schwarzschild. Siguen ausentes mareas, albedo/IR, atmósfera de alta
+fidelidad, actitud, penumbra, eventos de precisión y dinámica de maniobras. Si
+un efecto ausente es importante para el arco estudiado, la trayectoria no lo
+reflejará; no significa que el efecto sea cero en el mundo real.
 
 ### No calcula incertidumbre
 
@@ -59,7 +65,8 @@ Cowell es apropiado cuando se quiere comprender el efecto de una composición de
 No use la ruta Cowell/RK4 actual como resultado final para:
 
 - órbitas muy excéntricas, donde el perigeo puede requerir pasos mucho menores que 60 s;
-- órbitas GEO realistas, porque sin SRP, terceros cuerpos y otros efectos el comportamiento a largo plazo no es representativo;
+- órbitas GEO de misión o arcos largos, porque el modelo disponible sigue sin
+  mareas, albedo/IR, actitud, penumbra y control adaptativo de error;
 - órbitas resonantes o dinámicas con escalas temporales rápidas;
 - trayectorias con drag fuerte, predicción de reentrada o análisis detallado de la atmósfera;
 - propagación de largo periodo, donde el error de paso fijo y los efectos omitidos se acumulan;

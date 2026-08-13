@@ -61,6 +61,10 @@ const GROUND_TRACK_SURFACE_HEIGHT = 20000;
 const MINIMUM_RENDERABLE_EARTH_CENTER_DISTANCE_M = 1_000;
 const PROPAGATION_HOURS_MIN = 0;
 const PROPAGATION_HOURS_MAX = Number.POSITIVE_INFINITY;
+// Keep legacy/manual response normalisation aligned with the public Cowell
+// request budget.  The evaluator can parse a higher-degree ICGEM file, but a
+// fixed-step browser/API workflow must never resurrect an unbounded degree.
+const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 70;
 // The manual-orbit editor renders outside the normal layer runtime while a
 // user is designing an orbit.  These entities intentionally have their own
 // visual identity and never participate in layer selection or telemetry.
@@ -4098,7 +4102,20 @@ const MANUAL_ORBIT_NUMERICAL_INTEGRATOR_ALIASES = Object.freeze({
     rungekutta4: "rk4"
 });
 
-const MANUAL_ORBIT_FORCE_TERM_ORDER = Object.freeze(["central", "j2", "j3", "j4", "drag"]);
+const MANUAL_ORBIT_FORCE_TERM_ORDER = Object.freeze([
+    "central",
+    "j2",
+    "j3",
+    "j4",
+    "drag",
+    "geopotential",
+    "third-body-sun",
+    "third-body-moon",
+    "solar-radiation-pressure",
+    "relativity"
+]);
+
+const LEGACY_MANUAL_ORBIT_FORCE_TERMS = new Set(["central", "j2", "j3", "j4", "drag"]);
 
 const MANUAL_ORBIT_FORCE_TERM_ALIASES = Object.freeze({
     central: "central",
@@ -4112,7 +4129,23 @@ const MANUAL_ORBIT_FORCE_TERM_ALIASES = Object.freeze({
     j4: "j4",
     drag: "drag",
     "atmospheric-drag": "drag",
-    atmospheric: "drag"
+    atmospheric: "drag",
+    geopotential: "geopotential",
+    "gravity-field": "geopotential",
+    "full-geopotential": "geopotential",
+    fullgeopotential: "geopotential",
+    "third-body-sun": "third-body-sun",
+    sun: "third-body-sun",
+    "solar-gravity": "third-body-sun",
+    "third-body-moon": "third-body-moon",
+    moon: "third-body-moon",
+    "lunar-gravity": "third-body-moon",
+    "solar-radiation-pressure": "solar-radiation-pressure",
+    srp: "solar-radiation-pressure",
+    "solar-pressure": "solar-radiation-pressure",
+    solarradiationpressure: "solar-radiation-pressure",
+    relativity: "relativity",
+    schwarzschild: "relativity"
 });
 
 function normalizeManualOrbitPropagator(value, fallback = "sgp4") {
@@ -4158,13 +4191,16 @@ function normalizeManualOrbitForceTerms(value, fallback = ["central", "j2", "j3"
         seen.add(MANUAL_ORBIT_FORCE_TERM_ALIASES[normalized] || normalized);
     }
     const known = MANUAL_ORBIT_FORCE_TERM_ORDER.filter((term) => seen.has(term));
+    const mutuallyExclusiveKnown = known.includes("geopotential")
+        ? known.filter((term) => !["j2", "j3", "j4"].includes(term))
+        : known;
     const future = [...seen].filter((term) => !MANUAL_ORBIT_FORCE_TERM_ORDER.includes(term));
-    return [...known, ...future];
+    return [...mutuallyExclusiveKnown, ...future];
 }
 
 function manualOrbitLegacyModelFromForceTerms(forceTerms) {
     const terms = normalizeManualOrbitForceTerms(forceTerms).filter((term) => term !== "drag");
-    if (terms.some((term) => !MANUAL_ORBIT_FORCE_TERM_ORDER.includes(term))) {
+    if (terms.some((term) => !LEGACY_MANUAL_ORBIT_FORCE_TERMS.has(term))) {
         return null;
     }
     if (terms.includes("j3") || terms.includes("j4")) {
@@ -4553,6 +4589,9 @@ const DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS = Object.freeze({
     dragCoefficient: 2.2,
     areaM2: 1,
     massKg: 100,
+    geopotentialDegree: 4,
+    geopotentialOrder: 0,
+    solarRadiationCoefficient: 1.2,
     forceTerms: Object.freeze(["central"]),
     cowellGravityModel: "two-body",
     numericalIntegrator: "rk4"
@@ -4702,11 +4741,34 @@ function readManualOrbitPropagationOptions(payload, ephemeris, propagator) {
         forceTerms = fixedEngineTerms;
     }
     forceTerms = normalizeManualOrbitForceTerms(forceTerms);
+    const geopotentialDegree = Math.min(MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE, Math.floor(manualOrbitNumber(
+        source,
+        ["geopotentialDegree", "geopotential_degree"],
+        DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.geopotentialDegree
+    )));
+    const geopotentialOrder = Math.min(geopotentialDegree, Math.floor(manualOrbitNumber(
+        source,
+        ["geopotentialOrder", "geopotential_order"],
+        DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.geopotentialOrder
+    )));
+    if (forceTerms.includes("geopotential") && geopotentialDegree < 2) {
+        throw new Error(
+            "Geopotential degree must be at least 2. J1 is not a selectable centre-of-mass gravity term."
+        );
+    }
     return {
         atmosphericDrag: forceTerms.includes("drag"),
         dragCoefficient: manualOrbitNumber(source, ["dragCoefficient", "drag_coefficient"], DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.dragCoefficient),
         areaM2: manualOrbitNumber(source, ["areaM2", "area_m2"], DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.areaM2, { strictlyPositive: true }),
         massKg: manualOrbitNumber(source, ["massKg", "mass_kg"], DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.massKg, { strictlyPositive: true }),
+        geopotentialDegree,
+        geopotentialOrder,
+        solarRadiationCoefficient: Math.min(5, manualOrbitNumber(
+            source,
+            ["solarRadiationCoefficient", "solar_radiation_coefficient", "reflectivityCoefficient", "reflectivity_coefficient", "cr"],
+            DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.solarRadiationCoefficient,
+            { strictlyPositive: true }
+        )),
         forceTerms,
         cowellGravityModel: manualOrbitLegacyModelFromForceTerms(forceTerms),
         numericalIntegrator: normalizeManualOrbitNumericalIntegrator(

@@ -14,6 +14,11 @@ import {
 } from "./orbitalElements.js";
 
 export const DEFAULT_MANUAL_ORBIT_NAME = "Manual Orbit";
+// Public Cowell/RK4 requests are deliberately bounded.  A higher-degree
+// ICGEM file may be installed for offline inspection, but this pure-JS editor
+// must not send a configuration whose pure-Python RK4 evaluation can stall a
+// normal preview or API request.
+export const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 70;
 // A manually designed trajectory has a physical ECI state at its epoch, so
 // two-body propagation is the honest default.  SGP4 remains available for
 // TLE-compatible scenarios, but is not silently imposed on new designs.
@@ -36,6 +41,12 @@ export const DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS = Object.freeze({
     dragCoefficient: 2.2,
     areaM2: 1,
     massKg: 100,
+    // These values become active only with their corresponding force terms.
+    // Keeping them in canonical editor state lets a draft round-trip without
+    // changing its physical configuration each time it is reopened.
+    geopotentialDegree: 4,
+    geopotentialOrder: 0,
+    solarRadiationCoefficient: 1.2,
     // `forceTerms` is the canonical force-model contract. The central term
     // is mandatory; the remaining terms are independently selectable by the
     // Cowell numerical engine. `cowellGravityModel` remains only as a
@@ -77,7 +88,22 @@ const MANUAL_ORBIT_NUMERICAL_INTEGRATOR_ALIASES = Object.freeze({
     rungekutta4: "rk4"
 });
 
-const MANUAL_ORBIT_FORCE_TERM_ORDER = Object.freeze(["central", "j2", "j3", "j4", "drag"]);
+// Keep this ordering aligned with the backend's canonical Cowell contract.
+// Unknown future terms are retained after the terms understood by this UI.
+const MANUAL_ORBIT_FORCE_TERM_ORDER = Object.freeze([
+    "central",
+    "j2",
+    "j3",
+    "j4",
+    "drag",
+    "geopotential",
+    "third-body-sun",
+    "third-body-moon",
+    "solar-radiation-pressure",
+    "relativity"
+]);
+
+const LEGACY_MANUAL_ORBIT_FORCE_TERMS = new Set(["central", "j2", "j3", "j4", "drag"]);
 
 const MANUAL_ORBIT_FORCE_TERM_ALIASES = Object.freeze({
     central: "central",
@@ -91,7 +117,23 @@ const MANUAL_ORBIT_FORCE_TERM_ALIASES = Object.freeze({
     j4: "j4",
     drag: "drag",
     "atmospheric-drag": "drag",
-    atmospheric: "drag"
+    atmospheric: "drag",
+    geopotential: "geopotential",
+    "gravity-field": "geopotential",
+    "full-geopotential": "geopotential",
+    fullgeopotential: "geopotential",
+    "third-body-sun": "third-body-sun",
+    sun: "third-body-sun",
+    "solar-gravity": "third-body-sun",
+    "third-body-moon": "third-body-moon",
+    moon: "third-body-moon",
+    "lunar-gravity": "third-body-moon",
+    "solar-radiation-pressure": "solar-radiation-pressure",
+    srp: "solar-radiation-pressure",
+    "solar-pressure": "solar-radiation-pressure",
+    solarradiationpressure: "solar-radiation-pressure",
+    relativity: "relativity",
+    schwarzschild: "relativity"
 });
 
 export const DEFAULT_MANUAL_KEPLERIAN = Object.freeze({
@@ -151,6 +193,15 @@ const PROPAGATION_OPTIONS_ALIASES = Object.freeze({
     dragCoefficient: ["dragCoefficient", "drag_coefficient"],
     areaM2: ["areaM2", "area_m2"],
     massKg: ["massKg", "mass_kg"],
+    geopotentialDegree: ["geopotentialDegree", "geopotential_degree"],
+    geopotentialOrder: ["geopotentialOrder", "geopotential_order"],
+    solarRadiationCoefficient: [
+        "solarRadiationCoefficient",
+        "solar_radiation_coefficient",
+        "reflectivityCoefficient",
+        "reflectivity_coefficient",
+        "cr"
+    ],
     forceTerms: ["forceTerms", "force_terms", "gravityTerms", "gravity_terms"],
     cowellGravityModel: ["cowellGravityModel", "cowell_gravity_model", "forceModel", "force_model"],
     numericalIntegrator: ["numericalIntegrator", "numerical_integrator"]
@@ -226,14 +277,25 @@ function normalizeBoolean(value, fallback = false) {
     return fallback === true;
 }
 
-function normalizePositiveNumber(value, fallback, label, { minimum = 0, strictlyPositive = false } = {}) {
+function normalizePositiveNumber(value, fallback, label, { minimum = 0, maximum = Number.MAX_VALUE, strictlyPositive = false } = {}) {
     const raw = value === undefined || value === null || value === "" ? fallback : value;
     const numeric = Number(raw);
     const valid = Number.isFinite(numeric)
-        && (strictlyPositive ? numeric > minimum : numeric >= minimum);
+        && (strictlyPositive ? numeric > minimum : numeric >= minimum)
+        && numeric <= maximum;
     if (!valid) {
-        const comparison = strictlyPositive ? "greater than" : "at least";
-        throw new OrbitalElementsValidationError(`${label} must be ${comparison} ${minimum}.`);
+        const lowerComparison = strictlyPositive ? "greater than" : "at least";
+        const upperLimit = maximum < Number.MAX_VALUE ? ` and no more than ${maximum}` : "";
+        throw new OrbitalElementsValidationError(`${label} must be ${lowerComparison} ${minimum}${upperLimit}.`);
+    }
+    return numeric;
+}
+
+function normalizeWholeNumber(value, fallback, label, { minimum = 0, maximum = Number.MAX_SAFE_INTEGER } = {}) {
+    const raw = value === undefined || value === null || value === "" ? fallback : value;
+    const numeric = Number(raw);
+    if (!Number.isInteger(numeric) || numeric < minimum || numeric > maximum) {
+        throw new OrbitalElementsValidationError(`${label} must be an integer between ${minimum} and ${maximum}.`);
     }
     return numeric;
 }
@@ -307,8 +369,15 @@ export function normalizeManualOrbitForceTerms(value, fallback = DEFAULT_MANUAL_
         .filter(Boolean);
     const seen = new Set(["central", ...supplied]);
     const known = MANUAL_ORBIT_FORCE_TERM_ORDER.filter((term) => seen.has(term));
+    // A configured spherical-harmonic field already contains J2/J3/J4. The
+    // two implementations cannot be active together without double-counting
+    // gravity, so canonical UI state has exactly one of them. The backend
+    // independently enforces the same physical invariant.
+    const mutuallyExclusiveKnown = known.includes("geopotential")
+        ? known.filter((term) => !["j2", "j3", "j4"].includes(term))
+        : known;
     const future = [...seen].filter((term) => !MANUAL_ORBIT_FORCE_TERM_ORDER.includes(term));
-    return [...known, ...future];
+    return [...mutuallyExclusiveKnown, ...future];
 }
 
 function forceTermsFromLegacyModel(value, fallback = DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.cowellGravityModel) {
@@ -327,7 +396,7 @@ function legacyModelFromForceTerms(forceTerms) {
     // The legacy field cannot represent arbitrary combinations. Project only
     // exact historical presets; a nearest-match would silently advertise
     // different physics than the explicit forceTerms actually describe.
-    if (normalized.some((term) => !MANUAL_ORBIT_FORCE_TERM_ORDER.includes(term))) {
+    if (normalized.some((term) => !LEGACY_MANUAL_ORBIT_FORCE_TERMS.has(term))) {
         return null;
     }
     if (normalized.includes("j3") || normalized.includes("j4")) {
@@ -399,6 +468,23 @@ function normalizePropagationOptions(value, fallback = DEFAULT_MANUAL_ORBIT_PROP
         return optionAlias(base, key).value;
     };
     const forceTerms = resolveForceTerms(source, base);
+    const geopotentialDegree = normalizeWholeNumber(
+        read("geopotentialDegree"),
+        DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.geopotentialDegree,
+        "Geopotential degree",
+        { minimum: 0, maximum: MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE }
+    );
+    const geopotentialOrder = normalizeWholeNumber(
+        read("geopotentialOrder"),
+        DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.geopotentialOrder,
+        "Geopotential order",
+        { minimum: 0, maximum: geopotentialDegree }
+    );
+    if (forceTerms.includes("geopotential") && geopotentialDegree < 2) {
+        throw new OrbitalElementsValidationError(
+            "Geopotential degree must be at least 2. J1 is not a selectable centre-of-mass gravity term."
+        );
+    }
     return {
         // These two fields are compatibility projections. New callers should
         // use forceTerms, where membership of `drag` is the source of truth.
@@ -420,6 +506,14 @@ function normalizePropagationOptions(value, fallback = DEFAULT_MANUAL_ORBIT_PROP
             DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.massKg,
             "Mass",
             { minimum: 0, strictlyPositive: true }
+        ),
+        geopotentialDegree,
+        geopotentialOrder,
+        solarRadiationCoefficient: normalizePositiveNumber(
+            read("solarRadiationCoefficient"),
+            DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.solarRadiationCoefficient,
+            "Solar radiation coefficient",
+            { minimum: 0, maximum: 5, strictlyPositive: true }
         ),
         forceTerms,
         cowellGravityModel: legacyModelFromForceTerms(forceTerms),
@@ -869,6 +963,13 @@ function apiPropagationOptions(value, propagator) {
     const fixedEngineTerms = forceTermsForFixedEngine(normalizePropagator(propagator));
     if (!fixedEngineTerms) {
         result.numerical_integrator = value.numericalIntegrator;
+        if (value.forceTerms.includes("geopotential")) {
+            result.geopotential_degree = value.geopotentialDegree;
+            result.geopotential_order = value.geopotentialOrder;
+        }
+        if (value.forceTerms.includes("solar-radiation-pressure")) {
+            result.solar_radiation_coefficient = value.solarRadiationCoefficient;
+        }
         if (value.cowellGravityModel) {
             result.cowell_gravity_model = value.cowellGravityModel;
         }

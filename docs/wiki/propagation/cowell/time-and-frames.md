@@ -2,46 +2,73 @@
 
 [Propagación](../index.md) · [Cowell](../cowell.md) · [Tiempo, EOP e ITRF](../../operations/time-eop.md) · [Marcos de referencia](../../engineering/reference-frames.md)
 
-## Época y tiempo de integración
+## Época de integración
 
 Cowell recibe una época inicial `UTC` y un estado inicial `EME2000`. Para una
-consulta, calcula el intervalo \(\Delta t=t-t_0\) en segundos y RK4 integra
-la dinámica cartesiana en ese intervalo. UTC identifica el instante y el
-estado publicado; el paso de integración fijo de 60 s es una decisión numérica,
-no una escala de tiempo de referencia distinta.
+consulta calcula \(\Delta t=t-t_0\) en segundos. UTC identifica los instantes
+de entrada y publicación; el paso de RK4 es una decisión numérica, no una nueva
+escala de tiempo.
 
-## EME2000 es el marco de la dinámica
+Cada etapa RK4 tiene una época propia: \(t_n\), \(t_n+h/2\), \(t_n+h/2\) y
+\(t_n+h\). Un modelo dependiente de la Tierra o de la geometría Sol/Luna debe
+evaluarse en el instante de cada etapa, nunca reutilizar datos de la época
+inicial a lo largo de todo el paso.
 
-Cowell evalúa el estado, la gravedad central y los términos de fuerza actuales
-en el contrato inercial `EME2000`. No usa TEME ni rota el estado a un marco
-terrestre dentro de cada etapa RK4. Esta separación evita mezclar la dinámica
-del propagador con la transformación que requiere un consumidor.
+## Ruta para fuerzas terrestres estrictas
 
-Los modelos terrestres presentes tienen las simplificaciones declaradas en
-[Entrada y fuerzas](input-and-forces.md); no deben interpretarse como una
-transformación completa ITRF→EME2000 de alta fidelidad durante la integración.
+`EME2000` es el marco de la ecuación integrada. Para geopotencial de grado y
+orden y cualquier futuro modelo ligado a la Tierra, la fuerza se evalúa en
+`ITRF` y vuelve como vector libre al marco inercial:
 
-## De EME2000 a ITRF
+$$
+\begin{aligned}
+(\mathbf r,\mathbf v)_{ITRF} &= T_{EME2000\rightarrow ITRF}(t)
+(\mathbf r,\mathbf v)_{EME2000},\\
+\mathbf a_{EME2000} &= R_{ITRF\rightarrow EME2000}(t)\mathbf a_{ITRF}.
+\end{aligned}
+$$
 
-Después de integrar, `state_at` puede pedir la ruta
-`EME2000 → CIRS → TIRS → ITRF` al `FrameTransformService`. Es una ruta IAU
-2006/2000A cuando `pyerfa` está disponible y no debe confundirse con
-`TEME → PEF → ITRF`, que es específica de SGP4.
+La primera transformación sí trata correctamente velocidad y deriva la matriz
+temporal. La segunda rota una **aceleración libre**; no transforma una nueva
+derivada de estado ni añade términos de marco rotante. Esto es deliberado:
+integrar en ITRF sin Coriolis, centrífuga y Euler sería inconsistente.
 
-UTC nombra la época solicitada. TT interviene en la reducción celeste y UT1
-en la rotación terrestre; el proveedor EOP obtiene UT1 a partir de
-\(\mathrm{DUT1}=\mathrm{UT1}-\mathrm{UTC}\) y aporta movimiento polar. La
-explicación operativa completa está en [Tiempo, EOP e ITRF](../../operations/time-eop.md).
+La ruta exige:
 
-## Velocidad, precisión y procedencia
+| Dato o capacidad | Por qué se requiere |
+| --- | --- |
+| EOP cubriendo la época | Movimiento polar y DUT1/UT1−UTC. |
+| Tabla local de leap seconds | UTC→TAI→TT de forma trazable y sin saltos ocultos. |
+| ERFA/SOFA | Precesión-nutación IAU 2006/2000A y transformación de marcos. |
+| Realización declarada | No confundir IGS20/IGB20 u otra realización con ITRF sin una ruta de alineación. |
+| Validación de matriz | Comprobar \(R^TR\simeq I\) y conservación de norma de vectores libres. |
 
-La transformación de salida no rota solo la posición: la velocidad incluye la
-derivada de la matriz de rotación, cuyo término principal corresponde a
-\(\omega\times\mathbf r\). Las derivadas también se emplean para
-aceleración y covarianza cuando están presentes. Véanse las ecuaciones de
-[Estados cartesianos](../../engineering/cartesian-states.md).
+Si falta alguno, Orbit debe rechazar `geopotential` y cualquier término que
+declare ese contrato. Etiquetar el resultado como `ITRF` sin aplicar estos datos
+sería incorrecto; para una visualización no estricta corresponde «Marco
+terrestre aproximado (sin ruta ECI)».
 
-La fidelidad final combina dos límites independientes: el modelo/RK4 de Cowell
-y la calidad de los EOP, UT1 y la transformación de marcos. La procedencia del
-estado permite saber qué transformación se aplicó; no convierte una dinámica
-de baja fidelidad en una efeméride precisa.
+## Términos de marco celeste
+
+Las perturbaciones solar/lunar, la SRP y la corrección Schwarzschild usan la
+misma época que el estado. Sus vectores deben estar referidos a un origen y
+marco celeste coherentes con `EME2000`; su proveedor y cobertura deben formar
+parte de la procedencia. No se deben mezclar directamente coordenadas
+bariocéntricas, geocéntricas, TEME o ITRF.
+
+## Transformación de salida
+
+Después de integrar, `state_at` puede pedir
+`EME2000 → CIRS → TIRS → ITRF` al `FrameTransformService`. TT interviene en la
+reducción celeste y UT1 en la rotación terrestre. Esta conversión de salida no
+sustituye la evaluación por etapa explicada arriba: una fuerza terrestre debe
+haber usado los datos correctos durante la integración, no solo al representar
+el resultado.
+
+## Límite de precisión
+
+La fidelidad final es el mínimo entre la calidad de las fuerzas, la orientación
+terrestre, los datos auxiliares y el integrador. EOP exactos no compensan un
+modelo atmosférico simplificado; un geopotencial correcto tampoco compensa un
+paso de integración demasiado grueso. La procedencia permite distinguir esas
+fuentes de error, no eliminarlas.

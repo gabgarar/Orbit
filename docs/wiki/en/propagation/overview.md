@@ -24,15 +24,16 @@ flowchart LR
 
 ## Available propagators
 
-A propagator defines how a state evolves. Terms such as J2, J3, J4, and drag
-are [force models](force-models.md), not propagators: Cowell composes them and
-the [RK4](rk4.md) integrator solves the numerical system.
+A propagator defines how a state evolves. Terms such as zonals, drag,
+geopotential, third bodies, SRP, and relativity are
+[force models](force-models.md), not propagators: Cowell composes them and the
+[RK4](rk4.md) integrator solves the numerical system.
 
 | Propagator | Origin | Native state | Dynamics | Operational availability |
 | --- | --- | --- | --- | --- |
 | [SGP4](sgp4.md) | TLE | TEME, UTC | SGP4 implementation of `sgp4.api.Satrec`. | Catalogue TLE only. |
 | [Two bodies](two-body.md) | Manual elements | EME2000, UTC | Analytical elliptical Kepler. | Manual orbit. |
-| [Cowell](cowell.md) | Manual status | EME2000, UTC | RK4 fixed, center/J2/J3/J4/drag. | Manual orbit. |
+| [Cowell](cowell.md) | Manual state | EME2000, UTC | Fixed RK4 with validated force composition; includes ICGEM, Sun/Moon, SRP, and Schwarzschild when selected. | Manual orbit. |
 | J2+J3+J4 | Manual status | EME2000, UTC | Fixed RK4 preset without drag. | Manual compatibility. |
 
 The propagator record used by the catalog contains only `sgp4`. there is no
@@ -93,8 +94,10 @@ they were NORAD mean elements is not a valid frame conversion.
 
 - There is no orbit determination, parameter estimation, maneuvers or
   covariance propagation.
-- There is no adaptive integrator, precision events, third bodies, SRP,
-  relativity nor complete geopotential.
+- There is no adaptive integrator, precision events, STM/covariance, maneuvers,
+  tides, albedo/IR, high-fidelity atmosphere, or attitude-dependent SRP.
+- Available forces do not turn fixed 60 s RK4 into a mission ephemeris; they
+  require their auxiliary data and validation against a reference.
 - The OEM/SP3 reader is a Python tabbed source; is not a propagator
   registered in `OrbitRuntime` nor a UI/API product load.
 
