@@ -1,0 +1,15 @@
+{
+  "byte_size": 1631,
+  "compression": "gzip",
+  "coverage_end": "2025-05-13T00:00:00+00:00",
+  "coverage_start": "2025-05-10T00:00:00+00:00",
+  "filename": "COD0MGXFIN_20251310000_01D_12H_ERP.ERP",
+  "parser_sha256": "d67ffec66ba38771fc105fa6265dfb8706fd2a323ecc986c963519ab1bdeb6ff",
+  "quality": "local-validated",
+  "record_count": 7,
+  "schema_version": 2,
+  "snapshot_id": "manual-erp:sha256:d67ffec66ba38771fc105fa6265dfb8706fd2a323ecc986c963519ab1bdeb6ff",
+  "source_sha256": "d67ffec66ba38771fc105fa6265dfb8706fd2a323ecc986c963519ab1bdeb6ff",
+  "uploaded_name": "COD0MGXFIN_20251310000_01D_12H_ERP.ERP.gz",
+  "uploaded_sha256": "1436fc62736fc11fa058f3726175cc28af98d76ff544fab59c43e8d7005a04ab"
+}

@@ -485,9 +485,6 @@ export function getObjectIntrinsicTimeRange(id) {
     return cloneIntrinsicTimeRange(intrinsicTimeRangeForSatellite(id));
 }
 
-/** Backwards-friendly explicit alias for callers that operate on layers. */
-export const getSatelliteIntrinsicTimeRange = getObjectIntrinsicTimeRange;
-
 /**
  * Report whether an object has data at a specific UTC instant without
  * sampling it. Finite ephemerides fail closed: malformed/missing query time
@@ -555,9 +552,6 @@ export function getObjectIntrinsicTimeRangeUnion(ids) {
         ranges: ranges.map((range) => ({ ...range }))
     };
 }
-
-/** Compact alias for activation controllers that operate on source ids. */
-export const getIntrinsicTimeRangeUnion = getObjectIntrinsicTimeRangeUnion;
 
 /**
  * Run finite-range ephemeris requests with a small, shared concurrency cap.
@@ -6039,11 +6033,6 @@ export function hasLoadedOemEphemerisTracks() {
     return oemEphemerisTrackById.size > 0;
 }
 
-/** True when the workspace contains at least one generated finite manual track. */
-export function hasLoadedManualOrbitTracks() {
-    return manualOrbitTrackById.size > 0;
-}
-
 function loadedTrackTimeRanges(tracks, source) {
     return [...tracks.entries()]
         .map(([id, track]) => {
@@ -6075,15 +6064,6 @@ export function getLoadedManualOrbitTimeRanges() {
         ));
 }
 
-export function getLoadedManualOrbitTimeBounds() {
-    const ranges = getLoadedManualOrbitTimeRanges();
-    if (!ranges.length) return null;
-    return {
-        startTimeMs: Math.min(...ranges.map((range) => range.startTimeMs)),
-        endTimeMs: Math.max(...ranges.map((range) => range.endTimeMs))
-    };
-}
-
 /**
  * Return every active SP3 layer's individual validated coverage. Registered
  * but inactive products do not constrain the MTR until the operator adds
@@ -6112,11 +6092,6 @@ export function getLoadedPreciseProductTimeRanges({ activeOnly = true } = {}) {
         ));
 }
 
-/** Whether at least one active SP3 layer contributes a finite domain. */
-export function hasLoadedPreciseProductTracks() {
-    return getLoadedPreciseProductTimeRanges().length > 0;
-}
-
 /**
  * Aggregate all finite source ranges as individual records. This is the API
  * MTR consumers should use; callers that need one scene bound may take the
@@ -6133,10 +6108,6 @@ export function getLoadedFiniteEphemerisTimeRanges() {
         || String(left.source).localeCompare(String(right.source))
         || String(left.id).localeCompare(String(right.id))
     ));
-}
-
-export function hasLoadedFiniteEphemerisTracks() {
-    return getLoadedFiniteEphemerisTimeRanges().length > 0;
 }
 
 /**
