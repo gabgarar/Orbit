@@ -91,7 +91,11 @@ contrato de importación y procedencia.
 | PYTHON_BACKEND_URL | URL interna usada por el gateway para el backend Python. |
 | ORBIT_PYTHON_STARTUP_TIMEOUT_MS | Presupuesto de arranque del backend Python: `180000` ms por defecto; solo acepta enteros entre `10000` y `600000`. Dé margen suficiente para rehidratar localmente productos GNSS estrictos (SP3/ERP) antes de declarar el servicio disponible. |
 | ORBIT_EOP_* | Política y procedencia del snapshot C04 local. |
+| ORBIT_EOP_C01_CACHE_PATH | Caché mutable del C01 automático; por defecto `/app/data/erp/EOP_C01_IAU2000_1846-now.txt`. Solo se usa si no se configuró `ORBIT_EOP_C04_PATH`. |
 | ORBIT_LEAP_SECONDS_* | Política de la tabla UTC–TAI local. |
+| ORBIT_DIAGNOSTICS_MONITOR_INTERVAL_SECONDS | Intervalo del monitor de salud; por defecto `21600` (6 h), aceptado entre 30 s y 24 h. |
+| ORBIT_GITHUB_ACTIONS_MONITOR | `true` habilita una consulta pública, acotada y sin token de los últimos workflows para Built-In Test; el valor predeterminado es `false`. |
+| ORBIT_GITHUB_REPOSITORY | Repositorio público `propietario/repositorio` que consulta el monitor CI; por defecto `gabgarar/Orbit`. |
 | ORBIT_GRAVITY_FIELD_PATH | Ruta, dentro del contenedor, a un fichero ICGEM estático `.gfc` local. No se descargan campos por red ni hay campo completo predeterminado. |
 | ORBIT_GRAVITY_FIELD_SHA256 | SHA-256 obligatorio cuando se configura el campo; el arranque falla si no coincide. |
 | ORBIT_GRAVITY_FIELD_SOURCE | Procedencia humana/publicada opcional del campo ICGEM; si falta se deriva como procedencia local controlada. |

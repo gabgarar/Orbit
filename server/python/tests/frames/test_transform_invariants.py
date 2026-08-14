@@ -9,6 +9,7 @@ rotation, preserve Euclidean geometry and keep its time/EOP lookup contract.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -192,6 +193,47 @@ def test_velocity_and_acceleration_match_centered_differences_of_rotated_positio
 
     assert current.velocity_m_s == pytest.approx(expected_velocity, abs=2e-8)
     assert current.acceleration_m_s2 == pytest.approx(expected_acceleration, abs=2e-8)
+
+
+def test_nonzero_lod_changes_the_earth_rotation_velocity_derivative():
+    """LOD must affect the ITRF-to-inertial velocity term, not just metadata.
+
+    ``LOD`` is expressed in seconds and changes ``d(UT1-UTC)/dt``.  The
+    instantaneous rotation matrix is therefore the same for identical DUT1,
+    while its time derivative (and a stationary terrestrial point's inertial
+    velocity) is not.  This catches both a dropped LOD term and the historical
+    erroneous milliseconds-to-seconds extra division.
+    """
+
+    zero_lod = replace(_orientation(), lod_seconds=0.0)
+    nonzero_lod = replace(zero_lod, lod_seconds=0.005)
+    stationary = StateVector(
+        epoch=_UTC_EPOCH,
+        time_scale=TimeScale.UTC,
+        frame=FrameId.ITRF,
+        frame_realization="ITRF2020",
+        center="EARTH",
+        position_m=(6_702_345.678, -1_923_456.789, 2_783_210.987),
+        velocity_m_s=(0.0, 0.0, 0.0),
+    )
+
+    no_lod = FrameTransformService().transform(
+        stationary,
+        target_frame=FrameId.EME2000,
+        earth_orientation=zero_lod,
+    )
+    with_lod = FrameTransformService().transform(
+        stationary,
+        target_frame=FrameId.EME2000,
+        earth_orientation=nonzero_lod,
+    )
+
+    assert no_lod.position_m == pytest.approx(with_lod.position_m, abs=1e-8)
+    assert no_lod.velocity_m_s is not None
+    assert with_lod.velocity_m_s is not None
+    velocity_delta = math.dist(no_lod.velocity_m_s, with_lod.velocity_m_s)
+    # A 5 ms LOD produces an O(10^-5 m/s) correction for a LEO-scale radius.
+    assert velocity_delta > 1.0e-5
 
 
 def test_gps_epoch_uses_utc_equivalent_erp_epoch_and_rejects_coverage_overrun():

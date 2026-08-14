@@ -17,6 +17,9 @@ test("object detail field help describes SP3 source, frame and companion fields"
     assert.match(getObjectDetailFieldHelp("Archivo ATT / OBX"), /actitud/i);
     assert.match(getObjectDetailFieldHelp("Archivo OSB / BIA"), /sesgos/i);
     assert.match(getObjectDetailFieldHelp("Estado de representación"), /mostrarse/i);
+    assert.match(getObjectDetailFieldHelp("Fuente EOP"), /no sustituye/i);
+    assert.match(getObjectDetailFieldHelp("Cobertura EOP"), /instante SP3/i);
+    assert.match(getObjectDetailFieldHelp("Aviso EOP"), /rotación ITRF nominal/i);
 });
 
 test("time-scale help distinguishes source SP3 time from the simulation speed", () => {

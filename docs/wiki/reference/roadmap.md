@@ -20,6 +20,7 @@ evitar que la arquitectura extensible se interprete como una promesa.
 | Tiempo y marcos explícitos | Módulos de EOP, leap seconds, `StateVector` y transformaciones. | [Arquitectura](../development/architecture.md) |
 | Productos GNSS precisos | Importación local durable de SP3 obligatorio con CLK/ERP/SUM/ATT/OSB asociados y procedencia IGS/CDDIS, MGEX o ESA NSO. | [Productos GNSS precisos](../formats/precise-products.md) |
 | Docker Compose local | Implementado. | [Despliegue](../development/deployment.md) |
+| CI/CD y artefactos de release | Workflows de calidad, documentación y release con caché; la publicación exige un tag SemVer válido y verifica SHA-256. | [Testing](../development/testing.md) |
 
 ## Capacidades no disponibles
 
@@ -33,7 +34,6 @@ evitar que la arquitectura extensible se interprete como una promesa.
 | Determinación de órbita | No implementada. | Que los elementos osculadores sean una solución OD. |
 | Ajuste o exportación de TLE sintético | No implementado. | Que un estado manual EME2000 se convierta directamente en un TLE/TEME. |
 | Carga operativa OEM de precisión | No expuesta por UI, gateway o API pública. | Que el lector Python implique una ruta de producto. SP3 y sus auxiliares GNSS tienen su propia ruta local documentada. |
-| CI, artefactos y releases automatizados | No declarados. | Que los comandos locales publiquen una release. |
 | Kubernetes/Helm/cloud gestionado | No incluido. | Que Docker Compose describa un despliegue multiinstancia. |
 
 ## Criterio para publicar una iniciativa futura

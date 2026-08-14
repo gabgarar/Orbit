@@ -86,3 +86,13 @@ test("object-details help relies on the field hover target instead of visual inf
         "the help popup itself must not add a decorative information glyph"
     );
 });
+
+test("the selected SP3 inspector alone polls the shared EOP diagnostic contract", () => {
+    assert.match(componentSource, /import useSystemDiagnostics from "\.\.\/hooks\/useSystemDiagnostics\.js"/);
+    assert.match(componentSource, /selectedSourceFormat === "SP3"/);
+    assert.match(componentSource, /const selectedSp3PanelShown = Boolean/);
+    assert.match(componentSource, /useSystemDiagnostics\(\{\s*enabled: selectedSp3PanelShown\s*\}\)/);
+    assert.match(componentSource, /findDiagnosticComponent\(diagnostics, "erp"\)/);
+    assert.match(componentSource, /diagnosticsAvailability,/);
+    assert.match(componentSource, /eopDiagnostic/);
+});

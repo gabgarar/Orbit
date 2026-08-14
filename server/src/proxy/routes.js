@@ -33,6 +33,11 @@ export function registerPythonProxyRoutes(app, client) {
     // Product metadata is backed by the Python runtime rather than the Node
     // TLE catalogue. GET remains small and uses the normal app JSON parser.
     registerForwardingRoute(app, "get", "/api/precise-products", () => "/precise-products", forward);
+    // Built-In Test consumes a bounded backend snapshot. Keep the legacy
+    // alias while the React panel migrates, but both routes are read-only and
+    // resolve to the same Python diagnostics service.
+    registerForwardingRoute(app, "get", "/api/system/diagnostics", () => "/system/diagnostics", forward);
+    registerForwardingRoute(app, "get", "/api/diagnostics", () => "/diagnostics", forward);
 
     for (const route of ["/openapi.json", "/redoc"]) {
         registerForwardingRoute(app, "get", route, () => route, forward);

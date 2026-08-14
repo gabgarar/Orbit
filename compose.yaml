@@ -25,6 +25,16 @@ services:
       ORBIT_EOP_ALLOW_EXTRAPOLATION: "${ORBIT_EOP_ALLOW_EXTRAPOLATION:-}"
       ORBIT_EOP_REQUIRED_START: "${ORBIT_EOP_REQUIRED_START:-}"
       ORBIT_EOP_REQUIRED_END: "${ORBIT_EOP_REQUIRED_END:-}"
+      # Generic IERS C01 cache used only when no explicit C04 snapshot is
+      # configured. It is refreshed by the backend monitor, never by a state
+      # transformation, and lives in the mounted mutable data volume.
+      ORBIT_EOP_C01_CACHE_PATH: "${ORBIT_EOP_C01_CACHE_PATH:-/app/data/erp/EOP_C01_IAU2000_1846-now.txt}"
+      ORBIT_DIAGNOSTICS_MONITOR_INTERVAL_SECONDS: "${ORBIT_DIAGNOSTICS_MONITOR_INTERVAL_SECONDS:-21600}"
+      # Optional low-rate, unauthenticated public GitHub Actions monitor for
+      # the Built-In Test panel. It is off by default so an offline local
+      # deployment makes no GitHub request.
+      ORBIT_GITHUB_ACTIONS_MONITOR: "${ORBIT_GITHUB_ACTIONS_MONITOR:-false}"
+      ORBIT_GITHUB_REPOSITORY: "${ORBIT_GITHUB_REPOSITORY:-gabgarar/Orbit}"
       # A pinned IERS EOC Bulletin C 72 snapshot.  This is deliberately local:
       # ECI never contacts IERS/NTP at runtime and fails closed at its #@
       # horizon.  Override the path, SHA and version together when updating.
@@ -57,5 +67,7 @@ services:
     volumes:
       # Conserva cambios de configuración y catálogos fuera de la imagen.
       - ./config:/app/config
+      # Downloaded C01 is mutable operational cache, not an image layer.
+      - ./data:/app/data
     restart: unless-stopped
     init: true

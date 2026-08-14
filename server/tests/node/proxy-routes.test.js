@@ -61,6 +61,24 @@ test("proxy forwards query parameters, including repeated values", async () => {
     assert.equal(calls[0].options.timeoutMs, PYTHON_PROXY_TIMEOUT_MS);
 });
 
+test("proxy exposes the stable Built-In Test diagnostics endpoints", async () => {
+    const calls = [];
+    const app = createProxyApp(async (path, options) => {
+        calls.push({ path, options });
+        return new Response('{"status":"warning","components":{}}', {
+            headers: { "content-type": "application/json" }
+        });
+    });
+
+    await withServer(app, async (baseUrl) => {
+        assert.equal((await fetch(`${baseUrl}/api/system/diagnostics`)).status, 200);
+        assert.equal((await fetch(`${baseUrl}/api/diagnostics`)).status, 200);
+    });
+
+    assert.deepEqual(calls.map(({ path }) => path), ["/system/diagnostics", "/diagnostics"]);
+    assert.deepEqual(calls.map(({ options }) => options.method), ["GET", "GET"]);
+});
+
 test("proxy forwards POST method, JSON body, and accepted content headers", async () => {
     const calls = [];
     const app = createProxyApp(async (path, options) => {

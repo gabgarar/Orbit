@@ -12,7 +12,7 @@ multiusuario ni un servicio gestionado.
 | Página | Alcance |
 | --- | --- |
 | [Configuración](configuration.md) | Archivo persistente, panel de configuración, catálogo y variables de ejecución. |
-| [Tiempo y EOP](time-eop.md) | Snapshots locales C04, segundos intercalares, UT1, ITRF y modo estricto. |
+| [Tiempo y EOP](time-eop.md) | Caché C01 automática, snapshots C04, segundos intercalares, UT1, ITRF y modo estricto. |
 | [Rendimiento](performance.md) | Ajustes de presentación y frecuencia que cambian el coste del runtime. |
 | [Validación](validation.md) | Healthcheck, suites automatizadas y validación de datos de operación. |
 | [Preguntas frecuentes](faq.md) | Respuestas a límites y comportamientos operativos verificados. |

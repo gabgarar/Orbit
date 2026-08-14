@@ -79,10 +79,22 @@ contract.
 
 ## Continuous integration
 
-The **Verify Orbit** workflow runs for every push or pull request targeting
-`main` or `develop`. It repeats the Node, frontend, and Python tests, builds
-React, and runs the static audit. Browser tests remain a separate operational
-step because they require a healthy Docker instance.
+GitHub Actions applies three reproducible gates:
+
+| Workflow | Trigger | Evidence produced |
+| --- | --- | --- |
+| `quality.yml` (**Orbit quality**) | Every `push` and `pull request`. | Node and frontend tests (including MTR), React build, ITRF/ECI, EOP/ERP, SP3/OEM, interpolation, propagator and force-model contracts; complete Python suite; Knip/ESLint/Ruff/Vulture audit; strict MkDocs build. |
+| `docs-pages.yml` (**Deploy documentation**) | Documentation pull requests and pushes to `main`. | Builds both translations with `mkdocs build --strict`, checks the generated entry pages, and publishes GitHub Pages only after a push to `main`. |
+| `release.yml` (**Release Orbit**) | `vMAJOR.MINOR.PATCH` tags and releases created from a valid tag. | Orbit Tracker build, reproducible archive, and `SHA256SUMS.txt` verified before it is attached to the release. |
+
+All workflows use GitHub Actions npm or pip caches. Browser tests remain a
+separate operational step because they need a healthy Docker instance; they
+are not represented as a remote check that can run without that service.
+
+Documentation validation is local and deterministic: navigation, pages,
+Markdown links, and anchors become errors through `--strict`. CI does not
+probe external URLs because their availability is not controlled by the
+repository and would make the build non-reproducible.
 
 ## Interface tests
 
@@ -117,14 +129,18 @@ healthy and are run by Playwright separately.
 | Docker, Compose or operation scripts | Deployment contract testing, Docker build and healthcheck. |
 | Transverse change | `test-all` plus a review of the affected REST/WebSocket contracts. |
 
-## Automation limitations
+## Automation limits
 
-There is no continuous integration configuration declared in the repository
-(e.g. no GitHub Actions workflows). Running tests and
-The publication of results depends on the environment that maintains the instance.
+CI blocks integration when a declared test or build fails, but it is not a
+mission-precision certification and does not replace scientific review of
+data, frames, time scales, or force models. No coverage metric, coverage
+threshold, or supported-browser matrix is published yet; none should be
+inferred from the existing commands.
 
-No coverage metric, coverage threshold, or matrix is published
-of supported browsers. They should not be inferred from existing commands.
+`release.yml` does not create a version for every commit: it packages and
+publishes only when a tag has SemVer form `vMAJOR.MINOR.PATCH` (with optional
+SemVer metadata). Before creating a tag, verify that **Orbit quality** is
+green for the exact commit that will be tagged.
 
 ## Good practices
 

@@ -7,6 +7,8 @@
 | Método y ruta | Operación | Respuesta o restricciones principales |
 | --- | --- | --- |
 | `GET /health` | Estado del gateway y del backend Python. | `200` con ambos estados `ok`; `503` mientras el backend no esté disponible. |
+| `GET /api/system/diagnostics` | Instantánea de diagnóstico para Built-In Test. | Solo lectura; devuelve estado global, hora de generación y componentes `erp`, `sp3`, `oem`, `propagators`, `forces`, `frames`, `cicd` y `monitor`. No ejecuta una suite completa ni modifica datos. |
+| `GET /api/diagnostics` | Alias de compatibilidad del diagnóstico. | Mismo contrato que `/api/system/diagnostics`; los clientes nuevos deben preferir la ruta con espacio de nombres `system`. |
 | `POST /api/system-config` | Persiste una configuración saneada y solicita recarga del backend. | Requiere `system`; no permite cambiar en caliente el catálogo activo. Puede devolver `503` tras persistir si la recarga falla. |
 | `GET /docs` | Swagger UI de FastAPI a través del gateway. | Véase [OpenAPI](../openapi.md). |
 | `GET /openapi.json` | Descripción OpenAPI generada por FastAPI. | No tiene versión pública independiente. |
@@ -25,3 +27,12 @@
 filtros auxiliares y el umbral de perigeo de decaimiento. `catalogId` se hace
 único cuando hay nombres duplicados; no debe sustituirse por el nombre original
 al construir una selección de UI.
+
+## Diagnóstico EOP
+
+El componente `erp` publica únicamente procedencia y salud operativa:
+`loaded`, `source`, `sourceUrl`, `cacheFile`, `lastUpdate`,
+`lastValidation`, `coverage`, `recordCount`, `refreshDue` y un posible
+`error`. Una respuesta con `loaded: false` o estado `warning` no autoriza al
+cliente a suponer ERP, extrapolar cobertura ni solicitar ECI estricto. Los
+productos SP3 mantienen por separado su ERP adjunto y su contrato de marco.

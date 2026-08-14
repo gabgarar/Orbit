@@ -12,7 +12,7 @@ multi-user or a managed service.
 | Page | Scope |
 | --- | --- |
 | [Settings](configuration.md) | Persistent file, configuration panel, catalog and execution variables. |
-| [Time and EOP](time-eop.md) | Local snapshots C04, leap seconds, UT1, ITRF and strict mode. |
+| [Time and EOP](time-eop.md) | Automatic C01 cache, C04 snapshots, leap seconds, UT1, ITRF, and strict mode. |
 | [Performance](performance.md) | Presentation and frequency settings that change the cost of runtime. |
 | [Validation](validation.md) | Healthcheck, automated suites and operation data validation. |
 | [FAQ](faq.md) | Responses to verified operational limits and behaviors. |

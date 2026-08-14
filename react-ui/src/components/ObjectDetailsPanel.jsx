@@ -3,7 +3,9 @@ import { buildObjectDetails } from "../features/objectDetails/detailRows.js";
 import { getObjectDetailFieldHelp } from "../features/objectDetails/fieldHelp.js";
 import { objectDetailsSecondaryHeader } from "../features/objectDetails/headerPresentation.js";
 import useSelectedObject from "../hooks/useSelectedObject.js";
+import useSystemDiagnostics from "../hooks/useSystemDiagnostics.js";
 import { emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
+import { findDiagnosticComponent } from "../../../front/js/features/diagnostics/diagnosticsContract.js";
 import {
     calculatePatternGainDbi,
     calculateStationRfModel,
@@ -28,7 +30,11 @@ const groundStationTabs = [
     ["rf", "RF", "RF system and link budget"],
     ["pattern", "PATTERN", "Antenna radiation pattern"]
 ];
-const toneClass = { "is-operational": "text-[#73e3a0]", "is-hidden": "text-[#d2a8ff]" };
+const toneClass = {
+    "is-operational": "text-[#73e3a0]",
+    "is-hidden": "text-[#d2a8ff]",
+    "is-warning": "text-[#f0ca78]"
+};
 
 function number(input, digits = 1) {
     return Number.isFinite(Number(input)) ? Number(input).toFixed(digits) : "-";
@@ -335,6 +341,25 @@ export default function ObjectDetailsPanel() {
     const [stationDesignMode, setStationDesignMode] = useState(false);
     const [stationLinkContext, setStationLinkContext] = useState(null);
     const lastSelection = useRef({ id: null, revision: null });
+    const selectedSourceFormat = String(
+        detail?.sourceFormat
+        || detail?.telemetry?.source_format
+        || detail?.catalogMeta?.sourceFormat
+        || ""
+    ).toUpperCase();
+    const selectedSp3PanelShown = Boolean(
+        detail?.id
+        && selectedSourceFormat === "SP3"
+        && dismissedId !== detail.id
+        && !designMode
+        && !stationDesignMode
+    );
+    // The diagnostic endpoint is optional and must not become a background
+    // poller for ordinary catalogue objects. A selected, visible SP3 is the
+    // only inspector state that consumes the global automatic EOP snapshot.
+    const { availability: diagnosticsAvailability, diagnostics } = useSystemDiagnostics({
+        enabled: selectedSp3PanelShown
+    });
 
     // The runtime clears its transient selection when the user clicks the globe
     // or another UI surface. The information card remains open until the user
@@ -390,7 +415,13 @@ export default function ObjectDetailsPanel() {
 
     if (designMode || stationDesignMode || !detail || dismissedId === detail.id) return null;
 
-    const details = buildObjectDetails(detail);
+    const eopDiagnostic = selectedSp3PanelShown
+        ? findDiagnosticComponent(diagnostics, "erp")
+        : null;
+    const details = buildObjectDetails(detail, {
+        diagnosticsAvailability,
+        eopDiagnostic
+    });
     const isGroundStation = String(detail.layerType || "").toUpperCase() === "GROUND_STATION";
     const isCelestialBody = ["CELESTIAL_BODY", "EARTH"].includes(String(detail.layerType || "").toUpperCase())
         || String(detail.id || "").toLowerCase() === "body:earth";

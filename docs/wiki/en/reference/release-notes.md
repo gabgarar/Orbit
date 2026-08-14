@@ -6,10 +6,12 @@ This page only registers versions that can be identified in the
 Git history of the repository. It does not replace a published release system or
 declares a version for changes that remain uncommitted.
 
-The repository does not contain Git tags in the inspected state or an artifact
-versioned release. The following version names come from messages
-from commit; should be treated as historical milestones of the source code, not as
-downloadable packages or support contracts.
+The repository has no Git tags or published release artifact in the inspected
+state. The following version names come from commit messages and must be
+treated as historical source-code milestones, not downloadable packages or
+support contracts. The publishing mechanism is nevertheless declared: it runs
+only for a valid SemVer tag and does not by itself turn this history into a
+published release.
 
 ## Identifiable history
 
@@ -35,10 +37,10 @@ incomplete work, local configuration changes or unverified settings.
 | Appearance | State |
 | --- | --- |
 | release Git tags | Not present in the inspected repository. |
-| Release artifacts published | Not declared. |
+| Published release artifacts | Not present in the inspected state. |
 | Changelog generated | Not implemented. |
 | Formal REST API/WebSocket Versioning | Not published. |
-| CI that creates or publishes releases | Not declared. |
+| Quality, documentation, and release CI | Declared in GitHub Actions; `release.yml` publishes only for a valid SemVer tag and verifies checksums. |
 | Manual history file | It exists under `docs/general/VERSIONADO.md`. |
 
 ## Requirements for a future release note

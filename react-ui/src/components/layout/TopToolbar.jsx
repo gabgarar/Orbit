@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import GlobalSearch from "../GlobalSearch.jsx";
-import { BellIcon, ControlPanelIcon, HelpIcon } from "../icons.jsx";
+import { BellIcon, ControlPanelIcon, DiagnosticsIcon, HelpIcon } from "../icons.jsx";
 import "./TopToolbar.css";
 
 const navigation = ["Dashboard", "Satellites", "Missions", "Ground Stations", "Analytics"];
@@ -36,7 +36,7 @@ function NavigationItem({ label, active, onActivate }) {
     </button>;
 }
 
-export default function TopToolbar({ hasNotifications, onToggleNotifications, onToggleHelp }) {
+export default function TopToolbar({ hasNotifications, onToggleNotifications, onToggleHelp, onToggleDiagnostics }) {
     const [activeSection, setActiveSection] = useState("Satellites");
 
     useEffect(() => {
@@ -71,6 +71,7 @@ export default function TopToolbar({ hasNotifications, onToggleNotifications, on
                 {hasNotifications && <span className="toolbar-notification-dot" aria-hidden="true" />}
             </button>
             <button className={iconButtonClass} type="button" aria-label="Panel de ayuda" onClick={onToggleHelp}><HelpIcon /></button>
+            <button id="topBuiltInTestBtn" data-react-owned="true" className="toolbar-built-in-test-btn toolbar-vector-icon" type="button" aria-label="Built-In Test" title="Built-In Test" onClick={onToggleDiagnostics}><DiagnosticsIcon /><span>Built-In Test</span></button>
             <button id="topSettingsBtn" data-react-owned="true" className={iconButtonClass} type="button" aria-label="Configuracion general" onClick={() => window.dispatchEvent(new Event("orbit:config-panel-toggle"))}><ControlPanelIcon /></button>
             <span className="toolbar-action-divider" aria-hidden="true" />
             <button id="topUserBtn" className="toolbar-avatar" type="button" aria-label="Perfil de GG">GG</button>

@@ -23,3 +23,8 @@ Strict mode prevents extrapolating EOP and limits quality to final or rapid. The
 startup fails if the products do not cover the required window; the queries
 outside coverage are rejected. With SHA-256 configured for UTC–TAI, each
 query also checks the expiration indicated by #@.
+
+The automatic C01 cache is intentionally different: it improves global
+operational orientation when no explicit C04 exists, but it does not supply an
+operator-selected hash/version contract and cannot by itself satisfy this
+strict policy or the ERP bound to an SP3.

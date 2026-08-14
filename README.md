@@ -48,8 +48,12 @@ Todos los accesos operativos están centralizados en `.scripts/`. Ejecútalos de
 La estructura y responsabilidades de cada capa de pruebas están en
 [la guía de pruebas](docs/wiki/development/testing.md).
 
-Los pushes y pull requests hacia `main` o `develop` ejecutan automáticamente
-las pruebas, el build React y la auditoría estática en GitHub Actions.
+Cada `push` y `pull request` ejecuta automáticamente **Orbit quality** en
+GitHub Actions: pruebas Node, frontend y Python, build React, build estricto de
+la documentación y auditoría estática. Los cambios documentales también pasan
+por **Deploy documentation**; GitHub Pages sólo se publica tras un push a
+`main`. Consulte la [guía de pruebas](docs/wiki/development/testing.md) para
+los límites de estas validaciones y la política de releases con tags SemVer.
 
 ## Pruebas visuales de la interfaz
 

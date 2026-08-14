@@ -470,3 +470,98 @@ test("celestial bodies retain the common tabs without a fictional TLE engine", (
     assert.equal(overview["Tipo de objeto"], "Cuerpo de referencia");
     assert.equal(propagation.Motor, "No aplica");
 });
+
+function sp3DetailForGlobalEop({ referenceTime = "2026-08-10T12:00:00Z" } = {}) {
+    return {
+        id: "precise:eop-demo:G01",
+        sourceFormat: "SP3",
+        referenceTimeMs: Date.parse(referenceTime),
+        telemetry: {
+            id: "G01",
+            source_format: "SP3",
+            timestamp_ms: Date.parse(referenceTime),
+            sp3: {
+                satellite_id: "G01",
+                product_id: "eop-demo",
+                native_reference_frame: "IGB20",
+                start_time: "2026-08-10T00:00:00Z",
+                end_time: "2026-08-10T23:55:00Z",
+                erp: {
+                    present: true,
+                    file: "COD0OPSFIN_20262220000_01D_ERP.ERP",
+                    sample_count: 96
+                },
+                renderer_reference: {
+                    available: true,
+                    native_reference_frame: "IGB20",
+                    display_label: "ITRF (con ERP aplicado)",
+                    earth_orientation: { applied: true },
+                    eci_conversion: { available: true }
+                }
+            }
+        },
+        catalogMeta: { sourceFormat: "SP3" }
+    };
+}
+
+test("SP3 shows the applicable automatic IERS EOP separately from its attached product ERP", () => {
+    const details = buildObjectDetails(sp3DetailForGlobalEop(), {
+        diagnosticsAvailability: "available",
+        eopDiagnostic: {
+            status: "healthy",
+            details: {
+                loaded: true,
+                source: "IERS (EOP_C01_IAU2000_1846-now.txt)",
+                coverage: {
+                    start: "2026-08-01T00:00:00Z",
+                    end: "2026-08-31T00:00:00Z"
+                }
+            }
+        }
+    });
+    const overview = asObject(details.rows.overview);
+    const input = asObject(details.rows.input);
+
+    assert.equal(overview["Fuente EOP"], "Local (IERS EOP_C01_IAU2000_1846-now.txt)");
+    assert.equal(input["Fuente EOP"], "Local (IERS EOP_C01_IAU2000_1846-now.txt)");
+    assert.equal(input["Cobertura EOP"], "2026-08-01 00:00 UTC → 2026-08-31 00:00 UTC");
+    assert.equal(input["Aviso EOP"], undefined);
+    assert.equal(input["Archivo ERP"], "COD0OPSFIN_20262220000_01D_ERP.ERP · 96 muestras");
+    assert.equal(input["Marco de representaci\u00f3n"], "ITRF (con ERP aplicado)");
+});
+
+test("SP3 falls back to the nominal ITRF label when global EOP diagnostics are unavailable", () => {
+    const details = buildObjectDetails(sp3DetailForGlobalEop(), {
+        diagnosticsAvailability: "unavailable"
+    });
+    const overview = asObject(details.rows.overview);
+    const input = asObject(details.rows.input);
+
+    assert.equal(overview["Fuente EOP"], "Gen\u00e9rica (rotaci\u00f3n ITRF nominal)");
+    assert.equal(input["Fuente EOP"], "Gen\u00e9rica (rotaci\u00f3n ITRF nominal)");
+    assert.equal(input["Cobertura EOP"], "No disponible en la fuente");
+    assert.equal(input["Aviso EOP"], "No hay datos ERP disponibles — se usa una rotaci\u00f3n ITRF nominal.");
+    assert.equal(input["Archivo ERP"], "COD0OPSFIN_20262220000_01D_ERP.ERP · 96 muestras");
+});
+
+test("SP3 never labels an EOP snapshot as local outside its declared coverage", () => {
+    const details = buildObjectDetails(sp3DetailForGlobalEop(), {
+        diagnosticsAvailability: "available",
+        eopDiagnostic: {
+            status: "healthy",
+            details: {
+                loaded: true,
+                coverage: {
+                    start: "2026-08-11T00:00:00Z",
+                    end: "2026-08-31T00:00:00Z"
+                }
+            }
+        }
+    });
+    const overview = asObject(details.rows.overview);
+    const input = asObject(details.rows.input);
+
+    assert.equal(overview["Fuente EOP"], "Gen\u00e9rica (rotaci\u00f3n ITRF nominal)");
+    assert.equal(input["Aviso EOP"], "No hay datos ERP disponibles — se usa una rotaci\u00f3n ITRF nominal.");
+    assert.equal(input["Marco de representaci\u00f3n"], "ITRF (con ERP aplicado)");
+});

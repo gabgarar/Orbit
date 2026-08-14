@@ -26,7 +26,6 @@ from orbit_api.timekeeping import (
     tai_minus_utc,
     to_utc,
     utc_to_tt,
-    utc_to_ut1,
 )
 
 from .model import FrameId, Matrix6, StateVector, Vector3, _normalise_frame
@@ -199,10 +198,15 @@ def _julian_parts(
         # any transform performing network I/O or silently using an older
         # package table. Python cannot represent 23:59:60 itself, which is
         # already excluded by Orbit's datetime API.
-        ut1 = utc_to_ut1(utc, dut1_seconds=orientation.dut1_seconds)
         tt = utc_to_tt(utc, leap_seconds=leap_second_table)
-        ut11, ut12 = _erfa.dtf2d("UT1", ut1.year, ut1.month, ut1.day, ut1.hour, ut1.minute,
-                                 ut1.second + (ut1.microsecond / 1_000_000.0))
+        # Retain SOFA's two-part UTC representation and add DUT1 to its
+        # fractional part.  Going through ``utc_to_ut1`` would first create a
+        # Python ``datetime`` and lose sub-microsecond perturbations.  Those
+        # are exactly the signal from the LOD correction used by the centred
+        # rotation derivative, so rounding them away silently made a non-zero
+        # LOD indistinguishable from LOD=0 in transformed velocity.
+        ut11 = float(utc1)
+        ut12 = float(utc2) + (orientation.dut1_seconds / 86_400.0)
         tt1, tt2 = _erfa.dtf2d("TT", tt.year, tt.month, tt.day, tt.hour, tt.minute,
                                tt.second + (tt.microsecond / 1_000_000.0))
         return float(tt1), float(tt2), float(ut11), float(ut12), float(utc1), float(utc2)
@@ -265,6 +269,17 @@ class FrameTransformService:
         """Return this service's pinned table or the live legacy default table."""
 
         return self._leap_second_table if self._leap_second_table is not None else default_leap_second_table()
+
+    @property
+    def earth_orientation_provider(self) -> EarthOrientationProvider:
+        """Expose the immutable/default provider for operational diagnostics.
+
+        Callers must treat the provider as read-only.  Product-specific SP3
+        and manual ERP routes still create isolated transformer clones through
+        the explicit ``with_*_earth_orientation_provider`` methods.
+        """
+
+        return self._eop_provider
 
     @property
     def has_iau2006_2000a(self) -> bool:

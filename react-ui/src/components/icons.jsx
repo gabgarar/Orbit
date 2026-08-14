@@ -6,6 +6,10 @@ export function HelpIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.6 2.6 0 1 1 4.4 1.9c-1.1 1-1.9 1.5-1.9 3.1M12 17h.01" /></svg>;
 }
 
+export function DiagnosticsIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3" /><path d="M7 15.5h2.2l1.65-5 2.35 7 1.45-4H17" /><circle cx="17.4" cy="8.1" r="1.15" /></svg>;
+}
+
 export function FolderIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8.2A2.2 2.2 0 0 1 5.7 6h3.2l1.9 2.3H17a2.2 2.2 0 0 1 2.2 2.2v6.9a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2Z" /><path d="M3.8 11.1h16.4" /></svg>;
 }

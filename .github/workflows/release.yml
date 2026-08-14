@@ -124,7 +124,9 @@ jobs:
           (
             cd release
             sha256sum "${artifact_name}.tar.gz" > SHA256SUMS.txt
+            sha256sum --check --strict SHA256SUMS.txt
           )
+          tar -tzf "release/${artifact_name}.tar.gz" >/dev/null
 
           echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
           echo "::notice::Created release/${artifact_name}.tar.gz"
@@ -168,6 +170,11 @@ jobs:
             echo "::error::Expected exactly one Orbit Tracker archive, found ${#archives[@]}."
             exit 1
           fi
+          (
+            cd release
+            sha256sum --check --strict SHA256SUMS.txt
+          )
+          tar -tzf "${archives[0]}" >/dev/null
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "A GitHub Release already exists for ${RELEASE_TAG}."

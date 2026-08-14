@@ -14,6 +14,17 @@ from .eop import (
     VisualApproximationEarthOrientationProvider,
 )
 from .configuration import load_leap_second_table_from_environment
+from .iers_eop import (
+    IERS_EOP_C01_DOWNLOAD_TIMEOUT_SECONDS,
+    IERS_EOP_C01_FILENAME,
+    IERS_EOP_C01_MAX_BYTES,
+    IERS_EOP_C01_REFRESH_AGE,
+    IERS_EOP_C01_SOURCE,
+    IERS_EOP_C01_URL,
+    EopCacheDiagnostics,
+    IersC01EarthOrientationProvider,
+    IersEopCacheService,
+)
 from .scales import (
     BUILTIN_LEAP_SECOND_TABLE,
     LeapSecondTable,
@@ -45,6 +56,15 @@ __all__ = [
     "EopSnapshotIdentity",
     "EopSnapshotValidationError",
     "IersC04EarthOrientationProvider",
+    "IersC01EarthOrientationProvider",
+    "IersEopCacheService",
+    "EopCacheDiagnostics",
+    "IERS_EOP_C01_URL",
+    "IERS_EOP_C01_FILENAME",
+    "IERS_EOP_C01_SOURCE",
+    "IERS_EOP_C01_REFRESH_AGE",
+    "IERS_EOP_C01_DOWNLOAD_TIMEOUT_SECONDS",
+    "IERS_EOP_C01_MAX_BYTES",
     "IgsErpEarthOrientationProvider",
     "LeapSecondTable",
     "LeapSecondTableError",

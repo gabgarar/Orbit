@@ -330,6 +330,82 @@ function preciseErpText(sources) {
     return Number.isFinite(count) ? `${label} · ${number(count, 0)} muestras` : label;
 }
 
+const LOCAL_IERS_EOP_LABEL = "Local (IERS EOP_C01_IAU2000_1846-now.txt)";
+const GENERIC_EOP_LABEL = "Gen\u00e9rica (rotaci\u00f3n ITRF nominal)";
+const GENERIC_EOP_WARNING = "No hay datos ERP disponibles \u2014 se usa una rotaci\u00f3n ITRF nominal.";
+
+function diagnosticValue(component, keys) {
+    const sources = [record(component?.details), record(component)];
+    for (const source of sources) {
+        if (!source) continue;
+        for (const key of keys) {
+            const candidate = source[key];
+            if (candidate !== undefined && candidate !== null && candidate !== "") return candidate;
+        }
+    }
+    return undefined;
+}
+
+function diagnosticBoolean(component, keys) {
+    const candidate = diagnosticValue(component, keys);
+    if (candidate === true || candidate === 1) return true;
+    if (typeof candidate !== "string") return false;
+    return ["true", "yes", "si", "s\u00ed", "loaded", "available"].includes(candidate.trim().toLowerCase());
+}
+
+function diagnosticCoverage(component) {
+    const candidate = diagnosticValue(component, ["coverage", "coverage_range", "coverageRange", "validity"]);
+    const coverage = record(candidate);
+    const startRaw = coverage?.start
+        ?? coverage?.from
+        ?? diagnosticValue(component, ["coverage_start", "coverageStart", "start"]);
+    const endRaw = coverage?.end
+        ?? coverage?.to
+        ?? diagnosticValue(component, ["coverage_end", "coverageEnd", "end"]);
+    const startMs = timeMillis(startRaw);
+    const endMs = timeMillis(endRaw);
+    return {
+        startMs,
+        endMs,
+        valid: Number.isFinite(startMs) && Number.isFinite(endMs) && startMs <= endMs,
+        label: Number.isFinite(startMs) && Number.isFinite(endMs) && startMs <= endMs
+            ? `${utcMetadataDate(startMs)} → ${utcMetadataDate(endMs)}`
+            : INPUT_UNAVAILABLE
+    };
+}
+
+/**
+ * Present the process-wide, automatic IERS EOP cache without conflating it
+ * with the ERP file attached to an SP3 product. The generic cache may support
+ * an ITRF visual rotation at the queried epoch, but it never changes the
+ * product's strict ECI/realization contract.
+ */
+function preciseGlobalEopPresentation({ diagnosticsAvailability, eopDiagnostic, referenceTimeMs, productCoverage }) {
+    const coverage = diagnosticCoverage(eopDiagnostic);
+    const diagnosticStatus = String(eopDiagnostic?.status || diagnosticValue(eopDiagnostic, ["status", "health", "state"]) || "").trim().toLowerCase();
+    const loaded = diagnosticBoolean(eopDiagnostic, ["loaded", "eop_loaded", "eopLoaded", "erp_loaded", "erpLoaded"]);
+    const instantMs = timeMillis(referenceTimeMs);
+    const productHasCoverage = Number.isFinite(productCoverage?.startMs)
+        && Number.isFinite(productCoverage?.endMs)
+        && productCoverage.endMs >= productCoverage.startMs;
+    const coverageApplies = Number.isFinite(instantMs)
+        ? coverage.valid && instantMs >= coverage.startMs && instantMs <= coverage.endMs
+        : productHasCoverage
+            ? coverage.valid && coverage.startMs <= productCoverage.startMs && coverage.endMs >= productCoverage.endMs
+            : false;
+    const local = diagnosticsAvailability === "available"
+        && loaded
+        && diagnosticStatus !== "error"
+        && coverageApplies;
+
+    return {
+        source: local ? LOCAL_IERS_EOP_LABEL : GENERIC_EOP_LABEL,
+        coverage: local ? coverage.label : INPUT_UNAVAILABLE,
+        warning: local ? "" : GENERIC_EOP_WARNING,
+        local
+    };
+}
+
 function preciseCompanionText(sources, keys) {
     return metadataValue(sources, keys, "No incluido");
 }
@@ -490,7 +566,7 @@ function manualForceTermsLabel(terms) {
  * separates administrative identity, current
  * state, live telemetry, source input and propagation configuration.
  */
-export function buildObjectDetails(detail) {
+export function buildObjectDetails(detail, { diagnosticsAvailability = "unavailable", eopDiagnostic = null } = {}) {
     const telemetry = detail.telemetry || {};
     const geo = telemetry.geo || {};
     const catalogMeta = detail.catalogMeta || {};
@@ -585,6 +661,14 @@ export function buildObjectDetails(detail) {
     const oem = telemetry.oem || catalogMeta.oem || {};
     const inputEpoch = celestial ? "-" : inputEpochText(sourceFormat, tleSummary, oem, manualOrbit, metadataSources);
     const referenceTimeMs = detail.referenceTimeMs ?? telemetry.timestamp_ms;
+    const preciseGlobalEop = sourceFormat === "SP3"
+        ? preciseGlobalEopPresentation({
+            diagnosticsAvailability,
+            eopDiagnostic,
+            referenceTimeMs,
+            productCoverage: preciseCoverageWindow
+        })
+        : null;
     const inputAge = celestial ? "-" : inputAgeText(sourceFormat, tleSummary, referenceTimeMs, inputEpoch);
     const source = celestial
         ? "Cesium"
@@ -716,6 +800,9 @@ export function buildObjectDetails(detail) {
             ["Clase de producto", preciseProductClass],
             ["Familia de producto", preciseProductFamily],
             ["Cobertura UTC", preciseCoverageText],
+            ["Fuente EOP", preciseGlobalEop.source],
+            ["Cobertura EOP", preciseGlobalEop.coverage],
+            ...(preciseGlobalEop.warning ? [["Aviso EOP", preciseGlobalEop.warning, "is-warning"]] : []),
             ["Estado del objeto", status, statusTone],
             ["Calidad del dato", preciseProductClass === INPUT_UNAVAILABLE ? "Efeméride precisa SP3" : `${preciseProductClass} · efeméride precisa`],
             ["Estado de representación", preciseRenderingStatus(preciseFrameStatus)]
@@ -928,6 +1015,9 @@ export function buildObjectDetails(detail) {
             ...(Number.isFinite(preciseErpSamples)
                 ? [["Muestras ERP", number(preciseErpSamples, 0)]]
                 : []),
+            ["Fuente EOP", preciseGlobalEop.source],
+            ["Cobertura EOP", preciseGlobalEop.coverage],
+            ...(preciseGlobalEop.warning ? [["Aviso EOP", preciseGlobalEop.warning, "is-warning"]] : []),
             ["Archivo SUM", preciseCompanionText(preciseSources, ["sum_file", "sumFile"])],
             ["Archivo ATT / OBX", preciseCompanionText(preciseSources, ["attitude_file", "attitudeFile", "att_file", "attFile"])],
             ["Archivo OSB / BIA", preciseCompanionText(preciseSources, ["osb_file", "osbFile", "bias_file", "biasFile"])],

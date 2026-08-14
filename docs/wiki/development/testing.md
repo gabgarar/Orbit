@@ -79,10 +79,23 @@ documentado.
 
 ## Integración continua
 
-El workflow **Verify Orbit** se ejecuta en cada push o pull request dirigido a
-`main` o `develop`. Repite los tests Node, frontend y Python, compila React y
-ejecuta la auditoría estática. Las pruebas de navegador siguen siendo un paso
-operativo separado porque requieren una instancia Docker saludable.
+GitHub Actions aplica tres barreras reproducibles:
+
+| Workflow | Cuándo se ejecuta | Evidencia que produce |
+| --- | --- | --- |
+| `quality.yml` (**Orbit quality**) | Cada `push` y `pull request`. | Tests Node y frontend (incluido MTR), build React, contratos ITRF/ECI, EOP/ERP, SP3/OEM, interpolación, propagadores y fuerzas; suite Python completa; auditoría Knip/ESLint/Ruff/Vulture; build MkDocs estricto. |
+| `docs-pages.yml` (**Deploy documentation**) | Pull requests que cambian la documentación y pushes a `main`. | Construye las dos traducciones con `mkdocs build --strict`, comprueba las páginas de inicio generadas y publica GitHub Pages sólo tras un push a `main`. |
+| `release.yml` (**Release Orbit**) | Tags `vMAJOR.MINOR.PATCH` y releases creadas desde un tag válido. | Build de Orbit Tracker, archivo reproducible, `SHA256SUMS.txt` verificado antes de adjuntarlo a la release. |
+
+Los tres workflows usan las cachés de npm o pip de GitHub Actions. Las pruebas
+de navegador siguen siendo un paso operativo separado porque requieren una
+instancia Docker saludable; no se presentan como una comprobación remota que
+pueda ejecutarse sin ese servicio.
+
+La validación documental es local y determinista: navegación, páginas,
+enlaces Markdown y anclas se convierten en errores mediante `--strict`. No
+sondea URLs externas durante CI, porque su disponibilidad no es propiedad del
+repositorio ni haría reproducible el build.
 
 ## Pruebas de interfaz
 
@@ -117,14 +130,18 @@ saludable y se ejecutan mediante Playwright por separado.
 | Docker, Compose o scripts de operación | Pruebas de contrato de despliegue, build Docker y healthcheck. |
 | Cambio transversal | `test-all` más una revisión de los contratos REST/WebSocket afectados. |
 
-## Limitaciones de automatización
+## Límites de automatización
 
-No hay configuración de integración continua declarada en el repositorio
-(por ejemplo, no hay workflows de GitHub Actions). La ejecución de pruebas y
-la publicación de resultados dependen del entorno que mantenga la instancia.
+CI bloquea la integración si falla una prueba o build declarado, pero no es una
+certificación de precisión de misión ni sustituye una revisión científica de
+datos, marcos, escalas de tiempo o modelos de fuerza. Tampoco se publica aún
+una métrica de cobertura, un umbral de cobertura ni una matriz de navegadores
+soportados; no deben inferirse de los comandos existentes.
 
-No se publica una métrica de cobertura, un umbral de cobertura ni una matriz
-de navegadores soportados. No deben inferirse de los comandos existentes.
+`release.yml` no crea una versión para cada commit: sólo empaqueta y publica
+cuando el tag tiene el formato SemVer `vMAJOR.MINOR.PATCH` (con metadatos
+SemVer opcionales). Antes de crear un tag conviene comprobar que **Orbit
+quality** está verde en el commit exacto que se va a etiquetar.
 
 ## Buenas prácticas
 

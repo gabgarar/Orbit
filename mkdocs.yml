@@ -184,6 +184,7 @@ plugins:
                 - 3D view: user-guide/three-d-view.md
                 - Timeline: user-guide/timeline.md
                 - Master Time Range: user-guide/master-time-range.md
+                - Built-In Test: user-guide/built-in-test.md
                 - Import: user-guide/import.md
                 - Export: user-guide/export.md
             - Platform:
@@ -231,6 +232,21 @@ plugins:
       lang:
         - es
         - en
+
+# Treat the documentation tree as an integrity boundary.  `mkdocs build
+# --strict` promotes these diagnostics to failures in local and CI builds, so a
+# navigation entry, page link, or fragment cannot silently disappear from the
+# published site.  External URLs are intentionally not fetched: their
+# availability is outside the reproducible documentation build.
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    not_found: warn
+    absolute_links: relative_to_docs
+    unrecognized_links: warn
+    anchors: warn
 
 markdown_extensions:
   - admonition
@@ -392,6 +408,7 @@ nav:
       - Visualización: user-guide/visualization.md
       - Vista 3D: user-guide/three-d-view.md
       - Línea temporal: user-guide/timeline.md
+      - Built-In Test: user-guide/built-in-test.md
       - Importación: user-guide/import.md
       - Exportación: user-guide/export.md
   - Plataforma:

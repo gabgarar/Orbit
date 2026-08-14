@@ -154,6 +154,10 @@ import {
 } from "./js/features/manualOrbit/timePolicy.js";
 import { createManualErpUploadGate } from "./js/features/manualOrbit/erpUploadGate.js";
 import { createPropagatedParametersContextBuilder } from "./js/features/propagatedParameters/context.js";
+import {
+    DIAGNOSTICS_LOCAL_STATE_EVENT,
+    DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT
+} from "./js/features/diagnostics/diagnosticsContract.js";
 
 const logger = getLogger("main");
 logger.info("Iniciando Cesium...");
@@ -1029,6 +1033,92 @@ function masterTimeRangeDetail() {
         startDate: range.startDate.toISOString(),
         endDate: range.endDate.toISOString()
     };
+}
+
+function diagnosticsCoverageFromRanges(ranges) {
+    const valid = (Array.isArray(ranges) ? ranges : []).filter((range) => (
+        Number.isFinite(Number(range?.startTimeMs))
+        && Number.isFinite(Number(range?.endTimeMs))
+    ));
+    if (!valid.length) return null;
+    const startTimeMs = Math.min(...valid.map((range) => Number(range.startTimeMs)));
+    const endTimeMs = Math.max(...valid.map((range) => Number(range.endTimeMs)));
+    return {
+        start: new Date(startTimeMs).toISOString(),
+        end: new Date(endTimeMs).toISOString()
+    };
+}
+
+/**
+ * Snapshot of facts known by the browser runtime.  This deliberately does
+ * not claim an IERS dataset, parser validation, or propagator result: those
+ * belong to the diagnostics service.  It only exposes the active scene's
+ * finite coverage and the explicit frame metadata already held locally.
+ */
+function buildDiagnosticsLocalState() {
+    const finiteDomain = getFiniteEphemerisDomainState();
+    const preciseEntries = getActivePreciseProductEntries();
+    const preciseRanges = finiteDomain.preciseRanges;
+    const preciseFrames = preciseEntries.map((entry) => resolvePreciseProductFrameStatus({
+        ...entry,
+        sp3: entry?.inputMetadata ?? entry?.input_metadata ?? entry?.sp3 ?? null
+    }));
+    const preciseMissingCoverage = preciseEntries.length > preciseRanges.length;
+    const masterRange = masterTimeRangeDetail();
+    const currentDate = getDisplayedSimulationDate();
+    const timelineClamped = masterRange ? isInsideMasterRange(currentDate) : null;
+    const sp3Status = !preciseEntries.length
+        ? "warning"
+        : preciseMissingCoverage || preciseFrames.some((status) => status.available === false)
+            ? "error"
+            : "healthy";
+    const oemStatus = finiteDomain.oemRanges.length ? "healthy" : "warning";
+    const mtrStatus = !masterRange ? "warning" : timelineClamped ? "healthy" : "error";
+
+    return {
+        updatedAt: new Date().toISOString(),
+        source: "frontend-scene",
+        sp3: {
+            status: sp3Status,
+            activeCount: preciseRanges.length,
+            registeredActiveCount: preciseEntries.length,
+            coverage: diagnosticsCoverageFromRanges(preciseRanges),
+            usingEop: preciseFrames.length ? preciseFrames.every((status) => status.erpApplied === true) : null,
+            eciAvailable: preciseFrames.length ? preciseFrames.every((status) => status.eciAvailable === true) : null,
+            message: !preciseEntries.length
+                ? "No hay un producto SP3 activo en la escena."
+                : preciseMissingCoverage
+                    ? "Hay un SP3 activo sin cobertura temporal local verificable."
+                    : "Cobertura y procedencia leídas de los metadatos de la escena."
+        },
+        oem: {
+            status: oemStatus,
+            activeCount: finiteDomain.oemRanges.length,
+            coverage: diagnosticsCoverageFromRanges(finiteDomain.oemRanges),
+            message: finiteDomain.oemRanges.length
+                ? "Cobertura OEM leída de las efemérides activas."
+                : "No hay una efeméride OEM activa en la escena."
+        },
+        mtr: {
+            status: mtrStatus,
+            active: Boolean(masterRange),
+            range: masterRange
+                ? { start: masterRange.startDate, end: masterRange.endDate }
+                : null,
+            timelineClamped,
+            currentDate: currentDate instanceof Date && !Number.isNaN(currentDate.getTime())
+                ? currentDate.toISOString()
+                : "",
+            finiteSources: finiteDomain.finiteSources
+        }
+    };
+}
+
+function publishDiagnosticsLocalState() {
+    const detail = buildDiagnosticsLocalState();
+    window.__orbitDiagnosticsLocalState = detail;
+    window.dispatchEvent(new CustomEvent(DIAGNOSTICS_LOCAL_STATE_EVENT, { detail }));
+    return detail;
 }
 
 /**
@@ -4354,6 +4444,11 @@ function ensureTopToolbar() {
             helpButton.dataset.orbitBound = "true";
             helpButton.addEventListener("click", () => window.dispatchEvent(new Event("orbit:help-open")));
         }
+        const diagnosticsButton = existing.querySelector("#topBuiltInTestBtn");
+        if (diagnosticsButton && diagnosticsButton.dataset.reactOwned !== "true" && diagnosticsButton.dataset.orbitBound !== "true") {
+            diagnosticsButton.dataset.orbitBound = "true";
+            diagnosticsButton.addEventListener("click", () => window.dispatchEvent(new Event("orbit:diagnostics-open")));
+        }
         setupTopSearchAutocomplete();
         return existing;
     }
@@ -4381,6 +4476,7 @@ function ensureTopToolbar() {
         <div class="toolbar-actions">
             <button id="topNotificationsBtn" class="toolbar-icon-btn has-notification" type="button" aria-label="Notificaciones" title="Notificaciones">♧</button>
             <button id="topHelpBtn" class="toolbar-icon-btn" type="button" aria-label="Ayuda" title="Ayuda">?</button>
+            <button id="topBuiltInTestBtn" class="toolbar-icon-btn" type="button" aria-label="Built-In Test" title="Built-In Test">✓</button>
             <button id="topSettingsBtn" class="toolbar-icon-btn" type="button" aria-label="Configuración" title="Configuración">⚙</button>
             <button id="topUserBtn" class="toolbar-avatar" type="button" aria-label="Perfil de GG" title="Perfil de GG">GG</button>
         </div>
@@ -4388,6 +4484,7 @@ function ensureTopToolbar() {
 
     toolbar.querySelector("#topSettingsBtn")?.addEventListener("click", () => runtimeConfigPanelApi?.toggle?.());
     toolbar.querySelector("#topHelpBtn")?.addEventListener("click", () => window.dispatchEvent(new Event("orbit:help-open")));
+    toolbar.querySelector("#topBuiltInTestBtn")?.addEventListener("click", () => window.dispatchEvent(new Event("orbit:diagnostics-open")));
 
     if (!document.getElementById("projectWelcome")) {
         const welcome = document.createElement("div");
@@ -7578,6 +7675,8 @@ function setupPropagatedParametersInspector() {
 
     // Inicializar toolbars después de setupRuntimeConfigPanel
     ensureTopToolbar();
+    window.addEventListener(DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT, publishDiagnosticsLocalState);
+    publishDiagnosticsLocalState();
     ensureLeftSidebar();
     setSimulationTimelineProvider(() => ({
         date: getDisplayedSimulationDate(),

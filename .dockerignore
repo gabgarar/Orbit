@@ -42,5 +42,8 @@ front/assets/basemap/Moon_color_16bit_srgb_4k.tif
 # image layer, and can make Docker fail while archiving OneDrive reparse points.
 config/precise-products/
 config/manual-erp-snapshots/
+# Automatically downloaded IERS EOP is mutable operational cache. Compose
+# mounts it at runtime and it must never be packed into an image layer.
+data/erp/
 tests/artifacts
 server/ui-artifacts/

@@ -3,8 +3,50 @@
 [Inicio](../index.md) · [Operación](index.md) · [Configuración](configuration.md)
 
 Orbit trata tiempo, orientación terrestre y realización como contratos
-explícitos. No descarga productos de tiempo durante una propagación ni una
-transformación: el operador monta snapshots locales e identifica cada revisión.
+explícitos. Ninguna propagación ni transformación descarga productos de tiempo.
+El runtime puede actualizar una caché operativa genérica en segundo plano al
+arrancar; las rutas científicas estrictas siguen identificando snapshots locales
+y cada revisión usada.
+
+## Caché automática IERS C01
+
+Cuando no se ha configurado un snapshot reproducible `ORBIT_EOP_C04_PATH`, el
+monitor de salud intenta cargar el producto oficial
+[IERS EOP_C01_IAU2000_1846-now](https://datacenter.iers.org/data/latestVersion/EOP_C01_IAU2000_1846-now.txt).
+Su caché mutable está en:
+
+```text
+./data/erp/EOP_C01_IAU2000_1846-now.txt
+```
+
+El monitor valida primero la copia local. Si falta o su fecha de modificación
+supera siete días, descarga el fichero por HTTPS, lo valida completamente y lo
+reemplaza de forma atómica. El inicio y `/health` no esperan esa descarga: el
+visor conserva una rotación nominal mientras el monitor trabaja.
+
+La validación exige fichero no vacío, cabecera C01 `COMB EARTH ROTATION DATA`,
+columnas `MJD`, `PM-X`, `PM-Y`, `UT1-TAI`, `dX`, `dY` y `LOD`, épocas
+ordenadas y valores finitos dentro de envolventes físicas. C01 publica
+`UT1-TAI`, que Orbit convierte a `UT1-UTC` con la tabla local de segundos
+intercalares; no se interpreta como si fuera un C04. `PM-X`, `PM-Y`, `dX` y
+`dY` se convierten de segundos de arco a radianes; `LOD` ya viene en segundos.
+La sonda de ejemplo comprueba el valor nominal `|LOD| < 1 ms`; el parser usa
+además una envolvente de corrupción de ±10 ms para no rechazar por diseño una
+serie combinada/histórica IERS legítima. Ese límite operativo no cambia la
+política más restrictiva del ERP adjunto a un producto.
+
+- Si IERS falla pero existe una copia validada, Orbit conserva esa copia y
+  publica **Warning** con su antigüedad.
+- Si no existe una copia válida, publica **Warning** o **Error** y utiliza
+  solo la rotación ITRF nominal para la vista. No fabrica ERP ni extrapola la
+  cobertura.
+- El archivo está fuera de la imagen Docker y se monta como volumen `./data`;
+  así sobrevive a un reinicio sin convertirse en parte de una release.
+
+Esta caché es una orientación global operativa, no un sustituto de un ERP de
+producto ni una autorización implícita para ECI estricto. Un C04 explícito
+tiene prioridad y nunca se reemplaza automáticamente. Un ERP adjunto a un
+SP3 continúa siendo su propia fuente, cobertura y procedencia.
 
 ## Cadena temporal y de marcos
 
@@ -111,7 +153,7 @@ y la ventana común efectiva cuando se ejecute una operación multi-fuente.
 
 | Tema | Contenido |
 | --- | --- |
-| [Archivos locales](time-eop/data-files.md) | C04 y leap-seconds.list requeridos. |
+| [Archivos locales](time-eop/data-files.md) | Caché C01 automática, C04 explícito y leap-seconds.list. |
 | [Modo estricto](time-eop/strict-mode.md) | Hashes, variables y cobertura comprobable. |
 | [Realizaciones y modo visual](time-eop/realizations.md) | IGS20, ITRF2020 y aproximaciones. |
 | [Actualización controlada](time-eop/updates.md) | Renovación de snapshots e invalidación de caché. |

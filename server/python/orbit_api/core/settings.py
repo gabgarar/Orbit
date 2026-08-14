@@ -5,6 +5,12 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[4]
 CONFIG_DIR = BASE_DIR / "config"
+DATA_DIR = BASE_DIR / "data"
+# Downloaded public IERS C01 data is mutable operational cache, not project
+# configuration and not an image build input. Compose mounts ``./data`` at
+# runtime so a validated cache survives a container rebuild/restart.
+ERP_DATA_DIR = DATA_DIR / "erp"
+IERS_EOP_C01_CACHE_PATH = ERP_DATA_DIR / "EOP_C01_IAU2000_1846-now.txt"
 SYSTEM_CONFIG_PATH = CONFIG_DIR / "system_config.json"
 # Local precise products are content-addressed source files plus a small
 # manifest.  ``config`` is mounted into the container, so imports survive a

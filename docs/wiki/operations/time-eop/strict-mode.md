@@ -23,3 +23,8 @@ El modo estricto impide extrapolar EOP y limita la calidad a final o rapid. El
 inicio falla si los productos no cubren la ventana requerida; las consultas
 fuera de cobertura se rechazan. Con SHA-256 configurado para UTC–TAI, cada
 consulta comprueba también la expiración indicada por #@.
+
+La caché automática C01 es deliberadamente distinta: mejora la orientación
+operativa global cuando no hay C04 explícito, pero no aporta un hash/versionado
+elegido por el operador y no satisface por sí sola este contrato estricto ni el
+ERP ligado a un SP3.

@@ -2,9 +2,52 @@
 
 [Start](../index.md) · [Operation](index.md) · [Settings](configuration.md)
 
-Orbit treats time, terrestrial orientation and realization as contracts
-explicit. Does not discharge time products during a propagation or a
-transformation: The operator mounts local snapshots and identifies each revision.
+Orbit treats time, terrestrial orientation and realization as explicit
+contracts. No propagation or transformation downloads time products. The
+runtime may refresh a generic operational cache in the background at startup;
+strict scientific routes still identify their local snapshots and every
+revision used.
+
+## Automatic IERS C01 cache
+
+When no reproducible `ORBIT_EOP_C04_PATH` snapshot is configured, the health
+monitor tries to load the official
+[IERS EOP_C01_IAU2000_1846-now](https://datacenter.iers.org/data/latestVersion/EOP_C01_IAU2000_1846-now.txt)
+product. Its mutable cache is:
+
+```text
+./data/erp/EOP_C01_IAU2000_1846-now.txt
+```
+
+The monitor validates the local copy first. If it is missing or its
+modification time is older than seven days, it downloads the file over HTTPS,
+validates it completely, and atomically replaces the cache. Startup and
+`/health` do not wait for that download: the viewer retains nominal rotation
+while the monitor works.
+
+Validation requires a non-empty file, the C01 `COMB EARTH ROTATION DATA`
+header, `MJD`, `PM-X`, `PM-Y`, `UT1-TAI`, `dX`, `dY`, and `LOD` columns,
+ordered epochs, and finite values inside physical envelopes. C01 publishes
+`UT1-TAI`, which Orbit converts to `UT1-UTC` with the local leap-second table;
+it is not interpreted as C04. `PM-X`, `PM-Y`, `dX`, and `dY` are converted from
+arcseconds to radians; `LOD` is already expressed in seconds.
+The example probe checks the nominal `|LOD| < 1 ms` value; the parser also uses
+a ±10 ms corruption envelope so it does not reject a legitimate combined or
+historical IERS series by design. That operational limit does not alter the
+stricter policy for an ERP attached to a product.
+
+- If IERS fails while a validated copy exists, Orbit keeps that copy and
+  publishes **Warning** with its age.
+- If there is no valid copy, it publishes **Warning** or **Error** and uses
+  only nominal ITRF rotation for visualization. It never invents ERP or
+  extrapolates coverage.
+- The file is outside the Docker image and mounted through `./data`, so it
+  survives a restart without becoming release content.
+
+This cache is global operational orientation, not a product ERP replacement or
+implicit authorization for strict ECI. An explicit C04 has priority and is
+never automatically replaced. An ERP attached to an SP3 keeps its own source,
+coverage, and provenance.
 
 ## Temporal and frame chain
 
@@ -109,7 +152,7 @@ multi-source operation runs.
 
 | Theme | Content |
 | --- | --- |
-| [Local Files](time-eop/data-files.md) | C04 and leap-seconds.list required. |
+| [Local Files](time-eop/data-files.md) | Automatic C01 cache, explicit C04, and leap-seconds.list. |
 | [Strict Mode](time-eop/strict-mode.md) | Hashes, variables and testable coverage. |
 | [Realizations and visual mode](time-eop/realizations.md) | IGS20, ITRF2020 and approaches. |
 | [Controlled Update](time-eop/updates.md) | Snapshot renewal and cache invalidation. |

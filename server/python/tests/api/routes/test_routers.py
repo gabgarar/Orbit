@@ -19,7 +19,9 @@ def _paths(router): return {route.path for route in router.routes}
 def test_every_domain_route_factory_has_its_public_paths():
     resolver = lambda *_: ("ISS", object())
     ephemeris = lambda *_: {"satellite": "ISS", "points": []}
-    assert _paths(create_system_router(lambda: 1, lambda: 1)) == {"/health", "/reload"}
+    assert _paths(create_system_router(lambda: 1, lambda: 1)) == {
+        "/health", "/reload", "/system/diagnostics", "/diagnostics",
+    }
     assert _paths(create_catalog_router(lambda: ["ISS"])) == {"/catalog"}
     assert _paths(create_precise_products_router(lambda *_args, **_kwargs: object(), lambda: {})) == {
         "/precise-products", "/precise-products/import", "/precise-products/preview",
@@ -34,6 +36,16 @@ def test_every_domain_route_factory_has_its_public_paths():
     export_paths = _paths(create_exports_router(lambda _: None, resolver, ephemeris, lambda x: x))
     assert {"/export/tle/{sat_id}", "/export/manual-ephemeris"} <= export_paths
     assert _paths(create_realtime_router(lambda: ([], {}, {}), lambda *_: [], 100)) == {"/ws"}
+
+
+def test_system_diagnostics_route_uses_the_injected_snapshot_without_global_state():
+    expected = {"status": "warning", "generatedAt": "2026-07-26T00:00:00+00:00", "components": {}}
+    router = create_system_router(lambda: 1, lambda: 1, lambda: expected)
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/system/diagnostics")
+    alias = next(route.endpoint for route in router.routes if route.path == "/diagnostics")
+
+    assert endpoint() == expected
+    assert alias() == expected
 
 
 def test_orbit_routes_turn_precise_coverage_or_frame_failures_into_422():

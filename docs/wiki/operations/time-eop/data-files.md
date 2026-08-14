@@ -4,6 +4,7 @@
 
 | Producto | Función | Estado y formato |
 | --- | --- | --- |
+| [IERS EOP_C01_IAU2000](https://datacenter.iers.org/data/latestVersion/EOP_C01_IAU2000_1846-now.txt) | Caché global operativa de orientación terrestre. | Descarga automática solo en segundo plano al arrancar/monitorizar, en `data/erp/EOP_C01_IAU2000_1846-now.txt`; se renueva si supera 7 días, se valida antes de activar y no sustituye un C04 explícito ni un ERP de SP3. C01 declara `UT1-TAI`, no `UT1-UTC`. |
 | [IERS EOP 20u24 C04](https://datacenter.iers.org/products/eop/long-term/c04_20u24/) | DUT1, movimiento polar, dX, dY y LOD. | Recomendado: ASCII C04-20 con IAU 2000A `dX`/`dY`; conservar revisión y SHA-256. C04-14 se acepta solo para reproducir archivos históricos. |
 | leap-seconds.list | UTC, TAI, TT y escalas GNSS. | ASCII IERS/NTP con identidad y expiración. |
 | [IERS Bulletin A](https://maia.usno.navy.mil/products/bulletin-a) / ERP IGS | EOP rápidos, predicciones o productos emparejados a SP3. | El ERP local `.ERP`/`.ERP.gz` se asocia explícitamente al producto GNSS para ITRF → ECI, junto a una ruta de realización válida. Bulletin A sigue sin importador directo y nunca es fallback automático. |

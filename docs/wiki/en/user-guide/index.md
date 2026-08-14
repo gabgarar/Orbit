@@ -18,6 +18,7 @@ limits affecting data retention and technical interpretation.
 | [3D View](three-d-view.md) | Change projection, navigation, camera and local recording. |
 | [Timeline](timeline.md) | Work in static, real-time or range simulation mode. |
 | [Master Time Range](master-time-range.md) | Keep one coherent UTC window for finite-coverage objects. |
+| [Built-In Test](built-in-test.md) | Inspect published runtime health and local scene state. |
 | [Ground Stations](ground-stations.md) | Configure stations and view sampled visibility. |
 | [Import](import.md) | Incorporate orbital data and GeoJSON, Orbit JSON, or CSV stations within available limits. |
 | [Export](export.md) | Download projects, elements, ephemerides, and stations. |

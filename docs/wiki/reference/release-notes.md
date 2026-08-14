@@ -6,10 +6,12 @@ Esta página registra únicamente versiones que pueden identificarse en el
 historial Git del repositorio. No sustituye un sistema de releases publicado ni
 declara una versión para cambios que permanecen sin commit.
 
-El repositorio no contiene tags Git en el estado inspeccionado ni un artefacto
-de release versionado. Los nombres de versión siguientes proceden de mensajes
+El repositorio no contiene tags Git ni un artefacto de release publicado en el
+estado inspeccionado. Los nombres de versión siguientes proceden de mensajes
 de commit; deben tratarse como hitos históricos del código fuente, no como
-paquetes descargables o contratos de soporte.
+paquetes descargables o contratos de soporte. El mecanismo de publicación sí
+está declarado: se activa únicamente con un tag SemVer válido y no convierte
+por sí solo este historial en una release publicada.
 
 ## Historial identificable
 
@@ -35,10 +37,10 @@ trabajo incompleto, cambios locales de configuración o ajustes no verificados.
 | Aspecto | Estado |
 | --- | --- |
 | Tags Git de release | No presentes en el repositorio inspeccionado. |
-| Artefactos de release publicados | No declarados. |
+| Artefactos de release publicados | No presentes en el estado inspeccionado. |
 | Changelog generado | No implementado. |
 | Versionado formal de REST API / WebSocket | No publicado. |
-| CI que cree o publique releases | No declarada. |
+| CI de calidad, documentación y release | Declarada en GitHub Actions; `release.yml` sólo publica ante un tag SemVer válido y verifica los checksums. |
 | Archivo de historial manual | Existe bajo `docs/general/VERSIONADO.md`. |
 
 ## Requisitos para una nota de versión futura
