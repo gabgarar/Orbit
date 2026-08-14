@@ -6093,24 +6093,6 @@ export function getLoadedPreciseProductTimeRanges({ activeOnly = true } = {}) {
 }
 
 /**
- * Aggregate all finite source ranges as individual records. This is the API
- * MTR consumers should use; callers that need one scene bound may take the
- * minimum/maximum deliberately, while joint analyses must retain the list.
- */
-export function getLoadedFiniteEphemerisTimeRanges() {
-    return [
-        ...getLoadedOemEphemerisTimeRanges().map((range) => ({ ...range, source: "OEM" })),
-        ...getLoadedManualOrbitTimeRanges(),
-        ...getLoadedPreciseProductTimeRanges()
-    ].sort((left, right) => (
-        left.startTimeMs - right.startTimeMs
-        || left.endTimeMs - right.endTimeMs
-        || String(left.source).localeCompare(String(right.source))
-        || String(left.id).localeCompare(String(right.id))
-    ));
-}
-
-/**
  * Return each valid OEM coverage independently.
  *
  * The aggregate bounds remain useful for the global timeline, but are unsafe
