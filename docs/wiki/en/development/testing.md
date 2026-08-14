@@ -16,12 +16,50 @@ They validate the implemented contracts, their limits and their known regression
 | Build React/Vite | `react-ui/` | Vite and validation of local assets | `npm run test:react-build --prefix server` |
 | Python Backend | `server/python/tests/` | `pytest` | `npm run test:backend --prefix server` or Docker Windows script. |
 | Browser interface | `tests/ui/` | Playwright | `npm run test:integration --prefix server` with Orbit now healthy. |
+| Public-product integration | `server/python/tests/integration/` | `pytest` with a validated cache | `./.scripts/test-real-data.ps1 -Download` (explicit). |
+| Real-data performance | Tests marked `performance` | `pytest` and a monotonic clock | `./.scripts/test-real-data.ps1 -Download -Performance` (explicit). |
 
 Python tests cover FastAPI routes, requests, runtime, propagators,
 stations, caches, OEM/SP3 formats, frames, implementations, EOP and scales
 time. The Node tests cover the gateway, repositories, catalog, proxy and
 deployment contracts. The existence of evidence does not imply total coverage or
 an orbital precision certification.
+
+## Unit, integration, and performance tests
+
+The normal suite consists of unit and contract tests with local synthetic or
+versioned fixtures. It covers, among other things, Kepler invariants,
+high-eccentricity Kepler solving, central gravity and harmonics, third bodies,
+SRP, Hermite continuity, time scales, ERP/EOP, frame transformations, SP3/OEM,
+and Master Time Range. It does not open a network connection, which is why it
+is the evidence required on every `push` and `pull request`.
+
+Integration tests with real products are a second, opt-in layer. They verify
+the end-to-end contract of a public SP3+ERP bundle: provenance, the applicable
+hash or content validation, time coverage, SP3 parsing, interpolation, and the
+transformations implemented by Orbit. The cache is stored under
+`data/test-real-data/` and is not versioned. A corrupt or incomplete artifact
+is rejected and does not count as a valid run.
+
+The current immutable bundle is the 2025-131 CODE MGEX pair (SP3 and ERP), with
+SHA-256 pinned for the compressed bytes. Orbit first looks for the equivalent
+pair in `../SP3`; if it is missing, `-Download` retrieves it over HTTPS from
+the allowed CODE host, validates it, and atomically publishes it in the cache.
+`-IncludeIers` adds IERS C01 as a separate probe: its `latestVersion` endpoint
+is mutable, so format, bounds, and a locally recorded SHA-256 are validated,
+but it is not presented as a source-pinned reproducible snapshot.
+
+Performance measurements are opt-in too. They report time observed on the host
+that runs them and can apply an explicit budget via
+`ORBIT_REAL_DATA_PERF_MAX_SECONDS`; they are not a promise that every CPU,
+hosted runner, GPU, or mission configuration will achieve the same number.
+
+The suite does not pretend that unavailable external evidence exists: it does
+not call STK or GMAT, does not download or validate JPL DE430, and does not
+claim MSISE-00 or NRLMSISE-00 support until those models are implemented. When
+an optional capability is unavailable — for example a local EGM2008
+2190×2190 field — the result is reported as `skipped` with its reason, not as a
+scientific success.
 
 ## Running on Windows
 
@@ -40,6 +78,33 @@ The `.cmd` and `.ps1` scripts centralize the reproducible route with Docker:
 `test-ui` restarts and waits for the healthcheck before launching Playwright. The
 `test-all` sequence is Node, legacy frontend, build React, Python backend
 and UI.
+
+Public-data validation is not run by `test-all`, because a network download
+must not make the daily test path non-deterministic. Run it deliberately when
+the additional evidence is needed:
+
+```powershell
+# Uses a local SP3 in ../SP3 first when present; otherwise downloads the
+# permitted public bundle, validates it, and stores it in data/test-real-data/.
+.\.scripts\test-real-data.ps1 -Download
+
+# Adds performance measurements using the same validated bundle.
+.\.scripts\test-real-data.ps1 -Download -Performance
+
+# Optional: validates and records mutable C01; it does not turn it into a
+# source-hash-pinned mission reference.
+.\.scripts\test-real-data.ps1 -Download -IncludeIers
+
+# Example of a machine-specific budget in seconds.
+$env:ORBIT_REAL_DATA_PERF_MAX_SECONDS = "5"
+.\.scripts\test-real-data.ps1 -Download -Performance
+```
+
+`ORBIT_RUN_REAL_DATA=1` enables this layer; `ORBIT_DOWNLOAD_REAL_DATA=1`
+permits a download when the cache is empty. Without these variables, real-data
+tests deliberately skip and state the missing capability. `ORBIT_REAL_DATA_DIR`
+forces a local source and `ORBIT_REAL_DATA_CACHE` changes the persistent cache
+location.
 
 ## Running from npm
 
@@ -86,8 +151,9 @@ GitHub Actions applies three reproducible gates:
 | `quality.yml` (**Orbit quality**) | Every `push` and `pull request`. | Node and frontend tests (including MTR), React build, ITRF/ECI, EOP/ERP, SP3/OEM, interpolation, propagator and force-model contracts; complete Python suite; Knip/ESLint/Ruff/Vulture audit; strict MkDocs build. |
 | `docs-pages.yml` (**Deploy documentation**) | Documentation pull requests and pushes to `main`. | Builds both translations with `mkdocs build --strict`, checks the generated entry pages, and publishes GitHub Pages only after a push to `main`. |
 | `release.yml` (**Release Orbit**) | `vMAJOR.MINOR.PATCH` tags and releases created from a valid tag. | Orbit Tracker build, reproducible archive, and `SHA256SUMS.txt` verified before it is attached to the release. |
+| `real-data.yml` (**Orbit real-data validation**) | `workflow_dispatch` only; manually started. | Restores or downloads the public SP3/ERP bundle, validates its contents and runs integration; the `performance` input enables the performance measurement. |
 
-All workflows use GitHub Actions npm or pip caches. Browser tests remain a
+The workflows use GitHub Actions npm, pip, or public-data caches. Browser tests remain a
 separate operational step because they need a healthy Docker instance; they
 are not represented as a remote check that can run without that service.
 
@@ -95,6 +161,11 @@ Documentation validation is local and deterministic: navigation, pages,
 Markdown links, and anchors become errors through `--strict`. CI does not
 probe external URLs because their availability is not controlled by the
 repository and would make the build non-reproducible.
+
+`quality.yml` explicitly sets the real-data and performance variables to `0`.
+Consequently, a push or PR cannot accidentally trigger an external download;
+the public-product cache is used only by the manual workflow, where every item
+is validated before use.
 
 ## Interface tests
 
@@ -125,6 +196,7 @@ healthy and are run by Playwright separately.
 | --- | --- |
 | Express, proxy or catalog routes | `test:node` and catalog/proxy specific tests. |
 | Pydantic model, propagator, format, frames or time | `pytest server/python/tests` and contract tests affected. |
+| SP3/ERP parser, data cache, or integration-contract change | Offline suite plus `test-real-data.ps1 -Download`; add `-Performance` only when cost is affected. |
 | React, Vite, Cesium or assets runtime | `test:react-build`, frontend tests and, if visible interaction changes, UI. |
 | Docker, Compose or operation scripts | Deployment contract testing, Docker build and healthcheck. |
 | Transverse change | `test-all` plus a review of the affected REST/WebSocket contracts. |

@@ -55,6 +55,37 @@ test("documentation workflow validates content on reviews and publishes only mai
     assert.match(config, /^\s+anchors: warn$/m);
 });
 
+test("real-data validation is manually dispatched, cached, and cannot make quality CI download data", async () => {
+    const [quality, realData, wrapper, command] = await Promise.all([
+        readProjectFile(".github", "workflows", "quality.yml"),
+        readProjectFile(".github", "workflows", "real-data.yml"),
+        readProjectFile(".scripts", "test-real-data.ps1"),
+        readProjectFile(".scripts", "test-real-data.cmd")
+    ]);
+
+    assert.match(realData, /^on:\s*\n\s+workflow_dispatch:/m);
+    assert.doesNotMatch(realData, /^\s+push:/m);
+    assert.doesNotMatch(realData, /^\s+pull_request:/m);
+    assert.match(realData, /performance:/);
+    assert.match(realData, /actions\/cache@v4/);
+    assert.match(realData, /path: data\/test-real-data/);
+    assert.match(realData, /ORBIT_RUN_REAL_DATA: "1"/);
+    assert.match(realData, /ORBIT_DOWNLOAD_REAL_DATA: "1"/);
+    assert.match(realData, /ORBIT_RUN_REAL_DATA_PERFORMANCE:/);
+    assert.match(realData, /server\/python\/tests\/infrastructure\/test_real_data_cache\.py/);
+    assert.match(realData, /server\/python\/tests\/integration\/test_real_data_integration\.py/);
+    assert.match(quality, /ORBIT_RUN_REAL_DATA: "0"/);
+    assert.match(quality, /ORBIT_DOWNLOAD_REAL_DATA: "0"/);
+    assert.match(quality, /ORBIT_RUN_REAL_DATA_PERFORMANCE: "0"/);
+    assert.match(wrapper, /\[switch\]\$Download/);
+    assert.match(wrapper, /\[switch\]\$Performance/);
+    assert.match(wrapper, /\[switch\]\$IncludeIers/);
+    assert.match(wrapper, /ORBIT_DOWNLOAD_REAL_DATA = if \(\$Download\)/);
+    assert.match(wrapper, /tests_support\.real_data/);
+    assert.match(wrapper, /test_real_data_integration\.py/);
+    assert.match(command, /test-real-data\.ps1/);
+});
+
 test("release workflow validates SemVer tags and verifies uploaded artifact checksums", async () => {
     const release = await readProjectFile(".github", "workflows", "release.yml");
     const checksumChecks = release.match(/sha256sum --check --strict SHA256SUMS\.txt/g) || [];

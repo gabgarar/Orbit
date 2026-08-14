@@ -42,11 +42,17 @@ Todos los accesos operativos están centralizados en `.scripts/`. Ejecútalos de
 .\.scripts\test-react-build.cmd # Compilacion de React y runtime Cesium
 .\.scripts\test-backend.cmd   # Pruebas de server/python/ dentro de Docker
 .\.scripts\test-all.cmd       # Frontend + backend + integración completa
+.\.scripts\test-real-data.cmd -Download # Integración SP3/ERP pública opcional con caché validada
 .\.scripts\audit-code.ps1     # Detecta código, imports y variables no usados
 ```
 
 La estructura y responsabilidades de cada capa de pruebas están en
-[la guía de pruebas](docs/wiki/development/testing.md).
+[la guía de pruebas](docs/wiki/development/testing.md). `test-real-data` es
+deliberadamente opcional: descarga o reutiliza productos públicos SP3/ERP sólo
+cuando se solicita con `-Download`, los valida antes de usarlos y conserva la
+caché fuera de Git en `data/test-real-data/`. Añade `-Performance` para obtener
+mediciones del equipo local y `-IncludeIers` para validar por separado la C01
+mutable de IERS; no se ejecuta en cada push o PR.
 
 Cada `push` y `pull request` ejecuta automáticamente **Orbit quality** en
 GitHub Actions: pruebas Node, frontend y Python, build React, build estricto de

@@ -1,0 +1,78 @@
+name: Orbit real-data validation
+
+# Reference products are deliberately opt-in.  Pull requests stay deterministic
+# and offline; an operator starts this workflow when they want to refresh or
+# exercise the validated public-data cache.
+on:
+  workflow_dispatch:
+    inputs:
+      performance:
+        description: Run the opt-in performance measurements after integration validation
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-data-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reference-data:
+    name: Public SP3/ERP integration and optional performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # The test helper validates every cached/downloaded artifact before use.
+      # This workflow is the only CI entry point that permits a cache miss to
+      # reach the network.
+      ORBIT_RUN_REAL_DATA: "1"
+      ORBIT_DOWNLOAD_REAL_DATA: "1"
+      ORBIT_REAL_DATA_CACHE: ${{ github.workspace }}/data/test-real-data
+      ORBIT_RUN_REAL_DATA_PERFORMANCE: ${{ inputs.performance && '1' || '0' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            server/requirements.txt
+            server/requirements-dev.txt
+
+      - name: Restore validated public-data cache
+        uses: actions/cache@v4
+        with:
+          path: data/test-real-data
+          key: orbit-real-data-${{ runner.os }}-v1
+          restore-keys: |
+            orbit-real-data-${{ runner.os }}-
+
+      - name: Install Python dependencies
+        run: |
+          python --version
+          python -m pip install --upgrade pip
+          python -m pip install -r server/requirements.txt -r server/requirements-dev.txt
+
+      - name: Run SP3/ERP public-data integration validation
+        run: |
+          echo "Real-data validation was explicitly requested."
+          echo "Validated cache: ${ORBIT_REAL_DATA_CACHE}"
+          python -m pytest -ra -q -c server/python/pytest.ini \
+            -m "not performance" \
+            server/python/tests/infrastructure/test_real_data_cache.py \
+            server/python/tests/integration/test_real_data_integration.py
+
+      - name: Run opt-in performance measurements
+        if: inputs.performance
+        run: |
+          echo "Performance ceilings are explicit test inputs, not a universal hardware claim."
+          python -m pytest -ra -q -c server/python/pytest.ini \
+            -m performance \
+            server/python/tests/integration/test_real_data_integration.py

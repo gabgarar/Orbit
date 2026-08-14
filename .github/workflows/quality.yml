@@ -144,6 +144,12 @@ jobs:
             server/python/tests/application/test_orbit_parameters.py
 
       - name: Run complete Python regression suite
+        # Keep push/PR validation reproducible: public reference data is only
+        # fetched by the manually dispatched real-data workflow.
+        env:
+          ORBIT_RUN_REAL_DATA: "0"
+          ORBIT_DOWNLOAD_REAL_DATA: "0"
+          ORBIT_RUN_REAL_DATA_PERFORMANCE: "0"
         run: python -m pytest -q server/python/tests
 
   static-analysis:

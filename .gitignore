@@ -32,6 +32,7 @@ dist/
 build/
 site/
 data/geopotential/
+data/test-real-data/
 /.venv/
 /.venv-docs/
 server/ui-artifacts/
