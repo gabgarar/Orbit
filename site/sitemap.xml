@@ -869,6 +869,13 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/user-guide/"/>
     </url>
     <url>
+        <loc>https://gabgarar.github.io/Orbit/user-guide/built-in-test/</loc>
+        <lastmod>2026-08-14</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/user-guide/built-in-test/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/user-guide/built-in-test/"/>
+    </url>
+    <url>
         <loc>https://gabgarar.github.io/Orbit/user-guide/export/</loc>
         <lastmod>2026-08-14</lastmod>
         <changefreq>daily</changefreq>
@@ -1812,6 +1819,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/user-guide/"/>
         <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/user-guide/"/>
+    </url>
+    <url>
+        <loc>https://gabgarar.github.io/Orbit/en/user-guide/built-in-test/</loc>
+        <lastmod>2026-08-14</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://gabgarar.github.io/Orbit/en/user-guide/built-in-test/"/>
+        <xhtml:link rel="alternate" hreflang="es" href="https://gabgarar.github.io/Orbit/user-guide/built-in-test/"/>
     </url>
     <url>
         <loc>https://gabgarar.github.io/Orbit/en/user-guide/export/</loc>

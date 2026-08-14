@@ -31,6 +31,8 @@ test("Docker local-only bind and host-port override stay aligned with restart an
     assert.match(dockerfile, /npm run test:node --prefix server/);
     assert.match(dockerfile, /npm run test:frontend --prefix server/);
     assert.match(dockerfile, /\/opt\/venv\/bin\/python -m pytest server\/python\/tests/);
+    assert.match(dockerfile, /^COPY \.github\/workflows\/ \.\/\.github\/workflows\/$/m);
+    assert.match(dockerfile, /^COPY mkdocs\.yml \.\/$/m);
     assert.match(dockerfile, /HEALTHCHECK --interval=10s --timeout=5s --start-period=10m --retries=5/);
     assert.ok(
         dockerfile.lastIndexOf("COPY config/ ./config/") > dockerfile.indexOf("RUN npm run build --prefix react-ui"),
@@ -39,6 +41,14 @@ test("Docker local-only bind and host-port override stay aligned with restart an
     assert.ok(
         dockerfile.indexOf("COPY config/eop/ ./config/eop/") < dockerfile.indexOf("RUN npm run test:node --prefix server"),
         "the pinned leap-second snapshot must be available to the image test layer"
+    );
+    assert.ok(
+        dockerfile.indexOf("COPY .github/workflows/ ./.github/workflows/") < dockerfile.indexOf("RUN npm run test:node --prefix server"),
+        "CI workflow contract tests need the versioned workflows inside the image test layer"
+    );
+    assert.ok(
+        dockerfile.lastIndexOf("COPY mkdocs.yml ./") < dockerfile.indexOf("RUN npm run test:node --prefix server"),
+        "CI workflow contract tests need the MkDocs policy inside the image test layer"
     );
     assert.ok(
         dockerfile.indexOf("RUN node server/scripts/validate-image-config.js") > dockerfile.lastIndexOf("COPY config/ ./config/"),

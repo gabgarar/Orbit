@@ -34,6 +34,13 @@ RUN python3 -m venv /opt/venv \
 # test suites and the React build to run again on the next restart.
 COPY Dockerfile compose.yaml .dockerignore ./
 COPY .scripts/ ./.scripts/
+# Node contract tests inspect the versioned CI workflows.  Copy only the
+# declarative workflow files into the test/build layer; runtime data remains
+# excluded and is still provided by Compose after the expensive checks.
+COPY .github/workflows/ ./.github/workflows/
+# The workflow contract also validates the MkDocs policy, but the documentation
+# sources and generated site remain isolated in the docs-builder stage.
+COPY mkdocs.yml ./
 COPY server/ ./server/
 COPY front/ ./front/
 COPY react-ui/ ./react-ui/
