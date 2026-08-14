@@ -10,6 +10,13 @@ const STATUS_COPY = Object.freeze({
     error: { label: "Error", dot: "bg-[#f17878]", badge: "border-[#8d3b42] bg-[#401d25] text-[#ffabb1]" }
 });
 
+// This compact panel uses just normal reading copy and auxiliary detail.
+// The page heading in ProjectWelcome is the sole title scale.
+const STARTUP_TYPE = Object.freeze({
+    normal: "!font-sans !text-[16px] !leading-[1.4]",
+    auxiliary: "!font-sans !text-[13px] !leading-[1.4]"
+});
+
 function text(value) {
     if (value === undefined || value === null) return "";
     return String(value).trim();
@@ -20,9 +27,9 @@ function startupStatus(value) {
 }
 
 function Icon({ status }) {
-    if (status === "healthy") return <span className="grid size-4 place-items-center rounded-full border border-[#378666] bg-[#123d30] text-[10px] font-bold text-[#8ef0bd]" aria-hidden="true">✓</span>;
-    if (status === "warning") return <span className="grid size-4 place-items-center rounded-full border border-[#9b7030] bg-[#432f17] text-[10px] font-bold text-[#ffd184]" aria-hidden="true">!</span>;
-    if (status === "error") return <span className="grid size-4 place-items-center rounded-full border border-[#a84a54] bg-[#491e26] text-[10px] font-bold text-[#ffb3b9]" aria-hidden="true">×</span>;
+    if (status === "healthy") return <span className="grid size-4 place-items-center rounded-full border border-[#378666] bg-[#123d30] text-[13px] font-bold text-[#8ef0bd]" aria-hidden="true">✓</span>;
+    if (status === "warning") return <span className="grid size-4 place-items-center rounded-full border border-[#9b7030] bg-[#432f17] text-[13px] font-bold text-[#ffd184]" aria-hidden="true">!</span>;
+    if (status === "error") return <span className="grid size-4 place-items-center rounded-full border border-[#a84a54] bg-[#491e26] text-[13px] font-bold text-[#ffb3b9]" aria-hidden="true">×</span>;
     return <span className="size-3.5 animate-spin rounded-full border-2 border-[#6f9cff] border-t-transparent" aria-hidden="true" />;
 }
 
@@ -71,9 +78,9 @@ function StartupProgress({ progress, ready }) {
         : `${summary} ${percent}% completado.`;
 
     return <section className="mb-2.5 rounded-[7px] border border-[#31577e] bg-[#091b31] px-2.5 py-2" aria-label="Progreso de preparación">
-        <div className="mb-1.5 flex items-start justify-between gap-2 text-[10px] leading-snug">
+        <div className={`mb-1.5 flex items-start justify-between gap-2 ${STARTUP_TYPE.normal}`}>
             <span className="min-w-0 font-semibold text-[#dceaff]">{summary}</span>
-            <span className="shrink-0 font-mono text-[#91b9f0]">{percent === null ? (ready ? "100%" : "…") : `${percent}%`}</span>
+            <span className={`shrink-0 font-mono text-[#91b9f0] ${STARTUP_TYPE.auxiliary}`}>{percent === null ? (ready ? "100%" : "…") : `${percent}%`}</span>
         </div>
         <div
             className="h-1.5 overflow-hidden rounded-full bg-[#152d49]"
@@ -90,14 +97,14 @@ function StartupProgress({ progress, ready }) {
                 style={percent === null ? undefined : { width: `${percent}%` }}
             />
         </div>
-        {(completed !== null || total !== null) && <p className="mt-1.5 mb-0 text-[9px] leading-none text-[#91a9c9]">Modelos preparados: {completed ?? 0}{total !== null ? ` / ${total}` : ""}</p>}
+        {(completed !== null || total !== null) && <p className={`mt-1.5 mb-0 text-[#91a9c9] ${STARTUP_TYPE.auxiliary}`}>Modelos preparados: {completed ?? 0}{total !== null ? ` / ${total}` : ""}</p>}
         {models.length > 0 && <ul className="mt-2 mb-0 grid list-none gap-1 border-t border-[#203b59] pt-1.5 pl-0">
             {models.map((model, index) => {
                 const modelPercent = boundedPercent(model?.percent);
                 const bytes = model?.bytesDownloaded !== null || model?.totalBytes !== null
                     ? `${formatBytes(model?.bytesDownloaded)}${model?.totalBytes !== null ? ` / ${formatBytes(model.totalBytes)}` : ""}`.trim()
                     : "";
-                return <li className="flex items-center justify-between gap-2 text-[9px] leading-snug text-[#afc2db]" key={model?.model || `${model?.stage || "model"}-${index}`}>
+                return <li className={`flex items-center justify-between gap-2 text-[#afc2db] ${STARTUP_TYPE.auxiliary}`} key={model?.model || `${model?.stage || "model"}-${index}`}>
                     <span className="min-w-0 truncate"><strong className="font-semibold text-[#d7e6fb]">{model?.model || "Modelo"}</strong>{model?.stage || model?.state ? ` · ${progressStageLabel(model?.state || model?.stage)}` : ""}{model?.message ? ` · ${model.message}` : ""}</span>
                     <span className="shrink-0 font-mono text-[#83aee3]">{modelPercent !== null ? `${modelPercent}%` : bytes}</span>
                 </li>;
@@ -111,8 +118,8 @@ function StartupStep({ step }) {
     const copy = STATUS_COPY[status];
     return <li className="grid grid-cols-[16px_minmax(0,1fr)_auto] items-start gap-x-2 py-1.5 first:pt-0 last:pb-0">
         <span className="mt-px"><Icon status={status} /></span>
-        <span className="min-w-0 text-[11px] leading-snug text-[#dbe7fa]">{step?.label || "Comprobación de arranque"}{step?.message && <small className="mt-0.5 block text-[10px] leading-snug text-[#9baec8]">{step.message}</small>}</span>
-        <span className={`mt-px inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[8px] leading-none font-bold ${copy.badge}`}><span className={`size-1 rounded-full ${copy.dot}`} aria-hidden="true" />{copy.label}</span>
+        <span className={`min-w-0 text-[#dbe7fa] ${STARTUP_TYPE.normal}`}>{step?.label || "Comprobación de arranque"}{step?.message && <small className={`mt-0.5 block text-[#9baec8] ${STARTUP_TYPE.auxiliary}`}>{step.message}</small>}</span>
+        <span className={`mt-px inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-bold ${copy.badge} ${STARTUP_TYPE.auxiliary}`}><span className={`size-1 rounded-full ${copy.dot}`} aria-hidden="true" />{copy.label}</span>
     </li>;
 }
 
@@ -137,18 +144,18 @@ export default function StartupStatusPanel({ startup }) {
         role="status"
     >
         <header className="flex min-h-11 items-center justify-between gap-2 border-b border-[#294667] bg-[rgba(15,32,55,.8)] px-3 py-2">
-            <div className="min-w-0"><span className="block text-[8px] leading-none font-bold tracking-[.15em] text-[#7298dc]">ORBIT · STARTUP</span><h2 id="startup-status-heading" className="mt-1 mb-0 truncate text-[12px] leading-none font-semibold text-[#edf4ff]">Estado de arranque</h2></div>
-            <div className="flex shrink-0 items-center gap-1.5"><span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] leading-none font-bold ${copy.badge}`}><span className={`size-1.5 rounded-full ${copy.dot}`} aria-hidden="true" />{copy.label}</span></div>
+            <div className="min-w-0"><span className={`block font-bold tracking-[.15em] text-[#7298dc] ${STARTUP_TYPE.auxiliary}`}>ORBIT · STARTUP</span><h2 id="startup-status-heading" className={`mt-1 mb-0 truncate font-semibold text-[#edf4ff] ${STARTUP_TYPE.normal}`}>Estado de arranque</h2></div>
+            <div className="flex shrink-0 items-center gap-1.5"><span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-bold ${copy.badge} ${STARTUP_TYPE.auxiliary}`}><span className={`size-1.5 rounded-full ${copy.dot}`} aria-hidden="true" />{copy.label}</span></div>
         </header>
         <div className="max-h-[min(360px,max(160px,calc(100dvh-330px)))] overflow-y-auto px-3 py-2.5 [scrollbar-color:#426589_transparent] [scrollbar-width:thin]">
             <StartupProgress progress={startup?.progress} ready={readiness.ready} />
-            {!readiness.ready && <section className="mb-2 rounded-[6px] border border-[#456d9d] bg-[#102946] px-2 py-1.5 text-[10px] leading-snug text-[#d8e8ff]" data-testid="startup-project-gate" role="status">
-                <strong className="block text-[#f0f6ff]">Creación e importación de proyectos temporalmente bloqueadas</strong>
+            {!readiness.ready && <section className={`mb-2 rounded-[6px] border border-[#456d9d] bg-[#102946] px-2 py-1.5 text-[#d8e8ff] ${STARTUP_TYPE.auxiliary}`} data-testid="startup-project-gate" role="status">
+                <strong className={`block text-[#f0f6ff] ${STARTUP_TYPE.normal}`}>Creación e importación de proyectos temporalmente bloqueadas</strong>
                 <span>{readiness.message}</span>
             </section>}
-            {message && <p className={`mt-0 mb-2 rounded-[6px] border px-2 py-1.5 text-[10px] leading-snug ${status === "error" ? "border-[#87464f] bg-[#401f27] text-[#ffbec3]" : status === "warning" ? "border-[#85642d] bg-[#3d2c14] text-[#ffdaa1]" : "border-[#294b70] bg-[#0c1c31] text-[#afc3df]"}`}>{message}</p>}
-            {steps.length ? <ol className="m-0 list-none divide-y divide-[#203650] p-0">{steps.map((step) => <StartupStep key={step.id || step.label} step={step} />)}</ol> : <p className="m-0 text-[11px] leading-snug text-[#aabbd2]">Esperando los primeros eventos de arranque. La interfaz sigue siendo utilizable.</p>}
-            {!readiness.ready && <p className="mt-2 mb-0 text-[9px] leading-snug text-[#8094b2]">Las comprobaciones continúan en segundo plano. Los errores de descarga se reintentan automáticamente cuando el servicio lo permite.</p>}
+            {message && <p className={`mt-0 mb-2 rounded-[6px] border px-2 py-1.5 ${STARTUP_TYPE.normal} ${status === "error" ? "border-[#87464f] bg-[#401f27] text-[#ffbec3]" : status === "warning" ? "border-[#85642d] bg-[#3d2c14] text-[#ffdaa1]" : "border-[#294b70] bg-[#0c1c31] text-[#afc3df]"}`}>{message}</p>}
+            {steps.length ? <ol className="m-0 list-none divide-y divide-[#203650] p-0">{steps.map((step) => <StartupStep key={step.id || step.label} step={step} />)}</ol> : <p className={`m-0 text-[#aabbd2] ${STARTUP_TYPE.normal}`}>Esperando los primeros eventos de arranque. La interfaz sigue siendo utilizable.</p>}
+            {!readiness.ready && <p className={`mt-2 mb-0 text-[#8094b2] ${STARTUP_TYPE.auxiliary}`}>Las comprobaciones continúan en segundo plano. Los errores de descarga se reintentan automáticamente cuando el servicio lo permite.</p>}
         </div>
     </section>;
 }

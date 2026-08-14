@@ -297,7 +297,10 @@
 .project-welcome-mark { margin-top: 30px; color: #2888ff; font: 800 19px/1 sans-serif; letter-spacing: 12px; }
 #projectWelcome h1 { margin: 30px 0 18px; color: #fff; font: 600 clamp(34px, 3vw, 48px)/1.1 sans-serif; }
 .project-welcome-rule { width: 64px; height: 3px; margin: 0 auto 27px; border-radius: 8px; background: #168fff; box-shadow: 0 0 14px rgba(22,143,255,.6); }
-#projectWelcome p { margin: 0; color: #b9c9df; font: 400 20px/1.55 sans-serif; }
+/* The legacy welcome contains a single direct-copy paragraph.  Keeping this
+   selector narrow prevents its 20px shorthand from overriding the React
+   startup ledger's explicit normal and auxiliary type scales. */
+#projectWelcome .project-welcome-card > p { margin: 0; color: #b9c9df; font: 400 20px/1.55 sans-serif; }
 .project-welcome-actions { display: flex; justify-content: center; gap: 16px; margin-top: 40px; }
 #projectWelcome button { min-width: 0; flex: 1; padding: 16px 14px; border: 1px solid #168fff; border-radius: 11px; background: rgba(5, 18, 36, .64); color: #fff; font: 600 18px/1 sans-serif; cursor: pointer; transition: transform .15s ease, background .15s ease; }
 #projectWelcome button:hover { transform: translateY(-2px); background: rgba(21, 92, 180, .36); }
