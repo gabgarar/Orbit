@@ -17,7 +17,9 @@ export const DIAGNOSTIC_ENDPOINT_CANDIDATES = Object.freeze([
 ]);
 
 export const DIAGNOSTIC_COMPONENTS = Object.freeze([
+    { id: "startup", label: "Startup sequence" },
     { id: "erp", label: "ERP / EOP loader" },
+    { id: "gravity", label: "Gravity models (EGM96 / EGM2008)" },
     { id: "sp3", label: "SP3 parser" },
     { id: "oem", label: "OEM parser" },
     { id: "propagators", label: "Propagators" },
@@ -28,10 +30,23 @@ export const DIAGNOSTIC_COMPONENTS = Object.freeze([
 ]);
 
 const COMPONENT_ALIASES = Object.freeze({
+    startup: "startup",
+    startupsequence: "startup",
+    startuplifecycle: "startup",
+    startupstatus: "startup",
+    boot: "startup",
+    initialization: "startup",
     erp: "erp",
     eop: "erp",
     erploader: "erp",
     eoploader: "erp",
+    gravity: "gravity",
+    gravitymodel: "gravity",
+    gravitymodels: "gravity",
+    geopotential: "gravity",
+    geopotentialmodel: "gravity",
+    geopotentialmodels: "gravity",
+    earthgravity: "gravity",
     sp3: "sp3",
     sp3parser: "sp3",
     preciseproducts: "sp3",

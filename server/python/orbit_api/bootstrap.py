@@ -34,7 +34,10 @@ from orbit_api.core.settings import (
 )
 from orbit_api.frames import build_frame_transformer_from_environment
 from orbit_api.infrastructure.config_watcher import start_configuration_watcher
-from orbit_api.orbits.forces import build_gravity_field_from_environment
+from orbit_api.orbits.forces import (
+    build_gravity_field_from_environment,
+    build_gravity_model_registry_from_environment,
+)
 from orbit_api.timekeeping import IersEopCacheService, ensure_utc
 
 
@@ -83,6 +86,10 @@ def create_app() -> FastAPI:
     # server starts.  Leaving it unset is valid; the manual API then keeps the
     # legacy zonal terms but rejects the configurable geopotential term.
     gravity_field = build_gravity_field_from_environment()
+    # The NGA archive registry starts empty by design. Its monitor owns every
+    # local validation/download after FastAPI becomes healthy; app construction
+    # and all propagation paths remain free of that potentially large I/O.
+    gravity_models = build_gravity_model_registry_from_environment(environment)
     # Manual TIME-tab ERP uploads are content-addressed local snapshots. The
     # mounted config volume keeps their immutable bytes available to project
     # restores without serialising them into project JSON.
@@ -93,6 +100,7 @@ def create_app() -> FastAPI:
         eop_cache=automatic_eop,
         eop_payload=pinned_eop_diagnostics.payload if pinned_eop_diagnostics is not None else None,
         gravity_field=gravity_field,
+        gravity_models=gravity_models,
         precise_products_payload=runtime.precise_products_payload,
         github_actions=GitHubActionsDiagnostics(
             repository=str(environment.get("ORBIT_GITHUB_REPOSITORY", "gabgarar/Orbit")),
@@ -102,6 +110,7 @@ def create_app() -> FastAPI:
     monitor = SystemHealthMonitor(
         diagnostics,
         eop_cache=automatic_eop,
+        gravity_models=gravity_models,
         interval_seconds=_monitor_interval_seconds(environment),
     )
 
@@ -129,6 +138,7 @@ def create_app() -> FastAPI:
     app.state.system_diagnostics = diagnostics
     app.state.system_health_monitor = monitor
     app.state.automatic_eop_cache = automatic_eop
+    app.state.gravity_model_registry = gravity_models
     app.include_router(
         create_system_router(
             runtime.satellite_count,
@@ -157,6 +167,8 @@ def create_app() -> FastAPI:
         runtime.frame_transformer,
         gravity_field,
         manual_erp_repository,
+        gravity_models,
+        diagnostics.startup_readiness_payload,
     ))
     app.include_router(create_orbit_parameters_router(
         runtime.resolve_propagator,
@@ -164,6 +176,8 @@ def create_app() -> FastAPI:
         runtime.frame_transformer,
         gravity_field,
         manual_erp_repository,
+        gravity_models,
+        diagnostics.startup_readiness_payload,
     ))
     app.include_router(create_ground_stations_router(
         runtime.resolve_propagator,
@@ -172,6 +186,7 @@ def create_app() -> FastAPI:
         runtime.frame_transformer,
         gravity_field,
         manual_erp_repository,
+        gravity_models,
     ))
     app.include_router(create_exports_router(
         runtime.find_catalog_entry,
@@ -181,6 +196,7 @@ def create_app() -> FastAPI:
         runtime.frame_transformer,
         gravity_field,
         manual_erp_repository,
+        gravity_models,
     ))
     app.include_router(create_realtime_router(
         runtime.get_state_snapshot,

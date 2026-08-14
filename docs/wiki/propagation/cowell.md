@@ -48,8 +48,8 @@ cada modelo se evalúe físicamente en ese marco:
 | --- | --- | --- |
 | Central | `EME2000`. | Invariante ante rotación. |
 | `j2`, `j3`, `j4` | Compatibilidad en `EME2000`. | Heredado; aproxima el eje terrestre como fijo. |
-| `drag` | `ITRF` instantáneo, devuelto a `EME2000`. | Disponible; atmósfera exponencial exploratoria, con EOP, leap seconds y ERFA estrictos. |
-| `geopotential` | `ITRF` instantáneo, devuelto a `EME2000`. | Disponible con ICGEM local y EOP, leap seconds y ERFA estrictos. |
+| `drag` | `ITRF` instantáneo, devuelto a `EME2000`. | Disponible; usa IERS C01 automático o rotación nominal etiquetada, además de leap seconds y ERFA. |
+| `geopotential` | `ITRF` instantáneo, devuelto a `EME2000`. | Disponible con campo validado e IERS C01 automático o rotación nominal etiquetada, además de leap seconds y ERFA. |
 | Sol, Luna, SRP y relatividad | Marco celeste/inercial coherente con `EME2000`. | Disponibles con contratos propios de época, cobertura y procedencia. |
 
 Para un término terrestre de alta fidelidad, Cowell no integra en un marco

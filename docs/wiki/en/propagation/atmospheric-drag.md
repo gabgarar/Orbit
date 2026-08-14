@@ -9,9 +9,10 @@ is not available in two body, the fixed J2+J3+J4 preset, or configurable SGP4
 from Orbit.
 
 Unlike historical zonals, drag is evaluated in instantaneous ITRF **at every
-RK4 stage**. It therefore fails closed if a strict EOP, leap-second, and
-ERFA/SOFA route is absent. It does not fall back to a fixed <code>EME2000</code>
-atmosphere.
+RK4 stage**. For manual orbits it uses the same automatic IERS C01 provider as
+geopotential. When no valid EOP sample exists, it uses nominal Earth rotation
+marked with a warning; it neither falls back to a fixed <code>EME2000</code>
+atmosphere nor asks for a manual ERP.
 
 ## Applied model
 
@@ -48,9 +49,12 @@ whereas drag acceleration returns as a free vector. Orbit does not integrate in
 ITRF and therefore does not implicitly mix Coriolis, centrifugal, or Euler
 fictitious terms.
 
-The route requires EOP coverage, DUT1 and polar motion, a local versioned valid
-leap-second table, and ERFA/SOFA IAU 2006/2000A. If any is absent, selecting
-<code>drag</code> must return an explicit error before integration.
+With IERS coverage, the route applies DUT1, polar motion, and LOD. When automatic
+coverage is absent, the orbit provenance explicitly marks nominal rotation. The
+route still requires a local versioned valid leap-second table and ERFA/SOFA IAU
+2006/2000A; if either is absent, selecting <code>drag</code> returns an explicit
+error before integration. A manual ERP snapshot is an optional override that,
+when selected, must cover the design.
 
 ## Parameters
 

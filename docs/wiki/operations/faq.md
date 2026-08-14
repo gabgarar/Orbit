@@ -102,4 +102,21 @@ usuarios, control de acceso ni colaboración en tiempo real.
 Compruebe docker compose ps o ejecute ./.scripts/orbit-status.cmd. Para
 comprobar el código y contratos cubiertos, ejecute las suites descritas en
 [Validación](validation.md). Un healthcheck correcto no sustituye la revisión
-de los datos de entrada ni de la configuración EOP.
+de los datos de entrada ni de la configuración EOP. Es un resultado de
+liveness, no una prueba de que haya terminado el readiness de arranque. Use el
+panel **Estado de arranque** o el componente diagnóstico `startup`: las acciones
+de proyecto solo se habilitan después de su decisión explícita
+`ready`/`projectReady`, y muestra cualquier descarga o validación pendiente.
+
+## ¿Por qué queda bloqueado el arranque tras un error de gravedad NGA?
+
+Orbit conserva visible el error y su paso de readiness afectado, en lugar de
+habilitar silenciosamente el trabajo de proyecto. Reintenta automáticamente el
+trabajo NGA de descarga o validación que bloquee el arranque hasta cinco veces,
+tras 30, 60, 120, 240 y 300 segundos. El contenedor no se reinicia y `/health`
+puede seguir vivo durante esos intentos. Cuando se agotan los cinco, el monitor
+vuelve a su intervalo normal; el error mostrado permanece hasta que una
+comprobación posterior correcta recupere `ready` o `degraded-ready`, según
+corresponda. Este comportamiento no promete un control de reintento manual:
+revise el blocker publicado, la conectividad, la configuración y la validez de
+la caché en vez de reiniciar Orbit repetidamente.

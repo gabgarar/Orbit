@@ -11,7 +11,7 @@ usa SGP4 y no acepta esta composición como selector operativo.
 | --- | --- | --- | --- |
 | Punto masa | `central` | Disponible. | Dos cuerpos y término obligatorio de Cowell. |
 | Zonales J2/J3/J4 | `j2`, `j3`, `j4` | Disponible por compatibilidad. | Estudios manuales heredados. |
-| Armónicos esféricos ICGEM | `geopotential` | Disponible con campo local configurado. | Campo configurable hasta grado/orden con ruta ITRF estricta. |
+| Armónicos esféricos | `geopotential` | Disponible con un campo ICGEM local explícito o una caché NGA automática validada. | Campo configurable en ITRF; órbita manual usa IERS automático o rotación nominal etiquetada. |
 
 ## Zonales heredados
 
@@ -31,9 +31,10 @@ en cada etapa de integración.
 
 ## Campo armónico configurable
 
-El modelo nuevo se define mediante un fichero ICGEM `.gfc` y una selección de
-grado \(N\) y orden \(M\). Solo se aceptan coeficientes completamente
-normalizados. La relación zonal es:
+El modelo se define mediante un fichero ICGEM `.gfc` explícito o una caché
+automática NGA `EGM96`/`EGM2008` validada, más la selección de grado \(N\) y
+orden \(M\). Solo se aceptan coeficientes completamente normalizados. La
+relación zonal es:
 
 $$
 J_n=-\sqrt{2n+1}\;\bar C_{n0}.
@@ -47,14 +48,43 @@ El término armónico aporta la parte no central de la aceleración. `central`
 sigue siendo obligatorio, y `geopotential` se excluye mutuamente con los
 interruptores J2/J3/J4 para evitar doble conteo.
 
-El contrato de selección admite hasta **2159 × 2159**, que es el máximo
-semántico de un campo completo EGM2008. No debe confundirse con el presupuesto
-del evaluador actual: el RK4 Python rechaza de forma explícita una etapa con
-más de 2.555 coeficientes armónicos no centrales. Un campo `70 × 70` denso cabe
-como perfil actual; una selección zonal/de orden bajo puede alcanzar mayor grado si
-respeta ese presupuesto. No existe truncación silenciosa. La tabla de elección
-por LEO, MEO/GNSS, GEO y misión se mantiene en
+El modelo seleccionado solo puede elegirse numéricamente tras validar su fuente
+de coeficientes descomprimida. Entonces el registro publica `maxDegree`,
+`maxOrder`, un resumen de cobertura por grado, `completeThroughDegree` y
+`tailMaxOrder`; la UI limita grado/orden a esos hechos detectados y devuelve una
+selección efectiva `clamped` explícita cuando procede. Antes de validar, los
+límites numéricos son `null` y el selector falla cerrado.
+
+El archivo EGM2008 se maneja dentro de un sobre protector/informativo de
+2190 × 2190, pero no es un límite científico efectivo ni una afirmación de
+matriz densa. Controla el archivo real ya descomprimido. Esto no debe
+confundirse con el presupuesto del evaluador actual: el RK4 Python rechaza de
+forma explícita una etapa con más de 2.555 coeficientes armónicos no centrales.
+Un campo `70 × 70` denso cabe en el perfil actual; una selección zonal/de orden
+bajo puede alcanzar grados superiores si continúa dentro de ese presupuesto.
+No hay truncado silencioso. La tabla de selección para LEO, MEO/GNSS, GEO y
+misión se mantiene en
 [Geopotencial configurable](../propagation/full-geopotential.md).
+
+## Caché automática NGA
+
+El registro puede renovar archivos oficiales EGM96 o EGM2008 en
+`data/geopotential` después de que la API esté saludable. Valida una caché
+local antes de usarla, la renueva tras la antigüedad configurada (30 días por
+defecto), acepta únicamente las URL HTTPS fijas de NGA sin redirecciones,
+valida el miembro ZIP esperado y toda la cobertura de coeficientes, e instala
+el resultado de forma atómica junto con su huella. No descarga nada dentro de
+una etapa de propagación.
+
+Built-In Test publica los límites detectados y el perfil de cobertura después
+de esa validación. `hardMaxDegree`/`hardMaxOrder` del parser son solo techos de
+protección de entrada; no se ofrecen como capacidad de modelo no verificada.
+
+Un campo explícito `ORBIT_GRAVITY_FIELD_PATH` sigue siendo la elección
+reproducible de prioridad superior. Si no puede completarse el refresco
+automático, una caché válida anterior sigue disponible con **Warning**; si no
+existe, `geopotential` queda no disponible, sin fallback a J2/J3/J4. La caché
+NGA no aporta ERP ni una ruta ECI estricta.
 
 ## Marco correcto de evaluación
 
@@ -71,11 +101,15 @@ las fuerzas ficticias de marco rotante. Consulte [Geopotencial configurable](../
 
 ## Requisitos de trazabilidad
 
-Un resultado que usa un campo armónico debe registrar campo, fuente, huella,
-normalización, \(\mu\), radio de referencia, grado, orden, EOP, leap seconds,
-realización terrestre y método de transformación. Si algún requisito falta, el
-modelo debe quedar deshabilitado y el resultado no se puede presentar como
-ITRF/ECI riguroso.
+Un resultado que use un campo armónico debe registrar campo, URL de fuente o
+fuente local, huella de archivo/fichero, instante de validación de caché,
+normalización, sistema de marea, \(\mu\), radio de referencia, grado/orden
+detectados y perfil de cobertura, grado/orden solicitados y efectivos, EOP,
+segundos intercalares, realización terrestre y método de transformación. Si
+falta la ruta temporal (por ejemplo segundos intercalares o ERFA/SOFA), el
+modelo debe seguir deshabilitado. Si solo falta EOP automático, la órbita manual
+se etiqueta como rotación nominal y nunca puede presentarse como ITRF/ECI
+riguroso.
 
 ## Límites actuales y siguientes incrementos
 

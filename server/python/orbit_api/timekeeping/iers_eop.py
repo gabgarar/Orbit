@@ -29,6 +29,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .eop import (
     ARCSECOND_TO_RADIAN,
+    EarthOrientationCoverageError,
     IGS_ERP_MAX_ABS_POLAR_MOTION_ARCSECONDS,
     EarthOrientation,
     EarthOrientationProvider,
@@ -474,11 +475,24 @@ class IersEopCacheService(EarthOrientationProvider):
             return self._provider
 
     def at(self, moment: datetime.datetime) -> EarthOrientation:
-        """Read active EOP or return an explicitly marked visual fallback."""
+        """Read active EOP or return an explicitly marked nominal fallback.
+
+        C01 is an operational global source, not a promise of arbitrary
+        historical/future coverage.  Manual Earth-fixed propagation may use
+        the same process service, so an out-of-window epoch must degrade to
+        the labelled nominal rotation rather than trigger a hidden download or
+        demand a per-orbit ERP upload. Product-bound precise SP3 providers do
+        not use this service and remain fail-closed outside their ERP window.
+        """
 
         with self._state_lock:
             provider = self._provider
-        return provider.at(moment) if provider is not None else self._fallback.at(moment)
+        if provider is None:
+            return self._fallback.at(moment)
+        try:
+            return provider.at(moment)
+        except EarthOrientationCoverageError:
+            return self._fallback.at(moment)
 
     def diagnostics(self) -> EopCacheDiagnostics:
         """Read an immutable diagnostic snapshot without touching disk/network."""

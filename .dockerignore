@@ -45,5 +45,9 @@ config/manual-erp-snapshots/
 # Automatically downloaded IERS EOP is mutable operational cache. Compose
 # mounts it at runtime and it must never be packed into an image layer.
 data/erp/
+# Official NGA EGM archives are likewise an operational cache. They can be
+# large and contain externally supplied coefficients, so only the mounted
+# runtime data volume may hold them; never bake them into an image layer.
+data/geopotential/
 tests/artifacts
 server/ui-artifacts/

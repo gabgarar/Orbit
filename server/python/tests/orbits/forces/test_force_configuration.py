@@ -5,8 +5,11 @@ from __future__ import annotations
 import hashlib
 
 import pytest
-from orbit_api.orbits.forces.configuration import build_gravity_field_from_environment
-from orbit_api.orbits.forces.geopotential import GravityFieldError
+from orbit_api.orbits.forces.configuration import (
+    build_gravity_field_from_environment,
+    local_icgem_model_payload,
+)
+from orbit_api.orbits.forces.geopotential import GravityFieldError, GravityFieldModel
 
 
 def _icgem_payload() -> bytes:
@@ -69,3 +72,11 @@ def test_gravity_provenance_never_configures_without_a_local_field_path(key):
     with pytest.raises(GravityFieldError, match="ORBIT_GRAVITY_FIELD_PATH"):
         build_gravity_field_from_environment({key: "x" if key != "ORBIT_GRAVITY_FIELD_SHA256" else "f" * 64})
 
+
+def test_local_icgem_diagnostics_places_validation_at_model_level():
+    payload = local_icgem_model_payload(GravityFieldModel.wgs84_zonal_degree4())
+
+    assert payload is not None
+    assert payload["validation"] == "complete triangular ICGEM gfc coverage validated"
+    assert "validation" not in payload["coverage"]
+    assert payload["coverage"]["degreeCoverage"][0]["orderRule"] == "degree"

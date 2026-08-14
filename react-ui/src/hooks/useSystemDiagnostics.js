@@ -38,11 +38,14 @@ function publishDiagnosticsState(snapshot) {
  * duplicate API calls and lets MTR/SP3 remain visible if a backend predates
  * the endpoint.
  */
-export default function useSystemDiagnostics({ enabled = true, pollIntervalMs = DEFAULT_POLL_INTERVAL_MS } = {}) {
+export default function useSystemDiagnostics({ enabled = true, pollIntervalMs = DEFAULT_POLL_INTERVAL_MS, stopWhen = null } = {}) {
     const [state, setState] = useState(initialState);
     const mountedRef = useRef(false);
     const inFlightRef = useRef(false);
     const abortRef = useRef(null);
+    const intervalRef = useRef(null);
+    const stopWhenRef = useRef(stopWhen);
+    stopWhenRef.current = stopWhen;
     const endpoints = useMemo(() => DIAGNOSTIC_ENDPOINT_CANDIDATES, []);
     const endpointsKey = endpoints.join("|");
 
@@ -76,6 +79,12 @@ export default function useSystemDiagnostics({ enabled = true, pollIntervalMs = 
             };
             publishDiagnosticsState(snapshot);
             setState((current) => ({ ...current, ...snapshot, refreshing: false }));
+            if (typeof stopWhenRef.current === "function" && stopWhenRef.current(snapshot)) {
+                if (intervalRef.current) {
+                    window.clearInterval(intervalRef.current);
+                    intervalRef.current = null;
+                }
+            }
             return snapshot;
         } catch (error) {
             // An unmount abort is expected and must not overwrite a newer
@@ -120,9 +129,11 @@ export default function useSystemDiagnostics({ enabled = true, pollIntervalMs = 
         const interval = window.setInterval(() => {
             requestLocalState();
             void refresh();
-        }, Math.max(10_000, Number(pollIntervalMs) || DEFAULT_POLL_INTERVAL_MS));
+        }, Math.max(1_000, Number(pollIntervalMs) || DEFAULT_POLL_INTERVAL_MS));
+        intervalRef.current = interval;
         return () => {
             mountedRef.current = false;
+            if (intervalRef.current === interval) intervalRef.current = null;
             window.clearInterval(interval);
             abortRef.current?.abort();
         };

@@ -62,6 +62,46 @@ def test_application_installs_a_nonblocking_automatic_c01_provider_only_without_
     assert app.state.system_diagnostics.payload()["components"]["erp"]["automatic"] is True
 
 
+def test_application_registers_nga_gravity_cache_without_downloading_during_boot(tmp_path, monkeypatch):
+    cache_root = tmp_path / "data" / "geopotential"
+    monkeypatch.setenv("ORBIT_GRAVITY_CACHE_DIR", str(cache_root))
+    monkeypatch.setenv("ORBIT_GRAVITY_MODEL", "EGM96")
+    monkeypatch.setenv("ORBIT_GRAVITY_REFRESH_DAYS", "14")
+    monkeypatch.setenv("ORBIT_GRAVITY_AUTO_DOWNLOAD", "true")
+    monkeypatch.setenv("ORBIT_GRAVITY_DOWNLOAD_TIMEOUT_SECONDS", "12")
+
+    app = create_app()
+
+    registry = app.state.gravity_model_registry
+    assert registry.cache_root == cache_root
+    assert registry.active_model == "EGM96"
+    assert registry.refresh_age.days == 14
+    assert registry.timeout_seconds == 12
+    # Registry construction publishes a pending diagnostic only. The monitor
+    # owns local validation/download after ASGI lifespan startup.
+    assert not cache_root.exists()
+    gravity = app.state.system_diagnostics.payload()["components"]["gravity"]
+    assert gravity["activeModel"] == "EGM96"
+    assert gravity["models"]["EGM96"]["refreshDue"] is True
+
+
+def test_application_exposes_a_pending_startup_ledger_without_starting_background_work(tmp_path, monkeypatch):
+    cache = tmp_path / "data" / "erp" / "EOP_C01_IAU2000_1846-now.txt"
+    monkeypatch.setenv("ORBIT_EOP_C04_PATH", "")
+    monkeypatch.setenv("ORBIT_EOP_STRICT", "")
+    monkeypatch.setenv("ORBIT_EOP_C01_CACHE_PATH", str(cache))
+
+    app = create_app()
+    startup = app.state.system_diagnostics.payload()["components"]["startup"]
+
+    assert startup["status"] == "pending"
+    assert startup["details"]["completedAt"] is None
+    assert startup["details"]["steps"][0]["id"] == "configuration"
+    # Creating the ASGI application only publishes facts. Network/cache work
+    # belongs to the daemon monitor after lifespan startup.
+    assert not cache.exists()
+
+
 def test_application_keeps_an_explicit_c04_out_of_the_automatic_cache(tmp_path, monkeypatch):
     snapshot = tmp_path / "eopc04.txt"
     snapshot.write_text(

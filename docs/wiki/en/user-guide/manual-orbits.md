@@ -52,6 +52,12 @@ that start. It can then be edited manually. If **Full geopotential** or
 coverage. An inertial-force-only orbit may omit ERP, but that does not thereby
 obtain a rigorous terrestrial transformation.
 
+The automatic IERS C01 operational cache is not a manual ERP attachment. It
+may report global operational orientation health, but TIME never copies it,
+an explicit C04, or ERP data attached to an existing SP3 into the manual
+orbit. Attach a local ERP in TIME whenever Earth-bound forces require one;
+its coverage is what defines the initial design window and state-vector epoch.
+
 If the project already contains SP3, OEM, or a simulation range, it is not
 mixing clocks: all instants are UTC. However, comparing or analysing multiple
 layers must use the overlap shown by TIME. If there is no overlap, the manual

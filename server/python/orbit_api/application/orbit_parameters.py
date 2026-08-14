@@ -31,7 +31,7 @@ from orbit_api.domain.requests import (
 )
 from orbit_api.application.manual_erp import ManualErpError, ManualErpRepository, resolve_manual_erp_input
 from orbit_api.frames import FrameTransformService, StateVector
-from orbit_api.orbits.forces import GravityFieldModel
+from orbit_api.orbits.forces import GravityFieldModel, GravityModelRegistry
 from orbit_api.orbits.propagators.classical import (
     EARTH_EQUATORIAL_RADIUS_KM,
     EARTH_MU_KM3_S2,
@@ -373,6 +373,7 @@ def _manual_source(
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
     manual_erp_repository: ManualErpRepository | None = None,
+    gravity_model_registry: GravityModelRegistry | None = None,
     coverage_start: datetime.datetime | None = None,
     coverage_end: datetime.datetime | None = None,
 ) -> tuple[str, Callable, str, float, dict[str, Any], dict[str, Any]]:
@@ -417,6 +418,7 @@ def _manual_source(
         propagation_options=propagation_options,
         frame_transformer=frame_transformer,
         gravity_field=gravity_field,
+        gravity_model_registry=gravity_model_registry,
         manual_erp_provider=manual_erp.provider if manual_erp is not None else None,
         manual_erp_snapshot_id=manual_erp.snapshot_id if manual_erp is not None else None,
     )
@@ -451,6 +453,7 @@ def build_orbit_parameters(
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
     manual_erp_repository: ManualErpRepository | None = None,
+    gravity_model_registry: GravityModelRegistry | None = None,
 ) -> dict[str, Any]:
     """Propagate a source at evenly spaced instants and derive its elements."""
 
@@ -468,6 +471,7 @@ def build_orbit_parameters(
             frame_transformer,
             gravity_field,
             manual_erp_repository,
+            gravity_model_registry,
             min(normalise_utc(payload.source.manual_orbit.epoch), start_time),
             max(normalise_utc(payload.source.manual_orbit.epoch), end_time),
         )

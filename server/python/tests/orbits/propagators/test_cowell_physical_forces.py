@@ -150,7 +150,7 @@ def test_geopotential_rejects_legacy_zonal_double_counting_and_unconfigured_mode
 
 
 def test_geopotential_semantic_range_is_separate_from_the_rk4_work_budget():
-    """2159x2159 is valid user vocabulary, not safe Python-RK4 work today."""
+    """The 2190 hard request envelope is distinct from RK4 work cost."""
 
     model = GravityFieldModel(
         model_id="budget-fixture",
@@ -160,12 +160,12 @@ def test_geopotential_semantic_range_is_separate_from_the_rk4_work_budget():
         mu_km3_s2=398600.4418,
         reference_radius_km=6378.137,
         normalization="fully_normalized",
-        max_degree=2159,
+        max_degree=2190,
         coefficients={(0, 0): (1.0, 0.0)},
     )
 
     assert _geopotential_harmonic_term_count(70, 70) == MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS
-    assert _geopotential_harmonic_term_count(2159, 0) == 2159
+    assert _geopotential_harmonic_term_count(2190, 0) == 2190
 
     allowed = CowellPropagator(
         EPOCH,

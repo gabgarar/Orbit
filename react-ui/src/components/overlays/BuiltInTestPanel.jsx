@@ -6,6 +6,7 @@ import {
     findDiagnosticComponent,
     normalizeDiagnosticStatus
 } from "../../../../front/js/features/diagnostics/diagnosticsContract.js";
+import { startupStatusFromDiagnosticComponent } from "../../../../front/js/features/diagnostics/startupStatus.js";
 
 const statusStyle = {
     healthy: {
@@ -85,6 +86,63 @@ function latestWorkflowUpdate(workflows) {
     return candidates[0]?.value || "";
 }
 
+function list(value) {
+    if (Array.isArray(value)) return value;
+    const source = record(value);
+    return source ? Object.values(source) : [];
+}
+
+function gravityModelRecord(models, name) {
+    const normalizedName = normalizedKey(name);
+    if (Array.isArray(models)) {
+        return models.find((candidate) => normalizedKey(readValue(candidate, ["id", "name", "model", "key", "model_name", "modelName"])) === normalizedName) || null;
+    }
+    const source = record(models);
+    if (!source) return null;
+    const matchingKey = Object.keys(source).find((key) => normalizedKey(key) === normalizedName);
+    return matchingKey ? record(source[matchingKey]) : null;
+}
+
+function gravityModelState(model) {
+    if (!model) return "No publicado";
+    const explicit = text(readValue(model, ["status", "health", "state", "result"])).toLowerCase();
+    const valid = readValue(model, ["valid", "validated", "is_valid", "isValid"]);
+    const loaded = readValue(model, ["loaded", "available", "ready", "present"]);
+    if (["invalid", "error", "failed", "failure"].includes(explicit) || valid === false) return "Inválido";
+    if (["missing", "unavailable", "not_loaded", "not loaded"].includes(explicit) || loaded === false) return "No disponible";
+    if (["loaded", "ready", "healthy", "ok", "valid", "available"].includes(explicit) || loaded === true || valid === true) return "Cargado";
+    return explicit ? text(readValue(model, ["status", "health", "state", "result"])) : "Publicado sin estado";
+}
+
+function gravityModelLimit(model) {
+    if (!model) return "Límites no publicados";
+    const degree = readValue(model, ["max_degree", "maxDegree", "degree_max", "degreeMax"]);
+    const order = readValue(model, ["max_order", "maxOrder", "order_max", "orderMax"]);
+    if (degree === undefined && order === undefined) return "Límites no publicados";
+    return `máx. ${degree ?? "?"} × ${order ?? "?"}`;
+}
+
+function gravityModelPresentation(models, name) {
+    const model = gravityModelRecord(models, name);
+    return <span className="inline-grid gap-0.5"><span>{gravityModelState(model)}</span><small className="text-[9px] font-normal text-[#8fa6c6]">{gravityModelLimit(model)}</small></span>;
+}
+
+function activeGravityModel(value) {
+    const source = record(value);
+    if (source) return text(readValue(source, ["id", "name", "model", "key", "model_name", "modelName"])) || "Publicado sin identificador";
+    return text(value) || "No publicado";
+}
+
+function startupStepCount(value) {
+    const steps = list(value);
+    if (!steps.length) return "No publicado";
+    const complete = steps.filter((step) => {
+        const status = text(readValue(step, ["status", "health", "state", "result"])).toLowerCase();
+        return ["healthy", "ok", "ready", "passed", "success", "warning", "error", "failed"].includes(status);
+    }).length;
+    return `${complete}/${steps.length} con estado publicado`;
+}
+
 function utcTimestamp(value, unavailable = "No publicado") {
     const raw = text(value);
     if (!raw) return unavailable;
@@ -125,6 +183,22 @@ function localStatusFor(id, local) {
     return "";
 }
 
+function publishedNestedStatus(id, component) {
+    if (!component) return "";
+    if (id === "gravity") {
+        const models = componentValue(component, ["models", "gravity_models", "gravityModels", "registry", "model_registry", "modelRegistry"]);
+        const states = ["EGM96", "EGM2008"].map((name) => gravityModelState(gravityModelRecord(models, name)));
+        if (states.includes("Inválido")) return "error";
+        if (states.includes("No disponible")) return "warning";
+    }
+    if (id === "startup") {
+        const startup = startupStatusFromDiagnosticComponent(component);
+        if (startup?.errors?.length) return "error";
+        if (startup?.warnings?.length) return "warning";
+    }
+    return "";
+}
+
 function localSp3EopLabel(sp3) {
     if (!sp3 || sp3.activeCount === 0) return "No hay SP3 activo en la escena";
     if (sp3.usingEop === true) return "Sí (metadatos locales del producto)";
@@ -157,6 +231,19 @@ function LocalFields({ id, local }) {
 
 function RemoteFields({ id, component }) {
     if (!component) return null;
+    if (id === "startup") {
+        const startup = startupStatusFromDiagnosticComponent(component);
+        const rawSteps = componentValue(component, ["steps", "startup_steps", "startupSteps", "log", "events", "entries"]);
+        const warnings = startup?.warnings?.length ? startup.warnings.join(" · ") : "Ninguno publicado";
+        const errors = startup?.errors?.length ? startup.errors.join(" · ") : "Ninguno publicado";
+        return <>
+            <DiagnosticField label="Último arranque" value={utcTimestamp(componentValue(component, ["started_at", "startedAt", "last_startup", "lastStartup", "last_run", "lastRun"]))} />
+            <DiagnosticField label="Finalizado" value={utcTimestamp(componentValue(component, ["completed_at", "completedAt", "finished_at", "finishedAt"]) ?? startup?.completedAt)} />
+            <DiagnosticField label="Pasos publicados" value={startupStepCount(rawSteps ?? startup?.steps)} />
+            <DiagnosticField label="Avisos" value={warnings} />
+            <DiagnosticField label="Errores" value={errors} />
+        </>;
+    }
     if (id === "erp") {
         const coverage = componentValue(component, ["coverage", "coverage_range", "coverageRange", "validity"]);
         return <>
@@ -172,6 +259,17 @@ function RemoteFields({ id, component }) {
         return <>
             <DiagnosticField label="Using EOP" value={displayBoolean(componentValue(component, ["using_eop", "usingEop", "eop_used", "eopUsed", "erp_applied", "erpApplied"]))} />
             <DiagnosticField label="SP3 / ERP overlap" value={displayBoolean(overlap)} />
+        </>;
+    }
+    if (id === "gravity") {
+        const models = componentValue(component, ["models", "gravity_models", "gravityModels", "registry", "model_registry", "modelRegistry"]);
+        const active = componentValue(component, ["active_model", "activeModel", "selected_model", "selectedModel", "model"]);
+        return <>
+            <DiagnosticField label="Modelo activo" value={activeGravityModel(active)} />
+            <DiagnosticField label="EGM96" value={gravityModelPresentation(models, "EGM96")} />
+            <DiagnosticField label="EGM2008" value={gravityModelPresentation(models, "EGM2008")} />
+            <DiagnosticField label="Última actualización" value={utcTimestamp(componentValue(component, ["last_update", "lastUpdate", "updated_at", "updatedAt"]))} />
+            <DiagnosticField label="Origen" value={formatSource(componentValue(component, ["source_url", "sourceUrl", "url", "source"]))} />
         </>;
     }
     if (id === "oem") {
@@ -216,7 +314,7 @@ function DiagnosticField({ label, value }) {
 function DiagnosticCard({ definition, diagnostics, local }) {
     const component = findDiagnosticComponent(diagnostics, definition.id);
     const localStatus = localStatusFor(definition.id, local);
-    const status = worstStatus(component?.status, localStatus);
+    const status = worstStatus(component?.status, localStatus, publishedNestedStatus(definition.id, component));
     const style = statusStyle[status];
     const hasRemote = Boolean(component);
     const message = component?.message || component?.summary || (!hasRemote

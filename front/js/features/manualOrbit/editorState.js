@@ -14,10 +14,318 @@ import {
 } from "./orbitalElements.js";
 
 export const DEFAULT_MANUAL_ORBIT_NAME = "Manual Orbit";
-// EGM2008 is complete through degree/order 2159.  The backend separately
-// enforces the current RK4 execution budget; this UI bound describes the
-// scientific/request contract rather than silently rewriting an N×M choice.
-export const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 2159;
+// These are safe published envelopes used before the local NGA archive has
+// been inspected.  Once diagnostics exposes a validated archive, the editor
+// must use its parsed coefficient limits instead of treating this fallback as
+// proof that a particular cache is present or complete.
+export const GEOPOTENTIAL_MODEL_LIMITS = Object.freeze({
+    EGM96: Object.freeze({ maxDegree: 360, maxOrder: 360 }),
+    EGM2008: Object.freeze({ maxDegree: 2190, maxOrder: 2190 }),
+    // A configured ICGEM field is still diagnostics-led for actual limits.
+    // This is only the same manual-Cowell semantic safety ceiling used while
+    // preserving an editor draft before diagnostics has loaded.
+    LOCAL_ICGEM: Object.freeze({ maxDegree: 2190, maxOrder: 2190 })
+});
+
+function recognizedGeopotentialModel(value) {
+    const candidate = String(value ?? "").trim().toUpperCase().replace(/[-_\s]/g, "");
+    if (candidate === "EGM96" || candidate === "EGM1996") return "EGM96";
+    if (candidate === "EGM2008") return "EGM2008";
+    if (candidate === "LOCALICGEM" || candidate === "ICGEM") return "LOCAL_ICGEM";
+    return "";
+}
+
+/** Normalize NGA and configured-local gravity model identifiers accepted by the API. */
+export function normalizeGeopotentialModel(value, fallback = "EGM2008") {
+    return recognizedGeopotentialModel(value)
+        || recognizedGeopotentialModel(fallback)
+        || "EGM2008";
+}
+
+function positiveWholeNumber(value) {
+    const numeric = Number(value);
+    return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
+function diagnosticModelRecord(models, model) {
+    const source = models && typeof models === "object" ? models : null;
+    if (!source) return null;
+    const collection = source.models && typeof source.models === "object" ? source.models : source;
+    if (Array.isArray(collection)) {
+        return collection.find((candidate) => recognizedGeopotentialModel(
+            candidate?.id ?? candidate?.model ?? candidate?.name
+        ) === model) ?? null;
+    }
+    if (!collection || typeof collection !== "object") return null;
+    return collection[model]
+        ?? collection[model.toLowerCase()]
+        ?? Object.entries(collection).find(([key, candidate]) => recognizedGeopotentialModel(
+            candidate?.id ?? candidate?.model ?? candidate?.name ?? key
+        ) === model)?.[1]
+        ?? null;
+}
+
+function validatedCoefficientLimit(record, aliases) {
+    for (const alias of aliases) {
+        const limit = positiveWholeNumber(record?.[alias]);
+        if (limit !== null) return limit;
+    }
+    return null;
+}
+
+function nonNegativeWholeNumber(value) {
+    const numeric = Number(value);
+    return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : null;
+}
+
+/**
+ * Keep an imported integer draft intact until the author changes it.
+ *
+ * Archive coverage and RK4 capacity are runtime facts, so an older project
+ * can legitimately contain an N/M that this installation cannot execute.
+ * Do not turn that into a different scientific request while hydrating the
+ * editor: callers render the value and block propagation with the diagnosed
+ * reason. Non-integer raw values are also retained so an editor can report
+ * and correct them instead of silently substituting a fallback.
+ */
+export function preserveImportedIntegerDraft(value, fallback) {
+    const candidate = value === undefined || value === null ? fallback : value;
+    const numeric = Number(candidate);
+    return Number.isSafeInteger(numeric) ? numeric : candidate;
+}
+
+function validatedDegreeCoverage(record) {
+    const rawCoverage = record?.degreeCoverage
+        ?? record?.degree_coverage
+        ?? record?.coverage;
+    const rawSegments = Array.isArray(rawCoverage)
+        ? rawCoverage
+        : Array.isArray(rawCoverage?.segments)
+            ? rawCoverage.segments
+            : Array.isArray(rawCoverage?.degreeCoverage)
+                ? rawCoverage.degreeCoverage
+            : null;
+    if (!rawSegments?.length) return null;
+
+    const segments = [];
+    for (const rawSegment of rawSegments) {
+        if (!rawSegment || typeof rawSegment !== "object") return null;
+        const startDegree = nonNegativeWholeNumber(
+            rawSegment.startDegree ?? rawSegment.start_degree ?? rawSegment.fromDegree ?? rawSegment.from_degree
+        );
+        const endDegree = nonNegativeWholeNumber(
+            rawSegment.endDegree ?? rawSegment.end_degree ?? rawSegment.toDegree ?? rawSegment.to_degree ?? startDegree
+        );
+        const rawMaximumOrder = rawSegment.maxOrder ?? rawSegment.max_order ?? rawSegment.order;
+        const maxOrder = typeof rawMaximumOrder === "string"
+            && ["degree", "n", "diagonal"].includes(rawMaximumOrder.trim().toLowerCase())
+            ? "degree"
+            : nonNegativeWholeNumber(rawMaximumOrder);
+        if (startDegree === null || endDegree === null || endDegree < startDegree || maxOrder === null) {
+            return null;
+        }
+        segments.push({ startDegree, endDegree, maxOrder });
+    }
+    segments.sort((left, right) => left.startDegree - right.startDegree || left.endDegree - right.endDegree);
+    for (let index = 1; index < segments.length; index += 1) {
+        if (segments[index - 1].endDegree >= segments[index].startDegree) return null;
+    }
+    return segments;
+}
+
+function lastContinuouslyCoveredDegree(segments, ceiling) {
+    let nextDegree = 2;
+    for (const segment of segments) {
+        if (segment.endDegree < nextDegree) continue;
+        if (segment.startDegree > nextDegree) break;
+        nextDegree = Math.min(ceiling + 1, segment.endDegree + 1);
+        if (nextDegree > ceiling) break;
+    }
+    return nextDegree > 2 ? nextDegree - 1 : null;
+}
+
+function maxSelectableOrderForDegree(segments, degree) {
+    let nextDegree = 2;
+    let maximumOrder = degree;
+    for (const segment of segments) {
+        if (segment.endDegree < nextDegree) continue;
+        if (segment.startDegree > nextDegree) return null;
+        const coveredEnd = Math.min(segment.endDegree, degree);
+        if (typeof segment.maxOrder === "number") {
+            maximumOrder = Math.min(maximumOrder, segment.maxOrder);
+        }
+        nextDegree = coveredEnd + 1;
+        if (nextDegree > degree) return maximumOrder;
+    }
+    return null;
+}
+
+function validatedModelData(model, gravityModels) {
+    const value = normalizeGeopotentialModel(model);
+    const hardLimit = GEOPOTENTIAL_MODEL_LIMITS[value];
+    const record = diagnosticModelRecord(gravityModels, value);
+    const archiveValidated = record?.loaded === true
+        || record?.available === true
+        || record?.validated === true;
+    const coefficientDegree = validatedCoefficientLimit(record, [
+        "coefficientMaxDegree", "coefficient_max_degree",
+        "validatedMaxDegree", "validated_max_degree",
+        "parsedMaxDegree", "parsed_max_degree"
+    ]);
+    const coefficientOrder = validatedCoefficientLimit(record, [
+        "coefficientMaxOrder", "coefficient_max_order",
+        "validatedMaxOrder", "validated_max_order",
+        "parsedMaxOrder", "parsed_max_order"
+    ]);
+    const coverage = validatedDegreeCoverage(record);
+    if (!archiveValidated || coefficientDegree === null || coefficientOrder === null || coverage === null) {
+        return { value, hardLimit, available: false };
+    }
+    const ceiling = Math.min(hardLimit.maxDegree, coefficientDegree);
+    const maxDegree = lastContinuouslyCoveredDegree(coverage, ceiling);
+    if (maxDegree === null) return { value, hardLimit, available: false };
+    const maxOrder = maxSelectableOrderForDegree(coverage, maxDegree);
+    if (maxOrder === null) return { value, hardLimit, available: false };
+    return {
+        value,
+        hardLimit,
+        coverage,
+        maxDegree,
+        coefficientOrder,
+        maxOrder: Math.min(hardLimit.maxOrder, coefficientOrder, maxOrder),
+        available: true
+    };
+}
+
+/**
+ * Return the degree/order limits the form can offer for one gravity model.
+ *
+ * A diagnostics record is required before a model is selectable. It must
+ * identify an available/validated archive and publish parsed coefficient
+ * limits. This prevents a published theoretical envelope from becoming an
+ * executable request when the local NGA data has not been checked.
+ */
+export function resolveGeopotentialModelLimits(model, gravityModels = null) {
+    const resolved = validatedModelData(model, gravityModels);
+    if (resolved.available) {
+        return {
+            value: resolved.value,
+            maxDegree: resolved.maxDegree,
+            maxOrder: resolved.maxOrder,
+            source: "validated-coefficients-and-coverage",
+            validated: true
+        };
+    }
+    return {
+        value: resolved.value,
+        maxDegree: null,
+        maxOrder: null,
+        source: "not-validated",
+        validated: false
+    };
+}
+
+/**
+ * Return the largest valid M for a selected degree N from the validated
+ * per-degree archive profile. `null` means the archive did not publish a
+ * continuous coefficient path through N, so callers must fail closed.
+ */
+export function resolveGeopotentialOrderLimit(model, degree, gravityModels = null) {
+    const resolved = validatedModelData(model, gravityModels);
+    const selectedDegree = positiveWholeNumber(degree);
+    if (!resolved.available || selectedDegree === null || selectedDegree > resolved.maxDegree) return null;
+    const order = maxSelectableOrderForDegree(resolved.coverage, selectedDegree);
+    return order === null
+        ? null
+        : Math.min(resolved.hardLimit.maxOrder, resolved.coefficientOrder, order, selectedDegree);
+}
+
+function readExecutionTermBudget(value) {
+    if (!value || typeof value !== "object") return null;
+    return positiveWholeNumber(
+        value.maxHarmonicTerms
+        ?? value.max_harmonic_terms
+        ?? value.maxTerms
+        ?? value.max_terms
+    );
+}
+
+/**
+ * Return the diagnosed evaluator term budget for a validated gravity model.
+ *
+ * Archive coverage and evaluator capacity are deliberately different facts:
+ * an NGA member can contain a valid high-degree coefficient while the current
+ * pure-Python RK4 evaluator cannot execute all requested terms.  The backend
+ * publishes this value with diagnostics; without it clients must not guess a
+ * budget or send a configuration that the server will reject later.
+ */
+export function resolveGeopotentialExecutionLimit(model, gravityModels = null, executionLimit = null) {
+    const resolved = validatedModelData(model, gravityModels);
+    const record = diagnosticModelRecord(gravityModels, resolved.value);
+    const maxHarmonicTerms = readExecutionTermBudget(
+        record?.executionLimit
+        ?? record?.execution_limit
+        ?? record?.rk4ExecutionLimit
+        ?? record?.rk4_execution_limit
+        ?? executionLimit
+    );
+    if (!resolved.available || maxHarmonicTerms === null) {
+        return {
+            value: resolved.value,
+            maxHarmonicTerms: null,
+            source: "not-diagnosed",
+            validated: false
+        };
+    }
+    return {
+        value: resolved.value,
+        maxHarmonicTerms,
+        source: "validated-rk4-execution-limit",
+        validated: true
+    };
+}
+
+/** Count the non-central coefficients evaluated by a degree/order request. */
+export function geopotentialHarmonicTermCount(degree, order) {
+    const selectedDegree = positiveWholeNumber(degree);
+    const selectedOrder = nonNegativeWholeNumber(order);
+    if (selectedDegree === null || selectedOrder === null) return null;
+    const maximumOrder = Math.min(selectedDegree, selectedOrder);
+    const lowerTriangle = maximumOrder * (maximumOrder + 3) / 2;
+    const rectangularTail = (selectedDegree - maximumOrder) * (maximumOrder + 1);
+    const termCount = lowerTriangle + rectangularTail;
+    return Number.isSafeInteger(termCount) ? termCount : null;
+}
+
+function maxOrderWithinTermBudget(degree, archiveMaximumOrder, maxHarmonicTerms) {
+    const minimumTermCount = geopotentialHarmonicTermCount(degree, 0);
+    if (minimumTermCount === null || minimumTermCount > maxHarmonicTerms) return null;
+    let lower = 0;
+    let upper = archiveMaximumOrder;
+    while (lower < upper) {
+        const midpoint = Math.ceil((lower + upper) / 2);
+        const termCount = geopotentialHarmonicTermCount(degree, midpoint);
+        if (termCount !== null && termCount <= maxHarmonicTerms) lower = midpoint;
+        else upper = midpoint - 1;
+    }
+    return lower;
+}
+
+/**
+ * Return the largest M that is both present in the validated archive and
+ * executable by the diagnosed RK4 implementation for one selected N.
+ */
+export function resolveGeopotentialExecutableOrderLimit(
+    model,
+    degree,
+    gravityModels = null,
+    executionLimit = null
+) {
+    const archiveMaximumOrder = resolveGeopotentialOrderLimit(model, degree, gravityModels);
+    const evaluator = resolveGeopotentialExecutionLimit(model, gravityModels, executionLimit);
+    if (archiveMaximumOrder === null || !evaluator.validated) return null;
+    return maxOrderWithinTermBudget(degree, archiveMaximumOrder, evaluator.maxHarmonicTerms);
+}
 // A manually designed trajectory has a physical ECI state at its epoch, so
 // two-body propagation is the honest default.  SGP4 remains available for
 // TLE-compatible scenarios, but is not silently imposed on new designs.
@@ -43,6 +351,7 @@ export const DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS = Object.freeze({
     // These values become active only with their corresponding force terms.
     // Keeping them in canonical editor state lets a draft round-trip without
     // changing its physical configuration each time it is reopened.
+    geopotentialModel: "EGM2008",
     geopotentialDegree: 4,
     geopotentialOrder: 0,
     solarRadiationCoefficient: 1.2,
@@ -192,6 +501,12 @@ const PROPAGATION_OPTIONS_ALIASES = Object.freeze({
     dragCoefficient: ["dragCoefficient", "drag_coefficient"],
     areaM2: ["areaM2", "area_m2"],
     massKg: ["massKg", "mass_kg"],
+    geopotentialModel: [
+        "geopotentialModel",
+        "geopotential_model",
+        "gravityFieldModel",
+        "gravity_field_model"
+    ],
     geopotentialDegree: ["geopotentialDegree", "geopotential_degree"],
     geopotentialOrder: ["geopotentialOrder", "geopotential_order"],
     solarRadiationCoefficient: [
@@ -467,17 +782,19 @@ function normalizePropagationOptions(value, fallback = DEFAULT_MANUAL_ORBIT_PROP
         return optionAlias(base, key).value;
     };
     const forceTerms = resolveForceTerms(source, base);
+    const geopotentialModel = normalizeGeopotentialModel(read("geopotentialModel"));
+    const modelLimits = GEOPOTENTIAL_MODEL_LIMITS[geopotentialModel];
     const geopotentialDegree = normalizeWholeNumber(
         read("geopotentialDegree"),
         DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.geopotentialDegree,
         "Geopotential degree",
-        { minimum: 0, maximum: MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE }
+        { minimum: 0, maximum: modelLimits.maxDegree }
     );
     const geopotentialOrder = normalizeWholeNumber(
         read("geopotentialOrder"),
         DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.geopotentialOrder,
         "Geopotential order",
-        { minimum: 0, maximum: geopotentialDegree }
+        { minimum: 0, maximum: Math.min(geopotentialDegree, modelLimits.maxOrder) }
     );
     if (forceTerms.includes("geopotential") && geopotentialDegree < 2) {
         throw new OrbitalElementsValidationError(
@@ -506,6 +823,7 @@ function normalizePropagationOptions(value, fallback = DEFAULT_MANUAL_ORBIT_PROP
             "Mass",
             { minimum: 0, strictlyPositive: true }
         ),
+        geopotentialModel,
         geopotentialDegree,
         geopotentialOrder,
         solarRadiationCoefficient: normalizePositiveNumber(
@@ -963,6 +1281,7 @@ function apiPropagationOptions(value, propagator) {
     if (!fixedEngineTerms) {
         result.numerical_integrator = value.numericalIntegrator;
         if (value.forceTerms.includes("geopotential")) {
+            result.geopotential_model = value.geopotentialModel;
             result.geopotential_degree = value.geopotentialDegree;
             result.geopotential_order = value.geopotentialOrder;
         }

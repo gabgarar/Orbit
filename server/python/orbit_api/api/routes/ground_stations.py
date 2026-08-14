@@ -44,7 +44,7 @@ from orbit_api.ground_stations.visibility import (
     extract_passes,
     slant_range_km,
 )
-from orbit_api.orbits.forces import GravityFieldModel
+from orbit_api.orbits.forces import GravityFieldModel, GravityModelRegistry
 from orbit_api.timekeeping import utc_now
 
 
@@ -164,6 +164,7 @@ def create_ground_stations_router(
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
     manual_erp_repository: ManualErpRepository | None = None,
+    gravity_models: GravityModelRegistry | None = None,
 ) -> APIRouter:
     """Build access-window routes from orbit application services."""
     router = APIRouter(tags=["ground-stations"])
@@ -282,6 +283,7 @@ def create_ground_stations_router(
                 propagation_options=propagation_options,
                 frame_transformer=frame_transformer,
                 gravity_field=gravity_field,
+                gravity_model_registry=gravity_models,
                 manual_erp_provider=manual_erp.provider if manual_erp is not None else None,
                 manual_erp_snapshot_id=manual_erp.snapshot_id if manual_erp is not None else None,
             )

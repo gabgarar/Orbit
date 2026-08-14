@@ -48,6 +48,12 @@ class ForceEvaluationContext:
 
     epoch_utc: datetime.datetime
     frame_transformer: FrameTransformService
+    # Manual-orbit generation may use the process-wide IERS C01 cache.  That
+    # service deliberately exposes an explicitly labelled visual/nominal EOP
+    # fallback while its first refresh is pending or its coverage is absent.
+    # Keeping the opt-in at this force-context boundary means precise GNSS and
+    # direct Cowell callers retain their fail-closed contracts by default.
+    allow_nominal_earth_orientation: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "epoch_utc", ensure_utc(self.epoch_utc))
@@ -58,7 +64,7 @@ class ForceEvaluationContext:
         """Fail closed unless a rigorous Earth-fixed route is configured."""
 
         transformer = self.frame_transformer
-        if not transformer.strict_eop:
+        if not transformer.strict_eop and not self.allow_nominal_earth_orientation:
             raise ForceEvaluationError(
                 "La fuerza terrestre requiere EOP local estricto; configura un snapshot "
                 "IERS C04 versionado con ORBIT_EOP_STRICT=true."

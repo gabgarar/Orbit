@@ -65,10 +65,11 @@ const GROUND_TRACK_SURFACE_HEIGHT = 20000;
 const MINIMUM_RENDERABLE_EARTH_CENTER_DISTANCE_M = 1_000;
 const PROPAGATION_HOURS_MIN = 0;
 const PROPAGATION_HOURS_MAX = Number.POSITIVE_INFINITY;
-// This is the scientific/request ceiling of the EGM2008 complete field.  The
-// backend separately rejects configurations that exceed the current fixed-RK4
-// execution budget; do not silently rewrite a saved N×M selection here.
-const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 2159;
+// Keep the published envelope in restored metadata. The API's validated NGA
+// archive remains authoritative for an executable selection and separately
+// rejects requests over the current RK4 term budget.
+const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 2190;
+const MAX_MANUAL_COWELL_EGM2008_GEOPOTENTIAL_ORDER = 2190;
 // The manual-orbit editor renders outside the normal layer runtime while a
 // user is designing an orbit.  These entities intentionally have their own
 // visual identity and never participate in layer selection or telemetry.
@@ -5103,6 +5104,7 @@ const DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS = Object.freeze({
     dragCoefficient: 2.2,
     areaM2: 1,
     massKg: 100,
+    geopotentialModel: "EGM2008",
     geopotentialDegree: 4,
     geopotentialOrder: 0,
     solarRadiationCoefficient: 1.2,
@@ -5292,12 +5294,28 @@ function readManualOrbitPropagationOptions(payload, ephemeris, propagator) {
         forceTerms = fixedEngineTerms;
     }
     forceTerms = normalizeManualOrbitForceTerms(forceTerms);
-    const geopotentialDegree = Math.min(MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE, Math.floor(manualOrbitNumber(
+    const rawGeopotentialModel = manualOrbitText(
+        source,
+        ["geopotentialModel", "geopotential_model", "gravityFieldModel", "gravity_field_model"],
+        DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.geopotentialModel
+    ).toUpperCase().replace(/[-_\s]/g, "");
+    const geopotentialModel = rawGeopotentialModel === "EGM96" || rawGeopotentialModel === "EGM1996"
+        ? "EGM96"
+        : rawGeopotentialModel === "LOCALICGEM" || rawGeopotentialModel === "ICGEM"
+            ? "LOCAL_ICGEM"
+            : "EGM2008";
+    const geopotentialMaxDegree = geopotentialModel === "EGM96"
+        ? 360
+        : MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE;
+    const geopotentialMaxOrder = geopotentialModel === "EGM96"
+        ? 360
+        : MAX_MANUAL_COWELL_EGM2008_GEOPOTENTIAL_ORDER;
+    const geopotentialDegree = Math.min(geopotentialMaxDegree, Math.floor(manualOrbitNumber(
         source,
         ["geopotentialDegree", "geopotential_degree"],
         DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.geopotentialDegree
     )));
-    const geopotentialOrder = Math.min(geopotentialDegree, Math.floor(manualOrbitNumber(
+    const geopotentialOrder = Math.min(geopotentialDegree, geopotentialMaxOrder, Math.floor(manualOrbitNumber(
         source,
         ["geopotentialOrder", "geopotential_order"],
         DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.geopotentialOrder
@@ -5312,6 +5330,7 @@ function readManualOrbitPropagationOptions(payload, ephemeris, propagator) {
         dragCoefficient: manualOrbitNumber(source, ["dragCoefficient", "drag_coefficient"], DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.dragCoefficient),
         areaM2: manualOrbitNumber(source, ["areaM2", "area_m2"], DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.areaM2, { strictlyPositive: true }),
         massKg: manualOrbitNumber(source, ["massKg", "mass_kg"], DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.massKg, { strictlyPositive: true }),
+        geopotentialModel,
         geopotentialDegree,
         geopotentialOrder,
         solarRadiationCoefficient: Math.min(5, manualOrbitNumber(
@@ -5327,6 +5346,24 @@ function readManualOrbitPropagationOptions(payload, ephemeris, propagator) {
             DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS.numericalIntegrator
         )
     };
+}
+
+/**
+ * Preserve the server-resolved NGA selection with an authored manual track.
+ * The editor options retain the user's model/degree/order, while this compact
+ * response provenance records what the validated backend actually accepted.
+ * It is intentionally opaque to the renderer so it cannot be mistaken for a
+ * client-side authority or used to bypass a later archive validation.
+ */
+function readManualOrbitGeopotentialMetadata(payload, ephemeris) {
+    const candidates = [
+        payload?.propagator_metadata?.geopotential,
+        payload?.propagatorMetadata?.geopotential,
+        ephemeris?.propagator_metadata?.geopotential,
+        ephemeris?.propagatorMetadata?.geopotential
+    ];
+    const metadata = candidates.find((candidate) => candidate && typeof candidate === "object" && !Array.isArray(candidate));
+    return metadata ? cloneManualOrbitValue(metadata) : null;
 }
 
 function buildManualOrbitMetadata(payload, ephemeris, points) {
@@ -5359,7 +5396,8 @@ function buildManualOrbitMetadata(payload, ephemeris, points) {
         stateVector: cloneManualOrbitValue(payload?.state_vector || payload?.stateVector || null),
         summary: cloneManualOrbitValue(payload?.orbit_summary || payload?.orbitSummary || null),
         objectMetadata: readManualOrbitObjectMetadata(payload, ephemeris),
-        propagationOptions: readManualOrbitPropagationOptions(payload, ephemeris, propagator)
+        propagationOptions: readManualOrbitPropagationOptions(payload, ephemeris, propagator),
+        geopotentialMetadata: readManualOrbitGeopotentialMetadata(payload, ephemeris)
     };
 }
 
@@ -5929,6 +5967,7 @@ function buildManualOrbitProjectEntry(id, track) {
         stateVector: cloneManualOrbitValue(metadata.stateVector || metadata.state_vector || null),
         objectMetadata: cloneManualOrbitValue(metadata.objectMetadata || metadata.object_metadata || DEFAULT_MANUAL_ORBIT_OBJECT_METADATA),
         propagationOptions: cloneManualOrbitValue(metadata.propagationOptions || metadata.propagation_options || DEFAULT_MANUAL_ORBIT_PROPAGATION_OPTIONS),
+        geopotentialMetadata: cloneManualOrbitValue(metadata.geopotentialMetadata || metadata.geopotential_metadata || null),
         visual: {
             visible: !hiddenSatelliteIds.has(id),
             overrides: cloneManualOrbitValue(getSatelliteOverrides(id) || {})

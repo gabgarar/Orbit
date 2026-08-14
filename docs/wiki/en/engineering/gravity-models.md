@@ -11,7 +11,7 @@ does not accept this composition as an operational selector.
 | --- | --- | --- | --- |
 | Point mass | `central` | Available. | Two body and mandatory Cowell term. |
 | J2/J3/J4 zonals | `j2`, `j3`, `j4` | Available for compatibility. | Legacy manual studies. |
-| ICGEM spherical harmonics | `geopotential` | Available with configured local field. | Configurable degree/order field with strict ITRF path. |
+| Spherical harmonics | `geopotential` | Available with an explicit local ICGEM field or a validated automatic NGA cache. | Configurable ITRF field; manual orbit uses automatic IERS or labelled nominal rotation. |
 
 ## Legacy zonals
 
@@ -30,7 +30,8 @@ field at every integration stage.
 
 ## Configurable harmonic field
 
-The new model is defined by an ICGEM `.gfc` file and degree \(N\), order \(M\)
+The model is defined by an explicit ICGEM `.gfc` file or by a validated
+automatic NGA `EGM96`/`EGM2008` cache, plus degree \(N\), order \(M\)
 selection. Fully normalized coefficients only are accepted. The zonal
 relationship is:
 
@@ -46,14 +47,41 @@ The harmonic term contributes the non-central part of acceleration. `central`
 remains mandatory, and `geopotential` is mutually exclusive with J2/J3/J4
 switches to avoid double counting.
 
-The selection contract permits through **2159 × 2159**, the semantic maximum
-of a complete EGM2008 field. This must not be confused with the current
-evaluator budget: Python RK4 explicitly rejects a stage with more than 2,555
-non-central harmonic coefficients. A dense `70 × 70` field fits the current
-profile; a zonal/low-order selection may reach higher degree when it stays within
-that budget. There is no silent truncation. The LEO, MEO/GNSS, GEO, and mission
-selection table is maintained in
+The selected model becomes numerically selectable only after its unpacked
+coefficient source has validated. The registry then reports `maxDegree`,
+`maxOrder`, a per-degree coverage summary, `completeThroughDegree`, and
+`tailMaxOrder`; the UI bounds degree/order to those detected facts and returns
+an explicit `clamped` effective selection when necessary. Before validation,
+the numeric limits are `null` and the selector fails closed.
+
+The EGM2008 archive is handled within a protective/advisory 2190 × 2190
+envelope, but that is not an effective scientific limit or a claim of a dense
+matrix. The actual unpacked archive controls. This must not be confused with
+the current evaluator budget: Python RK4 explicitly rejects a stage with more
+than 2,555 non-central harmonic coefficients. A dense `70 × 70` field fits the
+current profile; a zonal/low-order selection may reach higher degree when it
+stays within that budget. There is no silent truncation. The LEO, MEO/GNSS,
+GEO, and mission selection table is maintained in
 [Configurable geopotential](../propagation/full-geopotential.md).
+
+## Automatic NGA cache
+
+The registry may refresh official EGM96 or EGM2008 archives into
+`data/geopotential` after the API is healthy. It validates a local cache before
+use, refreshes it after the configured age (30 days by default), accepts only
+the fixed HTTPS NGA URLs without redirects, validates the expected ZIP member
+and all coefficient coverage, and atomically installs the result with its
+digest. It does not download inside a propagation step.
+
+Built-In Test publishes the detected limits and coverage profile after that
+validation. The parser's `hardMaxDegree`/`hardMaxOrder` are protective input
+ceilings only; they are not offered as unverified model capability.
+
+An explicit `ORBIT_GRAVITY_FIELD_PATH` field remains the reproducible,
+higher-priority choice. If the automatic refresh cannot complete, a previous
+valid cache remains available with **Warning**; if none exists, `geopotential`
+is unavailable rather than falling back to J2/J3/J4. The NGA cache itself does
+not provide ERP or a strict ECI route.
 
 ## Correct evaluation frame
 
@@ -71,10 +99,13 @@ are explicitly implemented. See [Configurable geopotential](../propagation/full-
 
 ## Traceability requirements
 
-A result using a harmonic field must record field, source, digest,
-normalization, \(\mu\), reference radius, degree, order, EOP, leap seconds,
-terrestrial realization, and transformation method. If any requirement is
-missing, the model must remain disabled and the result cannot be presented as
+A result using a harmonic field must record field, source URL or local source,
+archive/file digest, cache validation time, normalization, tide system,
+\(\mu\), reference radius, detected limits and coverage profile, requested and
+effective degree/order, EOP, leap seconds, terrestrial realization, and
+transformation method. If the time route is missing (for example leap seconds
+or ERFA/SOFA), the model must remain disabled. If only automatic EOP is missing,
+the manual orbit is labelled nominal rotation and can never be presented as
 rigorous ITRF/ECI.
 
 ## Current limits and next increments

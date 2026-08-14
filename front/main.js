@@ -158,14 +158,77 @@ import {
     DIAGNOSTICS_LOCAL_STATE_EVENT,
     DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT
 } from "./js/features/diagnostics/diagnosticsContract.js";
+import {
+    publishStartupStatus,
+    STARTUP_STATUS_REQUEST_EVENT
+} from "./js/features/diagnostics/startupStatus.js";
 
 const logger = getLogger("main");
+publishStartupStatus({
+    source: "frontend-runtime",
+    status: "running",
+    startedAt: new Date().toISOString(),
+    step: {
+        id: "configuration",
+        label: "Comprobando configuración…",
+        status: "pending"
+    }
+});
 logger.info("Iniciando Cesium...");
 
 logger.info("Preparando las capas base locales de la Tierra...");
 
 const initialBootConfig = await loadSystemConfig({
-    onError: (error) => logger.error("Could not load system_config.json:", error)
+    onError: (error) => {
+        logger.error("Could not load system_config.json:", error);
+        publishStartupStatus({
+            source: "frontend-runtime",
+            status: "warning",
+            step: {
+                id: "configuration",
+                label: "Comprobando configuración…",
+                status: "warning",
+                message: "No se pudo leer la configuración local; se usarán valores seguros por defecto."
+            }
+        });
+    }
+});
+publishStartupStatus({
+    source: "frontend-runtime",
+    step: initialBootConfig
+        ? {
+            id: "configuration",
+            label: "Comprobando configuración…",
+            status: "healthy",
+            message: "Configuración local cargada."
+        }
+        : {
+            id: "configuration",
+            label: "Comprobando configuración…",
+            status: "warning",
+            message: "No se publicó una configuración local; se aplican valores por defecto."
+        }
+});
+// ERP and gravity are validated by the service rather than the browser.  The
+// pending entries make that ownership visible without fabricating a local
+// success while the startup diagnostic is still being published.
+publishStartupStatus({
+    source: "frontend-runtime",
+    step: {
+        id: "erp",
+        label: "Verificando parámetros de orientación terrestre (ERP)…",
+        status: "pending",
+        message: "Esperando la validación del servicio Orbit."
+    }
+});
+publishStartupStatus({
+    source: "frontend-runtime",
+    step: {
+        id: "gravity",
+        label: "Comprobando modelos de gravedad locales (EGM96 / EGM2008)…",
+        status: "pending",
+        message: "Esperando la validación del servicio Orbit."
+    }
 });
 const offlineModeEnabledAtBoot = initialBootConfig?.data?.offline_mode === true;
 
@@ -5438,6 +5501,31 @@ function publishManualOrbitStatus(kind, message) {
     }));
 }
 
+function manualOrbitGeopotentialAdjustmentMessage(responsePayload) {
+    const metadata = responsePayload?.propagator_metadata ?? responsePayload?.propagatorMetadata;
+    const geopotential = metadata?.geopotential;
+    const selection = geopotential?.selection && typeof geopotential.selection === "object"
+        ? geopotential.selection
+        : geopotential;
+    if (!selection || typeof selection !== "object") return "";
+    const requestedDegree = Number(selection.requestedDegree ?? selection.requested_degree);
+    const requestedOrder = Number(selection.requestedOrder ?? selection.requested_order);
+    const effectiveDegree = Number(selection.degree);
+    const effectiveOrder = Number(selection.order);
+    const hasFiniteSelection = [requestedDegree, requestedOrder, effectiveDegree, effectiveOrder]
+        .every((value) => Number.isInteger(value) && value >= 0);
+    const warnings = Array.isArray(selection.warnings)
+        ? selection.warnings.map((warning) => String(warning || "").trim()).filter(Boolean)
+        : [];
+    const adjusted = selection.clamped === true
+        || (hasFiniteSelection && (requestedDegree !== effectiveDegree || requestedOrder !== effectiveOrder));
+    if (!adjusted && warnings.length === 0) return "";
+    const adjustment = hasFiniteSelection
+        ? `Geopotencial ajustado de ${requestedDegree}×${requestedOrder} a ${effectiveDegree}×${effectiveOrder}.`
+        : "La selección de geopotencial fue ajustada por el backend validado.";
+    return warnings.length ? `${adjustment} ${warnings.join(" ")}` : adjustment;
+}
+
 const MANUAL_ORBIT_DEFAULT_WINDOW_HOURS = 24;
 const MANUAL_ORBIT_PREVIEW_DEBOUNCE_MS = 320;
 const MAX_MANUAL_ERP_FILE_BYTES = 32 * 1024 * 1024;
@@ -5811,9 +5899,9 @@ function publishManualOrbitDesignState(active) {
 
 /**
  * Resolve the single UTC policy used by both the React TIME surface and the
- * legacy runtime before preview/create.  A manual ERP is intentionally not
- * substituted with any global EOP feed: the saved snapshot is the reproducible
- * input for this orbit.
+ * legacy runtime before preview/create. Earth-fixed forces use the automatic
+ * process IERS provider by default; a saved manual ERP remains an explicit
+ * reproducible override when the operator elects to attach one.
  */
 function getManualOrbitTimePolicy() {
     const settings = getManualOrbitDesignSettings();
@@ -5858,14 +5946,11 @@ function assertManualOrbitTimePolicy({ allowApprovedMasterExpansion = false } = 
         return policy;
     }
 
-    if (policy.blockingReasons.includes("missing-erp")) {
-        throw new Error("Adjunta un ERP manual validado en TIME para usar geopotencial o arrastre atmosférico.");
+    if (policy.blockingReasons.includes("manual-erp-does-not-cover-design-window")) {
+        throw new Error("El ERP manual opcional seleccionado no cubre todo el intervalo de diseño.");
     }
-    if (policy.blockingReasons.includes("erp-does-not-cover-design-window")) {
-        throw new Error("El intervalo de diseño debe estar completamente cubierto por el ERP manual adjunto.");
-    }
-    if (policy.blockingReasons.includes("erp-does-not-cover-physical-epoch")) {
-        throw new Error("El epoch físico del vector de estado debe estar cubierto por el ERP manual adjunto.");
+    if (policy.blockingReasons.includes("manual-erp-does-not-cover-physical-epoch")) {
+        throw new Error("El ERP manual opcional seleccionado no cubre el epoch físico del vector de estado.");
     }
     if (policy.blockingReasons.includes("invalid-physical-epoch")) {
         throw new Error("El epoch físico del vector de estado no es una fecha UTC válida.");
@@ -6770,12 +6855,13 @@ async function createManualOrbitFromEditor(payload = {}) {
         activateSatelliteSelection(imported.id, false);
         resetCameraView();
         manualOrbitEditingTarget = null;
+        const geopotentialAdjustment = manualOrbitGeopotentialAdjustmentMessage(responsePayload);
         publishManualOrbitState({ open: false });
         publishManualOrbitStatus(
-            "success",
-            editingTargetAtRequest
+            geopotentialAdjustment ? "warning" : "success",
+            `${editingTargetAtRequest
                 ? `Orbita manual '${imported.name}' actualizada con ${getManualOrbitPropagatorLabel(manualOrbitEditorState?.propagator, manualOrbitEditorState?.propagationOptions)}.`
-                : `Orbita manual '${imported.name}' creada con ${getManualOrbitPropagatorLabel(manualOrbitEditorState?.propagator, manualOrbitEditorState?.propagationOptions)}.`
+                : `Orbita manual '${imported.name}' creada con ${getManualOrbitPropagatorLabel(manualOrbitEditorState?.propagator, manualOrbitEditorState?.propagationOptions)}.`}${geopotentialAdjustment ? ` ${geopotentialAdjustment}` : ""}`
         );
     } catch (error) {
         if (error?.name === "AbortError" || createRequestId !== manualOrbitCreateRequestId) {
@@ -7624,7 +7710,19 @@ function setupPropagatedParametersInspector() {
 
 (async function init() {
     const config = initialBootConfig || await loadSystemConfig({
-        onError: (error) => logger.error("Could not load system_config.json:", error)
+        onError: (error) => {
+            logger.error("Could not load system_config.json:", error);
+            publishStartupStatus({
+                source: "frontend-runtime",
+                status: "warning",
+                step: {
+                    id: "configuration",
+                    label: "Comprobando configuración…",
+                    status: "warning",
+                    message: "No se pudo recuperar la configuración local durante el arranque."
+                }
+            });
+        }
     });
     const currentConfig = {
         ...(config || {}),
@@ -7676,8 +7774,21 @@ function setupPropagatedParametersInspector() {
     // Inicializar toolbars después de setupRuntimeConfigPanel
     ensureTopToolbar();
     window.addEventListener(DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT, publishDiagnosticsLocalState);
+    window.addEventListener(STARTUP_STATUS_REQUEST_EVENT, () => {
+        if (window.__orbitStartupStatus) {
+            publishStartupStatus({ ...window.__orbitStartupStatus, replace: true });
+        }
+    });
     publishDiagnosticsLocalState();
     ensureLeftSidebar();
+    publishStartupStatus({
+        source: "frontend-runtime",
+        step: {
+            id: "mtr",
+            label: "Inicializando gestor temporal (MTR)…",
+            status: "pending"
+        }
+    });
     setSimulationTimelineProvider(() => ({
         date: getDisplayedSimulationDate(),
         mode: simulationState.mode,
@@ -7685,6 +7796,15 @@ function setupPropagatedParametersInspector() {
         rangeEnd: simulationState.endDate
     }));
     refreshSimulationControlsUi();
+    publishStartupStatus({
+        source: "frontend-runtime",
+        step: {
+            id: "mtr",
+            label: "Inicializando gestor temporal (MTR)…",
+            status: "healthy",
+            message: "El gestor temporal local está listo."
+        }
+    });
     
     // Timer para actualizar la toolbar superior
     if (timeHudTimer) {

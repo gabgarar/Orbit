@@ -60,7 +60,7 @@ test("finite-product epoch-millisecond aliases remain UTC ranges", () => {
     assert.equal(range.endTime, "2026-08-01T12:35:00.000Z");
 });
 
-test("only Earth-fixed manual force terms require the manually supplied ERP", () => {
+test("only Earth-fixed manual force terms use Earth orientation", () => {
     assert.equal(manualOrbitForceTermsRequireErp(["central", "geopotential"]), true);
     assert.equal(manualOrbitForceTermsRequireErp("central, drag"), true);
     assert.equal(manualOrbitForceTermsRequireErp(["full_geopotential"]), true);
@@ -82,7 +82,7 @@ test("a force requiring ERP cannot create outside its complete ERP coverage", ()
     assert.equal(policy.canCreate, false);
     assert.equal(policy.requiresErp, true);
     assert.equal(policy.erpCoversDesign, false);
-    assert.deepEqual(policy.blockingReasons, ["erp-does-not-cover-design-window"]);
+    assert.deepEqual(policy.blockingReasons, ["manual-erp-does-not-cover-design-window"]);
 });
 
 test("ERP coverage includes the physical state epoch, not only the visible design window", () => {
@@ -101,10 +101,10 @@ test("ERP coverage includes the physical state epoch, not only the visible desig
     assert.equal(policy.canCreate, false);
     assert.equal(policy.erpCoversDesign, true);
     assert.equal(policy.erpCoversPhysicalEpoch, false);
-    assert.deepEqual(policy.blockingReasons, ["erp-does-not-cover-physical-epoch"]);
+    assert.deepEqual(policy.blockingReasons, ["manual-erp-does-not-cover-physical-epoch"]);
 });
 
-test("missing ERP blocks Earth-fixed forces but not an inertial-only manual design", () => {
+test("missing manual ERP selects automatic IERS for Earth-fixed forces", () => {
     const designWindow = {
         startTime: "2026-08-01T01:00:00Z",
         endTime: "2026-08-01T02:00:00Z"
@@ -114,8 +114,10 @@ test("missing ERP blocks Earth-fixed forces but not an inertial-only manual desi
         designWindow,
         forceTerms: ["drag"]
     });
-    assert.equal(earthFixed.canCreate, false);
-    assert.deepEqual(earthFixed.blockingReasons, ["missing-erp"]);
+    assert.equal(earthFixed.canCreate, true);
+    assert.equal(earthFixed.requiresErp, true);
+    assert.equal(earthFixed.usesAutomaticIers, true);
+    assert.deepEqual(earthFixed.blockingReasons, []);
 
     const inertial = resolveManualOrbitTimePolicy({
         designWindow,

@@ -48,8 +48,8 @@ model is physically evaluated in that frame:
 | --- | --- | --- |
 | Central | `EME2000`. | Rotation invariant. |
 | `j2`, `j3`, `j4` | Compatibility in `EME2000`. | Legacy; approximates Earth axis as fixed. |
-| `drag` | Instantaneous `ITRF`, returned to `EME2000`. | Available; exploratory exponential atmosphere with strict EOP, leap seconds, and ERFA. |
-| `geopotential` | Instantaneous `ITRF`, returned to `EME2000`. | Available with local ICGEM and strict EOP, leap seconds, and ERFA. |
+| `drag` | Instantaneous `ITRF`, returned to `EME2000`. | Available; uses automatic IERS C01 or labelled nominal rotation, plus leap seconds and ERFA. |
+| `geopotential` | Instantaneous `ITRF`, returned to `EME2000`. | Available with validated field and automatic IERS C01 or labelled nominal rotation, plus leap seconds and ERFA. |
 | Sun, Moon, SRP, and relativity | Celestial/inertial frame coherent with `EME2000`. | Available with own epoch, coverage, and provenance contracts. |
 
 For a high-fidelity terrestrial term, Cowell does not integrate in a rotating

@@ -31,6 +31,25 @@ a reading file selector and allows downloading the export. The
 Ability to directly overwrite a file depends on the File API
 of the browser.
 
+## Startup readiness gate
+
+Immediately after Orbit starts, **New project** and **Open/Import project** can
+be disabled while the service validates critical local time and gravity data.
+This is intentional: replacing or restoring a project before that contract is
+ready could make its manual-orbit and force settings appear usable when they
+are not. The controls become available only when the startup diagnostics publish
+`projectReady: true` (normally `readiness.state: ready`, or
+`degraded-ready` with an explicit visible warning); a responsive gateway or a
+generic `healthy` indicator is not sufficient.
+
+Use the compact **Startup status** panel to see the active step and any NGA
+download percentage. A first run without a valid cache can take longer because
+it downloads and validates gravity data. A later run normally validates the
+persistent cache locally and finishes sooner. If the percentage is not known,
+the panel shows indeterminate progress rather than a made-up value. You may
+continue to inspect the scene and Built-In Test while waiting, but should not
+try to bypass a displayed blocker.
+
 ## Document contract
 
 The current version of the document declares format orbit-project and version 1.

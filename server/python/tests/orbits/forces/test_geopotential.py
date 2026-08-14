@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import math
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
+import orbit_api.orbits.forces.geopotential as geopotential_module
 from orbit_api.orbits.forces.geopotential import (
     WGS84_J2,
     WGS84_J3,
@@ -17,8 +19,10 @@ from orbit_api.orbits.forces.geopotential import (
     GravityFieldModel,
     geopotential_perturbation_acceleration_itrf,
     gravity_acceleration_itrf,
+    load_icgem_gfc,
     parse_icgem_gfc,
 )
+from orbit_api.orbits.forces.limits import MAX_LOCAL_ICGEM_MATERIALIZED_COEFFICIENTS
 from orbit_api.orbits.propagators.cowell import CowellPropagator
 
 EPOCH = datetime(2026, 7, 20, 12, tzinfo=UTC)
@@ -170,6 +174,25 @@ def _valid_icgem_payload() -> bytes:
     )).encode("utf-8")
 
 
+def _dense_icgem_payload(max_degree: int) -> bytes:
+    """Build a small deterministic complete field for parser boundary tests."""
+
+    lines = [
+        "product_type gravity_field",
+        "modelname DENSE-TEST-FIELD",
+        "earth_gravity_constant 3.986004418e14",
+        "radius 6.378137e6",
+        f"max_degree {max_degree}",
+        "norm fully_normalized",
+        "end_of_head",
+    ]
+    for degree in range(max_degree + 1):
+        for order in range(degree + 1):
+            cosine = "1.0" if (degree, order) == (0, 0) else "0.0"
+            lines.append(f"gfc {degree} {order} {cosine} 0.0")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
 def test_icgem_parser_requires_and_preserves_a_fully_normalized_static_field():
     payload = _valid_icgem_payload()
     digest = hashlib.sha256(payload).hexdigest()
@@ -228,6 +251,54 @@ def test_icgem_parser_rejects_sha_mismatch_and_configuration_beyond_model_limit(
             GravityFieldModel.wgs84_zonal_degree4(),
             GeopotentialConfiguration(5, 0),
         )
+
+
+def test_icgem_parser_rejects_degree_above_the_global_safe_envelope_before_rows():
+    oversized_header = _valid_icgem_payload().replace(
+        b"max_degree 2",
+        b"max_degree 2191",
+    )
+
+    with pytest.raises(GravityFieldError, match="2190"):
+        parse_icgem_gfc(oversized_header)
+
+
+def test_icgem_parser_rejects_dense_local_field_above_materialization_budget_before_rows():
+    mission_scale_header = _valid_icgem_payload().replace(
+        b"max_degree 2",
+        b"max_degree 71",
+    )
+
+    with pytest.raises(GravityFieldError, match=r"2556.*70x70"):
+        parse_icgem_gfc(mission_scale_header)
+
+
+def test_icgem_parser_accepts_complete_dense_field_at_local_materialization_budget():
+    model = parse_icgem_gfc(_dense_icgem_payload(70))
+
+    assert model.max_degree == 70
+    assert len(model.coefficients) == MAX_LOCAL_ICGEM_MATERIALIZED_COEFFICIENTS
+
+
+def test_icgem_parser_rejects_oversized_payload_before_hashing_or_decoding(monkeypatch):
+    monkeypatch.setattr(geopotential_module, "MAX_LOCAL_ICGEM_FILE_BYTES", 32)
+
+    with pytest.raises(GravityFieldError, match=r"límite seguro de 32 bytes"):
+        parse_icgem_gfc(b"x" * 33)
+
+
+def test_icgem_loader_uses_bounded_file_read_for_a_valid_small_field(tmp_path, monkeypatch):
+    field = tmp_path / "small-field.gfc"
+    field.write_bytes(_valid_icgem_payload())
+
+    def _unexpected_read_bytes(_self):
+        raise AssertionError("load_icgem_gfc must not call Path.read_bytes")
+
+    monkeypatch.setattr(Path, "read_bytes", _unexpected_read_bytes)
+
+    model = load_icgem_gfc(field)
+
+    assert model.model_id == "TEST-FIELD"
 
 
 @pytest.mark.parametrize("configuration", ((-1, 0), (2, 3), (2.5, 0), (True, 0)))

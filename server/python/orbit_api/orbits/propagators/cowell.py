@@ -43,6 +43,7 @@ from orbit_api.orbits.forces.geopotential import (
     GravityFieldModel,
     geopotential_perturbation_acceleration_itrf,
 )
+from orbit_api.orbits.forces.limits import MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS
 from orbit_api.timekeeping import ensure_utc, utc_now
 
 from .classical import (
@@ -150,9 +151,6 @@ _SPEED_OF_LIGHT_KM_S = 299_792.458
 # interpreter evaluates every harmonic at every fixed RK4 stage.  Bound the
 # actual work until an optimized/adaptive evaluator is introduced; rejecting
 # clearly is safer than making a UI/API request monopolize the service.
-MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS = 2_555  # sum(n + 1, n=1..70)
-
-
 def _finite(value: object, label: str) -> float:
     try:
         number = float(value)
@@ -342,6 +340,7 @@ class CowellPropagator:
         solar_radiation_coefficient: float = 1.2,
         celestial_ephemeris: CelestialEphemeris | None = None,
         frame_transformer: FrameTransformService | None = None,
+        allow_nominal_earth_orientation: bool = False,
     ) -> None:
         if force_terms is None:
             legacy_model = gravity_model or "two-body"
@@ -387,6 +386,7 @@ class CowellPropagator:
             raise ValueError("El coeficiente de reflexi\\u00f3n solar debe ser mayor que cero")
         self.ballistic_coefficient_m2_kg = self.drag_coefficient * self.area_m2 / self.mass_kg
         self._frame_transformer = frame_transformer or FrameTransformService()
+        self._allow_nominal_earth_orientation = bool(allow_nominal_earth_orientation)
         self.geopotential_model = geopotential_model
         if "geopotential" in terms:
             if geopotential_model is None:
@@ -408,8 +408,9 @@ class CowellPropagator:
                 raise ValueError(
                     "El geopotencial solicitado supera el presupuesto de ejecución del RK4 "
                     f"actual ({MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS} términos armónicos). "
-                    "El campo puede contener hasta 2159×2159; para evaluarlo completo "
-                    "se requiere el futuro evaluador optimizado e integrador adaptativo."
+                    "Los límites científicos efectivos provienen del archivo NGA validado; "
+                    "para evaluar un campo grande se requiere el futuro evaluador "
+                    "optimizado e integrador adaptativo."
                 )
             try:
                 self.geopotential_configuration = GeopotentialConfiguration(
@@ -468,6 +469,7 @@ class CowellPropagator:
         return ForceEvaluationContext(
             self.epoch + datetime.timedelta(seconds=float(offset_seconds)),
             self._frame_transformer,
+            allow_nominal_earth_orientation=self._allow_nominal_earth_orientation,
         )
 
     @staticmethod

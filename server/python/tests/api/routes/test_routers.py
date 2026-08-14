@@ -48,6 +48,13 @@ def test_system_diagnostics_route_uses_the_injected_snapshot_without_global_stat
     assert alias() == expected
 
 
+def test_health_remains_a_liveness_endpoint_while_readiness_is_reported_elsewhere():
+    router = create_system_router(lambda: 7, lambda: 7)
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/health")
+
+    assert endpoint() == {"status": "ok", "satellites": 7}
+
+
 def test_orbit_routes_turn_precise_coverage_or_frame_failures_into_422():
     router = create_orbits_router(
         lambda *_: ("precise:product:G01", object()),

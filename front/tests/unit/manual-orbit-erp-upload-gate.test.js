@@ -65,3 +65,12 @@ test("validated ERP preflight anchors the canonical physical epoch and publishes
     assert.match(panelSource, /anchorPhysicalEpoch: true/);
     assert.match(panelSource, /physicalEpochAtDesignWindowStart\(suggestedWindow\)/);
 });
+
+test("manual geopotential actions are guarded by the full propagation block, not only disabled DOM controls", () => {
+    assert.match(panelSource, /if \(propagationBlockMessage\) \{/);
+    assert.match(panelSource, /disabled=\{!epochRangeValid \|\| !timePolicy\.canCreate \|\| !canRunSelectedPropagation/);
+    assert.match(panelSource, /selectedGeopotentialSelectionExecutable/);
+    assert.match(panelSource, /La solicitud N=\{selectedGeopotentialDegree\}, M=\{selectedGeopotentialOrder\} se conserva sin cambios/);
+    assert.match(mainSource, /manualOrbitGeopotentialAdjustmentMessage/);
+    assert.match(mainSource, /Geopotencial ajustado de \$\{requestedDegree\}×\$\{requestedOrder\} a \$\{effectiveDegree\}×\$\{effectiveOrder\}/);
+});

@@ -25,6 +25,71 @@ docker compose logs -f orbit
 ./.scripts/orbit-logs.cmd
 ~~~
 
+`healthy` es **liveness**: el gateway y la aplicación pueden responder. No es
+**readiness** y no espera de forma intencionada a la renovación en segundo
+plano de C01 de IERS ni de la caché de gravedad NGA. Una caché automática puede
+seguir cargándose, estar obsoleta o no estar disponible después del arranque.
+Revise Built-In Test y el panel de arranque antes de habilitar una operación
+dependiente; un healthcheck por sí solo no es un certificado de precisión ni de
+modelo de fuerzas.
+
+## Readiness y progreso de arranque
+
+El registro de arranque autoritativo es el componente `startup` que devuelve
+`GET /api/system/diagnostics`. Sus booleanos `ready` y `projectReady` solo pasan
+a verdadero después de que el servicio complete explícitamente los pasos de
+validación obligatorios. `readiness` hace el bloqueo inspeccionable, sin tratar
+cualquier estado terminal o aviso como si fuese utilizable:
+
+| Campo | Significado |
+| --- | --- |
+| `readiness.state` | `pending`, `ready`, `degraded-ready` o `blocked`. El trabajo bloqueado exige el booleano explícito `ready`/`projectReady`. |
+| `readiness.requiredSteps` | Comprobaciones necesarias en este arranque; no se deben inferir de una secuencia fija de UI. |
+| `readiness.blockers` | Cada requisito pendiente o fallido, con identificador, estado y mensaje para el operador. |
+| `readiness.degradations` | Degradaciones completadas pero no bloqueantes, como la ruta de rotación terrestre nominal etiquetada explícitamente cuando falta ERP. |
+| `details.progress` | Fase de arranque, modelo de gravedad activo, número de modelos completados/totales y hechos de descarga/validación por modelo. |
+
+`details.progress.percent` se muestra como 0–100 solo cuando el servidor conoce
+el tamaño total. Si la respuesta ascendente no aporta un `Content-Length`
+fiable, vale `null` y la UI presenta una descarga indeterminada en vez de
+inventar un porcentaje. Cada modelo publica estado/etapa, bytes descargados y
+totales cuando se conocen, última actualización y mensaje. Los estados de
+progreso son `pending`, `downloading`, `validating`, `ready` y `error`.
+
+### Primer arranque, arranque con caché y acciones bloqueadas
+
+En un primer arranque sin archivos NGA locales válidos, la descarga y
+validación de los archivos de gravedad puede tardar de forma apreciable. El
+panel de arranque muestra el modelo actual y su progreso mientras ocurre. Los
+siguientes arranques suelen validar localmente la caché persistente y son mucho
+más rápidos; una entrada ausente, corrupta u obsoleta puede seguir provocando
+una renovación controlada.
+
+Si un fallo NGA bloquea el arranque, Orbit reintenta la operación en segundo
+plano hasta cinco veces, con esperas de 30, 60, 120, 240 y 300 segundos. No
+reinicia el contenedor ni hace que falle `/health` solo porque ese trabajo esté
+pendiente. Tras esos intentos, el error permanece visible y el monitor vuelve a
+su intervalo normal. Una descarga y validación posterior correctas trasladan el
+mismo runtime del error/blocker visible a `ready` (o a `degraded-ready` si queda
+una degradación independiente no bloqueante); esta política no implica una
+promesa de reintento manual.
+
+Hasta que `ready`/`projectReady` sea explícitamente verdadero, Orbit conserva
+disponibles la escena, el panel Startup y Built-In Test, pero bloquea acciones
+que crearían, sustituirían o restaurarían estado de proyecto. El control de
+proyecto no habilita **Nuevo proyecto** ni **Abrir/Importar proyecto**. Una
+previsualización o creación forzada de órbita manual y los cálculos de
+parámetros orbitales son rechazados por el servicio con HTTP 503 y la razón de
+readiness publicada. No salte este bloqueo llamando a un endpoint o reintentando
+a ciegas: resuelva el blocker informado o espere a que termine la validación.
+
+`Warning`, `healthy` o una barra de progreso aparentemente terminada no bastan
+por sí solos. La aplicación habilita estas acciones únicamente con los
+booleanos explícitos de readiness. `degraded-ready` puede tener esos booleanos
+verdaderos tras pasar los controles bloqueantes, pero conserva visible la
+degradación y no certifica una ruta ERP/ECI estricta. `blocked` sigue siendo
+una acción visible para el operador, no un fallback oculto.
+
 ## Suites automatizadas
 
 El repositorio separa las pruebas por responsabilidad.

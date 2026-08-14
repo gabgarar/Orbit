@@ -5,17 +5,23 @@ import PanelCloseButton from "../../components/PanelCloseButton.jsx";
 const panelClass = "relative w-[min(440px,100%)] rounded-[18px] border border-[#5899e799] bg-[linear-gradient(135deg,rgba(18,62,112,.96),rgba(5,18,36,.98))] p-8 font-sans text-[var(--orbit-text-primary)] shadow-[0_26px_70px_rgba(0,0,0,.56)]";
 const buttonClass = "rounded-lg border border-[var(--orbit-border-primary)] bg-[#122543e6] px-[14px] py-2.5 text-[13px] leading-none font-semibold text-[var(--orbit-text-primary)] cursor-pointer transition-colors hover:bg-[var(--orbit-bg-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#54a8ff]";
 
-export default function OpenProjectForm({ onClose }) {
+export default function OpenProjectForm({ onClose, startupReadiness }) {
     const fileInput = useRef(null);
     const [openError, setOpenError] = useState("");
+    const startupReady = startupReadiness?.ready === true;
 
     const selectFile = (event) => {
+        if (!startupReady) {
+            event.target.value = "";
+            setOpenError(startupReadiness?.message || "Orbit todavía está preparando los datos necesarios para proyectos.");
+            return;
+        }
         const file = event.target.files?.[0];
         if (!file) return;
         const result = requestProjectCommand({ type: "open", file });
         event.target.value = "";
         if (!result.accepted) {
-            setOpenError("El visor no está disponible. Recarga la aplicación para volver a intentarlo.");
+            setOpenError(result.reason || "El visor no está disponible. Recarga la aplicación para volver a intentarlo.");
             return;
         }
         onClose();
@@ -26,9 +32,10 @@ export default function OpenProjectForm({ onClose }) {
         <p className="m-0 mb-2.5 font-sans text-[11px] leading-none font-extrabold tracking-[3px] text-[#52a8ff]">ORBIT PROJECT</p>
         <h2 className="m-0 mb-2.5 font-sans text-[26px] leading-[1.2] font-bold">Abrir proyecto</h2>
         <p className="m-0 mb-6 text-sm leading-[1.55] text-[var(--orbit-text-secondary)]">Selecciona un archivo de proyecto exportado por Orbit.</p>
+        {!startupReady && <p className="-mt-3 mb-[18px] text-sm leading-[1.45] text-[#b9d9ff]" role="status">{startupReadiness?.message || "Preparando datos críticos…"}</p>}
         {openError && <p className="-mt-2 mb-[18px] text-sm leading-[1.45] text-[#ffb8b8]" role="alert">{openError}</p>}
-        <input ref={fileInput} id="openProjectFileInput" type="file" accept=".json,application/json" hidden onChange={selectFile} />
-        <button className="grid w-full gap-[7px] rounded-[10px] border border-dashed border-[#4e96e6] bg-[#06183085] p-[22px] text-center font-sans text-[var(--orbit-text-primary)] cursor-pointer hover:border-[#78b9ff] hover:bg-[#1246826b] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#54a8ff]" type="button" onClick={() => fileInput.current?.click()}>
+        <input ref={fileInput} id="openProjectFileInput" type="file" accept=".json,application/json" hidden disabled={!startupReady} onChange={selectFile} />
+        <button className="grid w-full gap-[7px] rounded-[10px] border border-dashed border-[#4e96e6] bg-[#06183085] p-[22px] text-center font-sans text-[var(--orbit-text-primary)] cursor-pointer hover:border-[#78b9ff] hover:bg-[#1246826b] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#54a8ff] disabled:cursor-not-allowed disabled:opacity-55" type="button" disabled={!startupReady} title={!startupReady ? startupReadiness?.message : undefined} onClick={() => fileInput.current?.click()}>
             <span>Seleccionar archivo .json</span>
             <small className="text-[var(--orbit-text-tertiary)]">El proyecto se abrirá en esta sesión.</small>
         </button>

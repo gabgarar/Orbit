@@ -30,7 +30,21 @@ test("diagnostics normalizes canonical and compatibility component shapes withou
                 }
             },
             "sp3-parser": { health: "warning", using_eop: false, eop_overlap: false },
-            time_manager: { state: "healthy", message: "MTR clamped" }
+            time_manager: { state: "healthy", message: "MTR clamped" },
+            gravity_models: {
+                status: "healthy",
+                details: {
+                    activeModel: "EGM2008",
+                    models: {
+                        EGM96: { status: "loaded", maxDegree: 360, maxOrder: 360 },
+                        EGM2008: { status: "loaded", maxDegree: 2190, maxOrder: 2190 }
+                    }
+                }
+            },
+            startup_sequence: {
+                state: "ready",
+                details: { steps: [{ id: "config", status: "healthy" }] }
+            }
         }
     });
 
@@ -41,6 +55,8 @@ test("diagnostics normalizes canonical and compatibility component shapes withou
     assert.equal(findDiagnosticComponent(diagnostics, "erp")?.details.loaded, true);
     assert.equal(findDiagnosticComponent(diagnostics, "sp3")?.status, "warning");
     assert.equal(findDiagnosticComponent(diagnostics, "mtr")?.message, "MTR clamped");
+    assert.equal(findDiagnosticComponent(diagnostics, "gravity")?.details.models.EGM2008.maxDegree, 2190);
+    assert.equal(findDiagnosticComponent(diagnostics, "startup")?.status, "healthy");
     assert.equal(findDiagnosticComponent(diagnostics, "erp")?.details.coverage.start, "2026-08-01T00:00:00Z");
 });
 
@@ -51,7 +67,7 @@ test("diagnostics status accepts only the three user-facing states", () => {
     assert.equal(normalizeDiagnosticStatus("unexpected", "error"), "error");
     assert.equal(normalizeDiagnosticComponent({ id: "reference_frames", state: "ready" }).id, "frames");
     assert.equal(normalizeDiagnosticComponent({ id: "monitor", state: "ready" }).id, "mtr");
-    assert.equal(DIAGNOSTIC_COMPONENTS.length, 8);
+    assert.equal(DIAGNOSTIC_COMPONENTS.length, 10);
     assert.deepEqual(DIAGNOSTIC_ENDPOINT_CANDIDATES, ["/api/system/diagnostics", "/api/diagnostics"]);
 });
 
@@ -96,7 +112,20 @@ test("Built-In Test mounts accessibly, uses the runtime local-state bridge, and 
         new URL("../../../react-ui/src/components/layout/TopToolbar.jsx", import.meta.url),
         "utf8"
     );
+    const startupPanel = readFileSync(
+        new URL("../../../react-ui/src/components/overlays/StartupStatusPanel.jsx", import.meta.url),
+        "utf8"
+    );
+    const startupHook = readFileSync(
+        new URL("../../../react-ui/src/hooks/useStartupStatus.js", import.meta.url),
+        "utf8"
+    );
+    const app = readFileSync(new URL("../../../react-ui/src/App.jsx", import.meta.url), "utf8");
     const runtime = readFileSync(new URL("../../main.js", import.meta.url), "utf8");
+    const contract = readFileSync(
+        new URL("../../js/features/diagnostics/diagnosticsContract.js", import.meta.url),
+        "utf8"
+    );
 
     assert.match(toolbar, /topBuiltInTestBtn/);
     assert.match(toolbar, /Built-In Test/);
@@ -108,6 +137,17 @@ test("Built-In Test mounts accessibly, uses the runtime local-state bridge, and 
     assert.match(panel, /quality\.yml/);
     assert.match(panel, /docs-pages\.yml/);
     assert.match(panel, /lastValidatedAt/);
+    assert.match(contract, /Gravity models \(EGM96 \/ EGM2008\)/);
+    assert.match(panel, /EGM96/);
+    assert.match(panel, /EGM2008/);
+    assert.match(contract, /Startup sequence/);
+    assert.match(startupPanel, /Estado de arranque/);
+    assert.match(startupPanel, /aria-live="polite"/);
+    assert.doesNotMatch(startupPanel, /aria-modal/);
+    assert.match(startupHook, /STARTUP_STATUS_EVENT/);
+    assert.match(startupHook, /startupStatusFromDiagnosticComponent/);
+    assert.match(app, /StartupStatusPanel/);
+    assert.match(app, /pollIntervalMs: 2_500/);
     assert.match(hook, /DIAGNOSTICS_STATE_EVENT/);
     assert.match(hook, /DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT/);
     assert.match(hook, /setInterval/);

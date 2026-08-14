@@ -295,24 +295,24 @@ def test_cowell_accepts_new_physical_force_terms_and_rejects_geopotential_double
 
 
 def test_public_cowell_geopotential_degree_has_a_bounded_execution_budget():
-    """EGM2008's 2159 ceiling is distinct from the current RK4 cost guard."""
+    """The parser hard ceiling is distinct from archive and RK4 limits."""
 
     request = ManualOrbitRequest(**keplerian_payload(
         propagator="cowell-rk4",
         propagationOptions={
             "forceTerms": ["geopotential"],
-            "geopotentialDegree": 2159,
+            "geopotentialDegree": 2190,
             "geopotentialOrder": 2159,
         },
     ))
-    assert request.propagation_options.geopotential_degree == 2159
+    assert request.propagation_options.geopotential_degree == 2190
 
-    with pytest.raises(ValidationError, match="less than or equal to 2159"):
+    with pytest.raises(ValidationError, match="less than or equal to 2190"):
         ManualOrbitRequest(**keplerian_payload(
             propagator="cowell-rk4",
             propagationOptions={
                 "forceTerms": ["geopotential"],
-                "geopotentialDegree": 2160,
+                "geopotentialDegree": 2191,
                 "geopotentialOrder": 0,
             },
         ))
@@ -373,9 +373,9 @@ def test_manual_force_capabilities_report_absent_or_pinned_gravity_data_without_
     assert configured["cowell"]["geopotential"]["available"] is True
     assert configured["cowell"]["geopotential"]["model"]["id"] == model.model_id
     assert configured["cowell"]["geopotential"]["model"]["max_selectable_degree"] == 4
-    assert configured["cowell"]["geopotential"]["model"]["execution_limit"]["semantic_max_degree"] == 2159
+    assert configured["cowell"]["geopotential"]["model"]["execution_limit"]["semantic_max_degree"] == 2190
     assert configured["cowell"]["geopotential"]["model"]["execution_limit"] == {
-        "semantic_max_degree": 2159,
+        "semantic_max_degree": 2190,
         "max_harmonic_terms": 2555,
         "full_degree_order_example": {"degree": 70, "order": 70},
         "enforcement": "validated before propagation",
@@ -384,6 +384,91 @@ def test_manual_force_capabilities_report_absent_or_pinned_gravity_data_without_
             "budget require a validated optimized evaluator"
         ),
     }
+    assert configured["cowell"]["geopotential"]["active_model"] == "LOCAL_ICGEM"
+    local = configured["cowell"]["geopotential"]["models"]["LOCAL_ICGEM"]
+    assert local["available"] is True
+    assert local["maxDegree"] == 4
+    assert local["executionLimit"]["maxHarmonicTerms"] == 2555
+
+
+def test_local_icgem_selection_is_explicit_and_never_mislabeled_as_nga(manual_erp_snapshot):
+    request = ManualOrbitRequest(**keplerian_payload(
+        propagator="cowell-rk4",
+        propagationOptions={
+            "forceTerms": ["geopotential"],
+            "geopotentialModel": "LOCAL_ICGEM",
+            "geopotentialDegree": 8,
+            "geopotentialOrder": 0,
+        },
+    ))
+    _source, keplerian, state_vector = canonical_manual_orbit(request)
+    _repository, erp = manual_erp_snapshot
+    _name, propagator, metadata = build_manual_orbit_propagator(
+        request.propagator,
+        name=request.name,
+        epoch=request.epoch,
+        keplerian=keplerian,
+        state_vector=state_vector,
+        propagation_options=request.propagation_options.canonical(propagator="cowell-rk4"),
+        gravity_field=GravityFieldModel.wgs84_zonal_degree4(),
+        manual_erp_provider=erp.provider,
+        manual_erp_snapshot_id=erp.snapshot_id,
+    )
+
+    assert propagator.geopotential_model is not None
+    selection = metadata["geopotential"]["selection"]
+    assert selection["model"] == "LOCAL_ICGEM"
+    assert (selection["requestedDegree"], selection["degree"]) == (8, 4)
+    assert selection["clamped"] is True
+    assert selection["warnings"]
+    assert selection["provenance"]["modelId"] == "WGS84-zonal-degree4-compatibility"
+
+
+def test_local_icgem_request_fails_without_a_configured_checksum_pinned_field():
+    request = ManualOrbitRequest(**keplerian_payload(
+        propagator="cowell-rk4",
+        propagationOptions={
+            "forceTerms": ["geopotential"],
+            "geopotentialModel": "LOCAL_ICGEM",
+            "geopotentialDegree": 4,
+            "geopotentialOrder": 0,
+        },
+    ))
+    _source, keplerian, state_vector = canonical_manual_orbit(request)
+
+    with pytest.raises(ManualOrbitError, match="LOCAL_ICGEM"):
+        build_manual_orbit_propagator(
+            request.propagator,
+            name=request.name,
+            epoch=request.epoch,
+            keplerian=keplerian,
+            state_vector=state_vector,
+            propagation_options=request.propagation_options.canonical(propagator="cowell-rk4"),
+        )
+
+
+def test_static_icgem_rejects_a_different_nga_name_before_propagation():
+    request = ManualOrbitRequest(**keplerian_payload(
+        propagator="cowell-rk4",
+        propagationOptions={
+            "forceTerms": ["geopotential"],
+            "geopotentialModel": "EGM2008",
+            "geopotentialDegree": 4,
+            "geopotentialOrder": 0,
+        },
+    ))
+    _source, keplerian, state_vector = canonical_manual_orbit(request)
+
+    with pytest.raises(ManualOrbitError, match="no coincide"):
+        build_manual_orbit_propagator(
+            request.propagator,
+            name=request.name,
+            epoch=request.epoch,
+            keplerian=keplerian,
+            state_vector=state_vector,
+            propagation_options=request.propagation_options.canonical(propagator="cowell-rk4"),
+            gravity_field=GravityFieldModel.wgs84_zonal_degree4(),
+        )
 
 
 def test_two_body_preserves_the_eme2000_epoch_state():

@@ -6,8 +6,8 @@
 
 | Method and route | Operation | Answer or main restrictions |
 | --- | --- | --- |
-| `GET /health` | Python gateway and backend status. | `200` with both states `ok`; `503` while the backend is unavailable. |
-| `GET /api/system/diagnostics` | Diagnostics snapshot for Built-In Test. | Read-only; returns overall status, generation time, and `erp`, `sp3`, `oem`, `propagators`, `forces`, `frames`, `cicd`, and `monitor` components. It does not run a full suite or mutate data. |
+| `GET /health` | Python gateway and backend liveness. | `200` with both states `ok`; `503` while the backend is unavailable. It is not a startup-readiness decision. |
+| `GET /api/system/diagnostics` | Diagnostics snapshot for Built-In Test. | Read-only; returns overall status, generation time, and diagnostics components, including `startup`, `erp`, `gravity`, `sp3`, `oem`, `propagators`, `forces`, `frames`, `cicd`, and `monitor`. It does not run a full suite or mutate data. |
 | `GET /api/diagnostics` | Diagnostics compatibility alias. | Same contract as `/api/system/diagnostics`; new clients should prefer the namespaced `system` route. |
 | `POST /api/system-config` | A healthy configuration persists and requests a backend reload. | Requires `system`; does not allow hot swapping of the active catalog. May return `503` after persisting if reload fails. |
 | `GET /docs` | FastAPI Swagger UI through gateway. | See [OpenAPI](../openapi.md). |
@@ -36,3 +36,29 @@ The `erp` component publishes operational provenance and health only:
 A response with `loaded: false` or `warning` status does not authorize a client
 to assume ERP, extrapolate coverage, or request strict ECI. SP3 products keep
 their attached ERP and frame contract separately.
+
+## Startup readiness and progress
+
+`/health` answers a deliberately narrow liveness question: whether the gateway
+and application can respond. It can therefore return `200` while automatic
+gravity-cache download or validation is still running. Clients that need to
+create, open, import, restore, preview, or parameterize an orbit must instead
+read `components.startup` from `GET /api/system/diagnostics` (or its compatibility
+alias) and use the explicit `ready` / `projectReady` booleans.
+
+The `readiness` record explains that decision: `state` is `pending`, `ready`,
+`degraded-ready`, or `blocked`; `requiredSteps`, `blockers`, `degradations`,
+and the operator-facing message make it inspectable. A client must not infer
+readiness from a `healthy` response, a warning, or a terminal-looking progress
+state. `degraded-ready` may still publish the booleans as true once blocking
+checks pass, but retains its warning and does not certify strict ERP/ECI.
+
+`progress` (also exposed in the startup details) reports the active gravity
+model, completed and total models, and a per-model state, stage, byte counts,
+message, and update time. `percent` is `0`–`100` only when a trustworthy total
+is known; `null` means an indeterminate transfer and must not be replaced with
+a guessed percentage. A first start can take longer while the persistent cache
+is downloaded and validated. Later starts normally validate that cache locally
+and finish sooner. Until the explicit readiness booleans are true, protected
+manual-orbit preview/create and parameter endpoints return HTTP `503` with the
+published readiness reason.

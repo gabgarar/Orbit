@@ -11,6 +11,10 @@ DATA_DIR = BASE_DIR / "data"
 # runtime so a validated cache survives a container rebuild/restart.
 ERP_DATA_DIR = DATA_DIR / "erp"
 IERS_EOP_C01_CACHE_PATH = ERP_DATA_DIR / "EOP_C01_IAU2000_1846-now.txt"
+# NGA gravity archives are an operational cache like generic IERS C01 data.
+# They are deliberately outside ``config``: their mutable bytes are never
+# serialised into an Orbit project or treated as an image-build input.
+GEOPOTENTIAL_DATA_DIR = DATA_DIR / "geopotential"
 SYSTEM_CONFIG_PATH = CONFIG_DIR / "system_config.json"
 # Local precise products are content-addressed source files plus a small
 # manifest.  ``config`` is mounted into the container, so imports survive a

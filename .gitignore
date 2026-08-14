@@ -31,6 +31,7 @@ Thumbs.db
 dist/
 build/
 site/
+data/geopotential/
 /.venv/
 /.venv-docs/
 server/ui-artifacts/

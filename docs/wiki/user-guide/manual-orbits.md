@@ -55,6 +55,13 @@ geopotential** o **Atmospheric drag**, no se podrá previsualizar ni crear fuera
 de esa cobertura. Una órbita de fuerzas inerciales puede no usar ERP, pero no
 obtiene por ello una transformación terrestre rigurosa.
 
+La caché operativa automática IERS C01 no es un ERP adjunto a la órbita manual.
+Puede informar del estado global de orientación operativa, pero TIME nunca
+copia esa caché, un C04 explícito ni datos ERP de un SP3 existente a la órbita
+manual. Adjunte un ERP local en TIME cuando una fuerza ligada a Tierra lo
+requiera; su cobertura define la ventana de diseño inicial y el epoch del
+vector de estado.
+
 Si ya hay un SP3, OEM o rango de simulación en el proyecto, no se mezclan
 relojes: todos los instantes son UTC. Sin embargo, para comparar o analizar
 varias capas hay que usar el solape que muestra TIME. Si no existe solape, la

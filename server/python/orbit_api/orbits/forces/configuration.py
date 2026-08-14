@@ -14,6 +14,14 @@ import os
 from collections.abc import Mapping
 
 from .geopotential import GravityFieldError, GravityFieldModel, load_icgem_gfc
+from .gravity_registry import GravityModelRegistry, GravityModelSelection
+from .limits import (
+    MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS,
+    MAX_SUPPORTED_GRAVITY_FIELD_DEGREE,
+)
+
+
+LOCAL_ICGEM_MODEL_ID = "LOCAL_ICGEM"
 
 
 def _present(values: Mapping[str, str], key: str) -> str | None:
@@ -76,4 +84,107 @@ def build_gravity_field_from_environment(
     )
 
 
-__all__ = ["build_gravity_field_from_environment"]
+def resolve_gravity_model_selection_from_environment(
+    registry: GravityModelRegistry,
+    environment: Mapping[str, str] | None = None,
+    *,
+    model_id: str | None = None,
+    degree: int | None = None,
+    order: int | None = None,
+) -> GravityModelSelection:
+    """Resolve an NGA selection without downloading or evaluating a force.
+
+    This is the bridge for propagation/settings adapters.  It deliberately
+    coexists with ``build_gravity_field_from_environment``: an explicitly
+    mounted, checksum-pinned ICGEM file remains the reproducible legacy
+    configuration and takes precedence wherever an adapter chooses it.
+
+    When explicit arguments are omitted, the helper reads the optional global
+    ``ORBIT_GRAVITY_MODEL``, ``ORBIT_GRAVITY_DEGREE`` and
+    ``ORBIT_GRAVITY_ORDER`` values.  The registry performs the model-specific
+    clamp and returns provenance/warnings; it never performs network I/O.
+    """
+
+    if not isinstance(registry, GravityModelRegistry):
+        raise TypeError("registry debe ser GravityModelRegistry")
+    values = os.environ if environment is None else environment
+    selected = model_id if model_id is not None else _present(values, "ORBIT_GRAVITY_MODEL")
+    requested_degree: int | str | None = degree
+    requested_order: int | str | None = order
+    if requested_degree is None:
+        requested_degree = _present(values, "ORBIT_GRAVITY_DEGREE")
+    if requested_order is None:
+        requested_order = _present(values, "ORBIT_GRAVITY_ORDER")
+    return registry.resolve_selection(selected, requested_degree, requested_order)
+
+
+def local_icgem_model_payload(field: GravityFieldModel | None) -> dict[str, object] | None:
+    """Describe the explicit checksum-pinned ICGEM field for API clients.
+
+    The local ICGEM parser has already validated complete triangular ``gfc``
+    coverage before it can create this field. Missing rows are therefore an
+    error, never an implicit zero. Its declared degree is a real evaluator
+    limit; the manual request envelope still has a separate hard degree
+    ceiling.
+    """
+
+    if field is None:
+        return None
+    maximum = min(int(field.max_degree), MAX_SUPPORTED_GRAVITY_FIELD_DEGREE)
+    coverage = (
+        [
+            {
+                "startDegree": 2,
+                "endDegree": maximum,
+                "maxOrder": "degree",
+                "orderRule": "degree",
+            }
+        ]
+        if maximum >= 2
+        else []
+    )
+    return {
+        "id": LOCAL_ICGEM_MODEL_ID,
+        "label": "ICGEM local fijado",
+        "status": "ok",
+        "loaded": True,
+        "available": True,
+        "source": "local-icgem",
+        "sourceDetail": field.source,
+        "version": field.version,
+        "sha256": field.sha256,
+        "maxDegree": maximum,
+        "maxOrder": maximum,
+        "coefficientMaxDegree": maximum,
+        "coefficientMaxOrder": maximum,
+        "completeThroughDegree": maximum,
+        "tailMaxOrder": maximum,
+        "degreeCoverage": coverage,
+        "coverage": {
+            "firstDegree": 2 if maximum >= 2 else None,
+            "maxDegree": maximum,
+            "maxOrder": maximum,
+            "completeThroughDegree": maximum,
+            "tailMaxOrder": maximum,
+            "degreeCoverage": coverage,
+        },
+        "validation": "complete triangular ICGEM gfc coverage validated",
+        "executionLimit": {
+            "maxHarmonicTerms": MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS,
+        },
+        "normalization": field.normalization,
+        "tideSystem": field.tide_system,
+        "hardMaxDegree": MAX_SUPPORTED_GRAVITY_FIELD_DEGREE,
+        "hardMaxOrder": MAX_SUPPORTED_GRAVITY_FIELD_DEGREE,
+        "automatic": False,
+        "refreshDue": False,
+        "usingCachedFallback": False,
+    }
+
+
+__all__ = [
+    "LOCAL_ICGEM_MODEL_ID",
+    "build_gravity_field_from_environment",
+    "local_icgem_model_payload",
+    "resolve_gravity_model_selection_from_environment",
+]

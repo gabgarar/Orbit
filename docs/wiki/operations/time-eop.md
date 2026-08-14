@@ -78,20 +78,25 @@ aproximado (sin ERP)** y rechazar cualquier solicitud que declare `require_eci`.
 El snapshot C04 global no se adopta silenciosamente como ERP de una revisión
 SP3: ambos orígenes mantienen su propia versión y procedencia.
 
-## Órbita manual: pestaña TIME y ERP local
+## Órbita manual: pestaña TIME y ERP local opcional
 
 La pestaña **TIME** del diseño de órbita manual contiene dos contratos
 distintos: **Design window**, que define las épocas UTC que se propagarán, y
 **Orbit preview frame**, que solo decide cómo se inspecciona la efeméride. No
 son dos relojes ni dos dinámicas diferentes.
 
-Un ERP de una órbita manual se adjunta expresamente desde esa pestaña como un
-fichero local. Orbit no descarga ni adopta de forma silenciosa el C04 global,
-el ERP de un SP3 ya cargado ni un valor de Internet para completar ese fichero.
-El resultado conserva nombre, proveedor, huella, escala UTC y límites de
-cobertura del ERP adjunto.
+Para fuerzas manuales ligadas a Tierra, Orbit usa por defecto el mismo
+proveedor automático IERS C01 para `geopotential` y `drag`. No se pide adjuntar
+un ERP para crear ni previsualizar una órbita manual. La caché C01 no cambia la
+**Design window** ni el epoch físico: es una fuente operativa de UT1–UTC,
+movimiento polar y LOD para las etapas de propagación.
 
-Cuando la validación del ERP termina correctamente, TIME sustituye el
+Adjuntar un ERP local desde TIME sigue siendo opcional: fija una instantánea
+reproducible y explícita para ese diseño. El resultado conserva nombre,
+proveedor, huella, escala UTC y límites de cobertura del ERP adjunto; no mezcla
+el ERP de un SP3 ya cargado con la órbita manual.
+
+Cuando se adjunta y valida un ERP manual, TIME sustituye el
 **Design window** por el intervalo completo cubierto por el fichero:
 
 $$
@@ -100,30 +105,39 @@ $$
 
 En la misma acción, el **State-vector epoch** físico se ancla a
 \(t_{ERP,min}\). Esto evita conservar un epoch anterior fuera de cobertura.
-Puede editarse después, pero las fuerzas ligadas a Tierra exigen que siga
-dentro de la cobertura del ERP.
+Puede editarse después, pero las fuerzas ligadas a Tierra que usen ese ERP
+explícito exigen que siga dentro de su cobertura.
 
 Esto no se recorta automáticamente a una capa SP3/OEM que estuviera ya en la
 escena. Recortarlo ocultaría al operador que dos productos tienen coberturas
 distintas y cambiaría el diseño manual sin una acción explícita.
 
-### Cuándo es obligatorio el ERP
+### Proveedor de orientación terrestre
 
-El ERP manual es obligatorio si la composición Cowell incluye una fuerza ligada
-a Tierra: actualmente `geopotential` o `drag`. Antes de previsualizar o crear,
-Orbit exige que el ERP cubra por completo la ventana diseñada:
+`geopotential` y `drag` comparten la caché automática IERS C01 del proceso.
+Cuando contiene una muestra válida para cada etapa, Orbit aplica UT1–UTC,
+movimiento polar y LOD de esa fuente. No es necesario adjuntar un fichero ERP
+manual.
+
+Si C01 no está disponible o no cubre la etapa solicitada, la órbita manual se
+puede crear con la advertencia **“No hay datos ERP disponibles. El geopotencial
+y el arrastre atmosférico usarán una rotación terrestre nominal.”** La
+procedencia publicada marca entonces esa ruta como nominal; no se presenta como
+una solución EOP precisa.
+
+Un ERP local opcional sí debe cubrir por completo la ventana diseñada y el
+epoch físico cuando se elige como override reproducible:
 
 $$
 D\subseteq E_{ERP}.
 $$
 
-Si falta, el error es **“Debe proporcionar un fichero ERP para convertir a
-ECI.”**; si existe pero no cubre toda la ventana, la creación se rechaza con
-una explicación de cobertura. El usuario puede seguir diseñando una órbita de
-fuerzas estrictamente inerciales —por ejemplo `central`, tercero cuerpo, SRP o
-relatividad— sin adjuntar ERP, pero eso no habilita una evaluación terrestre
-estricta. Los requisitos de segundos intercalares y ERFA siguen siendo
-independientes del ERP manual.
+Si ese override existe pero no cubre toda la ventana, la creación se rechaza
+con una explicación de cobertura. La ruta EME2000↔ITRF sigue requiriendo la
+tabla local de segundos intercalares y ERFA/SOFA; son requisitos independientes
+del ERP manual. La conversión ECI rigurosa de un producto SP3 conserva su
+contrato separado y fail-closed: la caché C01 global o el fallback nominal no
+la habilitan.
 
 ### Alineación con SP3, OEM y el rango de la escena
 

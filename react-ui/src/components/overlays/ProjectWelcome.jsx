@@ -1,7 +1,11 @@
+import { getStartupProjectReadiness } from "../../../../front/js/features/diagnostics/startupStatus.js";
+
 const actionButtonClass = "!min-w-0 !flex-1 !rounded-[11px] !border !border-[#168fff] !bg-[#051224a3] !px-[14px] !py-4 !font-sans !text-lg !leading-none !font-semibold !text-white !cursor-pointer !transition-[transform,background] hover:!-translate-y-0.5 hover:!bg-[#155cb45c] disabled:!cursor-not-allowed disabled:!opacity-[.52] disabled:hover:!translate-y-0 disabled:hover:!bg-[#051224a3]";
 
-export default function ProjectWelcome({ onAction, runtimeStatus }) {
+export default function ProjectWelcome({ onAction, runtimeStatus, startup }) {
     const runtimeFailed = runtimeStatus?.state === "failed";
+    const readiness = getStartupProjectReadiness(startup);
+    const actionsDisabled = runtimeFailed || !readiness.ready;
 
     return <section
         id="projectWelcome"
@@ -21,9 +25,14 @@ export default function ProjectWelcome({ onAction, runtimeStatus }) {
                 <span>Recarga la aplicación para volver a intentarlo.</span>
                 <button className="!mt-0.5 !w-fit !rounded-lg !border !border-[#ffb5b5b3] !bg-[#480f17cc] !px-[11px] !py-2 !font-sans !text-xs !leading-none !text-white !cursor-pointer hover:!bg-[#641721]" type="button" onClick={() => window.location.reload()}>Recargar aplicación</button>
             </div>}
+            {!runtimeFailed && !readiness.ready && <div className="mt-5 grid gap-1.5 rounded-xl border border-[#5f8cbd] bg-[#0c2948d9] p-[14px] text-left font-sans text-[13px] leading-[1.45] text-[#d7e8ff]" data-testid="project-startup-gate" role="status">
+                <strong className="text-white">Preparando Orbit</strong>
+                <span>{readiness.message}</span>
+                <small className="text-[#a9c5e5]">La escena y las comprobaciones siguen disponibles durante este proceso.</small>
+            </div>}
             <div className="mt-10 flex justify-center gap-4 max-[480px]:flex-col">
-                <button className={`${actionButtonClass} !bg-[linear-gradient(135deg,#168fff,#1046bc)] !shadow-[0_12px_26px_rgba(10,93,219,.32)]`} type="button" disabled={runtimeFailed} onClick={() => onAction("new")}>New project</button>
-                <button className={actionButtonClass} type="button" disabled={runtimeFailed} onClick={() => onAction("open")}>Open project</button>
+                <button className={`${actionButtonClass} !bg-[linear-gradient(135deg,#168fff,#1046bc)] !shadow-[0_12px_26px_rgba(10,93,219,.32)]`} type="button" disabled={actionsDisabled} title={!readiness.ready ? readiness.message : undefined} onClick={() => onAction("new")}>New project</button>
+                <button className={actionButtonClass} type="button" disabled={actionsDisabled} title={!readiness.ready ? readiness.message : undefined} onClick={() => onAction("open")}>Open project</button>
             </div>
         </div>
     </section>;

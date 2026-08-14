@@ -3,10 +3,16 @@ import test from "node:test";
 
 import {
     createDefaultManualOrbitState,
+    GEOPOTENTIAL_MODEL_LIMITS,
+    geopotentialHarmonicTermCount,
     normalizeManualOrbitForceTerms,
     normalizeManualOrbitNumericalIntegrator,
     normalizeManualOrbitPropagator,
     normalizeManualOrbitState,
+    resolveGeopotentialExecutableOrderLimit,
+    resolveGeopotentialExecutionLimit,
+    resolveGeopotentialModelLimits,
+    resolveGeopotentialOrderLimit,
     synchronizeManualOrbitState,
     toManualOrbitApiPayload
 } from "../../js/features/manualOrbit/editorState.js";
@@ -33,6 +39,7 @@ test("manual-orbit editor defaults to one canonical ECI/Kep state", () => {
         dragCoefficient: 2.2,
         areaM2: 1,
         massKg: 100,
+        geopotentialModel: "EGM2008",
         geopotentialDegree: 4,
         geopotentialOrder: 0,
         solarRadiationCoefficient: 1.2,
@@ -171,11 +178,13 @@ test("full geopotential is exclusive with legacy zonals and new Cowell terms ser
     assert.equal(state.propagationOptions.cowellGravityModel, null);
     assert.equal(state.propagationOptions.geopotentialDegree, 60);
     assert.equal(state.propagationOptions.geopotentialOrder, 30);
+    assert.equal(state.propagationOptions.geopotentialModel, "EGM2008");
     assert.equal(state.propagationOptions.solarRadiationCoefficient, 1.37);
 
     const payload = toManualOrbitApiPayload(state);
     assert.equal(payload.propagation_options.geopotential_degree, 60);
     assert.equal(payload.propagation_options.geopotential_order, 30);
+    assert.equal(payload.propagation_options.geopotential_model, "EGM2008");
     assert.equal(payload.propagation_options.solar_radiation_coefficient, 1.37);
     assert.equal("cowell_gravity_model" in payload.propagation_options, false);
 
@@ -208,24 +217,184 @@ test("full geopotential is exclusive with legacy zonals and new Cowell terms ser
         propagator: "cowell-rk4",
         propagationOptions: {
             forceTerms: ["geopotential"],
-            geopotentialDegree: 2159,
-            geopotentialOrder: 2159
+            geopotentialDegree: 2190,
+            geopotentialOrder: 2190
         }
     });
-    assert.equal(completeFieldRequest.propagationOptions.geopotentialDegree, 2159);
-    assert.equal(completeFieldRequest.propagationOptions.geopotentialOrder, 2159);
+    assert.equal(completeFieldRequest.propagationOptions.geopotentialDegree, 2190);
+    assert.equal(completeFieldRequest.propagationOptions.geopotentialOrder, 2190);
+
+    const egm96Request = normalizeManualOrbitState({
+        propagator: "cowell-rk4",
+        propagation_options: {
+            force_terms: ["geopotential"],
+            geopotential_model: "EGM96",
+            geopotential_degree: 360,
+            geopotential_order: 360
+        }
+    });
+    assert.equal(egm96Request.propagationOptions.geopotentialModel, "EGM96");
+    assert.equal(egm96Request.propagationOptions.geopotentialDegree, 360);
+    assert.equal(egm96Request.propagationOptions.geopotentialOrder, 360);
+    assert.equal(toManualOrbitApiPayload(egm96Request).propagation_options.geopotential_model, "EGM96");
 
     assert.throws(
         () => normalizeManualOrbitState({
             propagator: "cowell-rk4",
             propagationOptions: {
                 forceTerms: ["geopotential"],
-                geopotentialDegree: 2160,
+                geopotentialModel: "EGM96",
+                geopotentialDegree: 361,
                 geopotentialOrder: 0
             }
         }),
         OrbitalElementsValidationError
     );
+
+    assert.throws(
+        () => normalizeManualOrbitState({
+            propagator: "cowell-rk4",
+            propagationOptions: {
+                forceTerms: ["geopotential"],
+                geopotentialDegree: 2191,
+                geopotentialOrder: 0
+            }
+        }),
+        OrbitalElementsValidationError
+    );
+    assert.throws(
+        () => normalizeManualOrbitState({
+            propagator: "cowell-rk4",
+            propagationOptions: {
+                forceTerms: ["geopotential"],
+                geopotentialModel: "EGM2008",
+                geopotentialDegree: 2190,
+                geopotentialOrder: 2191
+            }
+        }),
+        OrbitalElementsValidationError
+    );
+});
+
+test("full-geopotential UI limits require validated NGA coefficient diagnostics", () => {
+    assert.deepEqual(GEOPOTENTIAL_MODEL_LIMITS.EGM2008, { maxDegree: 2190, maxOrder: 2190 });
+
+    const notLoaded = resolveGeopotentialModelLimits("EGM2008", {
+        EGM2008: {
+            status: "ok",
+            maxDegree: 2190,
+            maxOrder: 2190
+        }
+    });
+    assert.equal(notLoaded.validated, false);
+    assert.equal(notLoaded.maxDegree, null);
+    assert.equal(notLoaded.maxOrder, null);
+
+    const validated = resolveGeopotentialModelLimits("egm-2008", {
+        EGM2008: {
+            loaded: true,
+            coefficientMaxDegree: 2188,
+            coefficientMaxOrder: 2160,
+            degreeCoverage: [{ startDegree: 2, endDegree: 2188, maxOrder: "degree" }]
+        }
+    });
+    assert.deepEqual(validated, {
+        value: "EGM2008",
+        maxDegree: 2188,
+        maxOrder: 2160,
+        source: "validated-coefficients-and-coverage",
+        validated: true
+    });
+
+    const bounded = resolveGeopotentialModelLimits("EGM2008", {
+        EGM2008: {
+            available: true,
+            coefficient_max_degree: 9999,
+            coefficient_max_order: 9999,
+            degree_coverage: [{ start_degree: 2, end_degree: 9999, max_order: "degree" }]
+        }
+    });
+    assert.equal(bounded.maxDegree, 2190);
+    assert.equal(bounded.maxOrder, 2190);
+
+    const sparseArchive = {
+        EGM2008: {
+            loaded: true,
+            coefficientMaxDegree: 2190,
+            coefficientMaxOrder: 2190,
+            degreeCoverage: [
+                { startDegree: 2, endDegree: 2159, maxOrder: "degree" },
+                { startDegree: 2160, endDegree: 2190, maxOrder: 2159 }
+            ]
+        }
+    };
+    assert.equal(resolveGeopotentialOrderLimit("EGM2008", 2158, sparseArchive), 2158);
+    assert.equal(resolveGeopotentialOrderLimit("EGM2008", 2190, sparseArchive), 2159);
+    assert.equal(resolveGeopotentialOrderLimit("EGM2008", 2191, sparseArchive), null);
+});
+
+test("geopotential execution preflight trusts nested validated coverage and never guesses the RK4 budget", () => {
+    const nestedRegistryPayload = {
+        EGM2008: {
+            loaded: true,
+            coefficientMaxDegree: 2190,
+            coefficientMaxOrder: 2190,
+            coverage: {
+                degreeCoverage: [
+                    { startDegree: 2, endDegree: 2159, maxOrder: "degree", orderRule: "degree" },
+                    { startDegree: 2160, endDegree: 2190, maxOrder: 2159, orderRule: "fixed" }
+                ]
+            },
+            executionLimit: { maxHarmonicTerms: 2555 }
+        }
+    };
+
+    assert.equal(resolveGeopotentialOrderLimit("EGM2008", 2190, nestedRegistryPayload), 2159);
+    assert.deepEqual(resolveGeopotentialExecutionLimit("EGM2008", nestedRegistryPayload), {
+        value: "EGM2008",
+        maxHarmonicTerms: 2555,
+        source: "validated-rk4-execution-limit",
+        validated: true
+    });
+    assert.equal(geopotentialHarmonicTermCount(70, 70), 2555);
+    assert.equal(resolveGeopotentialExecutableOrderLimit("EGM2008", 70, nestedRegistryPayload), 70);
+    // The archive has a coefficient path to N=2190, but N×1 already exceeds
+    // the pure-Python RK4 budget; N×0 is the only executable request.
+    assert.equal(resolveGeopotentialExecutableOrderLimit("EGM2008", 2190, nestedRegistryPayload), 0);
+    assert.equal(geopotentialHarmonicTermCount(2190, 1), 4380);
+
+    const withoutExecutionLimit = structuredClone(nestedRegistryPayload);
+    delete withoutExecutionLimit.EGM2008.executionLimit;
+    assert.equal(resolveGeopotentialExecutableOrderLimit("EGM2008", 70, withoutExecutionLimit), null);
+
+    const localIcgem = {
+        LOCAL_ICGEM: {
+            id: "LOCAL_ICGEM",
+            loaded: true,
+            coefficientMaxDegree: 12,
+            coefficientMaxOrder: 12,
+            degreeCoverage: [{ startDegree: 2, endDegree: 12, maxOrder: "degree" }],
+            executionLimit: { maxHarmonicTerms: 2555 }
+        }
+    };
+    assert.deepEqual(resolveGeopotentialModelLimits("local-icgem", localIcgem), {
+        value: "LOCAL_ICGEM",
+        maxDegree: 12,
+        maxOrder: 12,
+        source: "validated-coefficients-and-coverage",
+        validated: true
+    });
+    const localRequest = normalizeManualOrbitState({
+        propagator: "cowell-rk4",
+        propagationOptions: {
+            forceTerms: ["geopotential"],
+            geopotentialModel: "LOCAL_ICGEM",
+            geopotentialDegree: 12,
+            geopotentialOrder: 2
+        }
+    });
+    assert.equal(localRequest.propagationOptions.geopotentialModel, "LOCAL_ICGEM");
+    assert.equal(toManualOrbitApiPayload(localRequest).propagation_options.geopotential_model, "LOCAL_ICGEM");
 });
 
 test("independent atmospheric drag is retained only by the explicit Cowell/RK4 path", () => {
@@ -346,6 +515,7 @@ test("synchronization derives the opposite representation and ignores stale geom
         dragCoefficient: 2.35,
         areaM2: 3.4,
         massKg: 420,
+        geopotentialModel: "EGM2008",
         geopotentialDegree: 4,
         geopotentialOrder: 0,
         solarRadiationCoefficient: 1.2,
@@ -471,6 +641,7 @@ test("manual-orbit state accepts snake-case API responses without losing authore
         dragCoefficient: 1.9,
         areaM2: 4.5,
         massKg: 820,
+        geopotentialModel: "EGM2008",
         geopotentialDegree: 4,
         geopotentialOrder: 0,
         solarRadiationCoefficient: 1.2,

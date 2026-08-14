@@ -96,10 +96,15 @@ contrato de importación y procedencia.
 | ORBIT_DIAGNOSTICS_MONITOR_INTERVAL_SECONDS | Intervalo del monitor de salud; por defecto `21600` (6 h), aceptado entre 30 s y 24 h. |
 | ORBIT_GITHUB_ACTIONS_MONITOR | `true` habilita una consulta pública, acotada y sin token de los últimos workflows para Built-In Test; el valor predeterminado es `false`. |
 | ORBIT_GITHUB_REPOSITORY | Repositorio público `propietario/repositorio` que consulta el monitor CI; por defecto `gabgarar/Orbit`. |
-| ORBIT_GRAVITY_FIELD_PATH | Ruta, dentro del contenedor, a un fichero ICGEM estático `.gfc` local. No se descargan campos por red ni hay campo completo predeterminado. |
-| ORBIT_GRAVITY_FIELD_SHA256 | SHA-256 obligatorio cuando se configura el campo; el arranque falla si no coincide. |
-| ORBIT_GRAVITY_FIELD_SOURCE | Procedencia humana/publicada opcional del campo ICGEM; si falta se deriva como procedencia local controlada. |
-| ORBIT_GRAVITY_FIELD_VERSION | Versión o identificador de publicación opcional; si falta se usa `modelname` del encabezado ICGEM. |
+| ORBIT_GRAVITY_CACHE_DIR | Directorio persistente de caché NGA automática; por defecto `data/geopotential` (`/app/data/geopotential` en el contenedor estándar). |
+| ORBIT_GRAVITY_MODEL | Selección automática del modelo: `EGM96` o `EGM2008`; por defecto `EGM2008`. |
+| ORBIT_GRAVITY_REFRESH_DAYS | Antigüedad a partir de la que el monitor renueva la caché automática; por defecto `30`, rango permitido `1`–`3650`. |
+| ORBIT_GRAVITY_AUTO_DOWNLOAD | Habilita la renovación oficial NGA en segundo plano; por defecto `true`. Use `false` para utilizar únicamente copias locales ya validadas. |
+| ORBIT_GRAVITY_DOWNLOAD_TIMEOUT_SECONDS | Tiempo de espera acotado de la descarga automática; por defecto `45` segundos. |
+| ORBIT_GRAVITY_FIELD_PATH | Ruta opcional dentro del contenedor a un campo ICGEM estático `.gfc` explícito. Tiene prioridad sobre la caché automática. |
+| ORBIT_GRAVITY_FIELD_SHA256 | SHA-256 obligatorio cuando se configura un campo ICGEM explícito; el arranque falla si no coincide. |
+| ORBIT_GRAVITY_FIELD_SOURCE | Procedencia humana/publicada opcional del campo ICGEM explícito; si falta se deriva como procedencia local controlada. |
+| ORBIT_GRAVITY_FIELD_VERSION | Versión o identificador de publicación opcional del campo ICGEM explícito; si falta se usa `modelname` del encabezado ICGEM. |
 | ORBIT_TERRESTRIAL_REALIZATION | Realización terrestre de salida; Compose usa `ITRF2020` por defecto. |
 | ORBIT_ENABLE_IGS20_FAMILY_ITRF2020_ALIGNMENT | Activa, junto a `ORBIT_TERRESTRIAL_REALIZATION=ITRF2020`, la operación publicada IGS20/IGb20/IGc20→ITRF2020 para estados orbitales de satélite; Compose usa `true` por defecto. |
 
@@ -114,20 +119,58 @@ Las variables temporales y de realización no pertenecen al JSON de interfaz.
 Se inyectan en Compose al iniciar el proceso; su contrato se documenta en
 [Tiempo y EOP](time-eop.md).
 
-### Campo de gravedad local
+### Caché NGA automática y campo local explícito
 
-`geopotential` se habilita únicamente si las cuatro variables
-`ORBIT_GRAVITY_FIELD_*` anteriores describen un fichero local accesible para el
-contenedor. Debe ser un ICGEM `.gfc` estático con normalización
-`fully_normalized`; se valida encabezado, completitud de coeficientes y huella.
-No se acepta URL, no hay descarga automática y no se sustituye por J2/J3/J4 si
-falta el campo. Monte el directorio que contiene el fichero dentro de
-`/app/config` o de otra ruta visible para el contenedor y use esa ruta interna
-en `ORBIT_GRAVITY_FIELD_PATH`.
+Sin `ORBIT_GRAVITY_FIELD_PATH`, `geopotential` puede usar el registro NGA
+automático. Después de que FastAPI esté saludable, el monitor valida la copia
+local de `ORBIT_GRAVITY_CACHE_DIR` y, cuando está habilitado, renueva una
+entrada ausente u obsoleta desde la URL fija oficial de EGM96/EGM2008. La caché
+no es una dependencia del arranque y nunca se descarga durante una etapa de
+propagación. Conserve este directorio en el volumen persistente `./data`.
 
-El término también exige `ORBIT_EOP_STRICT=true`, EOP con cobertura, tabla de
-segundos intercalares válida y ERFA/SOFA. El mismo contrato estricto se aplica
-al arrastre `drag`, porque su atmósfera se evalúa en ITRF por etapa RK4.
+Con una caché fría, este trabajo asíncrono puede hacer que el primer arranque
+utilizable tarde más que uno posterior con caché. `/health` puede estar ya
+saludable mientras el registro de descarga y validación NGA sigue pendiente.
+La aplicación expone progreso de descarga/validación por modelo mediante
+diagnósticos y mantiene las acciones de proyecto bloqueadas hasta publicar
+readiness explícito. Una caché persistente válida evita la descarga de red en
+arranques posteriores, aunque se vuelve a validar localmente. Si el servidor
+ascendente no anuncia un tamaño total fiable, el progreso es indeterminado en
+vez de informar un porcentaje fabricado.
+
+El registro valida URL y política de redirecciones, tamaño y rutas del ZIP,
+miembro de coeficientes exacto, continuidad y plausibilidad de coeficientes, y
+SHA-256 antes de activar una entrada de caché atómicamente. Si NGA no está
+disponible, puede conservarse una copia válida obsoleta con **Warning**. Si no
+hay caché válida, `geopotential` queda no disponible; no se sustituye por
+J2/J3/J4.
+
+`ORBIT_GRAVITY_FIELD_PATH` conserva la alternativa explícita reproducible y
+tiene prioridad sobre la caché automática. Debe nombrar un campo ICGEM `.gfc`
+estático con convención `fully_normalized`; se validan encabezado, completitud
+de coeficientes y huella obligatoria. Monte su directorio en `/app/config` u
+otra ruta visible para el contenedor y use esa ruta interna. Un campo ICGEM
+explícito nunca se sobrescribe ni cambia silenciosamente por el monitor NGA.
+
+Después de descomprimir y validar el archivo, Orbit deriva y publica
+`maxDegree`, `maxOrder` y el perfil de cobertura; la UI usa esos valores
+detectados como únicos límites efectivos. Antes de esa validación son `null`,
+por lo que el selector sigue no disponible en vez de adivinar un tope. El
+archivo EGM2008 se maneja dentro de un sobre protector/informativo de parser de
+2190 × 2190, pero controla lo seleccionable el fichero de coeficientes real y
+validado, no ese sobre.
+
+Esos límites derivados de la fuente son distintos del guard actual de RK4
+Python de 2.555 términos no centrales por etapa. Una selección cuya
+materialización supera el guard se rechaza; un campo denso completo de escala
+de misión sigue siendo una tarea futura de un motor optimizado.
+
+Para órbitas manuales, `geopotential` y `drag` consumen el proveedor automático
+IERS C01 común. Con cobertura válida aplican sus EOP; sin ella conservan una
+rotación terrestre nominal etiquetada con **Warning**, sin exigir un ERP manual.
+La ruta EME2000↔ITRF sigue necesitando tabla local de segundos intercalares y
+ERFA/SOFA. `ORBIT_EOP_STRICT=true` permanece disponible para rutas reproducibles
+estrictas y no se relaja la política fail-closed de ECI para productos SP3.
 
 `restart-orbit` espera el presupuesto configurado, redondeado a segundos, más
 60 s para el gateway y la cadencia del healthcheck. Por ejemplo, el valor

@@ -9,9 +9,10 @@ El arrastre está disponible como término <code>drag</code> de
 J2+J3+J4 ni SGP4 configurable desde Orbit.
 
 A diferencia de los zonales históricos, el arrastre se evalúa en ITRF
-instantáneo **en cada etapa RK4**. Por ello falla de forma segura si no hay ruta
-estricta de EOP, segundos intercalares y ERFA/SOFA. No se degrada a una
-atmósfera fija en <code>EME2000</code>.
+instantáneo **en cada etapa RK4**. En órbitas manuales usa el mismo proveedor
+automático IERS C01 que el geopotencial. Si no hay una muestra EOP válida, usa
+una rotación terrestre nominal marcada con advertencia; no se degrada a una
+atmósfera fija en <code>EME2000</code> ni solicita un ERP manual.
 
 ## Modelo aplicado
 
@@ -47,10 +48,12 @@ matriz—; la aceleración de drag vuelve como vector libre. Orbit no integra en
 ITRF y por tanto no mezcla implícitamente términos ficticios de Coriolis,
 centrífuga o Euler.
 
-La ruta requiere EOP con cobertura, DUT1 y movimiento polar, una tabla local
-versionada y vigente de segundos intercalares, y ERFA/SOFA IAU 2006/2000A. Si
-falta cualquiera de ellos, la selección de <code>drag</code> debe devolver un
-error explícito antes de integrar.
+Con cobertura IERS, la ruta aplica DUT1, movimiento polar y LOD. Si la cobertura
+automática falta, la procedencia de la órbita marca explícitamente la rotación
+nominal. La ruta sigue requiriendo tabla local versionada y vigente de segundos
+intercalares y ERFA/SOFA IAU 2006/2000A; si faltan, la selección de
+<code>drag</code> devuelve un error explícito antes de integrar. Una instantánea
+ERP manual es un override opcional que, si se elige, debe cubrir el diseño.
 
 ## Parámetros
 

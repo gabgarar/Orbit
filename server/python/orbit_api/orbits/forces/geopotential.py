@@ -33,6 +33,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
+from .limits import (
+    MAX_LOCAL_ICGEM_FILE_BYTES,
+    MAX_LOCAL_ICGEM_MATERIALIZED_COEFFICIENTS,
+    MAX_SUPPORTED_GRAVITY_FIELD_DEGREE,
+)
+
 Vector3 = tuple[float, float, float]
 CoefficientKey = tuple[int, int]
 Coefficient = tuple[float, float]
@@ -165,6 +171,10 @@ class GravityFieldModel:
             raise GravityFieldError("max_degree debe ser un entero no negativo") from exc
         if maximum != self.max_degree or maximum < 0:
             raise GravityFieldError("max_degree debe ser un entero no negativo")
+        if maximum > MAX_SUPPORTED_GRAVITY_FIELD_DEGREE:
+            raise GravityFieldError(
+                f"max_degree supera el límite seguro de {MAX_SUPPORTED_GRAVITY_FIELD_DEGREE}"
+            )
         object.__setattr__(self, "max_degree", maximum)
 
         try:
@@ -505,6 +515,87 @@ def _is_icgem_header_boundary(tokens: Sequence[str], marker: str) -> bool:
     return len(tokens) == 1 or all(token and set(token) == {"="} for token in tokens[1:])
 
 
+def _triangular_coefficient_count(max_degree: int) -> int:
+    """Return the complete static ICGEM row count through ``max_degree``."""
+
+    return (max_degree + 1) * (max_degree + 2) // 2
+
+
+def _largest_complete_degree_within(coefficient_limit: int) -> int:
+    """Return the highest dense triangular degree fitting a positive limit."""
+
+    degree = 0
+    while _triangular_coefficient_count(degree + 1) <= coefficient_limit:
+        degree += 1
+    return degree
+
+
+def _local_icgem_size_error(actual_size: int | None = None) -> GravityFieldError:
+    detail = (
+        f" ({actual_size} bytes)" if actual_size is not None else ""
+    )
+    return GravityFieldError(
+        "El fichero ICGEM local"
+        f"{detail} supera el límite seguro de {MAX_LOCAL_ICGEM_FILE_BYTES} bytes. "
+        "Use la caché NGA validada para EGM96/EGM2008 o un motor de misión optimizado."
+    )
+
+
+def _ensure_local_icgem_materialization_budget(max_degree: int) -> None:
+    """Reject a complete local field before its coefficient rows are retained.
+
+    The local ICGEM route constructs one complete immutable model at startup.
+    It cannot safely retain a dense mission-scale triangular field simply
+    because an eventual request might use only a small N x M subset.  The NGA
+    registry owns that selective streaming/materialisation path instead.
+    """
+
+    coefficient_count = _triangular_coefficient_count(max_degree)
+    if coefficient_count <= MAX_LOCAL_ICGEM_MATERIALIZED_COEFFICIENTS:
+        return
+    dense_degree = _largest_complete_degree_within(
+        MAX_LOCAL_ICGEM_MATERIALIZED_COEFFICIENTS
+    )
+    raise GravityFieldError(
+        f"El campo ICGEM local declara max_degree={max_degree}, que requiere "
+        f"{coefficient_count} coeficientes completos. El cargador local solo "
+        f"materializa hasta {MAX_LOCAL_ICGEM_MATERIALIZED_COEFFICIENTS} "
+        f"coeficientes (campo denso {dense_degree}x{dense_degree}) para "
+        "proteger memoria. Use la caché NGA validada para EGM96/EGM2008 o un "
+        "motor de misión optimizado."
+    )
+
+
+def _read_bounded_local_icgem_payload(candidate: Path) -> bytes:
+    """Read a regular local ICGEM file without an unbounded ``read_bytes``.
+
+    The stat preflight provides a clear startup error before opening a known
+    oversized file.  The bounded read is retained as a TOCTOU guard in case a
+    file changes between ``stat`` and ``open``.
+    """
+
+    try:
+        if not candidate.is_file():
+            raise GravityFieldError(
+                f"El fichero ICGEM '{candidate}' debe ser un fichero regular"
+            )
+        size = candidate.stat().st_size
+    except OSError as exc:
+        raise GravityFieldError(f"No se pudo leer el fichero ICGEM '{candidate}'") from exc
+    if size > MAX_LOCAL_ICGEM_FILE_BYTES:
+        raise _local_icgem_size_error(size)
+    try:
+        with candidate.open("rb") as source_file:
+            # Read at most one byte beyond the policy.  This also prevents a
+            # replacement after the stat check from causing an unbounded read.
+            payload = source_file.read(MAX_LOCAL_ICGEM_FILE_BYTES + 1)
+    except OSError as exc:
+        raise GravityFieldError(f"No se pudo leer el fichero ICGEM '{candidate}'") from exc
+    if len(payload) > MAX_LOCAL_ICGEM_FILE_BYTES:
+        raise _local_icgem_size_error(len(payload))
+    return payload
+
+
 def parse_icgem_gfc(
     payload: bytes | str,
     *,
@@ -523,11 +614,17 @@ def parse_icgem_gfc(
     """
 
     if isinstance(payload, str):
+        # A caller already owns a str payload, but reject an obviously
+        # oversized one before making a second byte representation of it.
+        if len(payload) > MAX_LOCAL_ICGEM_FILE_BYTES:
+            raise _local_icgem_size_error(len(payload))
         raw = payload.encode("utf-8")
     elif isinstance(payload, bytes):
         raw = payload
     else:
         raise TypeError("payload debe ser bytes o texto ICGEM")
+    if len(raw) > MAX_LOCAL_ICGEM_FILE_BYTES:
+        raise _local_icgem_size_error(len(raw))
     actual_sha256 = hashlib.sha256(raw).hexdigest()
     required_sha256 = _normalise_sha256(expected_sha256, label="expected_sha256")
     if required_sha256 is not None and not hmac.compare_digest(actual_sha256, required_sha256):
@@ -543,6 +640,7 @@ def parse_icgem_gfc(
     coefficients: dict[CoefficientKey, Coefficient] = {}
     in_header = True
     ended_header = False
+    declared_max_degree: int | None = None
     for line_number, raw_line in enumerate(text.splitlines(), start=1):
         stripped = raw_line.strip()
         if not stripped or stripped.startswith(("#", "%")):
@@ -559,6 +657,20 @@ def parse_icgem_gfc(
             if keyword == "end_of_head":
                 if not _is_icgem_header_boundary(tokens, "end_of_head"):
                     raise GravityFieldError("end_of_head solo admite el separador '=' de ICGEM")
+                # Reject an oversized local header before any data rows or
+                # triangular completeness allocation can consume O(N²)
+                # memory/time. The header is a hard parser boundary, not a
+                # display-only advisory.
+                declared_max_degree = _parse_icgem_integer(
+                    _required_header_value(headers, "max_degree").strip(),
+                    "max_degree",
+                )
+                if declared_max_degree > MAX_SUPPORTED_GRAVITY_FIELD_DEGREE:
+                    raise GravityFieldError(
+                        "max_degree supera el límite seguro de "
+                        f"{MAX_SUPPORTED_GRAVITY_FIELD_DEGREE}"
+                    )
+                _ensure_local_icgem_materialization_budget(declared_max_degree)
                 in_header = False
                 ended_header = True
                 continue
@@ -588,6 +700,12 @@ def parse_icgem_gfc(
             )
         degree = _parse_icgem_integer(tokens[1], f"El grado gfc de la línea {line_number}")
         order = _parse_icgem_integer(tokens[2], f"El orden gfc de la línea {line_number}")
+        if declared_max_degree is None:
+            raise GravityFieldError("El encabezado ICGEM no declaró max_degree")
+        if degree > declared_max_degree:
+            raise GravityFieldError(
+                f"El coeficiente gfc {degree},{order} supera max_degree={declared_max_degree}"
+            )
         if order > degree:
             raise GravityFieldError(
                 f"El registro gfc de la línea {line_number} tiene orden mayor que grado"
@@ -612,10 +730,9 @@ def parse_icgem_gfc(
         raise GravityFieldError(
             "El fichero ICGEM debe declarar norm fully_normalized"
         )
-    max_degree = _parse_icgem_integer(
-        _required_header_value(headers, "max_degree").strip(),
-        "max_degree",
-    )
+    if declared_max_degree is None:
+        raise GravityFieldError("El encabezado ICGEM no declaró max_degree")
+    max_degree = declared_max_degree
     gm_m3_s2 = _parse_icgem_float(
         _required_header_value(headers, "earth_gravity_constant", "gm").strip(),
         "earth_gravity_constant",
@@ -628,23 +745,18 @@ def parse_icgem_gfc(
         raise GravityFieldError("earth_gravity_constant y radius deben ser mayores que cero")
     if not coefficients:
         raise GravityFieldError("El fichero ICGEM no contiene registros gfc")
-    expected_keys = {
-        (degree, order)
-        for degree in range(max_degree + 1)
-        for order in range(degree + 1)
-    }
-    unexpected = [key for key in coefficients if key not in expected_keys]
-    if unexpected:
-        degree, order = min(unexpected)
-        raise GravityFieldError(
-            f"El coeficiente gfc {degree},{order} supera max_degree={max_degree}"
-        )
-    missing = expected_keys.difference(coefficients)
-    if missing:
-        degree, order = min(missing)
-        raise GravityFieldError(
-            f"El fichero ICGEM no declara el coeficiente gfc obligatorio {degree},{order}"
-        )
+    expected_count = _triangular_coefficient_count(max_degree)
+    if len(coefficients) != expected_count:
+        # Do not build a second O(N²) ``expected_keys`` set. Coefficient rows
+        # were bounded against the header as they were read; scan only until
+        # the first strict-completeness gap is found.
+        for degree in range(max_degree + 1):
+            for order in range(degree + 1):
+                if (degree, order) not in coefficients:
+                    raise GravityFieldError(
+                        f"El fichero ICGEM no declara el coeficiente gfc obligatorio {degree},{order}"
+                    )
+        raise GravityFieldError("El fichero ICGEM declara coeficientes inconsistentes")
     central = coefficients[(0, 0)]
     if not math.isclose(central[0], 1.0, rel_tol=0.0, abs_tol=1.0e-14) or central[1] != 0.0:
         raise GravityFieldError("El fichero ICGEM debe declarar C00=1 y S00=0")
@@ -679,10 +791,7 @@ def load_icgem_gfc(
     candidate = Path(path).expanduser()
     if candidate.suffix.lower() != ".gfc":
         raise GravityFieldError("El fichero de geopotencial debe usar la extensión .gfc")
-    try:
-        raw = candidate.read_bytes()
-    except OSError as exc:
-        raise GravityFieldError(f"No se pudo leer el fichero ICGEM '{candidate}'") from exc
+    raw = _read_bounded_local_icgem_payload(candidate)
     return parse_icgem_gfc(
         raw,
         expected_sha256=expected_sha256,

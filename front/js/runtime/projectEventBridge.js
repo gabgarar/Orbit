@@ -1,4 +1,8 @@
 import { markOrbitRuntimeReady } from "./runtimeStatus.js";
+import {
+    getStartupProjectReadiness,
+    publishStartupProjectActionBlocked
+} from "../features/diagnostics/startupStatus.js";
 
 const BOUND_KEY = "__orbitProjectLifecycleEventsBound";
 const PENDING_COMMANDS_KEY = "__orbitPendingProjectCommands";
@@ -21,9 +25,21 @@ export function bindProjectLifecycleEvents({
     if (windowRef[BOUND_KEY]) return;
     windowRef[BOUND_KEY] = true;
 
+    const startupAllowsProjectAction = (action, { notify = true } = {}) => {
+        if (action !== "new" && action !== "open") return true;
+        const readiness = getStartupProjectReadiness(windowRef.__orbitStartupStatus);
+        if (readiness.ready) return true;
+        if (notify) {
+            publishStartupProjectActionBlocked(action, windowRef);
+            showAlert(readiness.message, getAlertTitle());
+        }
+        return false;
+    };
+
     const onAction = async (event) => {
         const action = String(event.detail || "");
         if (action === "new" || action === "open") {
+            if (!startupAllowsProjectAction(action)) return;
             requestDialog(action);
             return;
         }
@@ -55,6 +71,7 @@ export function bindProjectLifecycleEvents({
     const onCommand = async (event) => {
         const command = event.detail || {};
         if (command.type === "new") {
+            if (!startupAllowsProjectAction("new")) return;
             try {
                 projectLifecycle.startNew(command.name);
             } catch {
@@ -63,6 +80,7 @@ export function bindProjectLifecycleEvents({
             return;
         }
         if (command.type === "open" && isProjectFile(command.file)) {
+            if (!startupAllowsProjectAction("open")) return;
             try {
                 await projectLifecycle.loadFile(command.file);
             } catch {
@@ -78,7 +96,11 @@ export function bindProjectLifecycleEvents({
         ? windowRef[PENDING_COMMANDS_KEY].splice(0)
         : [];
     markOrbitRuntimeReady(windowRef);
-    pendingCommands.forEach((command) => dispatchCommand(windowRef, command));
+    // Commands queued by an old/bare renderer are never replayed before the
+    // backend explicitly marks its mandatory startup assets ready.
+    pendingCommands
+        .filter((command) => startupAllowsProjectAction(String(command?.type || ""), { notify: false }))
+        .forEach((command) => dispatchCommand(windowRef, command));
 
     return () => {
         windowRef.removeEventListener("orbit:project-action", onAction);

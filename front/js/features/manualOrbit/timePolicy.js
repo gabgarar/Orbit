@@ -3,9 +3,10 @@
  *
  * The design editor, the scene timeline and finite products all use UTC.
  * They do not become different *time frames* merely because their coverage
- * differs.  What must never happen silently is evaluating an Earth-fixed
- * force outside the ERP supplied for the manual orbit, or treating two
- * disjoint finite ephemerides as if they could be analysed together.
+ * differs. Earth-fixed manual forces use Orbit's automatic IERS EOP service;
+ * an optional local ERP is a reproducible override, not a prerequisite. What
+ * must never happen silently is treating two disjoint finite ephemerides as
+ * if they could be analysed together.
  *
  * This module is deliberately UI/framework independent.  The React TIME tab
  * can use it to set the design window after an ERP upload, while the legacy
@@ -160,7 +161,7 @@ export function physicalEpochAtDesignWindowStart(designWindow) {
     return normalizeManualOrbitUtcRange(designWindow)?.startTime || null;
 }
 
-/** Whether selected forces require an Earth-orientation ERP in manual TIME. */
+/** Whether selected forces use Earth orientation in manual TIME. */
 export function manualOrbitForceTermsRequireErp(forceTerms = []) {
     const terms = Array.isArray(forceTerms)
         ? forceTerms
@@ -222,24 +223,25 @@ export function resolveManualOrbitTimePolicy({
     const scene = normalizeManualOrbitUtcRange(sceneWindow);
     const finite = normalizeFiniteRanges(finiteEphemerisRanges);
     const requiresErp = manualOrbitForceTermsRequireErp(forceTerms);
+    const hasManualErpOverride = Boolean(erp);
     const blockingReasons = [];
     const warnings = [];
 
     if (!design) {
         blockingReasons.push("invalid-design-window");
     }
-    if (requiresErp && !erp) {
-        blockingReasons.push("missing-erp");
+    // A manual ERP deliberately opts into its own immutable coverage. The
+    // normal no-file path uses the global IERS service, which reports an
+    // explicit nominal-rotation warning if no EOP is currently available.
+    if (requiresErp && hasManualErpOverride && design && !utcRangeCovers(erp, design)) {
+        blockingReasons.push("manual-erp-does-not-cover-design-window");
     }
-    if (requiresErp && erp && design && !utcRangeCovers(erp, design)) {
-        blockingReasons.push("erp-does-not-cover-design-window");
-    }
-    if (requiresErp && physicalEpochProvided && !Number.isFinite(physicalEpochMs)) {
+    if (requiresErp && hasManualErpOverride && physicalEpochProvided && !Number.isFinite(physicalEpochMs)) {
         blockingReasons.push("invalid-physical-epoch");
-    } else if (requiresErp && physicalEpochProvided && erp && !(
+    } else if (requiresErp && hasManualErpOverride && physicalEpochProvided && erp && !(
         physicalEpochMs >= erp.startMs && physicalEpochMs <= erp.endMs
     )) {
-        blockingReasons.push("erp-does-not-cover-physical-epoch");
+        blockingReasons.push("manual-erp-does-not-cover-physical-epoch");
     }
 
     const sharedInputs = [design, scene, ...finite].filter(Boolean);
@@ -262,6 +264,8 @@ export function resolveManualOrbitTimePolicy({
     return Object.freeze({
         canCreate: blockingReasons.length === 0,
         requiresErp,
+        usesAutomaticIers: requiresErp && !hasManualErpOverride,
+        hasManualErpOverride,
         erpCoversDesign: Boolean(erp && design && utcRangeCovers(erp, design)),
         physicalEpoch: Number.isFinite(physicalEpochMs)
             ? new Date(physicalEpochMs).toISOString()

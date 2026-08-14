@@ -42,7 +42,7 @@ from orbit_api.domain.requests import (
     require_manual_orbit_runtime_propagator,
 )
 from orbit_api.frames import FrameTransformService
-from orbit_api.orbits.forces import GravityFieldModel
+from orbit_api.orbits.forces import GravityFieldModel, GravityModelRegistry
 
 
 def _serialize_ephemeris_product(
@@ -168,6 +168,7 @@ def _build_manual_export_ephemeris(
     frame_transformer: FrameTransformService | None,
     gravity_field: GravityFieldModel | None,
     manual_erp_repository: ManualErpRepository | None,
+    gravity_models: GravityModelRegistry | None,
 ) -> tuple[dict, datetime.datetime, datetime.datetime, str]:
     """Propagate a manual source exactly as the manual-orbit endpoint does."""
 
@@ -201,6 +202,7 @@ def _build_manual_export_ephemeris(
             propagation_options=propagation_options,
             frame_transformer=frame_transformer,
             gravity_field=gravity_field,
+            gravity_model_registry=gravity_models,
             manual_erp_provider=manual_erp.provider if manual_erp is not None else None,
             manual_erp_snapshot_id=manual_erp.snapshot_id if manual_erp is not None else None,
         )
@@ -231,6 +233,7 @@ def create_exports_router(
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
     manual_erp_repository: ManualErpRepository | None = None,
+    gravity_models: GravityModelRegistry | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["exports"])
 
@@ -323,6 +326,7 @@ def create_exports_router(
             frame_transformer,
             gravity_field,
             manual_erp_repository,
+            gravity_models,
         )
         result.update({"source_format": "MANUAL", "propagator": propagator})
         return _serialize_ephemeris_product(

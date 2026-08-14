@@ -27,10 +27,13 @@ from orbit_api.domain.requests import (
     OrbitParametersRequest,
 )
 from orbit_api.frames import FrameTransformService, FrameTransformationError
+from orbit_api.orbits.forces import GravityFieldModel
 from orbit_api.timekeeping import (
     EarthOrientation,
     IgsErpEarthOrientationProvider,
+    LeapSecondTable,
     StaticEarthOrientationProvider,
+    VisualApproximationEarthOrientationProvider,
 )
 
 
@@ -81,6 +84,45 @@ def repository_and_snapshot(tmp_path):
 
 def _endpoint(router, path: str):
     return next(route.endpoint for route in router.routes if route.path == path)
+
+
+def _automatic_iers_transformer() -> FrameTransformService:
+    """Deterministic stand-in for the process-wide automatic IERS route."""
+
+    return FrameTransformService(
+        StaticEarthOrientationProvider(
+            EarthOrientation(
+                dut1_seconds=0.17,
+                xp_radians=1.0e-6,
+                yp_radians=-0.8e-6,
+                source="IERS automatic test provider",
+                version="test-c01",
+                quality="final",
+            )
+        ),
+        leap_second_table=LeapSecondTable(
+            entries=((datetime(2025, 1, 1, tzinfo=UTC), 38),),
+            source="test leap seconds",
+            version="test-2025",
+            sha256="a" * 64,
+            expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+        ),
+    )
+
+
+def _nominal_transformer() -> FrameTransformService:
+    """Deterministic missing-IERS state with an explicit nominal fallback."""
+
+    return FrameTransformService(
+        VisualApproximationEarthOrientationProvider(),
+        leap_second_table=LeapSecondTable(
+            entries=((datetime(2025, 1, 1, tzinfo=UTC), 38),),
+            source="test leap seconds",
+            version="test-2025",
+            sha256="c" * 64,
+            expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+        ),
+    )
 
 
 def test_manual_erp_snapshot_is_content_addressed_reloadable_and_never_returns_bytes(
@@ -168,19 +210,41 @@ def test_time_preview_persists_only_compact_provenance_and_proposes_exact_covera
 
 
 @pytest.mark.parametrize("force_terms", (["drag"], ["geopotential"]))
-def test_earth_fixed_manual_forces_fail_closed_without_an_attached_erp(force_terms):
+def test_earth_fixed_manual_forces_use_automatic_iers_without_an_attached_erp(force_terms):
     calls = []
     router = create_manual_orbits_router(
         lambda *_args: calls.append("build") or {"points": []},
         lambda value: value,
+        frame_transformer=_automatic_iers_transformer(),
+        gravity_field=(None if force_terms == ["drag"] else GravityFieldModel.wgs84_zonal_degree4()),
     )
     create = _endpoint(router, "/manual-orbits")
 
-    with pytest.raises(HTTPException, match="Debe proporcionar un fichero ERP") as rejected:
-        create(ManualOrbitRequest(**_manual_payload(force_terms=force_terms)))
+    response = create(ManualOrbitRequest(**_manual_payload(force_terms=force_terms)))
 
-    assert rejected.value.status_code == 422
-    assert calls == []
+    assert calls == ["build"]
+    assert response["manualErp"] is None
+    assert "IERS EOP automatic" in response["propagator_metadata"]["earth_fixed_force_route"]
+    assert response["propagator_metadata"]["earth_orientation_status"] == "iers"
+
+
+def test_earth_fixed_manual_force_warns_and_uses_nominal_rotation_when_iers_is_missing():
+    router = create_manual_orbits_router(
+        lambda *_args: {"points": []},
+        lambda value: value,
+        frame_transformer=_nominal_transformer(),
+    )
+
+    response = _endpoint(router, "/manual-orbits")(
+        ManualOrbitRequest(**_manual_payload(force_terms=["drag"]))
+    )
+
+    metadata = response["propagator_metadata"]
+    assert metadata["earth_orientation_status"] == "nominal"
+    assert metadata["warnings"] == [
+        "No hay datos ERP disponibles. El geopotencial y el arrastre atmosférico "
+        "usarán una rotación terrestre nominal."
+    ]
 
 
 def test_central_manual_orbit_still_creates_without_erp():
@@ -196,11 +260,7 @@ def test_central_manual_orbit_still_creates_without_erp():
     assert response["manualErp"] is None
 
 
-def test_inspector_rejects_earth_fixed_force_before_reading_a_global_eop():
-    global_transformer = FrameTransformService(
-        StaticEarthOrientationProvider(EarthOrientation(quality="final")),
-        strict_eop=True,
-    )
+def test_inspector_uses_automatic_global_eop_for_earth_fixed_force():
     request = OrbitParametersRequest.model_validate({
         "source": {"kind": "manual", "manualOrbit": _manual_payload(force_terms=["drag"])},
         "startTime": _EPOCH.isoformat(),
@@ -208,12 +268,14 @@ def test_inspector_rejects_earth_fixed_force_before_reading_a_global_eop():
         "samples": 2,
     })
 
-    with pytest.raises(ManualOrbitError, match="Debe proporcionar un fichero ERP"):
-        build_orbit_parameters(
-            request,
-            resolve_propagator=lambda *_args: (_ for _ in ()).throw(AssertionError("manual")),
-            frame_transformer=global_transformer,
-        )
+    response = build_orbit_parameters(
+        request,
+        resolve_propagator=lambda *_args: (_ for _ in ()).throw(AssertionError("manual")),
+        frame_transformer=_automatic_iers_transformer(),
+    )
+
+    assert response["model"]["earth_orientation_status"] == "iers"
+    assert response["source"]["manual_erp"] is None
 
 
 def test_manual_force_snapshot_reference_fails_closed_when_local_file_is_missing(tmp_path):
@@ -273,7 +335,8 @@ def test_manual_force_uses_its_snapshot_not_global_eop_and_requires_full_window_
 
     assert calls == ["build"]
     assert accepted["manualErp"]["snapshotId"] == snapshot.snapshot_id
-    assert accepted["propagator_metadata"]["manual_erp_required"] is True
+    assert "manual_erp_required" not in accepted["propagator_metadata"]
+    assert accepted["propagator_metadata"]["manual_erp_snapshot_id"] == snapshot.snapshot_id
     assert "contentBase64" not in accepted["manualErp"]
 
     outside = ManualOrbitRequest(**_manual_payload(

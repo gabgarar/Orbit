@@ -14,6 +14,10 @@ test("a pending precise-product hydration cannot delay New project", async () =>
     const previousFetch = globalThis.fetch;
     const windowRef = new EventTarget();
     windowRef.CustomEvent = globalThis.CustomEvent;
+    // Precise-product metadata is optional. The required startup gate has
+    // already completed, so this deliberately slow hydration must not delay
+    // an otherwise valid New-project action.
+    windowRef.__orbitStartupStatus = { ready: true };
     const created = [];
     let resolveFetch;
 

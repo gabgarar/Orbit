@@ -23,8 +23,15 @@ from orbit_api.domain.requests import (
     require_manual_orbit_runtime_propagator,
 )
 from orbit_api.frames import FrameTransformService
-from orbit_api.orbits.forces import GravityFieldModel
-from orbit_api.orbits.propagators.cowell import CowellPropagator
+from orbit_api.orbits.forces import (
+    GravityFieldModel,
+    GravityModelCacheError,
+    GravityModelRegistry,
+)
+from orbit_api.orbits.propagators.cowell import (
+    MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS,
+    CowellPropagator,
+)
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
 from orbit_api.timekeeping import EarthOrientationCoverageError, ensure_utc
@@ -42,14 +49,19 @@ class ManualOrbitError(ValueError):
 
 
 _MANUAL_ERP_FORCE_TERMS = frozenset({"geopotential", "drag"})
-MANUAL_ERP_REQUIRED_MESSAGE = (
-    "Debe proporcionar un fichero ERP para usar Full geopotential o arrastre atmosférico "
-    "en una órbita manual."
+NOMINAL_EARTH_ORIENTATION_WARNING = (
+    "No hay datos ERP disponibles. El geopotencial y el arrastre atmosférico "
+    "usarán una rotación terrestre nominal."
 )
 
 
 def manual_orbit_requires_erp(force_terms: tuple[str, ...] | list[str]) -> bool:
-    """Return whether a manual force is Earth-fixed and needs its own ERP."""
+    """Return whether a manual force is tied to Earth orientation.
+
+    The historical name is retained for API compatibility. Earth-fixed forces
+    consume the shared automatic IERS provider by default; a manual ERP is an
+    optional reproducible override rather than a creation prerequisite.
+    """
 
     return bool(_MANUAL_ERP_FORCE_TERMS.intersection(force_terms))
 
@@ -58,10 +70,14 @@ def require_manual_erp_for_force_terms(
     force_terms: tuple[str, ...] | list[str],
     manual_erp_provider: object | None,
 ) -> None:
-    """Reject an Earth-fixed manual force before any global EOP can be read."""
+    """Compatibility no-op for the pre-automatic-IERS API.
 
-    if manual_orbit_requires_erp(force_terms) and manual_erp_provider is None:
-        raise ManualOrbitError(MANUAL_ERP_REQUIRED_MESSAGE)
+    A missing manual snapshot now selects the process-wide IERS EOP provider
+    (and its explicit nominal fallback); product-bound SP3 ECI remains
+    governed by its separate strict contract.
+    """
+
+    del force_terms, manual_erp_provider
 
 
 def manual_erp_frame_transformer(
@@ -110,10 +126,15 @@ def validate_manual_erp_coverage(
     start_time: datetime.datetime,
     end_time: datetime.datetime,
 ) -> None:
-    """Check the complete design window before RK4 starts integrating it."""
+    """Fail closed only for an explicitly selected manual ERP snapshot.
 
-    if frame_transformer is None:
-        raise ManualOrbitError("Debe proporcionar un fichero ERP para usar fuerzas terrestres.")
+    The global IERS provider is automatic. It may deliberately expose a
+    labelled nominal rotation while no usable sample is available, which must
+    be a warning rather than a request to upload a manual ERP.
+    """
+
+    if frame_transformer is None or not frame_transformer.uses_manual_earth_orientation_provider:
+        return
     for label, instant in (("inicio", ensure_utc(start_time)), ("final", ensure_utc(end_time))):
         try:
             orientation = frame_transformer.earth_orientation_at(instant)
@@ -548,6 +569,7 @@ def build_manual_orbit_propagator(
     propagation_options: dict[str, Any] | None = None,
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
+    gravity_model_registry: GravityModelRegistry | None = None,
     manual_erp_provider: object | None = None,
     manual_erp_snapshot_id: str | None = None,
 ) -> tuple[str, Any, dict[str, Any]]:
@@ -576,7 +598,95 @@ def build_manual_orbit_propagator(
         raise ManualOrbitError(str(exc)) from exc
     force_terms = tuple(options["force_terms"])
     atmospheric_drag = bool(options["atmospheric_drag"])
-    requires_manual_erp = canonical == "cowell-rk4" and manual_orbit_requires_erp(force_terms)
+    effective_gravity_field = gravity_field
+    gravity_selection = None
+    gravity_selection_payload = None
+    if (
+        canonical == "cowell-rk4"
+        and "geopotential" in force_terms
+        and effective_gravity_field is not None
+    ):
+        requested_model = options.get("geopotential_model")
+        if (
+            requested_model is not None
+            and str(requested_model) != "LOCAL_ICGEM"
+            and str(requested_model).casefold() != effective_gravity_field.model_id.casefold()
+        ):
+            raise ManualOrbitError(
+                "La selección NGA solicitada no coincide con el campo ICGEM local fijado "
+                f"({effective_gravity_field.model_id}). Quite la selección EGM o configure el mismo modelo."
+            )
+        # The checksum-pinned static file is the applied force source even if
+        # an older project used the name EGM96/EGM2008. Its declared ICGEM
+        # degree is an actual local evaluator limit, so clamp it explicitly
+        # and preserve both requested/effective values in provenance.
+        requested_degree = int(options["geopotential_degree"])
+        requested_order = int(options["geopotential_order"])
+        effective_degree = min(requested_degree, effective_gravity_field.max_degree)
+        effective_order = min(requested_order, effective_degree)
+        selection_warnings: list[str] = []
+        if (effective_degree, effective_order) != (requested_degree, requested_order):
+            selection_warnings.append(
+                "Requested degree/order exceeds the configured local ICGEM coverage; "
+                f"using degree={effective_degree}, order={effective_order}."
+            )
+        options["geopotential_model"] = "LOCAL_ICGEM"
+        options["geopotential_degree"] = effective_degree
+        options["geopotential_order"] = effective_order
+        gravity_selection_payload = {
+            "model": "LOCAL_ICGEM",
+            "requestedModel": requested_model,
+            "requestedDegree": requested_degree,
+            "requestedOrder": requested_order,
+            "degree": effective_degree,
+            "order": effective_order,
+            "clamped": bool(selection_warnings),
+            "available": True,
+            "warnings": selection_warnings,
+            "source": "configured-local-icgem",
+            "provenance": {
+                "modelId": effective_gravity_field.model_id,
+                "source": effective_gravity_field.source,
+                "version": effective_gravity_field.version,
+                "sha256": effective_gravity_field.sha256,
+                "maxDegree": effective_gravity_field.max_degree,
+            },
+        }
+    if (
+        canonical == "cowell-rk4"
+        and "geopotential" in force_terms
+        and effective_gravity_field is None
+        and options.get("geopotential_model") == "LOCAL_ICGEM"
+    ):
+        raise ManualOrbitError(
+            "LOCAL_ICGEM requires ORBIT_GRAVITY_FIELD_PATH and ORBIT_GRAVITY_FIELD_SHA256."
+        )
+    if (
+        canonical == "cowell-rk4"
+        and "geopotential" in force_terms
+        and effective_gravity_field is None
+        and gravity_model_registry is not None
+    ):
+        try:
+            gravity_selection = gravity_model_registry.resolve_selection(
+                options.get("geopotential_model"),
+                options.get("geopotential_degree"),
+                options.get("geopotential_order"),
+            )
+            # The registry clamps to the scientific model bounds before any
+            # allocation.  Cowell's own fixed-RK4 budget is passed at this
+            # boundary, so an enormous EGM2008 request is never parsed only
+            # to be rejected a moment later by the propagator.
+            effective_gravity_field = gravity_model_registry.materialize_selection(
+                gravity_selection,
+                max_harmonic_terms=MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS,
+            )
+            options["geopotential_model"] = gravity_selection.model_id
+            options["geopotential_degree"] = gravity_selection.degree
+            options["geopotential_order"] = gravity_selection.order
+        except GravityModelCacheError as exc:
+            raise ManualOrbitError(str(exc)) from exc
+    uses_earth_orientation = canonical == "cowell-rk4" and manual_orbit_requires_erp(force_terms)
     if manual_erp_provider is None and manual_erp_snapshot_id is not None:
         raise ManualOrbitError(
             "La referencia ERP manual no tiene un fichero local validado asociado."
@@ -589,7 +699,7 @@ def build_manual_orbit_propagator(
     effective_transformer = manual_erp_frame_transformer(
         frame_transformer,
         manual_erp_provider,
-    )
+    ) or FrameTransformService()
     legacy_force_model_id = option_model.cowell_gravity_model if canonical == "cowell-rk4" else None
     numerical_integrator = options.get("numerical_integrator")
     metadata = manual_propagator_metadata(canonical)
@@ -617,13 +727,18 @@ def build_manual_orbit_propagator(
                 drag_coefficient=float(options["drag_coefficient"]),
                 area_m2=float(options["area_m2"]),
                 mass_kg=float(options["mass_kg"]),
-                geopotential_model=gravity_field,
+                geopotential_model=effective_gravity_field,
                 geopotential_degree=int(options.get("geopotential_degree", 4)),
                 geopotential_order=int(options.get("geopotential_order", 0)),
                 solar_radiation_coefficient=float(
                     options.get("solar_radiation_coefficient", 1.2)
                 ),
                 frame_transformer=effective_transformer,
+                # Manual Earth-fixed forces normally use the shared IERS
+                # cache. The explicit nominal fallback is limited to this
+                # authoring path; direct Cowell and precise-SP3 paths keep
+                # their stricter contracts.
+                allow_nominal_earth_orientation=manual_erp_provider is None,
             )
     except ValueError as exc:
         raise ManualOrbitError(str(exc)) from exc
@@ -649,17 +764,22 @@ def build_manual_orbit_propagator(
                 {
                     "degree": int(options["geopotential_degree"]),
                     "order": int(options["geopotential_order"]),
-                    "model_id": gravity_field.model_id,
-                    "source": gravity_field.source,
-                    "version": gravity_field.version,
-                    "sha256": gravity_field.sha256,
-                    "normalization": gravity_field.normalization,
-                    "tide_system": gravity_field.tide_system,
+                    "model_id": effective_gravity_field.model_id,
+                    "source": effective_gravity_field.source,
+                    "version": effective_gravity_field.version,
+                    "sha256": effective_gravity_field.sha256,
+                    "normalization": effective_gravity_field.normalization,
+                    "tide_system": effective_gravity_field.tide_system,
                     "evaluation_frame": "ITRF",
                     "native_force_route": "EME2000 -> ITRF -> EME2000",
-                    "requires": "strict local EOP, versioned leap seconds and ERFA/SOFA",
+                    "requires": "automatic IERS EOP or explicitly labelled nominal rotation, versioned leap seconds and ERFA/SOFA",
+                    "selection": (
+                        gravity_selection.payload()
+                        if gravity_selection is not None
+                        else gravity_selection_payload
+                    ),
                 }
-                if "geopotential" in force_terms and gravity_field is not None
+                if "geopotential" in force_terms and effective_gravity_field is not None
                 else None
             ),
             "solar_radiation_pressure": (
@@ -674,12 +794,32 @@ def build_manual_orbit_propagator(
                 else None
             ),
         })
-    if requires_manual_erp:
-        metadata["manual_erp_required"] = True
-        metadata["manual_erp_snapshot_id"] = manual_erp_snapshot_id
-        metadata["earth_fixed_force_route"] = (
-            "EME2000 -> ITRF -> EME2000 (ERP manual local-validated)"
-        )
+    if uses_earth_orientation:
+        if manual_erp_provider is not None:
+            metadata["manual_erp_snapshot_id"] = manual_erp_snapshot_id
+            metadata["earth_fixed_force_route"] = (
+                "EME2000 -> ITRF -> EME2000 (ERP manual local-validated)"
+            )
+        else:
+            metadata["earth_fixed_force_route"] = (
+                "EME2000 -> ITRF -> EME2000 (IERS EOP automatic; "
+                "nominal rotation when coverage is unavailable)"
+            )
+            try:
+                orientation = effective_transformer.earth_orientation_at(ensure_utc(epoch))
+            except (EarthOrientationCoverageError, ValueError):
+                orientation = None
+            if orientation is None or orientation.quality == "approximate":
+                metadata["warnings"] = [NOMINAL_EARTH_ORIENTATION_WARNING]
+                metadata["earth_orientation_status"] = "nominal"
+            else:
+                metadata["earth_orientation_status"] = "iers"
+                metadata["earth_orientation"] = {
+                    "source": orientation.source,
+                    "version": orientation.version,
+                    "quality": orientation.quality,
+                    "snapshot_id": orientation.snapshot_id,
+                }
     return _manual_runtime_identity(
         canonical,
         epoch,

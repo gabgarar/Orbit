@@ -19,8 +19,11 @@ docker compose up -d --build
 docker compose ps
 ~~~
 
-El estado esperado es healthy. Los registros del conjunto de procesos se
-consultan con:
+El estado esperado del contenedor es healthy. Esto solo confirma que el gateway
+y el backend están vivos; el primer arranque puede seguir descargando o
+validando datos automáticos de gravedad. El panel Startup y Built-In Test de
+Orbit muestran por separado la decisión de readiness y su progreso. Los
+registros del conjunto de procesos se consultan con:
 
 ~~~powershell
 docker compose logs -f orbit
@@ -76,7 +79,11 @@ La carpeta .scripts/ contiene accesos consistentes para el entorno Docker.
 2. Compruebe que aparece la pantalla de bienvenida del proyecto o el espacio
    de trabajo.
 3. Ejecute ./.scripts/orbit-status.cmd y confirme el estado saludable.
-4. Si el visor no aparece, inspeccione primero los registros y después la
+4. En Orbit, espere a que Estado de arranque publique `projectReady: true`
+   antes de usar Nuevo/Abrir/Importar proyecto. El primer inicio sin caché
+   puede tardar más; los posteriores suelen validar localmente la caché
+   persistente y terminan antes.
+5. Si el visor no aparece, inspeccione primero los registros y después la
    disponibilidad de WebGL indicada en [Requisitos](requirements.md).
 
 ## Configuración de precisión opcional
@@ -88,4 +95,3 @@ config/eop/, defina sus rutas internas y reinicie el servicio. Consulte
 modo estricto.
 
 Continúe con el [inicio rápido](quick-start.md).
-

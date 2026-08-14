@@ -79,19 +79,25 @@ ERP)** and reject any request declaring `require_eci`. The global C04 snapshot
 is not silently adopted as an ERP for an SP3 revision: both sources retain
 their own version and provenance.
 
-## Manual orbit: TIME tab and local ERP
+## Manual orbit: TIME tab and optional local ERP
 
 The manual-orbit design **TIME** tab contains two separate contracts:
 **Design window** defines the UTC epochs to propagate, while **Orbit preview
 frame** only chooses how to inspect the ephemeris. They are not two clocks or
 two different dynamics.
 
-A manual orbit ERP is explicitly attached from that tab as a local file. Orbit
-does not silently download or adopt the global C04, an ERP belonging to an
-already-loaded SP3, or an Internet value to complete that file. The result keeps
-the attached ERP's name, provider, digest, UTC scale, and coverage limits.
+For manual Earth-bound forces, Orbit uses the same automatic IERS C01 provider
+for `geopotential` and `drag` by default. A manual ERP is not required to
+create or preview a manual orbit. The C01 cache does not change the **Design
+window** or physical epoch: it is the operational UT1–UTC, polar-motion, and
+LOD source for propagation stages.
 
-After the ERP validates successfully, TIME replaces the **Design window** with
+Attaching a local ERP from TIME remains optional: it pins an explicit,
+reproducible snapshot for that design. The result retains the attached ERP's
+name, provider, digest, UTC scale, and coverage limits; it never mixes an
+already-loaded SP3 ERP into the manual orbit.
+
+When an optional manual ERP validates successfully, TIME replaces the **Design window** with
 the complete interval covered by the file:
 
 $$
@@ -101,29 +107,35 @@ $$
 In that same explicit action, the physical **State-vector epoch** is anchored
 to \(t_{ERP,min}\). This prevents an old draft epoch from surviving when the
 new ERP does not cover it. It may be edited afterwards, but Earth-bound forces
-require it to remain within ERP coverage.
+using that explicit ERP require it to remain within its coverage.
 
 It is not automatically clipped to an SP3/OEM layer already in the scene.
 Clipping would hide the fact that the products have different coverages and
 would change the manual design without an explicit operator action.
 
-### When ERP is mandatory
+### Earth-orientation provider
 
-The manual ERP is required when the Cowell composition includes an Earth-bound
-force: currently `geopotential` or `drag`. Before previewing or creating, Orbit
-requires the ERP to cover the complete design interval:
+`geopotential` and `drag` share the process-wide automatic IERS C01 cache. When
+it has a valid sample for every stage, Orbit applies its UT1–UTC, polar motion,
+and LOD. No manual ERP file is required.
+
+If C01 is unavailable or does not cover a requested stage, the manual orbit may
+be created with the warning **“No ERP data available. Geopotential and drag will
+use nominal Earth rotation.”** Its published provenance then labels the route
+as nominal; it is not presented as a precise EOP solution.
+
+An optional local ERP must cover the full design window and physical epoch when
+it is selected as the reproducible override:
 
 $$
 D\subseteq E_{ERP}.
 $$
 
-When it is absent the error is **“Debe proporcionar un fichero ERP para
-convertir a ECI.”**; when present but not covering the entire window, creation
-is rejected with a coverage explanation. An operator can still design an
-inertial-only force composition —for example `central`, third body, SRP, or
-relativity— without attaching an ERP, but that does not enable a rigorous
-Earth-fixed evaluation. Leap-second and ERFA requirements remain independent
-from the manual ERP.
+When that override is present but does not cover the full window, creation is
+rejected with a coverage explanation. The EME2000↔ITRF route still requires the
+local leap-second table and ERFA/SOFA; those requirements are independent of a
+manual ERP. Rigorous ECI conversion for an SP3 product retains its separate
+fail-closed contract: neither global C01 nor nominal fallback enables it.
 
 ### Alignment with SP3, OEM, and scene range
 

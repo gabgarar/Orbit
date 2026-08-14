@@ -23,6 +23,10 @@ from orbit_api.application.manual_erp import (
     ManualErpSnapshot,
     resolve_manual_erp_input,
 )
+from orbit_api.api.routes.startup_gate import (
+    StartupReadinessProvider,
+    require_project_startup_ready,
+)
 from orbit_api.domain.requests import (
     MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
     ManualErpPreviewRequest,
@@ -30,7 +34,11 @@ from orbit_api.domain.requests import (
     require_manual_orbit_runtime_propagator,
 )
 from orbit_api.frames import FrameTransformService
-from orbit_api.orbits.forces import GravityFieldModel
+from orbit_api.orbits.forces import (
+    GravityFieldModel,
+    GravityModelRegistry,
+    local_icgem_model_payload,
+)
 from orbit_api.orbits.propagators.cowell import (
     MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS,
 )
@@ -148,6 +156,7 @@ def _camel_propagation_options(options: dict) -> dict:
         ("mass_kg", "massKg"),
         ("geopotential_degree", "geopotentialDegree"),
         ("geopotential_order", "geopotentialOrder"),
+        ("geopotential_model", "geopotentialModel"),
         ("solar_radiation_coefficient", "solarRadiationCoefficient"),
     ):
         if snake_case in options:
@@ -234,6 +243,8 @@ def create_manual_orbits_router(
     frame_transformer: FrameTransformService | None = None,
     gravity_field: GravityFieldModel | None = None,
     manual_erp_repository: ManualErpRepository | None = None,
+    gravity_models: GravityModelRegistry | None = None,
+    startup_readiness: StartupReadinessProvider | None = None,
 ) -> APIRouter:
     """Build the HTTP adapter for transient manual orbit engines."""
 
@@ -291,6 +302,29 @@ def create_manual_orbits_router(
         leap_seconds = (
             frame_transformer.leap_second_table if frame_transformer is not None else None
         )
+        registry_payload = (
+            gravity_models.diagnostics_payload() if gravity_models is not None else None
+        )
+        active_registry_model = (
+            str(registry_payload.get("activeModel")) if registry_payload is not None else None
+        )
+        registry_models = (
+            registry_payload.get("models", {}) if registry_payload is not None else {}
+        )
+        models = dict(registry_models) if isinstance(registry_models, dict) else {}
+        static_model = local_icgem_model_payload(gravity_field)
+        if static_model is not None:
+            models[str(static_model["id"])] = static_model
+        effective_active_model = (
+            str(static_model["id"])
+            if static_model is not None
+            else active_registry_model
+        )
+        active_registry_record = (
+            registry_models.get(active_registry_model, {})
+            if isinstance(registry_models, dict) and active_registry_model is not None
+            else {}
+        )
         return {
             "cowell": {
                 "force_terms": [
@@ -299,10 +333,10 @@ def create_manual_orbits_router(
                     "relativity",
                 ],
                 "geopotential": {
-                    "available": gravity_field is not None,
+                    "available": static_model is not None or bool(active_registry_record.get("loaded")),
                     "requires": [
-                        "local ICGEM .gfc with SHA-256",
-                        "strict local EOP coverage",
+                        "local ICGEM .gfc with SHA-256 or validated local NGA EGM archive",
+                        "automatic IERS EOP or explicitly labelled nominal rotation",
                         "versioned unexpired leap-second snapshot",
                         "pyerfa/SOFA IAU 2006/2000A",
                     ],
@@ -332,6 +366,13 @@ def create_manual_orbits_router(
                         }
                         if gravity_field is not None else None
                     ),
+                    "active_model": effective_active_model,
+                    "models": models,
+                    "static_model": static_model,
+                    "selection_source": (
+                        "configured-local-icgem" if static_model is not None else "nga-registry"
+                    ),
+                    "registry": registry_payload,
                 },
                 "temporal_route": {
                     "strict_eop": bool(frame_transformer and frame_transformer.strict_eop),
@@ -352,6 +393,7 @@ def create_manual_orbits_router(
 
     @router.post("/manual-orbits")
     def create_manual_orbit(payload: ManualOrbitRequest) -> dict:
+        require_project_startup_ready(startup_readiness)
         try:
             # ``ManualOrbitRequest`` recognizes legacy SGP4 records so a
             # saved project can be identified without silently becoming a
@@ -397,9 +439,19 @@ def create_manual_orbits_router(
                 propagation_options=propagation_options,
                 frame_transformer=frame_transformer,
                 gravity_field=gravity_field,
+                gravity_model_registry=gravity_models,
                 manual_erp_provider=manual_erp.provider if manual_erp is not None else None,
                 manual_erp_snapshot_id=manual_erp.snapshot_id if manual_erp is not None else None,
             )
+            resolved_geopotential = propagator_metadata.get("geopotential")
+            if isinstance(resolved_geopotential, dict):
+                selection = resolved_geopotential.get("selection")
+                if isinstance(selection, dict):
+                    propagation_options["geopotential_model"] = selection.get("model")
+                    propagation_options["geopotential_degree"] = selection.get("degree")
+                    propagation_options["geopotential_order"] = selection.get("order")
+                    if selection.get("warnings"):
+                        propagator_metadata.setdefault("warnings", []).extend(selection["warnings"])
         except (ManualOrbitError, ManualErpError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

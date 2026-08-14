@@ -64,6 +64,16 @@ services:
       ORBIT_GRAVITY_FIELD_SHA256: "${ORBIT_GRAVITY_FIELD_SHA256:-}"
       ORBIT_GRAVITY_FIELD_SOURCE: "${ORBIT_GRAVITY_FIELD_SOURCE:-}"
       ORBIT_GRAVITY_FIELD_VERSION: "${ORBIT_GRAVITY_FIELD_VERSION:-}"
+      # Official NGA EGM archives are a separately validated, mutable cache.
+      # The health monitor refreshes it outside force evaluation, so starting
+      # Orbit never blocks on a large network download. EGM2008 is selected
+      # by default; its effective N×M selection is read from the validated
+      # decompressed archive rather than assumed from this configuration.
+      ORBIT_GRAVITY_CACHE_DIR: "${ORBIT_GRAVITY_CACHE_DIR:-/app/data/geopotential}"
+      ORBIT_GRAVITY_MODEL: "${ORBIT_GRAVITY_MODEL:-EGM2008}"
+      ORBIT_GRAVITY_REFRESH_DAYS: "${ORBIT_GRAVITY_REFRESH_DAYS:-30}"
+      ORBIT_GRAVITY_AUTO_DOWNLOAD: "${ORBIT_GRAVITY_AUTO_DOWNLOAD:-true}"
+      ORBIT_GRAVITY_DOWNLOAD_TIMEOUT_SECONDS: "${ORBIT_GRAVITY_DOWNLOAD_TIMEOUT_SECONDS:-45}"
     volumes:
       # Conserva cambios de configuración y catálogos fuera de la imagen.
       - ./config:/app/config

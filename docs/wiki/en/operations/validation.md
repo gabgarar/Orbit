@@ -25,6 +25,68 @@ docker compose logs -f orbit
 ./.scripts/orbit-logs.cmd
 ~~~
 
+`healthy` is **liveness**: the gateway and application can respond. It is not
+**readiness** and deliberately does not wait for background IERS C01 or NGA
+gravity-cache work. An automatic cache may still be loading, stale, or
+unavailable after startup. Check Built-In Test and the startup panel before
+enabling a dependent operation; a healthcheck alone is neither a precision nor
+a force-model certificate.
+
+## Startup readiness and progress
+
+The authoritative startup record is the `startup` component returned by
+`GET /api/system/diagnostics`. Its `ready` and `projectReady` booleans become
+true only after the service has explicitly completed the required validation
+steps. `readiness` makes the gate inspectable instead of treating any terminal
+or warning state as usable:
+
+| Field | Meaning |
+| --- | --- |
+| `readiness.state` | `pending`, `ready`, `degraded-ready`, or `blocked`. Gated work requires the explicit `ready`/`projectReady` boolean. |
+| `readiness.requiredSteps` | The checks required by this startup; do not infer them from a fixed UI sequence. |
+| `readiness.blockers` | Each unfinished or failed requirement with its identifier, status, and operator-facing message. |
+| `readiness.degradations` | Completed but non-blocking degradations, such as the explicitly labelled nominal-Earth-rotation path when ERP is unavailable. |
+| `details.progress` | Startup phase, active gravity model, completed/total model count, and per-model download/validation facts. |
+
+`details.progress.percent` is shown as 0–100 only when the server knows the
+total size. If the upstream response has no trustworthy `Content-Length`, it
+is `null` and the UI presents an indeterminate download rather than inventing a
+percentage. Per-model entries report their state/stage, downloaded and total
+bytes when known, last update, and message. The progress states are `pending`,
+`downloading`, `validating`, `ready`, and `error`.
+
+### First start, cached start, and gated actions
+
+On a first start without valid local NGA files, downloading and validating the
+gravity archives can take noticeably longer. The startup panel exposes the
+current model and progress while this happens. Later starts normally validate
+the persistent cache locally and are much faster; a missing, corrupt, or stale
+entry may still trigger a controlled refresh.
+
+If an NGA failure blocks startup, Orbit retries the background operation up to
+five times with backoffs of 30, 60, 120, 240, and 300 seconds. It neither
+restarts the container nor makes `/health` fail just because that work is
+pending. After those attempts, the error remains visible and monitoring returns
+to its normal interval. A later successful download and validation moves the
+same runtime from the visible error/blocker to `ready` (or `degraded-ready`
+when a separately non-blocking degradation remains); no manual retry promise
+should be inferred from this policy.
+
+Until `ready`/`projectReady` is explicitly true, Orbit keeps the scene, Startup
+panel, and Built-In Test available but gates actions that would create, replace,
+or restore project state. The project control does not enable **New project**
+or **Open/Import project**. Forced manual-orbit preview/creation and orbit-
+parameter calculations are rejected by the service with HTTP 503 and the
+published readiness reason. Do not bypass this gate by calling an endpoint or
+retrying blindly: resolve the reported blocker or wait for validation.
+
+`Warning`, `healthy`, or a completed-looking progress bar is not enough by
+itself. The application enables those actions only from the explicit readiness
+booleans. `degraded-ready` can have those booleans true after all blocking
+checks pass, but retains the visible degradation and does not certify a strict
+ERP/ECI route. `blocked` remains a visible operator action, not a hidden
+fallback.
+
 ## Automated suites
 
 The repository separates tests by responsibility.

@@ -6,8 +6,8 @@
 
 | Método y ruta | Operación | Respuesta o restricciones principales |
 | --- | --- | --- |
-| `GET /health` | Estado del gateway y del backend Python. | `200` con ambos estados `ok`; `503` mientras el backend no esté disponible. |
-| `GET /api/system/diagnostics` | Instantánea de diagnóstico para Built-In Test. | Solo lectura; devuelve estado global, hora de generación y componentes `erp`, `sp3`, `oem`, `propagators`, `forces`, `frames`, `cicd` y `monitor`. No ejecuta una suite completa ni modifica datos. |
+| `GET /health` | Liveness del gateway y del backend Python. | `200` con ambos estados `ok`; `503` mientras el backend no esté disponible. No es una decisión de readiness de arranque. |
+| `GET /api/system/diagnostics` | Instantánea de diagnóstico para Built-In Test. | Solo lectura; devuelve estado global, hora de generación y componentes de diagnóstico, incluidos `startup`, `erp`, `gravity`, `sp3`, `oem`, `propagators`, `forces`, `frames`, `cicd` y `monitor`. No ejecuta una suite completa ni modifica datos. |
 | `GET /api/diagnostics` | Alias de compatibilidad del diagnóstico. | Mismo contrato que `/api/system/diagnostics`; los clientes nuevos deben preferir la ruta con espacio de nombres `system`. |
 | `POST /api/system-config` | Persiste una configuración saneada y solicita recarga del backend. | Requiere `system`; no permite cambiar en caliente el catálogo activo. Puede devolver `503` tras persistir si la recarga falla. |
 | `GET /docs` | Swagger UI de FastAPI a través del gateway. | Véase [OpenAPI](../openapi.md). |
@@ -36,3 +36,32 @@ El componente `erp` publica únicamente procedencia y salud operativa:
 `error`. Una respuesta con `loaded: false` o estado `warning` no autoriza al
 cliente a suponer ERP, extrapolar cobertura ni solicitar ECI estricto. Los
 productos SP3 mantienen por separado su ERP adjunto y su contrato de marco.
+
+## Readiness y progreso de arranque
+
+`/health` responde una pregunta de liveness deliberadamente limitada: si el
+gateway y la aplicación pueden responder. Por ello puede devolver `200`
+mientras todavía se descarga o valida la caché automática de gravedad. Los
+clientes que necesiten crear, abrir, importar, restaurar, previsualizar o
+parametrizar una órbita deben leer en su lugar `components.startup` de
+`GET /api/system/diagnostics` (o de su alias de compatibilidad) y usar los
+booleanos explícitos `ready` / `projectReady`.
+
+El registro `readiness` explica la decisión: `state` es `pending`, `ready`,
+`degraded-ready` o `blocked`; `requiredSteps`, `blockers`, `degradations` y el
+mensaje para el operador permiten inspeccionarla. Un cliente no debe inferir
+readiness de una respuesta `healthy`, un aviso ni un estado de progreso que
+parezca terminal. `degraded-ready` puede publicar igualmente los booleanos como
+verdaderos una vez superados los controles bloqueantes, pero conserva su aviso y
+no certifica ERP/ECI estricto.
+
+`progress` (también expuesto dentro de los detalles de arranque) informa del
+modelo de gravedad activo, modelos completados/totales y, por modelo, estado,
+etapa, contadores de bytes, mensaje y hora de actualización. `percent` vale
+`0`–`100` solo si se conoce un total fiable; `null` significa transferencia
+indeterminada y no debe sustituirse por un porcentaje estimado. Un primer
+arranque puede tardar más mientras se descarga y valida la caché persistente.
+Los siguientes suelen validarla localmente y terminan antes. Hasta que los
+booleanos explícitos de readiness sean verdaderos, los endpoints protegidos de
+previsualización/creación manual y parámetros devuelven HTTP `503` con la razón
+de readiness publicada.

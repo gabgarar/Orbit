@@ -3,6 +3,11 @@ import { CalendarIcon, ChevronDownIcon, EyeIcon, EyeOffIcon, FolderIcon, GroundS
 import CameraControls from "../features/camera/CameraControls.jsx";
 import { getLayerActionsState, LAYER_ACTIONS_STATE_EVENT } from "../../../front/js/runtime/layerActionsState.js";
 import { emitPropagatedParametersClose, emitPropagatedParametersOpen } from "../../../front/js/runtime/propagatedParametersEvents.js";
+import {
+    getStartupProjectReadiness,
+    publishStartupProjectActionBlocked,
+    STARTUP_STATUS_EVENT
+} from "../../../front/js/features/diagnostics/startupStatus.js";
 import { openGroundStationExportMenu } from "./GroundStationExportMenu.jsx";
 import { ActionMenuItem, ActionMenuSeparator, ActionMenuSurface } from "./ActionMenuSurface.jsx";
 
@@ -28,7 +33,7 @@ const PROJECT_ACTIONS = [
     { action: "export-ground-stations", label: "Exportar estaciones", description: "Elige GeoJSON, KML/KMZ, GeoPackage, WKT/WKB, Orbit JSON o CSV" }
 ];
 
-function ProjectActionsMenu({ source, left, top, onSelect, projectName }) {
+function ProjectActionsMenu({ source, left, top, onSelect, projectName, startupReadiness }) {
     return <ActionMenuSurface
         id="projectActionsMenu"
         data-project-actions-menu="true"
@@ -40,15 +45,21 @@ function ProjectActionsMenu({ source, left, top, onSelect, projectName }) {
         icon={<FolderIcon />}
         ariaLabel={`Acciones de ${projectName || "proyecto"}`}
     >
-        {PROJECT_ACTIONS.map(({ action, label, description }) => <span key={action}>
-            {action === "export" && <ActionMenuSeparator />}
-            <ActionMenuItem
-                data-project-action={action}
-                title={label}
-                description={description}
-                onClick={(event) => onSelect(action, event)}
-            />
-        </span>)}
+        {PROJECT_ACTIONS.map(({ action, label, description }) => {
+            const blocked = (action === "new" || action === "open") && startupReadiness?.ready !== true;
+            return <span key={action}>
+                {action === "export" && <ActionMenuSeparator />}
+                <ActionMenuItem
+                    data-project-action={action}
+                    title={label}
+                    description={blocked ? `${description}. ${startupReadiness?.message || "Preparando datos críticos…"}` : description}
+                    disabled={blocked}
+                    aria-disabled={blocked}
+                    onClick={(event) => onSelect(action, event)}
+                />
+            </span>;
+        })}
+        {startupReadiness?.ready !== true && <p className="m-1 mt-2 border-t border-[#274261] pt-2 text-[9px] leading-snug text-[#a9c5e7]" data-testid="project-actions-startup-gate">{startupReadiness?.message || "Preparando datos críticos…"}</p>}
     </ActionMenuSurface>;
 }
 
@@ -150,6 +161,7 @@ export default function WorkspaceSidebar() {
     const [projectTreeExpanded, setProjectTreeExpanded] = useState(true);
     const [projectLayerCount, setProjectLayerCount] = useState(0);
     const [projectActionsMenu, setProjectActionsMenu] = useState(null);
+    const [startupReadiness, setStartupReadiness] = useState(() => getStartupProjectReadiness(window.__orbitStartupStatus));
     const [searchMenuOpen, setSearchMenuOpen] = useState(false);
     const [searchOptions, setSearchOptions] = useState({ matchCase: false, wholeWord: false, regex: false });
     const [allLayersVisible, setAllLayersVisible] = useState(true);
@@ -166,6 +178,14 @@ export default function WorkspaceSidebar() {
     useEffect(() => {
         openPanelRef.current = openPanel;
     }, [openPanel]);
+    useEffect(() => {
+        const updateStartupReadiness = (event) => {
+            setStartupReadiness(getStartupProjectReadiness(event.detail || window.__orbitStartupStatus));
+        };
+        window.addEventListener(STARTUP_STATUS_EVENT, updateStartupReadiness);
+        updateStartupReadiness({});
+        return () => window.removeEventListener(STARTUP_STATUS_EVENT, updateStartupReadiness);
+    }, []);
     useEffect(() => {
         const open = () => setGroundStationsOpen(true);
         const close = () => setGroundStationsOpen(false);
@@ -390,6 +410,10 @@ export default function WorkspaceSidebar() {
     };
     const selectProjectAction = (action, event) => {
         setProjectActionsMenu(null);
+        if ((action === "new" || action === "open") && !startupReadiness.ready) {
+            publishStartupProjectActionBlocked(action);
+            return;
+        }
         if (action === "export-ground-stations") {
             const rect = event?.currentTarget?.getBoundingClientRect?.();
             openGroundStationExportMenu({
@@ -423,7 +447,7 @@ export default function WorkspaceSidebar() {
                 <div className="orbit-layers-header-actions relative shrink-0">
                     <button className="orbit-layers-header-add" id={addLayerId} type="button" title={addLayerTitle} aria-label={addLayerTitle} disabled={designMode} onClick={groundStationsOpen ? () => window.dispatchEvent(new Event("orbit:ground-stations-create-request")) : undefined}><PlusIcon /></button>
                     <button id="projectActionsBtn" className={`orbit-layers-project-menu${projectActionsMenu?.source === "toolbar" ? " is-open" : ""}`} data-project-actions-control="true" type="button" title="Acciones de proyecto" aria-label="Acciones de proyecto" aria-haspopup="menu" aria-expanded={projectActionsMenu?.source === "toolbar"} aria-controls="projectActionsMenu" onClick={toggleProjectActionsMenu}><MoreHorizontalIcon /></button>
-                    {projectActionsMenu?.source === "toolbar" && <ProjectActionsMenu source="toolbar" projectName={projectName} onSelect={selectProjectAction} />}
+                    {projectActionsMenu?.source === "toolbar" && <ProjectActionsMenu source="toolbar" projectName={projectName} startupReadiness={startupReadiness} onSelect={selectProjectAction} />}
                 </div>
             </div>
             <div className="orbit-project-header orbit-project-module">
@@ -458,7 +482,7 @@ export default function WorkspaceSidebar() {
         </aside>
         </div>
         </section>
-        {projectActionsMenu?.source === "context" && <ProjectActionsMenu source="context" left={projectActionsMenu.left} top={projectActionsMenu.top} projectName={projectName} onSelect={selectProjectAction} />}
+        {projectActionsMenu?.source === "context" && <ProjectActionsMenu source="context" left={projectActionsMenu.left} top={projectActionsMenu.top} projectName={projectName} startupReadiness={startupReadiness} onSelect={selectProjectAction} />}
         <div id="legacyHiddenInfo" hidden />
     </>;
 }

@@ -101,4 +101,20 @@ users, access control or collaboration in real time.
 Check docker compose ps or run ./.scripts/orbit-status.cmd. For
 check the code and contracts covered, run the suites described in
 [Validation](validation.md). A correct healthcheck does not replace the review
-of the input data or the EOP configuration.
+of the input data or the EOP configuration. It is a liveness result, not proof
+that startup readiness has completed. Use the **Startup status** panel or the
+`startup` diagnostic component: project actions are enabled only after its
+explicit `ready`/`projectReady` decision, and it shows any pending download or
+validation blocker.
+
+## Why is startup blocked after an NGA gravity error?
+
+Orbit keeps the error and its affected readiness step visible instead of
+silently enabling project work. It automatically retries startup-blocking NGA
+download or validation work up to five times, after 30, 60, 120, 240, and 300
+seconds. The container is not restarted and `/health` can remain live during
+those attempts. Once the five attempts are exhausted, the monitor resumes its
+normal interval; the displayed error remains until a later successful check
+recovers `ready` or `degraded-ready` as appropriate. There is no manual retry
+control promised by this behavior: inspect the published blocker, connectivity,
+configuration, and cache validity instead of repeatedly restarting Orbit.

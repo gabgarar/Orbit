@@ -6,9 +6,26 @@ import {
     requestProjectCommand
 } from "../../../react-ui/src/services/projectRuntime.js";
 
-test("project commands queue until the Cesium runtime is ready", () => {
+test("project commands fail closed until startup explicitly reports ready", () => {
     const previousWindow = globalThis.window;
     const events = new EventTarget();
+    globalThis.window = events;
+    try {
+        assert.deepEqual(requestProjectCommand({ type: "new", name: "Blocked project" }), {
+            accepted: false,
+            reason: "Orbit está preparando los datos críticos (ERP y modelos de gravedad). Espera a que finalice la descarga y validación antes de crear o importar un proyecto.",
+            code: "startup-not-ready"
+        });
+        assert.equal(events.__orbitPendingProjectCommands, undefined);
+    } finally {
+        globalThis.window = previousWindow;
+    }
+});
+
+test("project commands queue only after startup explicitly reports ready", () => {
+    const previousWindow = globalThis.window;
+    const events = new EventTarget();
+    events.__orbitStartupStatus = { ready: true };
     globalThis.window = events;
     try {
         requestProjectCommand({ type: "new", name: "Queued project" });
@@ -22,6 +39,7 @@ test("project commands dispatch immediately once the runtime is ready", () => {
     const previousWindow = globalThis.window;
     const events = new EventTarget();
     events.__orbitRuntimeReady = true;
+    events.__orbitStartupStatus = { ready: true };
     globalThis.window = events;
     try {
         let command = null;

@@ -5,12 +5,25 @@ import {
     physicalEpochAtDesignWindowStart,
     resolveManualOrbitTimePolicy
 } from "../../../front/js/features/manualOrbit/timePolicy.js";
+import {
+    GEOPOTENTIAL_MODEL_LIMITS,
+    geopotentialHarmonicTermCount,
+    normalizeGeopotentialModel,
+    preserveImportedIntegerDraft,
+    resolveGeopotentialExecutableOrderLimit,
+    resolveGeopotentialExecutionLimit,
+    resolveGeopotentialModelLimits,
+    resolveGeopotentialOrderLimit
+} from "../../../front/js/features/manualOrbit/editorState.js";
+import { findDiagnosticComponent } from "../../../front/js/features/diagnostics/diagnosticsContract.js";
+import useSystemDiagnostics from "../hooks/useSystemDiagnostics.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
 
-// This is the semantic/request ceiling of the EGM2008 complete field.  The
-// backend separately applies the present RK4 execution budget with an
-// actionable error rather than silently changing the requested N×M value.
-const MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 2159;
+const GEOPOTENTIAL_MODEL_OPTIONS = Object.freeze([
+    { value: "LOCAL_ICGEM", label: "Configured local ICGEM" },
+    { value: "EGM96", label: "EGM96" },
+    { value: "EGM2008", label: "EGM2008" }
+]);
 const MAX_MANUAL_ERP_FILE_BYTES = 32 * 1024 * 1024;
 
 /**
@@ -27,7 +40,7 @@ const MAX_MANUAL_ERP_FILE_BYTES = 32 * 1024 * 1024;
  *   to hydrate or synchronize the form. `epochUtc` remains the compatibility
  *   alias for the initial epoch. State
  *   vectors use `{ positionEciKm: { x, y, z }, velocityEciKmS: { x, y, z } }`.
- * - `orbit:manual-orbit-status` ({ kind: "error" | "busy" | "success",
+ * - `orbit:manual-orbit-status` ({ kind: "error" | "busy" | "success" | "warning",
  *   message }) for non-blocking runtime feedback.
  *
  * Events emitted by this component:
@@ -120,7 +133,7 @@ const FORCE_TERM_OPTIONS = [
     { value: "j3", label: "J3", description: "North–south asymmetry" },
     { value: "j4", label: "J4", description: "Higher zonal harmonic" },
     { value: "drag", label: "Atmospheric drag", description: "Density-based perturbation" },
-    { value: "geopotential", label: "Full geopotential", description: "Local ICGEM field; includes J2/J3/J4" },
+    { value: "geopotential", label: "Full geopotential", description: "Validated NGA EGM96/EGM2008 (or explicit ICGEM); includes J2/J3/J4" },
     { value: "third-body-sun", label: "Sun third body", description: "Differential solar gravity" },
     { value: "third-body-moon", label: "Moon third body", description: "Differential lunar gravity" },
     { value: "solar-radiation-pressure", label: "Solar radiation pressure", description: "Cannonball SRP with eclipse" },
@@ -503,6 +516,7 @@ function createDefaultForm() {
             dragCoefficient: 2.2,
             areaM2: 1,
             massKg: 100,
+            geopotentialModel: "EGM2008",
             geopotentialDegree: 4,
             geopotentialOrder: 0,
             solarRadiationCoefficient: 1.2,
@@ -626,10 +640,96 @@ function boundedNumber(value, fallback, min, max) {
     return clamp(asNumber(value, fallback), min, max);
 }
 
-function boundedWholeNumber(value, fallback, min, max) {
-    const numeric = Number(value);
-    if (!Number.isInteger(numeric)) return fallback;
-    return clamp(numeric, min, max);
+function gravityModelsFromDiagnostics(diagnostics) {
+    const gravity = findDiagnosticComponent(diagnostics, "gravity");
+    const details = gravity?.details && typeof gravity.details === "object" ? gravity.details : {};
+    const registry = details.registry && typeof details.registry === "object" ? details.registry : {};
+    return details.models
+        ?? details.gravityModels
+        ?? details.gravity_models
+        ?? registry.models
+        ?? gravity?.models
+        ?? null;
+}
+
+function gravityModelRecord(gravityModels, model) {
+    const source = gravityModels && typeof gravityModels === "object" ? gravityModels : null;
+    if (!source) return null;
+    const collection = source.models && typeof source.models === "object" ? source.models : source;
+    const normalized = String(model || "").toUpperCase().replace(/[-_\s]/g, "");
+    if (Array.isArray(collection)) {
+        return collection.find((candidate) => String(
+            candidate?.id ?? candidate?.model ?? candidate?.name ?? ""
+        ).toUpperCase().replace(/[-_\s]/g, "") === normalized) ?? null;
+    }
+    if (!collection || typeof collection !== "object") return null;
+    return collection[model]
+        ?? collection[String(model).toLowerCase()]
+        ?? Object.entries(collection).find(([key, candidate]) => String(
+            candidate?.id ?? candidate?.model ?? candidate?.name ?? key
+        ).toUpperCase().replace(/[-_\s]/g, "") === normalized)?.[1]
+        ?? null;
+}
+
+function configuredLocalIcgemFromDiagnostics(diagnostics, gravityModels) {
+    const gravity = findDiagnosticComponent(diagnostics, "gravity");
+    const details = gravity?.details && typeof gravity.details === "object" ? gravity.details : {};
+    return Boolean(
+        gravityModelRecord(gravityModels, "LOCAL_ICGEM")
+        ?? details.staticModel
+        ?? details.static_model
+        ?? details.fullGeopotential?.staticModel
+        ?? details.full_geopotential?.static_model
+    );
+}
+
+function gravityExecutionLimitFromDiagnostics(diagnostics) {
+    const gravity = findDiagnosticComponent(diagnostics, "gravity");
+    const details = gravity?.details && typeof gravity.details === "object" ? gravity.details : {};
+    const registry = details.registry && typeof details.registry === "object" ? details.registry : {};
+    return details.executionLimit
+        ?? details.execution_limit
+        ?? details.rk4ExecutionLimit
+        ?? details.rk4_execution_limit
+        ?? details.fullGeopotential?.executionLimit
+        ?? details.full_geopotential?.execution_limit
+        ?? registry.executionLimit
+        ?? registry.execution_limit
+        ?? null;
+}
+
+function geopotentialModelOption(value, gravityModels = null, { allowPublishedEnvelope = false } = {}) {
+    const resolved = resolveGeopotentialModelLimits(value, gravityModels);
+    if (resolved.validated || !allowPublishedEnvelope) return resolved;
+    const fallback = GEOPOTENTIAL_MODEL_LIMITS[resolved.value];
+    return {
+        ...resolved,
+        maxDegree: fallback.maxDegree,
+        maxOrder: fallback.maxOrder,
+        source: "editor-envelope"
+    };
+}
+
+function geopotentialArchiveOrderLimit(value, degree, gravityModels = null) {
+    return resolveGeopotentialOrderLimit(value, degree, gravityModels);
+}
+
+function geopotentialExecutionLimit(value, gravityModels = null, executionLimit = null) {
+    return resolveGeopotentialExecutionLimit(value, gravityModels, executionLimit);
+}
+
+function geopotentialOrderLimit(
+    value,
+    degree,
+    gravityModels = null,
+    executionLimit = null,
+    { allowPublishedEnvelope = false } = {}
+) {
+    const resolved = resolveGeopotentialExecutableOrderLimit(value, degree, gravityModels, executionLimit);
+    if (resolved !== null || !allowPublishedEnvelope) return resolved;
+    const model = normalizeGeopotentialModel(value);
+    const limits = GEOPOTENTIAL_MODEL_LIMITS[model];
+    return Math.min(Number(degree), limits.maxOrder);
 }
 
 function normalizePropagationOptions(value, fallback = {}) {
@@ -668,18 +768,20 @@ function normalizePropagationOptions(value, fallback = {}) {
                 fallbackGravityModel,
                 normalizeBoolean(fallbackAtmosphericDrag)
             );
-    const geopotentialMinimumDegree = forceTerms.includes("geopotential") ? 2 : 0;
-    const geopotentialDegree = boundedWholeNumber(
-        source.geopotentialDegree ?? source.geopotential_degree,
-        fallback.geopotentialDegree ?? fallback.geopotential_degree ?? 4,
-        geopotentialMinimumDegree,
-        MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE
+    const geopotentialModel = normalizeGeopotentialModel(
+        source.geopotentialModel ?? source.geopotential_model,
+        fallback.geopotentialModel ?? fallback.geopotential_model ?? "EGM2008"
     );
-    const geopotentialOrder = boundedWholeNumber(
+    // Keep an archived N/M verbatim while diagnostics decides whether it is
+    // still covered and executable.  In particular, do not silently replace
+    // an older N=5000 or M>N request by the published UI envelope.
+    const geopotentialDegree = preserveImportedIntegerDraft(
+        source.geopotentialDegree ?? source.geopotential_degree,
+        fallback.geopotentialDegree ?? fallback.geopotential_degree ?? 4
+    );
+    const geopotentialOrder = preserveImportedIntegerDraft(
         source.geopotentialOrder ?? source.geopotential_order,
-        fallback.geopotentialOrder ?? fallback.geopotential_order ?? 0,
-        0,
-        geopotentialDegree
+        fallback.geopotentialOrder ?? fallback.geopotential_order ?? 0
     );
     const cowellGravityModel = legacyGravityModelForForceTerms(forceTerms);
     return {
@@ -694,6 +796,7 @@ function normalizePropagationOptions(value, fallback = {}) {
         dragCoefficient: boundedNumber(source.dragCoefficient ?? source.drag_coefficient, fallback.dragCoefficient ?? fallback.drag_coefficient ?? 2.2, 0.01, 10),
         areaM2: boundedNumber(source.areaM2 ?? source.area_m2, fallback.areaM2 ?? fallback.area_m2 ?? 1, 0.0001, 100000),
         massKg: boundedNumber(source.massKg ?? source.mass_kg, fallback.massKg ?? fallback.mass_kg ?? 100, 0.001, 1000000),
+        geopotentialModel,
         geopotentialDegree,
         geopotentialOrder,
         solarRadiationCoefficient: boundedNumber(source.solarRadiationCoefficient ?? source.solar_radiation_coefficient ?? source.reflectivityCoefficient ?? source.reflectivity_coefficient ?? source.cr, fallback.solarRadiationCoefficient ?? fallback.solar_radiation_coefficient ?? 1.2, 0.01, 5),
@@ -724,6 +827,7 @@ function payloadPropagationOptions(value, { propagator }) {
     if (supportsDrag) {
         result.numericalIntegrator = options.numericalIntegrator;
         if (forceTerms.includes("geopotential")) {
+            result.geopotentialModel = options.geopotentialModel;
             result.geopotentialDegree = options.geopotentialDegree;
             result.geopotentialOrder = options.geopotentialOrder;
         }
@@ -922,6 +1026,9 @@ export default function ManualOrbitPanel() {
     const [status, setStatus] = useState(null);
     const [vectorsVisible, setVectorsVisible] = useState(false);
     const [erpUploadPending, setErpUploadPending] = useState(false);
+    const { availability: diagnosticsAvailability, diagnostics } = useSystemDiagnostics({ enabled: open });
+    const gravityModels = gravityModelsFromDiagnostics(diagnostics);
+    const gravityExecutionLimit = gravityExecutionLimitFromDiagnostics(diagnostics);
     const erpInputRef = useRef(null);
     // The runtime owns the replacement target.  Keeping only its id in the
     // UI lets the same form distinguish a new authored orbit from an edit
@@ -990,12 +1097,18 @@ export default function ManualOrbitPanel() {
         };
         const onStatus = (event) => {
             const detail = event.detail || {};
-            const kind = ["error", "busy", "success"].includes(detail.kind) ? detail.kind : null;
+            const kind = ["error", "busy", "success", "warning"].includes(detail.kind) ? detail.kind : null;
             if (!kind) {
                 setStatus(null);
                 return;
             }
-            const fallback = kind === "busy" ? "Creating manual orbit…" : kind === "success" ? "Manual orbit created." : "Unable to create the manual orbit.";
+            const fallback = kind === "busy"
+                ? "Creating manual orbit…"
+                : kind === "success"
+                    ? "Manual orbit created."
+                    : kind === "warning"
+                        ? "Manual orbit created with a validated warning."
+                        : "Unable to create the manual orbit.";
             setStatus({ kind, message: String(detail.message || fallback) });
         };
         const onErpUploadResult = (event) => {
@@ -1042,6 +1155,15 @@ export default function ManualOrbitPanel() {
             window.removeEventListener("orbit:manual-orbit-erp-upload-result", onErpUploadResult);
         };
     }, []);
+
+    // A successful server-side archive clamp can legitimately close the design
+    // panel before its warning event arrives. Keep that one non-intrusive
+    // warning visible as a short toast instead of losing it with the panel.
+    useEffect(() => {
+        if (open || status?.kind !== "warning") return undefined;
+        const timeoutId = window.setTimeout(() => setStatus(null), 12_000);
+        return () => window.clearTimeout(timeoutId);
+    }, [open, status?.kind, status?.message]);
 
     useEffect(() => {
         if (!open) return undefined;
@@ -1218,13 +1340,49 @@ export default function ManualOrbitPanel() {
             ...form.propagationOptions,
             [key]: value
         };
+        if (key === "geopotentialModel") {
+            const limits = geopotentialModelOption(value, gravityModels);
+            const execution = geopotentialExecutionLimit(
+                limits.value,
+                gravityModels,
+                gravityExecutionLimit
+            );
+            const configuredFieldMismatch = configuredLocalIcgem && limits.value !== "LOCAL_ICGEM";
+            propagationOptions.geopotentialModel = limits.value;
+            if (!limits.validated || !execution.validated || configuredFieldMismatch) {
+                // The model selector must never turn a theoretical envelope
+                // into a runnable configuration. Keep the archived draft
+                // intact and let the rendered availability state block it.
+                const next = { ...form, propagationOptions };
+                setForm(next);
+                setStatus({
+                    kind: "error",
+                    message: configuredFieldMismatch
+                        ? "Hay un campo ICGEM local configurado y fijado por checksum. Selecciónelo en lugar de un EGM."
+                        : !limits.validated
+                        ? `El modelo ${limits.value} no tiene coeficientes de gravedad validados localmente.`
+                        : `El límite de ejecución RK4 de ${limits.value} aún no ha sido diagnosticado.`
+                });
+                emitChange("propagation-options", next, `propagationOptions.${key}`, limits.value);
+                return;
+            }
+            // Keep an imported/persisted N×M visible. Diagnostics may make it
+            // non-executable, but must never silently replace the requested
+            // scientific configuration with a cheaper one.
+        }
         // The order is meaningful only within the selected maximum degree.
         // Keep the local draft valid while the user lowers degree N.
         if (key === "geopotentialDegree") {
-            propagationOptions.geopotentialOrder = Math.min(
-                boundedWholeNumber(propagationOptions.geopotentialOrder, 0, 0, value),
-                value
-            );
+            const limits = geopotentialModelOption(propagationOptions.geopotentialModel, gravityModels);
+            const execution = geopotentialExecutionLimit(limits.value, gravityModels, gravityExecutionLimit);
+            if (!limits.validated || !execution.validated) return;
+            propagationOptions.geopotentialDegree = value;
+        }
+        if (key === "geopotentialOrder") {
+            const limits = geopotentialModelOption(propagationOptions.geopotentialModel, gravityModels);
+            const execution = geopotentialExecutionLimit(limits.value, gravityModels, gravityExecutionLimit);
+            if (!limits.validated || !execution.validated) return;
+            propagationOptions.geopotentialOrder = value;
         }
         const next = {
             ...form,
@@ -1236,6 +1394,34 @@ export default function ManualOrbitPanel() {
     };
     const updateForceTerm = (term, enabled) => {
         if (term === "central" || form.propagator !== "cowell-rk4") return;
+        let selectedGravityModel = normalizeGeopotentialModel(form.propagationOptions.geopotentialModel);
+        const selectedGravityLimits = geopotentialModelOption(selectedGravityModel, gravityModels);
+        const selectedGravityExecution = geopotentialExecutionLimit(
+            selectedGravityModel,
+            gravityModels,
+            gravityExecutionLimit
+        );
+        if (enabled && term === "geopotential" && (
+            (configuredLocalIcgem && selectedGravityModel !== "LOCAL_ICGEM")
+            || !selectedGravityLimits.validated
+            || !selectedGravityExecution.validated
+        )) {
+            const firstAvailable = GEOPOTENTIAL_MODEL_OPTIONS
+                .filter((option) => !configuredLocalIcgem || option.value === "LOCAL_ICGEM")
+                .map((option) => ({
+                    limits: geopotentialModelOption(option.value, gravityModels),
+                    execution: geopotentialExecutionLimit(option.value, gravityModels, gravityExecutionLimit)
+                }))
+                .find((option) => option.limits.validated && option.execution.validated);
+            if (!firstAvailable) {
+                setStatus({
+                    kind: "error",
+                    message: "Full geopotential requiere un campo de gravedad validado y el límite de ejecución RK4 diagnosticado. Espere a la validación o repare la caché de gravedad."
+                });
+                return;
+            }
+            selectedGravityModel = firstAvailable.limits.value;
+        }
         const currentTerms = normalizeForceTerms(form.propagationOptions.forceTerms);
         const nextTerms = new Set(currentTerms);
         if (enabled) nextTerms.add(term);
@@ -1257,18 +1443,14 @@ export default function ManualOrbitPanel() {
             ...currentTerms.filter((value) => !FORCE_TERM_VALUES.includes(value) && nextTerms.has(value))
         ];
         const cowellGravityModel = legacyGravityModelForForceTerms(forceTerms);
-        const nextGeopotentialDegree = term === "geopotential" && enabled
-            ? Math.max(2, form.propagationOptions.geopotentialDegree)
-            : form.propagationOptions.geopotentialDegree;
+        const nextGeopotentialDegree = form.propagationOptions.geopotentialDegree;
         const next = {
             ...form,
             propagationOptions: {
                 ...form.propagationOptions,
+                geopotentialModel: selectedGravityModel,
                 geopotentialDegree: nextGeopotentialDegree,
-                geopotentialOrder: Math.min(
-                    form.propagationOptions.geopotentialOrder,
-                    nextGeopotentialDegree
-                ),
+                geopotentialOrder: form.propagationOptions.geopotentialOrder,
                 forceTerms,
                 atmosphericDrag: forceTerms.includes("drag"),
                 cowellGravityModel
@@ -1294,6 +1476,10 @@ export default function ManualOrbitPanel() {
         dispatch(reason === "cancel" ? "orbit:manual-orbit-cancel" : "orbit:manual-orbit-close", detail);
     };
     const openPropagatedParameters = () => {
+        if (propagationBlockMessage) {
+            setStatus({ kind: "error", message: propagationBlockMessage });
+            return;
+        }
         const manualOrbit = payloadFor(form);
         const start = new Date(manualOrbit.epochStartUtc);
         const end = new Date(manualOrbit.epochEndUtc);
@@ -1318,7 +1504,7 @@ export default function ManualOrbitPanel() {
     useEffect(() => {
         window.addEventListener("orbit:manual-orbit-propagated-parameters-request", openPropagatedParameters);
         return () => window.removeEventListener("orbit:manual-orbit-propagated-parameters-request", openPropagatedParameters);
-    }, [form]);
+    }, [openPropagatedParameters]);
 
     useEffect(() => {
         if (!vectorsVisible) return;
@@ -1327,7 +1513,25 @@ export default function ManualOrbitPanel() {
         }));
     }, [form, vectorsVisible]);
 
-    if (!open) return null;
+    if (!open) {
+        if (status?.kind !== "warning") return null;
+        return <aside
+            data-testid="manual-orbit-adjustment-notice"
+            className="fixed right-4 bottom-20 z-[10400] flex w-[min(420px,calc(100vw-32px))] items-start gap-2 rounded-lg border border-[#8d6c32] bg-[#302515] px-3 py-2.5 text-[#ffe0a2] shadow-[0_16px_42px_rgba(0,0,0,.48)]"
+            role="status"
+            aria-live="polite"
+        >
+            <span className="min-w-0 flex-1 text-[11px] leading-[1.4] font-semibold">{status.message}</span>
+            <button
+                className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-base leading-none text-[#ffe0a2] hover:text-white"
+                type="button"
+                aria-label="Descartar aviso de órbita manual"
+                onClick={() => setStatus(null)}
+            >
+                &times;
+            </button>
+        </aside>;
+    }
 
     const fields = definitionTab === "keplerian" ? KEPLERIAN_FIELDS : STATE_VECTOR_FIELDS;
     const group = definitionTab === "keplerian" ? "keplerian" : "stateVector";
@@ -1353,6 +1557,66 @@ export default function ManualOrbitPanel() {
     const isEditingManualOrbit = Boolean(editingManualOrbitId);
     const dragEnabled = selectedPropagator.value === "cowell-rk4" && activeForceTerms.includes("drag");
     const geopotentialEnabled = selectedPropagator.value === "cowell-rk4" && activeForceTerms.includes("geopotential");
+    const configuredLocalIcgem = configuredLocalIcgemFromDiagnostics(diagnostics, gravityModels);
+    const configuredLocalIcgemRecord = gravityModelRecord(gravityModels, "LOCAL_ICGEM");
+    const configuredLocalIcgemLabel = String(
+        configuredLocalIcgemRecord?.label
+        ?? configuredLocalIcgemRecord?.modelName
+        ?? configuredLocalIcgemRecord?.model_name
+        ?? configuredLocalIcgemRecord?.version
+        ?? "Configured local ICGEM"
+    ).trim();
+    const configuredLocalIcgemChecksum = String(
+        configuredLocalIcgemRecord?.sha256
+        ?? configuredLocalIcgemRecord?.checksum
+        ?? ""
+    ).trim();
+    const selectedGeopotentialModel = geopotentialModelOption(form.propagationOptions.geopotentialModel, gravityModels);
+    const selectedGeopotentialExecution = geopotentialExecutionLimit(
+        selectedGeopotentialModel.value,
+        gravityModels,
+        gravityExecutionLimit
+    );
+    const selectedGeopotentialArchiveOrderMaximum = selectedGeopotentialModel.validated
+        ? geopotentialArchiveOrderLimit(
+            selectedGeopotentialModel.value,
+            form.propagationOptions.geopotentialDegree,
+            gravityModels
+        )
+        : null;
+    const selectedGeopotentialOrderMaximum = selectedGeopotentialModel.validated && selectedGeopotentialExecution.validated
+        ? geopotentialOrderLimit(
+            selectedGeopotentialModel.value,
+            form.propagationOptions.geopotentialDegree,
+            gravityModels,
+            gravityExecutionLimit
+        )
+        : null;
+    const selectedGeopotentialDegree = Number(form.propagationOptions.geopotentialDegree);
+    const selectedGeopotentialOrder = Number(form.propagationOptions.geopotentialOrder);
+    const selectedGeopotentialTermCount = geopotentialHarmonicTermCount(
+        selectedGeopotentialDegree,
+        selectedGeopotentialOrder
+    );
+    const selectedGeopotentialSelectionExecutable = selectedGeopotentialModel.validated
+        && selectedGeopotentialExecution.validated
+        && (!configuredLocalIcgem || selectedGeopotentialModel.value === "LOCAL_ICGEM")
+        && Number.isInteger(selectedGeopotentialDegree)
+        && selectedGeopotentialDegree >= 2
+        && selectedGeopotentialDegree <= selectedGeopotentialModel.maxDegree
+        && selectedGeopotentialArchiveOrderMaximum !== null
+        && selectedGeopotentialOrderMaximum !== null
+        && Number.isInteger(selectedGeopotentialOrder)
+        && selectedGeopotentialOrder >= 0
+        && selectedGeopotentialOrder <= selectedGeopotentialOrderMaximum
+        && selectedGeopotentialTermCount !== null
+        && selectedGeopotentialTermCount <= selectedGeopotentialExecution.maxHarmonicTerms;
+    const availableGeopotentialModels = GEOPOTENTIAL_MODEL_OPTIONS.filter(
+        (option) => (!configuredLocalIcgem || option.value === "LOCAL_ICGEM")
+            && geopotentialModelOption(option.value, gravityModels).validated
+            && geopotentialExecutionLimit(option.value, gravityModels, gravityExecutionLimit).validated
+    );
+    const hasValidatedGeopotentialModel = availableGeopotentialModels.length > 0;
     const legacyZonalEnabled = activeForceTerms.some((term) => ["j2", "j3", "j4"].includes(term));
     const solarRadiationPressureEnabled = selectedPropagator.value === "cowell-rk4" && activeForceTerms.includes("solar-radiation-pressure");
     const spacecraftPropertiesEnabled = dragEnabled || solarRadiationPressureEnabled;
@@ -1371,17 +1635,39 @@ export default function ManualOrbitPanel() {
         sceneWindow: form.timeData?.sceneWindow,
         finiteEphemerisRanges: form.timeData?.finiteEphemerisRanges || []
     });
-    const timeBlockMessage = timePolicy.blockingReasons.includes("missing-erp")
-        ? "El modelo de fuerzas seleccionado requiere un ERP manual validado. Cárguelo en TIME."
-        : timePolicy.blockingReasons.includes("erp-does-not-cover-design-window")
-            ? "El ERP manual no cubre toda la ventana de diseño. Seleccione fechas dentro de su cobertura UTC."
-            : timePolicy.blockingReasons.includes("erp-does-not-cover-physical-epoch")
-                ? "El epoch del vector de estado queda fuera de la cobertura ERP. Ajustelo explicitamente en TIME."
-                : timePolicy.blockingReasons.includes("invalid-physical-epoch")
-                    ? "El epoch del vector de estado no es una fecha UTC valida."
-            : timePolicy.blockingReasons.includes("invalid-design-window")
-                ? "La ventana de diseño no es válida."
-                : "";
+    const automaticErpDiagnostic = findDiagnosticComponent(diagnostics, "erp");
+    const automaticErpLoaded = diagnosticsAvailability === "available"
+        && automaticErpDiagnostic?.details?.loaded === true
+        && automaticErpDiagnostic?.status !== "error";
+    const automaticErpMessage = automaticErpLoaded
+        ? "IERS ERP automático disponible para las fuerzas terrestres."
+        : diagnosticsAvailability === "available"
+            ? "No hay datos ERP disponibles. El geopotencial y el arrastre atmosférico usarán una rotación terrestre nominal."
+            : "Comprobando el ERP automático de IERS…";
+    const timeBlockMessage = timePolicy.blockingReasons.includes("manual-erp-does-not-cover-design-window")
+        ? "El ERP manual opcional no cubre toda la ventana de diseño. Seleccione fechas dentro de su cobertura UTC."
+        : timePolicy.blockingReasons.includes("manual-erp-does-not-cover-physical-epoch")
+            ? "El epoch del vector de estado queda fuera de la cobertura del ERP manual opcional. Ajústelo explícitamente en TIME."
+            : timePolicy.blockingReasons.includes("invalid-physical-epoch")
+                ? "El epoch del vector de estado no es una fecha UTC válida."
+                : timePolicy.blockingReasons.includes("invalid-design-window")
+                    ? "La ventana de diseño no es válida."
+                    : "";
+    const geopotentialBlockMessage = geopotentialEnabled && configuredLocalIcgem && selectedGeopotentialModel.value !== "LOCAL_ICGEM"
+        ? "Hay un campo ICGEM local configurado y fijado por checksum. Seleccione ese campo; Orbit no sustituirá silenciosamente su procedencia por EGM."
+        : geopotentialEnabled && !selectedGeopotentialModel.validated
+        ? `El modelo ${selectedGeopotentialModel.value} no tiene coeficientes de gravedad validados localmente.`
+        : geopotentialEnabled && !selectedGeopotentialExecution.validated
+            ? `El límite de ejecución RK4 de ${selectedGeopotentialModel.value} no ha sido diagnosticado; Orbit no lo infiere.`
+        : geopotentialEnabled && selectedGeopotentialArchiveOrderMaximum === null
+            ? `La cobertura validada de ${selectedGeopotentialModel.value} no contiene un perfil continuo para el grado N seleccionado.`
+        : geopotentialEnabled && selectedGeopotentialOrderMaximum === null
+            ? `Incluso el orden mínimo para N=${selectedGeopotentialDegree} supera el presupuesto RK4 diagnosticado.`
+        : geopotentialEnabled && !selectedGeopotentialSelectionExecutable
+            ? `N=${selectedGeopotentialDegree}, M=${selectedGeopotentialOrder} requiere ${selectedGeopotentialTermCount ?? "un número no válido"} términos; el RK4 actual admite ${selectedGeopotentialExecution.maxHarmonicTerms}.`
+        : "";
+    const propagationBlockMessage = geopotentialBlockMessage || timeBlockMessage;
+    const canRunSelectedPropagation = !propagationBlockMessage;
     const erpDateMinimum = manualErp?.coverageStart ? toDatetimeInput(manualErp.coverageStart, "") : undefined;
     const erpDateMaximum = manualErp?.coverageEnd ? toDatetimeInput(manualErp.coverageEnd, "") : undefined;
 
@@ -1479,18 +1765,18 @@ export default function ManualOrbitPanel() {
                     <label className="mt-2 grid min-w-0 gap-1 font-[system-ui,sans-serif] text-[10px] font-semibold text-[#c7d5ea]">
                         <span className="flex items-center justify-between gap-2"><span>State-vector epoch</span><small className="font-medium text-[#7f94b4]">PHYSICAL UTC</small></span>
                         <input className="!h-[33px] !min-w-0 !rounded-lg !border !border-[#294361] !bg-[#0b1728] !px-1.5 !font-[system-ui,sans-serif] !text-[11px] !font-medium !text-[#eaf2ff] !outline-none focus:!border-[#5d8fff] focus:!shadow-[0_0_0_2px_rgba(75,122,255,.16)]" type="datetime-local" value={form.epochUtc} onChange={(event) => updateOrbitEpoch(event.target.value)} />
-                        <small className="text-[9px] leading-[1.3] font-medium text-[#7f94b4]">This is the epoch of the EME2000 input state. Attaching or replacing a validated ERP anchors it to the design start; you can edit it afterwards, but Earth-fixed forces require it to remain within ERP coverage.</small>
+                        <small className="text-[9px] leading-[1.3] font-medium text-[#7f94b4]">This is the epoch of the EME2000 input state. Earth-fixed forces use the automatic IERS ERP; an optional local ERP override must cover this epoch.</small>
                     </label>
                     {!epochRangeValid && <p className="mt-2 mb-0 text-[10px] leading-[1.35] font-semibold text-[#ff9cab]" role="alert">El epoch final debe ser posterior al inicial.</p>}
-                    {timePolicy.requiresErp && <p className={`mt-2 mb-0 rounded border px-2 py-1.5 text-[9px] leading-[1.35] font-semibold ${timePolicy.canCreate ? "border-[#2d7252] bg-[#102a22] text-[#b8f1d0]" : "border-[#874252] bg-[#291821] text-[#ffd0d9]"}`} role={timePolicy.canCreate ? "status" : "alert"}>{timePolicy.canCreate ? "La ventana completa está cubierta por el ERP manual requerido para las fuerzas terrestres seleccionadas." : timeBlockMessage}</p>}
+                    {timePolicy.requiresErp && <p className={`mt-2 mb-0 rounded border px-2 py-1.5 text-[9px] leading-[1.35] font-semibold ${timePolicy.canCreate ? (automaticErpLoaded ? "border-[#2d7252] bg-[#102a22] text-[#b8f1d0]" : "border-[#776035] bg-[#2d2617] text-[#f5d38e]") : "border-[#874252] bg-[#291821] text-[#ffd0d9]"}`} role={timePolicy.canCreate ? "status" : "alert"}>{timePolicy.canCreate ? automaticErpMessage : timeBlockMessage}</p>}
                 </section>
 
                 <section className="rounded-lg border border-[#315a8d] bg-[#0a182b] p-2.5" aria-labelledby="manualOrbitErpTitle">
                     <div className="flex items-baseline justify-between gap-2">
-                        <h3 id="manualOrbitErpTitle" className="m-0 text-[11px] leading-none font-bold text-[#dbe9ff]">Manual ERP</h3>
-                        <span className={`text-[9px] leading-none font-bold tracking-[.06em] ${manualErp ? "text-[#8eddb7]" : "text-[#87a4d1]"}`}>{manualErp ? "VALIDATED SNAPSHOT" : "OPTIONAL"}</span>
+                        <h3 id="manualOrbitErpTitle" className="m-0 text-[11px] leading-none font-bold text-[#dbe9ff]">Earth orientation</h3>
+                        <span className={`text-[9px] leading-none font-bold tracking-[.06em] ${manualErp ? "text-[#8eddb7]" : automaticErpLoaded ? "text-[#8eddb7]" : "text-[#f5d38e]"}`}>{manualErp ? "LOCAL OVERRIDE" : automaticErpLoaded ? "IERS AUTOMATIC" : "NOMINAL FALLBACK"}</span>
                     </div>
-                    <p className="mt-1 mb-2 text-[10px] leading-[1.35] text-[#8498b5]">Adjunte un .ERP o .ERP.gz de hasta 32 MiB. Se valida y guarda por identidad de contenido; el proyecto conserva sólo la referencia, no los bytes.</p>
+                    <p className="mt-1 mb-2 text-[10px] leading-[1.35] text-[#8498b5]">No necesita adjuntar un ERP para generar la órbita: Orbit usa automáticamente el EOP de IERS. Puede adjuntar un .ERP o .ERP.gz de hasta 32 MiB solo como override local reproducible; el proyecto conserva la referencia, no los bytes.</p>
                     <input ref={erpInputRef} className="sr-only" type="file" accept=".erp,.erp.gz" onChange={(event) => {
                         const [file] = Array.from(event.target.files || []);
                         event.currentTarget.value = "";
@@ -1510,7 +1796,7 @@ export default function ManualOrbitPanel() {
                             <button className="min-h-8 cursor-pointer rounded-md border border-[#315f96] bg-[#102946] px-2 text-[9px] font-bold text-[#c9e0ff] hover:border-[#5b91ce] hover:bg-[#17395f] disabled:cursor-wait disabled:opacity-55" type="button" disabled={erpUploadPending} onClick={() => erpInputRef.current?.click()}>Reemplazar</button>
                             <button className="min-h-8 cursor-pointer rounded-md border border-[#634155] bg-[#251824] px-2 text-[9px] font-bold text-[#f1c2ce] hover:border-[#9b6176] hover:bg-[#34202c]" type="button" onClick={clearManualErp}>Quitar</button>
                         </div>
-                    </div> : <button className="inline-flex min-h-8 w-full cursor-pointer items-center justify-center rounded-md border border-[#315f96] bg-[#102946] px-2 text-[10px] font-bold text-[#c9e0ff] hover:border-[#5b91ce] hover:bg-[#17395f] disabled:cursor-wait disabled:opacity-55" type="button" disabled={erpUploadPending} onClick={() => erpInputRef.current?.click()}>{erpUploadPending ? "Validando ERP…" : "Cargar ERP"}</button>}
+                    </div> : <button className="inline-flex min-h-8 w-full cursor-pointer items-center justify-center rounded-md border border-[#315f96] bg-[#102946] px-2 text-[10px] font-bold text-[#c9e0ff] hover:border-[#5b91ce] hover:bg-[#17395f] disabled:cursor-wait disabled:opacity-55" type="button" disabled={erpUploadPending} onClick={() => erpInputRef.current?.click()}>{erpUploadPending ? "Validando ERP…" : "Añadir override ERP opcional"}</button>}
                 </section>
 
                 <section className="rounded-lg border border-[#1f3655] bg-[#091526] p-2.5" aria-labelledby="manualOrbitPreviewFrameTitle">
@@ -1612,12 +1898,16 @@ export default function ManualOrbitPanel() {
                         <div className="grid grid-cols-2 gap-1.5">
                             {FORCE_TERM_OPTIONS.map((option) => {
                                 const isLegacyZonal = ["j2", "j3", "j4"].includes(option.value);
+                                const geopotentialUnavailable = option.value === "geopotential" && !hasValidatedGeopotentialModel;
                                 const disabled = (option.value === "geopotential" && legacyZonalEnabled)
-                                    || (isLegacyZonal && geopotentialEnabled);
+                                    || (isLegacyZonal && geopotentialEnabled)
+                                    || geopotentialUnavailable;
                                 const disabledReason = option.value === "geopotential" && legacyZonalEnabled
                                     ? "Disable J2/J3/J4 before selecting full geopotential"
                                     : isLegacyZonal && geopotentialEnabled
                                         ? "Included in the selected full geopotential"
+                                        : geopotentialUnavailable
+                                            ? "Se necesita un campo de gravedad validado y el perfil RK4; el selector se habilitará cuando finalice la comprobación."
                                         : "";
                                 return <div key={option.value} className={["drag", "geopotential", "solar-radiation-pressure"].includes(option.value) ? "col-span-2" : ""}>
                                     <ForceTermToggle option={option} checked={activeForceTerms.includes(option.value)} required={option.value === "central"} disabled={disabled} disabledReason={disabledReason} onChange={(enabled) => updateForceTerm(option.value, enabled)} />
@@ -1626,18 +1916,40 @@ export default function ManualOrbitPanel() {
                         </div>
                     </fieldset>
                     {geopotentialEnabled && <div className="grid gap-2 rounded-md border border-[#3e5a83] bg-[#0d1d34] p-2" aria-label="Full geopotential configuration">
-                        <p className="m-0 text-[9px] leading-[1.35] font-medium text-[#b8d2f3]">Uses the configured local ICGEM gravity field in ITRF. Degree/order include the field’s zonal coefficients, so J2, J3 and J4 cannot be added separately. Propagation is rejected until the server has a pinned local ICGEM field.</p>
-                        <p className="m-0 rounded border border-[#2b4e78] bg-[#0a1729] px-1.5 py-1 text-[9px] leading-[1.35] font-medium text-[#a9c9ed]">
-                            Límite del campo: hasta 2159 × 2159 (EGM2008). El RK4 actual limita cada etapa a 2.555 coeficientes armónicos: 70 × 70 completo es un ejemplo seguro. Los campos mayores se rechazan antes de propagar hasta disponer de un evaluador optimizado e integrador adaptativo.
-                        </p>
-                        <div className="grid grid-cols-2 gap-2">
+                        <p className="m-0 text-[9px] leading-[1.35] font-medium text-[#b8d2f3]">Uses the selected validated NGA EGM field or checksum-pinned local ICGEM field in ITRF. Degree/order include the field’s zonal coefficients, so J2, J3 and J4 cannot be added separately. The backend only uses a locally validated model; it never downloads during propagation.</p>
+                        {configuredLocalIcgem && <p className="m-0 rounded border border-[#2b4e78] bg-[#0a1729] px-1.5 py-1 text-[9px] leading-[1.35] font-medium text-[#a9c9ed]" role="status">Campo ICGEM configurado: {configuredLocalIcgemLabel}{configuredLocalIcgemChecksum ? ` · SHA-256 ${configuredLocalIcgemChecksum.slice(0, 16)}…` : ""}. Este campo tiene prioridad y su procedencia no se sustituye por un EGM.</p>}
+                        <label className="grid min-w-0 gap-1 text-[9px] font-semibold text-[#c7d5ea]">
+                            <span>Gravity model</span>
+                            <select className={inputClassName("!h-[31px] !cursor-pointer !px-1.5 !text-[11px]")} value={selectedGeopotentialModel.value} onChange={(event) => updatePropagationOption("geopotentialModel", event.target.value)}>
+                                {GEOPOTENTIAL_MODEL_OPTIONS.map((option) => {
+                                    const limits = geopotentialModelOption(option.value, gravityModels);
+                                    const execution = geopotentialExecutionLimit(option.value, gravityModels, gravityExecutionLimit);
+                                    const selectable = (!configuredLocalIcgem || option.value === "LOCAL_ICGEM")
+                                        && limits.validated
+                                        && execution.validated;
+                                    return <option key={option.value} value={option.value} disabled={!selectable}>
+                                        {option.label}{selectable ? ` (máx. ${limits.maxDegree} × ${limits.maxOrder})` : " (pendiente de validar)"}
+                                    </option>;
+                                })}
+                            </select>
+                        </label>
+                        {selectedGeopotentialSelectionExecutable
+                            ? <p className="m-0 rounded border border-[#2b4e78] bg-[#0a1729] px-1.5 py-1 text-[9px] leading-[1.35] font-medium text-[#a9c9ed]" role="status">Cobertura validada: grado máximo {selectedGeopotentialModel.maxDegree}; para N={selectedGeopotentialDegree}, el archivo permite M≤{selectedGeopotentialArchiveOrderMaximum} y el RK4 permite M≤{selectedGeopotentialOrderMaximum} ({selectedGeopotentialExecution.maxHarmonicTerms} términos no centrales). La selección actual evalúa {selectedGeopotentialTermCount} términos.</p>
+                            : selectedGeopotentialModel.validated && selectedGeopotentialExecution.validated && selectedGeopotentialArchiveOrderMaximum !== null && selectedGeopotentialOrderMaximum !== null
+                                ? <p className="m-0 rounded border border-[#754542] bg-[#28191a] px-1.5 py-1 text-[9px] leading-[1.35] font-medium text-[#ffd0c7]" role="alert">La solicitud N={selectedGeopotentialDegree}, M={selectedGeopotentialOrder} se conserva sin cambios, pero no es ejecutable. Para este N, el archivo permite M≤{selectedGeopotentialArchiveOrderMaximum} y el RK4 permite M≤{selectedGeopotentialOrderMaximum} ({selectedGeopotentialExecution.maxHarmonicTerms} términos). Ajuste N o M explícitamente.</p>
+                            : selectedGeopotentialModel.validated && !selectedGeopotentialExecution.validated
+                                ? <p className="m-0 rounded border border-[#754542] bg-[#28191a] px-1.5 py-1 text-[9px] leading-[1.35] font-medium text-[#ffd0c7]" role="alert">Falta el perfil de ejecución RK4 diagnosticado. Orbit no deduce un presupuesto y no puede crear ni previsualizar esta propagación.</p>
+                                : selectedGeopotentialModel.validated
+                                    ? <p className="m-0 rounded border border-[#754542] bg-[#28191a] px-1.5 py-1 text-[9px] leading-[1.35] font-medium text-[#ffd0c7]" role="alert">La cobertura validada de {selectedGeopotentialModel.value} o el presupuesto RK4 no permite el grado seleccionado. Elija un N dentro del perfil publicado.</p>
+                                    : <p className="m-0 rounded border border-[#754542] bg-[#28191a] px-1.5 py-1 text-[9px] leading-[1.35] font-medium text-[#ffd0c7]" role="alert">No hay una copia validada de {selectedGeopotentialModel.value}. No se puede previsualizar ni crear una órbita con full geopotential hasta que el inicio valide esa fuente de gravedad.</p>}
+                        <div className="grid grid-cols-2 gap-2" aria-disabled={!selectedGeopotentialModel.validated || !selectedGeopotentialExecution.validated}>
                             <label className="grid min-w-0 gap-1 text-[9px] font-semibold text-[#c7d5ea]">
                                 <span>Degree N</span>
-                                <input className={inputClassName("!h-[31px] !px-1.5 !text-[11px]")} type="number" min="2" max={MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE} step="1" inputMode="numeric" value={form.propagationOptions.geopotentialDegree} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePropagationOption("geopotentialDegree", boundedWholeNumber(value, form.propagationOptions.geopotentialDegree, 2, MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE)); }} />
+                                <input className={inputClassName("!h-[31px] !px-1.5 !text-[11px]")} type="number" min="2" max={selectedGeopotentialModel.maxDegree ?? undefined} step="1" inputMode="numeric" disabled={!selectedGeopotentialModel.validated || !selectedGeopotentialExecution.validated} value={form.propagationOptions.geopotentialDegree} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && selectedGeopotentialModel.validated && selectedGeopotentialExecution.validated) updatePropagationOption("geopotentialDegree", value); }} />
                             </label>
                             <label className="grid min-w-0 gap-1 text-[9px] font-semibold text-[#c7d5ea]">
                                 <span>Order M</span>
-                                <input className={inputClassName("!h-[31px] !px-1.5 !text-[11px]")} type="number" min="0" max={form.propagationOptions.geopotentialDegree} step="1" inputMode="numeric" value={form.propagationOptions.geopotentialOrder} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value)) updatePropagationOption("geopotentialOrder", boundedWholeNumber(value, form.propagationOptions.geopotentialOrder, 0, form.propagationOptions.geopotentialDegree)); }} />
+                                <input className={inputClassName("!h-[31px] !px-1.5 !text-[11px]")} type="number" min="0" max={selectedGeopotentialOrderMaximum ?? undefined} step="1" inputMode="numeric" disabled={!selectedGeopotentialModel.validated || !selectedGeopotentialExecution.validated || selectedGeopotentialOrderMaximum === null} value={form.propagationOptions.geopotentialOrder} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && selectedGeopotentialOrderMaximum !== null) updatePropagationOption("geopotentialOrder", value); }} />
                             </label>
                         </div>
                     </div>}
@@ -1665,7 +1977,7 @@ export default function ManualOrbitPanel() {
                 </div>}
             </section>
 
-            <button className="mt-3 inline-flex min-h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#294d7b] bg-[#0d1d33] px-3 py-2 text-[10px] leading-none font-bold text-[#b7d4ff] hover:border-[#5787c9] hover:bg-[#142a49] hover:text-[#edf5ff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before inspecting ephemerides." : timeBlockMessage || "Inspect the ephemerides over this design window."} disabled={!epochRangeValid || !timePolicy.canCreate || selectedPropagator.unavailable} onClick={openPropagatedParameters}>Ver efemérides</button>
+            <button className="mt-3 inline-flex min-h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#294d7b] bg-[#0d1d33] px-3 py-2 text-[10px] leading-none font-bold text-[#b7d4ff] hover:border-[#5787c9] hover:bg-[#142a49] hover:text-[#edf5ff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before inspecting ephemerides." : propagationBlockMessage || "Inspect the ephemerides over this design window."} disabled={!epochRangeValid || !timePolicy.canCreate || !canRunSelectedPropagation || selectedPropagator.unavailable} onClick={openPropagatedParameters}>Ver efemérides</button>
             </>}
             <button className="mt-3 w-full cursor-pointer rounded-lg border border-[#39445a] bg-[#111a29] px-3 py-2 text-[10px] leading-none font-bold text-[#b7c5da] hover:border-[#637c9f] hover:bg-[#17253a] hover:text-[#ecf3ff]" type="button" onClick={reset}>Reset values</button>
         </div>
@@ -1676,7 +1988,7 @@ export default function ManualOrbitPanel() {
             </div>
             <footer className="grid grid-cols-2 gap-2 border-t border-[#1b2c43] px-4 pt-2 pb-3">
                 <button className="min-h-[34px] cursor-pointer rounded-lg border border-[#3c3145] bg-[#1b1320] px-3 text-[11px] leading-none font-bold text-[#e1b5c1] hover:border-[#885166] hover:bg-[#2a1721] hover:text-[#ffe2e9]" type="button" onClick={() => requestClose("cancel")}>Cancel</button>
-                <button className="min-h-[34px] cursor-pointer rounded-lg border border-[#476dce] bg-[#3657dc] px-3 text-[11px] leading-none font-bold text-white shadow-[0_6px_16px_rgba(41,76,220,.3)] hover:border-[#6e91ff] hover:bg-[#4668ee] disabled:cursor-wait disabled:opacity-55" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before updating this orbit." : timeBlockMessage || undefined} disabled={status?.kind === "busy" || !epochRangeValid || !timePolicy.canCreate || selectedPropagator.unavailable} onClick={() => dispatch("orbit:manual-orbit-create", payloadFor(form))}>{status?.kind === "busy" ? (isEditingManualOrbit ? "Updating..." : "Creating...") : (isEditingManualOrbit ? "Actualizar \u00f3rbita" : "Crear \u00f3rbita")}</button>
+                <button className="min-h-[34px] cursor-pointer rounded-lg border border-[#476dce] bg-[#3657dc] px-3 text-[11px] leading-none font-bold text-white shadow-[0_6px_16px_rgba(41,76,220,.3)] hover:border-[#6e91ff] hover:bg-[#4668ee] disabled:cursor-wait disabled:opacity-55" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before updating this orbit." : propagationBlockMessage || undefined} disabled={status?.kind === "busy" || !epochRangeValid || !timePolicy.canCreate || !canRunSelectedPropagation || selectedPropagator.unavailable} onClick={() => dispatch("orbit:manual-orbit-create", payloadFor(form))}>{status?.kind === "busy" ? (isEditingManualOrbit ? "Updating..." : "Creating...") : (isEditingManualOrbit ? "Actualizar \u00f3rbita" : "Crear \u00f3rbita")}</button>
             </footer>
         </div>
     </aside>;

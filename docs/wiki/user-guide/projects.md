@@ -31,6 +31,26 @@ un selector de archivo de lectura y permite descargar la exportación. La
 capacidad de sobrescribir directamente un archivo depende de la API de archivo
 del navegador.
 
+## Bloqueo de readiness de arranque
+
+Justo después de iniciar Orbit, **Nuevo proyecto** y **Abrir/Importar proyecto**
+pueden estar deshabilitados mientras el servicio valida datos locales críticos
+de tiempo y gravedad. Es intencionado: sustituir o restaurar un proyecto antes
+de que ese contrato esté listo podría hacer que la configuración de órbitas
+manuales y fuerzas parezca utilizable cuando no lo es. Los controles solo se
+habilitan cuando el diagnóstico de arranque publica `projectReady: true`
+(normalmente `readiness.state: ready`, o `degraded-ready` con un aviso explícito
+visible); no basta con un gateway que responda ni con un indicador genérico
+`healthy`.
+
+Use el panel compacto **Estado de arranque** para ver el paso activo y el
+porcentaje de descarga NGA, si se conoce. Un primer inicio sin caché válida
+puede tardar más porque descarga y valida datos de gravedad. Uno posterior
+suele validar localmente la caché persistente y terminar antes. Si no se conoce
+el porcentaje, el panel muestra progreso indeterminado en vez de inventar un
+valor. Mientras espera puede inspeccionar la escena y Built-In Test, pero no
+debe intentar saltar un blocker mostrado.
+
 ## Contrato del documento
 
 La versión actual del documento declara format orbit-project y version 1.
@@ -73,4 +93,3 @@ de la restauración incompleta.
 
 La estructura visual del documento se gestiona en [Capas](layers.md); el
 contenido de los formatos se incorpora mediante [Importar](import.md).
-

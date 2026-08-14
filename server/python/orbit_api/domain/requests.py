@@ -75,6 +75,33 @@ _COWELL_GRAVITY_MODEL_ALIASES = {
     "j2j3j4": "j2-j3-j4",
 }
 
+GEOPOTENTIAL_MODEL_IDS = ("LOCAL_ICGEM", "EGM96", "EGM2008")
+_GEOPOTENTIAL_MODEL_ALIASES = {
+    # A checksum-pinned ICGEM file is an explicit, reproducible source. It
+    # must never be silently labelled as an NGA EGM model merely because a UI
+    # had an old EGM2008 default selected.
+    "local-icgem": "LOCAL_ICGEM",
+    "localicgem": "LOCAL_ICGEM",
+    "icgem": "LOCAL_ICGEM",
+    "egm96": "EGM96",
+    "egm-96": "EGM96",
+    "egm1996": "EGM96",
+    "egm2008": "EGM2008",
+    "egm-2008": "EGM2008",
+    "egm08": "EGM2008",
+}
+
+
+def normalize_geopotential_model(value: object) -> str:
+    """Normalise an explicit NGA selection or the pinned local ICGEM source."""
+
+    token = str(value or "").strip().lower().replace("_", "-")
+    try:
+        return _GEOPOTENTIAL_MODEL_ALIASES[token]
+    except KeyError as exc:
+        available = ", ".join(GEOPOTENTIAL_MODEL_IDS)
+        raise ValueError(f"Modelo geopotencial no compatible '{value}'. Disponibles: {available}") from exc
+
 # ``force_terms`` is the authoritative Cowell configuration. Central gravity
 # cannot be disabled because a bounded Earth orbit requires it; J2/J3/J4 and
 # drag are independently selectable additions. The order is part of the
@@ -92,12 +119,10 @@ COWELL_FORCE_TERMS = (
     "solar-radiation-pressure",
     "relativity",
 )
-# EGM2008 is complete to degree/order 2159 (with a few additional degree-2190
-# coefficients).  This is the public data-contract ceiling: a UI may express
-# the full field's scientifically meaningful degree/order, even though the
-# current pure-Python fixed-step evaluator separately applies a fail-closed
-# execution-cost budget before attempting an expensive propagation.
-MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 2159
+# Request parsing accepts the registry's hard archive ceiling. The validated
+# local NGA member still determines the actual degree/order available for a
+# selection; this is deliberately not a promise of a complete 2190×2190 set.
+MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE = 2190
 # Start new designs from the smallest physically complete model. Additional
 # harmonics are opt-in force terms of Cowell/RK4; they are never implied by an
 # unrelated propagation family such as two-body.
@@ -987,6 +1012,15 @@ class ManualPropagationOptions(BaseModel):
         ge=0,
         le=MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
     )
+    geopotential_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "geopotential_model",
+            "geopotentialModel",
+            "full_geopotential_model",
+            "fullGeopotentialModel",
+        ),
+    )
     solar_radiation_coefficient: float = Field(
         default=1.2,
         validation_alias=AliasChoices(
@@ -1008,6 +1042,19 @@ class ManualPropagationOptions(BaseModel):
         if not isinstance(value, dict):
             return value
         payload = dict(value)
+        # ``gravityModel`` was historically a legacy Cowell force preset.  A
+        # named EGM value is unambiguous, so reinterpret only EGM96/EGM2008 as
+        # the full-field source while retaining j2/j2-j3-j4 compatibility.
+        raw_generic_gravity = payload.get("gravityModel")
+        if (
+            raw_generic_gravity is not None
+            and not any(key in payload for key in ("geopotentialModel", "geopotential_model", "fullGeopotentialModel", "full_geopotential_model"))
+        ):
+            try:
+                payload["geopotentialModel"] = normalize_geopotential_model(raw_generic_gravity)
+                payload.pop("gravityModel", None)
+            except ValueError:
+                pass
         modern_terms = next(
             (
                 payload[key]
@@ -1097,6 +1144,13 @@ class ManualPropagationOptions(BaseModel):
         # future integrator must be ignored safely).
         candidate = str(value or "").strip()
         return candidate or "rk4"
+
+    @field_validator("geopotential_model", mode="before")
+    @classmethod
+    def validate_geopotential_model(cls, value: object) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        return normalize_geopotential_model(value)
 
     @field_validator("drag_coefficient", "area_m2", "mass_kg", "solar_radiation_coefficient")
     @classmethod
@@ -1192,6 +1246,7 @@ class ManualPropagationOptions(BaseModel):
         if "geopotential" in strict_force_terms:
             canonical["geopotential_degree"] = int(self.geopotential_degree)
             canonical["geopotential_order"] = int(self.geopotential_order)
+            canonical["geopotential_model"] = self.geopotential_model
         if "solar-radiation-pressure" in strict_force_terms:
             canonical["solar_radiation_coefficient"] = float(
                 self.solar_radiation_coefficient

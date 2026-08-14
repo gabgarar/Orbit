@@ -282,6 +282,18 @@ class FrameTransformService:
         return self._eop_provider
 
     @property
+    def uses_manual_earth_orientation_provider(self) -> bool:
+        """Whether this clone is bound to an optional manual-orbit ERP.
+
+        The flag is provenance, not a permission switch.  It lets the manual
+        orbit application preserve strict coverage checks for an explicitly
+        selected local snapshot while the normal process-wide IERS provider
+        remains available without making a manual upload mandatory.
+        """
+
+        return self._manual_erp_isolated
+
+    @property
     def has_iau2006_2000a(self) -> bool:
         """Whether this service can perform the full ERFA/SOFA ECI route.
 
