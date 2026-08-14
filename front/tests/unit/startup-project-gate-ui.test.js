@@ -37,7 +37,7 @@ test("welcome replaces project actions with one central preparation view until e
     assert.match(welcome, /getStartupProjectReadiness/);
     assert.match(welcome, /const preparing = !readiness\.ready/);
     assert.match(welcome, /data-testid="startup-preparing-view"/);
-    assert.match(welcome, /<StartupStatusPanel startup=\{startup\} \/>/);
+    assert.match(welcome, /<StartupStatusPanel startup=\{startup\} authoritative=\{authoritativeSnapshot\} presentationPhase=\{phase\} \/>/);
     assert.match(welcome, /data-testid="project-welcome-actions"/);
     assert.match(welcome, /\{preparing \? <section/);
     assert.doesNotMatch(welcome, /project-startup-gate/);

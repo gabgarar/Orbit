@@ -10,6 +10,7 @@ import TimeControlBar from "./features/simulation/TimeControlBar.jsx";
 import useOrbitNotifications from "./hooks/useOrbitNotifications.js";
 import useProjectWelcome from "./hooks/useProjectWelcome.js";
 import useStartupStatus from "./hooks/useStartupStatus.js";
+import useStartupWelcomePresentation from "./hooks/useStartupWelcomePresentation.js";
 import useSystemDiagnostics from "./hooks/useSystemDiagnostics.js";
 import { findDiagnosticComponent } from "../../front/js/features/diagnostics/diagnosticsContract.js";
 import {
@@ -40,8 +41,14 @@ export default function App() {
         stopWhen: startupDiagnosticsFinished
     });
     const startup = useStartupStatus(startupDiagnostics);
+    const startupPresentation = useStartupWelcomePresentation({
+        startup,
+        diagnostics: startupDiagnostics.diagnostics,
+        availability: startupDiagnostics.availability
+    });
     const startProjectAction = (action) => {
         if (runtimeStatus.state === "failed") return;
+        if (!startupPresentation.allowProjectActions) return;
         if (!getStartupProjectReadiness(startup).ready) return;
         if (action === "new" || action === "open") {
             window.dispatchEvent(new CustomEvent("orbit:project-dialog-request", { detail: action }));
@@ -57,5 +64,5 @@ export default function App() {
             window.removeEventListener("orbit:diagnostics-open", openDiagnostics);
         };
     }, []);
-    return <><TopToolbar hasNotifications={notifications.length > 0} onToggleNotifications={() => setNotificationsOpen((value) => !value)} onToggleHelp={() => setHelpOpen((value) => !value)} onToggleDiagnostics={() => setDiagnosticsOpen((value) => !value)} /><CesiumGlobe /><OrbitOverlays /><TimeControlBar />{welcomeOpen && <ProjectWelcome onAction={startProjectAction} runtimeStatus={runtimeStatus} startup={startup} />}{notificationsOpen && <NotificationCenter notifications={notifications} onClose={() => setNotificationsOpen(false)} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}{diagnosticsOpen && <BuiltInTestPanel onClose={() => setDiagnosticsOpen(false)} />}</>;
+    return <><TopToolbar hasNotifications={notifications.length > 0} onToggleNotifications={() => setNotificationsOpen((value) => !value)} onToggleHelp={() => setHelpOpen((value) => !value)} onToggleDiagnostics={() => setDiagnosticsOpen((value) => !value)} /><CesiumGlobe /><OrbitOverlays /><TimeControlBar />{welcomeOpen && <ProjectWelcome onAction={startProjectAction} runtimeStatus={runtimeStatus} startup={startup} startupPresentation={startupPresentation} />}{notificationsOpen && <NotificationCenter notifications={notifications} onClose={() => setNotificationsOpen((value) => !value)} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}{diagnosticsOpen && <BuiltInTestPanel onClose={() => setDiagnosticsOpen(false)} />}</>;
 }

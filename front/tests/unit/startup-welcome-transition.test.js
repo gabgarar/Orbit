@@ -23,7 +23,8 @@ test("the startup branch is central and never exposes New/Open project controls"
     assert.ok(projectActionsMarker > preparationMarker, "project actions must belong to the ready branch");
 
     const preparationBranch = welcome.slice(preparationMarker, projectActionsMarker);
-    assert.match(preparationBranch, /<StartupStatusPanel startup=\{startup\} \/>/);
+    assert.match(preparationBranch, /<StartupStatusPanel startup=\{startup\} authoritative=\{authoritativeSnapshot\} presentationPhase=\{phase\} \/>/);
+    assert.match(welcome, /Comprobando los datos locales ya validados/);
     assert.doesNotMatch(preparationBranch, /New project|Open project|project-welcome-actions/);
     assert.match(welcome.slice(projectActionsMarker), /New project/);
     assert.match(welcome.slice(projectActionsMarker), /Open project/);
@@ -37,7 +38,9 @@ test("the startup branch is central and never exposes New/Open project controls"
 
 test("a failed startup remains centrally observable until service readiness is explicit", () => {
     assert.doesNotMatch(app, /StartupStatusPanel/);
-    assert.match(app, /<ProjectWelcome onAction=\{startProjectAction\} runtimeStatus=\{runtimeStatus\} startup=\{startup\} \/>/);
+    assert.match(app, /useStartupWelcomePresentation/);
+    assert.match(app, /startupPresentation\.allowProjectActions/);
+    assert.match(app, /<ProjectWelcome onAction=\{startProjectAction\} runtimeStatus=\{runtimeStatus\} startup=\{startup\} startupPresentation=\{startupPresentation\} \/>/);
     assert.match(app, /getStartupProjectReadiness\(startupStatusFromDiagnosticComponent\(component\)\)\.ready/);
     assert.doesNotMatch(app, /isStartupTerminal/);
 

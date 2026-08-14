@@ -63,16 +63,20 @@ function progressStageLabel(state) {
     }[state] || "Preparando";
 }
 
-function StartupProgress({ progress, ready }) {
+function StartupProgress({ progress, ready, awaitingSnapshot = false, verifyingLocalCache = false }) {
     const percent = boundedPercent(progress?.percent);
     const models = Array.isArray(progress?.models) ? progress.models : [];
     const modelName = String(progress?.currentModel || "").trim();
     const stage = progressStageLabel(progress?.state);
     const completed = Number.isFinite(progress?.completedModels) ? progress.completedModels : null;
     const total = Number.isFinite(progress?.totalModels) ? progress.totalModels : null;
-    const summary = ready
-        ? "Datos críticos preparados y validados."
-        : (progress?.message || `${stage}${modelName ? ` ${modelName}` : " de datos críticos"}…`);
+    const summary = awaitingSnapshot
+        ? "Esperando la confirmación del estado local."
+        : verifyingLocalCache
+            ? "Comprobando datos locales ya validados."
+            : ready
+                ? "Datos críticos preparados y validados."
+                : (progress?.message || `${stage}${modelName ? ` ${modelName}` : " de datos críticos"}…`);
     const valueText = percent === null
         ? `${summary} Progreso en curso.`
         : `${summary} ${percent}% completado.`;
@@ -128,11 +132,23 @@ function StartupStep({ step }) {
  * keeps the service-owned project-readiness gate and every automatic retry
  * visible while the mandatory ERP/gravity assets download and validate.
  */
-export default function StartupStatusPanel({ startup }) {
-    const status = startupStatus(startup?.status);
-    const readiness = getStartupProjectReadiness(startup);
-    const message = statusMessage(startup);
-    const steps = useMemo(() => Array.isArray(startup?.steps) ? startup.steps : [], [startup?.steps]);
+export default function StartupStatusPanel({ startup, authoritative = true, presentationPhase = "" }) {
+    const reportedReadiness = getStartupProjectReadiness(startup);
+    // Do not present a browser-cached ready value as permission before the
+    // diagnostics endpoint has supplied its current startup snapshot.
+    const readiness = authoritative ? reportedReadiness : {
+        ...reportedReadiness,
+        ready: false,
+        state: "pending",
+        message: "Esperando la confirmación del servicio antes de habilitar proyectos."
+    };
+    const status = authoritative ? startupStatus(startup?.status) : "pending";
+    const message = authoritative ? statusMessage(startup) : "";
+    const progress = authoritative ? startup?.progress : null;
+    const steps = useMemo(
+        () => authoritative && Array.isArray(startup?.steps) ? startup.steps : [],
+        [authoritative, startup?.steps]
+    );
 
     const copy = STATUS_COPY[status];
     return <section
@@ -148,7 +164,12 @@ export default function StartupStatusPanel({ startup }) {
             <div className="flex shrink-0 items-center gap-1.5"><span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 font-bold ${copy.badge} ${STARTUP_TYPE.auxiliary}`}><span className={`size-1.5 rounded-full ${copy.dot}`} aria-hidden="true" />{copy.label}</span></div>
         </header>
         <div className="max-h-[min(360px,max(160px,calc(100dvh-330px)))] overflow-y-auto px-3 py-2.5 [scrollbar-color:#426589_transparent] [scrollbar-width:thin]">
-            <StartupProgress progress={startup?.progress} ready={readiness.ready} />
+            <StartupProgress
+                progress={progress}
+                ready={readiness.ready}
+                awaitingSnapshot={!authoritative}
+                verifyingLocalCache={authoritative && presentationPhase === "verified-cache"}
+            />
             {!readiness.ready && <section className={`mb-2 rounded-[6px] border border-[#456d9d] bg-[#102946] px-2 py-1.5 text-[#d8e8ff] ${STARTUP_TYPE.auxiliary}`} data-testid="startup-project-gate" role="status">
                 <strong className={`block text-[#f0f6ff] ${STARTUP_TYPE.normal}`}>Creación e importación de proyectos temporalmente bloqueadas</strong>
                 <span>{readiness.message}</span>

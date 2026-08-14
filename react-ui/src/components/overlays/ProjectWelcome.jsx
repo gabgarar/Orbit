@@ -21,10 +21,32 @@ function RuntimeFailureNotice() {
     </div>;
 }
 
-export default function ProjectWelcome({ onAction, runtimeStatus, startup }) {
+function preparationCopy(phase, progress) {
+    if (phase === "verified-cache") {
+        return "Comprobando los datos locales ya validados antes de habilitar los proyectos.";
+    }
+    if (phase === "awaiting-snapshot") {
+        return "Conectando con Orbit para comprobar el estado de los datos locales.";
+    }
+    if (progress?.state === "downloading") {
+        return "Orbit está descargando y validando los datos necesarios antes de permitir crear o abrir un proyecto.";
+    }
+    if (progress?.state === "validating") {
+        return "Orbit está validando los datos necesarios antes de permitir crear o abrir un proyecto.";
+    }
+    return "Orbit está comprobando y preparando los datos necesarios antes de permitir crear o abrir un proyecto.";
+}
+
+export default function ProjectWelcome({ onAction, runtimeStatus, startup, startupPresentation }) {
     const runtimeFailed = runtimeStatus?.state === "failed";
     const readiness = getStartupProjectReadiness(startup);
-    const preparing = !readiness.ready;
+    // `startupPresentation` adds the authoritative-snapshot and minimum
+    // display requirements.  Its absence must remain fail-closed for older
+    // callers rather than briefly exposing project actions from a stale
+    // browser-side startup event.
+    const preparing = !readiness.ready || startupPresentation?.isPreparing !== false;
+    const authoritativeSnapshot = startupPresentation?.authoritativeSnapshot === true;
+    const phase = startupPresentation?.phase || "awaiting-snapshot";
     const actionsDisabled = runtimeFailed;
 
     return <section
@@ -40,9 +62,9 @@ export default function ProjectWelcome({ onAction, runtimeStatus, startup }) {
             <h1 className={`!mt-[30px] !mb-[18px] !font-semibold !text-white ${WELCOME_TYPE.title}`}>{preparing ? "Preparando Orbit" : "Welcome to Orbit"}</h1>
             <div className="mx-auto mb-[27px] h-[3px] w-16 rounded-lg bg-[#168fff] shadow-[0_0_14px_rgba(22,143,255,.6)]" />
             {preparing ? <section className="text-left" data-testid="startup-preparing-view" aria-label="Preparando Orbit">
-                <p className={`!m-0 !mb-5 text-center font-normal text-[#b9c9df] ${WELCOME_TYPE.normal}`}>Orbit está descargando y validando los datos necesarios antes de permitir crear o abrir un proyecto.</p>
+                <p className={`!m-0 !mb-5 text-center font-normal text-[#b9c9df] ${WELCOME_TYPE.normal}`} data-testid="startup-preparation-copy">{preparationCopy(phase, startup?.progress)}</p>
                 {runtimeFailed && <RuntimeFailureNotice />}
-                <StartupStatusPanel startup={startup} />
+                <StartupStatusPanel startup={startup} authoritative={authoritativeSnapshot} presentationPhase={phase} />
                 {!runtimeFailed && <p className={`!mt-4 !mb-0 text-center text-[#9eb6d4] ${WELCOME_TYPE.auxiliary}`}>Este estado se actualiza automáticamente. La escena y el Built-In Test siguen disponibles.</p>}
             </section> : <>
                 <p className={`!m-0 !font-normal !text-[#b9c9df] ${WELCOME_TYPE.normal}`}>Create a project to start modelling your space operations, or open an existing one.</p>
