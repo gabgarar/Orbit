@@ -146,7 +146,8 @@ test("Built-In Test mounts accessibly, uses the runtime local-state bridge, and 
     assert.doesNotMatch(startupPanel, /aria-modal/);
     assert.match(startupHook, /STARTUP_STATUS_EVENT/);
     assert.match(startupHook, /startupStatusFromDiagnosticComponent/);
-    assert.match(app, /StartupStatusPanel/);
+    assert.doesNotMatch(app, /StartupStatusPanel/);
+    assert.match(app, /getStartupProjectReadiness\(startupStatusFromDiagnosticComponent\(component\)\)\.ready/);
     assert.match(app, /pollIntervalMs: 2_500/);
     assert.match(hook, /DIAGNOSTICS_STATE_EVENT/);
     assert.match(hook, /DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT/);

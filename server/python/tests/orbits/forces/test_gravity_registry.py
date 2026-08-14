@@ -2,26 +2,28 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+import gzip
 import io
 import os
-from pathlib import Path
 import threading
 import zipfile
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import orbit_api.orbits.forces.gravity_registry as gravity_registry_module
 import pytest
-
+from orbit_api.application.manual_orbits import (
+    build_manual_orbit_propagator,
+    canonical_manual_orbit,
+)
+from orbit_api.domain.requests import ManualOrbitRequest
 from orbit_api.orbits.forces.gravity_registry import (
-    EGM2008_SPEC,
     EGM96_SPEC,
+    EGM2008_SPEC,
     GravityModelCacheError,
     GravityModelRegistry,
 )
-import orbit_api.orbits.forces.gravity_registry as gravity_registry_module
-from orbit_api.application.manual_orbits import build_manual_orbit_propagator, canonical_manual_orbit
-from orbit_api.domain.requests import ManualOrbitRequest
-
 
 NOW = datetime(2026, 8, 14, tzinfo=UTC)
 
@@ -216,6 +218,264 @@ def test_streaming_nga_download_reports_exact_bytes_when_content_length_is_known
 
     assert destination.read_bytes() == b"abcdefg"
     assert events == [(0, 7), (3, 7), (7, 7)]
+
+
+def test_streaming_nga_download_treats_mismatched_content_length_as_observability(tmp_path: Path, monkeypatch, caplog):
+    """A proxy/header discrepancy cannot reject an otherwise validated archive."""
+
+    class Response:
+        headers = {"Content-Length": "99"}
+
+        def __init__(self):
+            self._chunks = iter((b"abc", b"defg", b""))
+
+        def geturl(self):
+            return EGM96_SPEC.url
+
+        def read(self, _size):
+            return next(self._chunks)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Opener:
+        def open(self, _request, *, timeout):
+            assert timeout == 1.0
+            return Response()
+
+    monkeypatch.setattr(gravity_registry_module, "build_opener", lambda *_args: Opener())
+    destination = tmp_path / "EGM96.zip"
+    events: list[tuple[int, int | None]] = []
+
+    GravityModelRegistry._download_https_to_path(
+        EGM96_SPEC.url,
+        1.0,
+        100,
+        destination,
+        on_progress=lambda downloaded, total: events.append((downloaded, total)),
+    )
+
+    assert destination.read_bytes() == b"abcdefg"
+    # Content-Length initially permits a live percentage, but a mismatch is
+    # reset to indeterminate rather than claimed as a corrupted ZIP.
+    assert events == [(0, 99), (3, 99), (7, 99), (7, None)]
+    assert "Content-Length mismatch" in caplog.text
+
+
+def test_streaming_nga_download_handles_chunked_transfer_as_indeterminate(tmp_path: Path, monkeypatch, caplog):
+    class Response:
+        headers = {"Content-Length": "7", "Transfer-Encoding": "chunked"}
+
+        def __init__(self):
+            self._chunks = iter((b"abc", b"defg", b""))
+
+        def geturl(self):
+            return EGM96_SPEC.url
+
+        def read(self, _size):
+            return next(self._chunks)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Opener:
+        def open(self, _request, *, timeout):
+            return Response()
+
+    monkeypatch.setattr(gravity_registry_module, "build_opener", lambda *_args: Opener())
+    destination = tmp_path / "EGM96.zip"
+    events: list[tuple[int, int | None]] = []
+
+    GravityModelRegistry._download_https_to_path(
+        EGM96_SPEC.url,
+        1.0,
+        100,
+        destination,
+        on_progress=lambda downloaded, total: events.append((downloaded, total)),
+    )
+
+    assert destination.read_bytes() == b"abcdefg"
+    assert events == [(0, None), (3, None), (7, None)]
+    assert "Transfer-Encoding" in caplog.text
+
+
+def test_streaming_nga_download_rejects_an_unsolicited_partial_response(tmp_path: Path, monkeypatch):
+    class Response:
+        headers = {"Content-Range": "bytes 0-6/7"}
+        status = 206
+
+        def geturl(self):
+            return EGM96_SPEC.url
+
+        def read(self, _size):
+            return b"abcdefg"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Opener:
+        def open(self, _request, *, timeout):
+            return Response()
+
+    monkeypatch.setattr(gravity_registry_module, "build_opener", lambda *_args: Opener())
+
+    with pytest.raises(GravityModelCacheError, match="respuesta parcial"):
+        GravityModelRegistry._download_https_to_path(
+            EGM96_SPEC.url,
+            1.0,
+            100,
+            tmp_path / "EGM96.zip",
+        )
+
+
+def test_streaming_nga_download_decodes_gzip_content_encoding_with_wire_progress(tmp_path: Path, monkeypatch):
+    payload = b"abcdefg"
+    encoded = gzip.compress(payload)
+
+    class Response:
+        headers = {"Content-Length": str(len(encoded)), "Content-Encoding": "gzip"}
+
+        def __init__(self):
+            self._chunks = iter((encoded[:5], encoded[5:], b""))
+
+        def geturl(self):
+            return EGM96_SPEC.url
+
+        def read(self, _size):
+            return next(self._chunks)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Opener:
+        def open(self, _request, *, timeout):
+            return Response()
+
+    monkeypatch.setattr(gravity_registry_module, "build_opener", lambda *_args: Opener())
+    destination = tmp_path / "EGM96.zip"
+    events: list[tuple[int, int | None]] = []
+
+    GravityModelRegistry._download_https_to_path(
+        EGM96_SPEC.url,
+        1.0,
+        100,
+        destination,
+        on_progress=lambda downloaded, total: events.append((downloaded, total)),
+    )
+
+    assert destination.read_bytes() == payload
+    assert events[0] == (0, len(encoded))
+    assert events[-1] == (len(encoded), len(encoded))
+
+
+def test_streaming_nga_download_rejects_a_truncated_gzip_body(tmp_path: Path, monkeypatch):
+    encoded = gzip.compress(b"abcdefg")[:-8]
+
+    class Response:
+        headers = {"Content-Encoding": "gzip"}
+
+        def __init__(self):
+            self._chunks = iter((encoded, b""))
+
+        def geturl(self):
+            return EGM96_SPEC.url
+
+        def read(self, _size):
+            return next(self._chunks)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Opener:
+        def open(self, _request, *, timeout):
+            return Response()
+
+    monkeypatch.setattr(gravity_registry_module, "build_opener", lambda *_args: Opener())
+
+    with pytest.raises(GravityModelCacheError, match="truncada|no es válida"):
+        GravityModelRegistry._download_https_to_path(
+            EGM96_SPEC.url,
+            1.0,
+            100,
+            tmp_path / "EGM96.zip",
+        )
+
+
+def test_nga_redirect_handler_allows_only_bounded_same_origin_https_targets():
+    handler = gravity_registry_module._TrustedNgaRedirects()
+    request = gravity_registry_module.Request(EGM96_SPEC.url)
+
+    accepted = handler.redirect_request(
+        request,
+        None,
+        302,
+        "Found",
+        {},
+        "/downloads/EGM96_Spherical_Harmonics.zip",
+    )
+
+    assert accepted is not None
+    assert accepted.full_url == "https://earth-info.nga.mil/downloads/EGM96_Spherical_Harmonics.zip"
+    with pytest.raises(OSError, match="host oficial"):
+        handler.redirect_request(request, None, 302, "Found", {}, "https://example.invalid/EGM96.zip")
+
+
+def test_unreliable_content_length_never_accepts_a_truncated_archive(tmp_path: Path, monkeypatch):
+    """A size mismatch is advisory, but ZIP/member validation still fails closed."""
+
+    raw = _archive(_coefficients())
+
+    class Response:
+        headers = {"Content-Length": str(len(raw) + 100)}
+
+        def __init__(self):
+            self._chunks = iter((raw[:-12], b""))
+
+        def geturl(self):
+            return EGM96_SPEC.url
+
+        def read(self, _size):
+            return next(self._chunks)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Opener:
+        def open(self, _request, *, timeout):
+            return Response()
+
+    monkeypatch.setattr(gravity_registry_module, "build_opener", lambda *_args: Opener())
+    registry = GravityModelRegistry(
+        tmp_path,
+        active_model="EGM96",
+        specs=(_small_egm96_spec(),),
+        now=lambda: NOW,
+    )
+
+    record = registry.refresh_if_needed()["EGM96"]
+
+    assert record.status == "error"
+    assert record.available is False
+    assert record.archive_path.exists() is False
+    assert "ZIP válido" in (record.error or "")
 
 
 def test_egm2008_exact_member_and_sparse_archive_tail_are_validated_offline(tmp_path: Path):

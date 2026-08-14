@@ -24,12 +24,22 @@ test("startup UI exposes an accessible determinate-or-indeterminate download pro
     assert.match(startupPanel, /totalBytes/);
     assert.match(startupPanel, /animate-pulse/);
     assert.match(startupPanel, /startup-project-gate/);
+    assert.match(startupPanel, /data-testid="startup-status-panel"/);
+    assert.doesNotMatch(startupPanel, /Ocultar estado de arranque/);
+    assert.doesNotMatch(startupPanel, /fixed top-/);
 });
 
-test("project entry controls remain visibly disabled until explicit startup readiness", () => {
+test("welcome replaces project actions with one central preparation view until explicit startup readiness", () => {
     assert.match(welcome, /getStartupProjectReadiness/);
-    assert.match(welcome, /disabled=\{actionsDisabled\}/);
-    assert.match(welcome, /project-startup-gate/);
+    assert.match(welcome, /const preparing = !readiness\.ready/);
+    assert.match(welcome, /data-testid="startup-preparing-view"/);
+    assert.match(welcome, /<StartupStatusPanel startup=\{startup\} \/>/);
+    assert.match(welcome, /data-testid="project-welcome-actions"/);
+    assert.match(welcome, /\{preparing \? <section/);
+    assert.doesNotMatch(welcome, /project-startup-gate/);
+    assert.match(welcome, /function RuntimeFailureNotice/);
+    assert.match(welcome, /\{runtimeFailed && <RuntimeFailureNotice \/>\}/);
+    assert.match(welcome, /\{!runtimeFailed && <p/);
     assert.match(sidebar, /disabled=\{blocked\}/);
     assert.match(sidebar, /project-actions-startup-gate/);
 });

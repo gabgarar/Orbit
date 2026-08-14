@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import io
+import logging
 import math
 import os
 import re
@@ -25,12 +26,13 @@ import tempfile
 import threading
 import time
 import zipfile
+import zlib
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Literal
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from orbit_api.core.settings import GEOPOTENTIAL_DATA_DIR
@@ -41,7 +43,6 @@ from .limits import (
     MAX_PURE_PYTHON_RK4_GEOPOTENTIAL_TERMS,
     MAX_SUPPORTED_GRAVITY_FIELD_DEGREE,
 )
-
 
 NGA_EGM96_URL = "https://earth-info.nga.mil/php/download.php?file=egm-96spherical"
 NGA_EGM2008_URL = "https://earth-info.nga.mil/php/download.php?file=egm-08spherical"
@@ -79,11 +80,150 @@ class GravityModelCacheError(GravityFieldError):
     """A downloaded/cached NGA archive is unsafe or not scientifically usable."""
 
 
-class _RejectRedirects(HTTPRedirectHandler):
-    """Prevent an official URL from silently becoming an arbitrary download."""
+_LOGGER = logging.getLogger(__name__)
+_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+# A content-coding can make the on-the-wire payload slightly larger than the
+# ZIP it represents. The accepted archive itself is still capped by the model
+# specification; this only bounds the temporary network stream.
+_CONTENT_CODING_WIRE_OVERHEAD_BYTES = 1024 * 1024
 
-    def redirect_request(self, _req, _fp, _code, _msg, _headers, _newurl):  # type: ignore[no-untyped-def]
-        raise OSError("La descarga automática de gravedad NGA no admite redirecciones")
+
+def _is_trusted_nga_redirect_target(value: str) -> bool:
+    """Return whether a redirect remains on the authoritative NGA origin.
+
+    The initial URL is fixed and checked separately by ``_canonical_url_for``.
+    A bounded same-origin HTTPS redirect is safe to follow when NGA changes
+    its download endpoint, whereas following a cross-origin redirect would
+    turn an operational cache refresh into an arbitrary download primitive.
+    """
+
+    try:
+        parsed = urlparse(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.casefold() == "https"
+        and (parsed.hostname or "").casefold() == "earth-info.nga.mil"
+        and port in {None, 443}
+        and bool(parsed.path)
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
+class _TrustedNgaRedirects(HTTPRedirectHandler):
+    """Follow only a short HTTPS redirect chain on NGA's own origin."""
+
+    max_redirections = 3
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        target = urljoin(request.full_url, newurl)
+        if not _is_trusted_nga_redirect_target(target):
+            raise OSError("La descarga automática de gravedad NGA rechazó una redirección fuera del host oficial")
+        return super().redirect_request(request, fp, code, msg, headers, target)
+
+
+class _BoundedContentDecoder:
+    """Streaming gzip/deflate decoder with an output limit and EOF check."""
+
+    def __init__(self, encoding: str, maximum_output_bytes: int) -> None:
+        self.encoding = encoding
+        self.maximum_output_bytes = int(maximum_output_bytes)
+        wbits = 16 + zlib.MAX_WBITS if encoding in {"gzip", "x-gzip"} else zlib.MAX_WBITS
+        self._decoder = zlib.decompressobj(wbits)
+        self.output_bytes = 0
+
+    def decode(self, chunk: bytes) -> bytes:
+        pending = chunk
+        output = bytearray()
+        try:
+            while pending:
+                remaining = self.maximum_output_bytes - self.output_bytes
+                if remaining < 0:
+                    raise GravityModelCacheError("La descarga NGA descomprimida supera el tamaño máximo permitido")
+                decoded = self._decoder.decompress(pending, remaining + 1)
+                if len(decoded) > remaining:
+                    raise GravityModelCacheError("La descarga NGA descomprimida supera el tamaño máximo permitido")
+                output.extend(decoded)
+                self.output_bytes += len(decoded)
+                if self._decoder.unconsumed_tail:
+                    if self.output_bytes >= self.maximum_output_bytes:
+                        raise GravityModelCacheError("La descarga NGA descomprimida supera el tamaño máximo permitido")
+                    pending = self._decoder.unconsumed_tail
+                    continue
+                if self._decoder.unused_data:
+                    raise GravityModelCacheError("La descarga NGA comprimida contiene bytes posteriores no esperados")
+                break
+        except zlib.error as exc:
+            raise GravityModelCacheError(
+                f"La respuesta NGA con Content-Encoding {self.encoding} no es válida"
+            ) from exc
+        return bytes(output)
+
+    def finish(self) -> bytes:
+        if not self._decoder.eof:
+            raise GravityModelCacheError("La descarga NGA comprimida está truncada")
+        remaining = self.maximum_output_bytes - self.output_bytes
+        if remaining < 0:
+            raise GravityModelCacheError("La descarga NGA descomprimida supera el tamaño máximo permitido")
+        try:
+            tail = self._decoder.flush(remaining + 1)
+        except zlib.error as exc:
+            raise GravityModelCacheError(
+                f"La respuesta NGA con Content-Encoding {self.encoding} no es válida"
+            ) from exc
+        if len(tail) > remaining:
+            raise GravityModelCacheError("La descarga NGA descomprimida supera el tamaño máximo permitido")
+        self.output_bytes += len(tail)
+        return tail
+
+
+def _content_encoding(headers: object) -> str:
+    """Return one supported content coding, or fail with a clear boundary."""
+
+    value = getattr(headers, "get", lambda _name, _default=None: None)("Content-Encoding")
+    tokens = tuple(token.strip().casefold() for token in str(value or "").split(",") if token.strip())
+    if not tokens or tokens == ("identity",):
+        return "identity"
+    if len(tokens) == 1 and tokens[0] in {"gzip", "x-gzip", "deflate"}:
+        return tokens[0]
+    raise GravityModelCacheError(
+        "La respuesta NGA usa un Content-Encoding no compatible; se solicitó identidad"
+    )
+
+
+def _usable_content_length(headers: object) -> int | None:
+    """Return a byte-progress total only when HTTP framing makes it usable.
+
+    Content-Length is observability metadata, never an archive-integrity
+    assertion. ``Transfer-Encoding`` owns body framing, so a simultaneous
+    Content-Length must not drive a percentage. The actual stream and the
+    later ZIP/member validation remain bounded independently.
+    """
+
+    getter = getattr(headers, "get", lambda _name, _default=None: None)
+    transfer_encoding = str(getter("Transfer-Encoding") or "").strip()
+    advertised = getter("Content-Length")
+    if not advertised:
+        return None
+    try:
+        total = int(str(advertised).strip())
+    except (TypeError, ValueError):
+        _LOGGER.warning("NGA download advertised an invalid Content-Length; using indeterminate progress")
+        return None
+    if total <= 0:
+        _LOGGER.warning("NGA download advertised a non-positive Content-Length; using indeterminate progress")
+        return None
+    if transfer_encoding:
+        _LOGGER.warning(
+            "NGA download advertised both Transfer-Encoding (%s) and Content-Length; using indeterminate progress",
+            transfer_encoding,
+        )
+        return None
+    # A declared length describes wire bytes, including any supported content
+    # coding. It must never be compared with staged-file bytes.
+    return total
 
 
 def _finite(value: object, label: str) -> float:
@@ -1983,28 +2123,50 @@ class GravityModelRegistry:
         *,
         on_progress: Callable[[int, int | None], None] | None = None,
     ) -> None:
-        """Stream one fixed NGA archive into a staged file, without redirects."""
+        """Stream a fixed NGA archive into staging, then leave integrity to validation.
+
+        HTTP ``Content-Length`` is deliberately used only for an honest
+        transfer percentage. It is not an archive checksum: proxies may
+        transform content or send contradictory framing. The caller validates
+        the bounded ZIP and its exact coefficient member before the staged
+        file can replace a local cache entry.
+        """
 
         spec = next((item for item in NGA_GRAVITY_SPECS.values() if item.url == url), None)
         if spec is None:
             raise ValueError("La descarga de gravedad debe usar una URL oficial fija de NGA")
         _canonical_url_for(spec)
-        request = Request(url, headers={"Accept": "application/zip", "User-Agent": "Orbit-Tracker/0.2"})
-        opener = build_opener(_RejectRedirects())
+        request = Request(
+            url,
+            headers={
+                "Accept": "application/zip",
+                # The ZIP is already compressed. Asking explicitly for its
+                # identity representation keeps ordinary transfers simple;
+                # gzip/deflate are still handled below if an intermediary
+                # applies one despite this preference.
+                "Accept-Encoding": "identity",
+                "User-Agent": "Orbit-Tracker/0.2",
+            },
+        )
+        opener = build_opener(_TrustedNgaRedirects())
         with opener.open(request, timeout=float(timeout_seconds)) as response:
-            if response.geturl() != url:
-                raise OSError("La descarga automática de gravedad no admite redirecciones")
-            advertised = response.headers.get("Content-Length")
-            advertised_total: int | None = None
-            if advertised is not None:
-                try:
-                    advertised_total = int(advertised)
-                    if advertised_total <= 0:
-                        raise GravityModelCacheError("La descarga NGA declara Content-Length no positivo")
-                    if advertised_total > int(max_bytes):
-                        raise GravityModelCacheError("La descarga NGA supera el tamaño máximo permitido")
-                except ValueError as exc:
-                    raise GravityModelCacheError("La descarga NGA declara Content-Length inválido") from exc
+            if not _is_trusted_nga_redirect_target(response.geturl()):
+                raise OSError("La descarga automática de gravedad NGA terminó fuera del host HTTPS oficial")
+            # We never issue a Range request. A 206/Content-Range response is
+            # therefore a concrete partial-object signal, unlike a merely
+            # advisory Content-Length mismatch, and must fail before staging.
+            if getattr(response, "status", None) == 206 or response.headers.get("Content-Range"):
+                raise GravityModelCacheError("La descarga NGA recibió una respuesta parcial no solicitada")
+            content_encoding = _content_encoding(response.headers)
+            advertised_total = _usable_content_length(response.headers)
+            decoder = (
+                _BoundedContentDecoder(content_encoding, int(max_bytes))
+                if content_encoding != "identity"
+                else None
+            )
+            maximum_wire_bytes = int(max_bytes) + (
+                _CONTENT_CODING_WIRE_OVERHEAD_BYTES if decoder is not None else 0
+            )
             if on_progress is not None:
                 try:
                     on_progress(0, advertised_total)
@@ -2012,26 +2174,53 @@ class GravityModelRegistry:
                     # Progress reporting is observational only; it must never
                     # interrupt a verified cache transfer.
                     pass
-            total = 0
+            wire_total = 0
+            archive_total = 0
             with destination.open("wb") as target:
                 while True:
-                    chunk = response.read(min(1024 * 1024, int(max_bytes) + 1 - total))
+                    chunk = response.read(_DOWNLOAD_CHUNK_BYTES)
                     if not chunk:
                         break
-                    total += len(chunk)
-                    if total > int(max_bytes):
+                    wire_total += len(chunk)
+                    if wire_total > maximum_wire_bytes:
                         raise GravityModelCacheError("La descarga NGA supera el tamaño máximo permitido")
-                    target.write(chunk)
+                    decoded = decoder.decode(chunk) if decoder is not None else chunk
+                    archive_total += len(decoded)
+                    if archive_total > int(max_bytes):
+                        raise GravityModelCacheError("La descarga NGA supera el tamaño máximo permitido")
+                    if decoded:
+                        target.write(decoded)
                     if on_progress is not None:
                         try:
-                            on_progress(total, advertised_total)
+                            on_progress(wire_total, advertised_total)
                         except Exception:
                             pass
+                if decoder is not None:
+                    decoded_tail = decoder.finish()
+                    archive_total += len(decoded_tail)
+                    if archive_total > int(max_bytes):
+                        raise GravityModelCacheError("La descarga NGA supera el tamaño máximo permitido")
+                    if decoded_tail:
+                        target.write(decoded_tail)
                 target.flush()
                 os.fsync(target.fileno())
-        if advertised_total is not None and total != advertised_total:
-            raise GravityModelCacheError("La descarga NGA no coincide con Content-Length")
-        if total <= 0:
+        if advertised_total is not None and wire_total != advertised_total:
+            # A mismatched header is useful evidence for an operator, but it
+            # does not prove that the ZIP is corrupt. The complete bounded ZIP
+            # and its coefficient coverage are validated by the caller before
+            # this staged file becomes usable. Reset the byte total so UI
+            # progress never presents a false completed percentage.
+            _LOGGER.warning(
+                "NGA download Content-Length mismatch (advertised=%s, received=%s); validating archive integrity",
+                advertised_total,
+                wire_total,
+            )
+            if on_progress is not None:
+                try:
+                    on_progress(wire_total, None)
+                except Exception:
+                    pass
+        if archive_total <= 0:
             raise GravityModelCacheError("La descarga NGA está vacía")
 
 

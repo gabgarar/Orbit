@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
-    getStartupProjectReadiness,
-    isStartupTerminal
+    getStartupProjectReadiness
 } from "../../../../front/js/features/diagnostics/startupStatus.js";
 
 const STATUS_COPY = Object.freeze({
@@ -118,50 +117,30 @@ function StartupStep({ step }) {
 }
 
 /**
- * A compact, non-modal ledger. It never blocks the globe or diagnostics, but
- * it makes the service-owned project-readiness gate visible while critical
- * ERP/gravity assets download and validate.
+ * The central, non-dismissible startup ledger shown in the welcome view. It
+ * keeps the service-owned project-readiness gate and every automatic retry
+ * visible while the mandatory ERP/gravity assets download and validate.
  */
 export default function StartupStatusPanel({ startup }) {
-    const [collapsed, setCollapsed] = useState(false);
     const status = startupStatus(startup?.status);
-    const terminal = isStartupTerminal(startup);
     const readiness = getStartupProjectReadiness(startup);
     const message = statusMessage(startup);
     const steps = useMemo(() => Array.isArray(startup?.steps) ? startup.steps : [], [startup?.steps]);
 
-    useEffect(() => {
-        if (!terminal || status !== "healthy" || !readiness.ready) return undefined;
-        const timer = window.setTimeout(() => setCollapsed(true), 8_000);
-        return () => window.clearTimeout(timer);
-    }, [terminal, status, readiness.ready]);
-
-    useEffect(() => {
-        if (status === "warning" || status === "error") setCollapsed(false);
-    }, [status]);
-
     const copy = STATUS_COPY[status];
-    if (collapsed) {
-        return <button
-            className={`fixed top-[calc(max(64px,calc(76px*var(--orbit-ui-scale)))+12px)] right-[clamp(10px,1.7vw,28px)] z-[10510] inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-2 font-[system-ui,sans-serif] text-[10px] font-semibold shadow-[0_12px_30px_rgba(0,0,0,.42)] transition-colors hover:brightness-125 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7aa3ff] ${copy.badge}`}
-            type="button"
-            onClick={() => setCollapsed(false)}
-            aria-label="Mostrar estado de arranque"
-        ><span className={`size-1.5 rounded-full ${copy.dot}`} aria-hidden="true" />Estado de arranque</button>;
-    }
-
-    return <aside
-        className="fixed top-[calc(max(64px,calc(76px*var(--orbit-ui-scale)))+12px)] right-[clamp(10px,1.7vw,28px)] z-[10510] w-[min(370px,calc(100vw-20px))] overflow-hidden rounded-[11px] border border-[#36557c] bg-[linear-gradient(145deg,rgba(12,29,51,.98),rgba(6,16,30,.98))] font-[system-ui,sans-serif] text-[#e8f0fd] shadow-[0_18px_50px_rgba(0,0,0,.48)] backdrop-blur-[12px]"
-        aria-label="Estado de arranque"
+    return <section
+        className="overflow-hidden rounded-[14px] border border-[#36557c] bg-[linear-gradient(145deg,rgba(12,29,51,.98),rgba(6,16,30,.98))] font-[system-ui,sans-serif] text-[#e8f0fd] shadow-[0_18px_50px_rgba(0,0,0,.48)] backdrop-blur-[12px]"
+        data-testid="startup-status-panel"
+        aria-labelledby="startup-status-heading"
         aria-live="polite"
         aria-atomic="false"
         role="status"
     >
         <header className="flex min-h-11 items-center justify-between gap-2 border-b border-[#294667] bg-[rgba(15,32,55,.8)] px-3 py-2">
-            <div className="min-w-0"><span className="block text-[8px] leading-none font-bold tracking-[.15em] text-[#7298dc]">ORBIT · STARTUP</span><h2 className="mt-1 mb-0 truncate text-[12px] leading-none font-semibold text-[#edf4ff]">Estado de arranque</h2></div>
-            <div className="flex shrink-0 items-center gap-1.5"><span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] leading-none font-bold ${copy.badge}`}><span className={`size-1.5 rounded-full ${copy.dot}`} aria-hidden="true" />{copy.label}</span><button className="grid size-6 place-items-center rounded-[5px] border border-transparent bg-transparent text-base leading-none text-[#aebed6] transition-colors hover:border-[#42638b] hover:bg-[#152c49] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7aa3ff]" type="button" onClick={() => setCollapsed(true)} aria-label="Ocultar estado de arranque">×</button></div>
+            <div className="min-w-0"><span className="block text-[8px] leading-none font-bold tracking-[.15em] text-[#7298dc]">ORBIT · STARTUP</span><h2 id="startup-status-heading" className="mt-1 mb-0 truncate text-[12px] leading-none font-semibold text-[#edf4ff]">Estado de arranque</h2></div>
+            <div className="flex shrink-0 items-center gap-1.5"><span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] leading-none font-bold ${copy.badge}`}><span className={`size-1.5 rounded-full ${copy.dot}`} aria-hidden="true" />{copy.label}</span></div>
         </header>
-        <div className="max-h-[min(360px,calc(100vh-104px))] overflow-y-auto px-3 py-2.5 [scrollbar-color:#426589_transparent] [scrollbar-width:thin]">
+        <div className="max-h-[min(360px,max(160px,calc(100dvh-330px)))] overflow-y-auto px-3 py-2.5 [scrollbar-color:#426589_transparent] [scrollbar-width:thin]">
             <StartupProgress progress={startup?.progress} ready={readiness.ready} />
             {!readiness.ready && <section className="mb-2 rounded-[6px] border border-[#456d9d] bg-[#102946] px-2 py-1.5 text-[10px] leading-snug text-[#d8e8ff]" data-testid="startup-project-gate" role="status">
                 <strong className="block text-[#f0f6ff]">Creación e importación de proyectos temporalmente bloqueadas</strong>
@@ -169,7 +148,7 @@ export default function StartupStatusPanel({ startup }) {
             </section>}
             {message && <p className={`mt-0 mb-2 rounded-[6px] border px-2 py-1.5 text-[10px] leading-snug ${status === "error" ? "border-[#87464f] bg-[#401f27] text-[#ffbec3]" : status === "warning" ? "border-[#85642d] bg-[#3d2c14] text-[#ffdaa1]" : "border-[#294b70] bg-[#0c1c31] text-[#afc3df]"}`}>{message}</p>}
             {steps.length ? <ol className="m-0 list-none divide-y divide-[#203650] p-0">{steps.map((step) => <StartupStep key={step.id || step.label} step={step} />)}</ol> : <p className="m-0 text-[11px] leading-snug text-[#aabbd2]">Esperando los primeros eventos de arranque. La interfaz sigue siendo utilizable.</p>}
-            {!terminal && <p className="mt-2 mb-0 text-[9px] leading-snug text-[#8094b2]">Las comprobaciones continúan en segundo plano. Puedes inspeccionar la escena y el BIT mientras Orbit prepara los datos necesarios para proyectos.</p>}
+            {!readiness.ready && <p className="mt-2 mb-0 text-[9px] leading-snug text-[#8094b2]">Las comprobaciones continúan en segundo plano. Los errores de descarga se reintentan automáticamente cuando el servicio lo permite.</p>}
         </div>
-    </aside>;
+    </section>;
 }
