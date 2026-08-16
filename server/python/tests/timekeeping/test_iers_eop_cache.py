@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import os
+from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from orbit_api.timekeeping import (
     ARCSECOND_TO_RADIAN,
     EopSnapshotValidationError,
@@ -147,6 +146,33 @@ def test_cache_uses_fresh_valid_file_without_network_and_exposes_coverage(tmp_pa
         "start": now.replace(hour=0).isoformat(),
         "end": (now.replace(hour=0) + timedelta(days=1)).isoformat(),
     }
+
+
+def test_invalid_fresh_local_cache_is_rejected_and_replaced_by_a_valid_download(tmp_path):
+    """Cache age never substitutes for parsing the C01 snapshot at startup."""
+
+    now = datetime(2026, 7, 26, 12, tzinfo=UTC)
+    cache = tmp_path / "data" / "erp" / "EOP_C01_IAU2000_1846-now.txt"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"this is not an IERS C01 snapshot\n")
+    os.utime(cache, (now.timestamp(), now.timestamp()))
+    replacement = _c01(
+        _row(now.replace(hour=0)),
+        _row(now.replace(hour=0) + timedelta(days=1), ut1_tai=-36.79),
+    )
+    downloads: list[object] = []
+    service = IersEopCacheService(
+        cache,
+        fetcher=lambda *_: downloads.append(object()) or replacement,
+        now=lambda: now,
+    )
+
+    status = service.refresh_if_needed()
+
+    assert len(downloads) == 1
+    assert status.status == "ok"
+    assert status.loaded is True
+    assert cache.read_bytes() == replacement
 
 
 def test_stale_cache_falls_back_to_its_last_valid_snapshot_when_download_fails(tmp_path):

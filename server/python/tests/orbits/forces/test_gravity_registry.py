@@ -132,6 +132,85 @@ def test_missing_egm96_download_is_validated_extracted_and_materialised(tmp_path
     assert model.coefficient(2, 0)[0] == pytest.approx(-0.484165371736e-3)
 
 
+def test_fresh_warm_archive_is_revalidated_and_repairs_a_missing_extracted_member_without_download(
+    tmp_path: Path,
+):
+    """A warm NGA cache is trusted only after its ZIP is parsed again.
+
+    The ZIP is the authoritative cache object.  A missing extracted member is
+    reconstructed from that already-validated ZIP, so a normal warm startup
+    stays offline while still checking both files that Orbit uses later.
+    """
+
+    spec = _small_egm96_spec()
+    raw = _archive(_coefficients())
+    seeded = GravityModelRegistry(
+        tmp_path,
+        active_model="EGM96",
+        specs=(spec,),
+        fetcher=lambda *_: raw,
+        now=lambda: NOW,
+    )
+    first = seeded.refresh_if_needed()["EGM96"]
+    first.coefficient_path.unlink()
+
+    downloads: list[object] = []
+    warm = GravityModelRegistry(
+        tmp_path,
+        active_model="EGM96",
+        specs=(spec,),
+        fetcher=lambda *_: downloads.append(object()) or b"must not be fetched",
+        now=lambda: NOW,
+    )
+
+    record = warm.refresh_if_needed()["EGM96"]
+
+    assert downloads == []
+    assert record.status == "ok"
+    assert record.available is True
+    assert record.inspection is not None
+    assert record.coefficient_path.read_bytes() == _coefficients()
+
+
+@pytest.mark.parametrize(
+    "corrupt_archive",
+    (
+        b"not-a-zip",
+        _archive(_coefficients(), member="almost-egm96.txt"),
+    ),
+    ids=("invalid-zip", "wrong-member"),
+)
+def test_invalid_cached_archive_is_rejected_then_replaced_only_by_a_valid_download(
+    tmp_path: Path,
+    corrupt_archive: bytes,
+):
+    """A cached archive never bypasses ZIP/member validation on a warm boot."""
+
+    spec = _small_egm96_spec()
+    archive_path = tmp_path / "egm96" / spec.archive_filename
+    archive_path.parent.mkdir(parents=True)
+    archive_path.write_bytes(corrupt_archive)
+    valid_archive = _archive(_coefficients())
+    downloads: list[object] = []
+    registry = GravityModelRegistry(
+        tmp_path,
+        active_model="EGM96",
+        specs=(spec,),
+        fetcher=lambda *_: downloads.append(object()) or valid_archive,
+        now=lambda: NOW,
+    )
+
+    record = registry.refresh_if_needed()["EGM96"]
+
+    assert len(downloads) == 1
+    assert record.status == "ok"
+    assert record.available is True
+    # The corrupt user cache was never materialised.  It is atomically
+    # replaced only after the newly staged archive has passed validation.
+    assert archive_path.read_bytes() == valid_archive
+    assert record.coefficient_path.read_bytes() == _coefficients()
+
+
 def test_registry_exposes_live_download_bytes_then_validation_completion(tmp_path: Path):
     raw = _archive(_coefficients())
     started = threading.Event()
