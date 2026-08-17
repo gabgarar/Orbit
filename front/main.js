@@ -1690,6 +1690,9 @@ const compositeLayers = createCompositeLayerManager({
         station.visible = visible === true;
         if (station.entity) station.entity.show = station.visible;
         applyGroundStationVisuals(station);
+        // A station's live links are presentation-only. Do not retain a
+        // connector when either end has been hidden in Layers.
+        syncGroundStationVisibilityLinks();
     }
 });
 
@@ -1997,6 +2000,10 @@ function setCompositeLayerVisibility(layerId, visible) {
         deactivateLocalCameraForLayer(layerId, { matchSatelliteSource: true });
     }
     compositeLayers.setVisibility(layerId, visible);
+    // Remove/recreate station connectors at the same time as the layer eye
+    // changes. The callback has the same guard for a frame-perfect fallback,
+    // but removing the entity here avoids a stale line between renders.
+    syncGroundStationVisibilityLinks();
 }
 
 function isCompositeLayerActive(layerId) {
@@ -3497,15 +3504,16 @@ function clearGroundStationAnalysisVisuals() {
     }
 }
 
-// Every active orbital layer gets a lightweight callback polyline for every
-// visible ground station. The callback returns no positions below the station
-// mask or outside the RF envelope, so no station/satellite association is
-// persisted merely to show the live operational geometry.
+// Every active and visible orbital layer gets a lightweight callback polyline
+// for every visible ground station. The callback returns no positions below
+// the station mask or outside the RF envelope, so no station/satellite
+// association is persisted merely to show the live operational geometry.
 function syncGroundStationVisibilityLinks() {
     const desired = new Set();
     const satelliteLayerIds = getCompositeLayerIds()
         .filter((id) => !isGroundStationLayerId(id) && !isCelestialBodyLayerId(id))
-        .filter((id) => isCompositeLayerActive(id));
+        .filter((id) => isCompositeLayerActive(id))
+        .filter((id) => getCompositeLayerVisibility(id) === true);
     for (const station of groundStationLayers.values()) {
         if (!station?.visible) continue;
         for (const satelliteLayerId of satelliteLayerIds) {
@@ -3520,7 +3528,10 @@ function syncGroundStationVisibilityLinks() {
                     positions: new Cesium.CallbackProperty((time) => {
                         const currentStation = groundStationLayers.get(station.id);
                         const satellitePosition = satellite.position?.getValue?.(time);
-                        if (!currentStation?.visible || !isCompositeLayerActive(satelliteLayerId) || !satellitePosition) return [];
+                        if (!currentStation?.visible
+                            || !isCompositeLayerActive(satelliteLayerId)
+                            || getCompositeLayerVisibility(satelliteLayerId) !== true
+                            || !satellitePosition) return [];
                         const stationPosition = Cesium.Cartesian3.fromDegrees(currentStation.longitude_deg, currentStation.latitude_deg, currentStation.altitude_m);
                         const satelliteId = getSatelliteSourceIdFromLayerId(satelliteLayerId);
                         const satelliteRfProfile = getCatalogEntryMeta(satelliteId)?.rfProfile || null;
@@ -3559,9 +3570,13 @@ function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElev
         id: `ground-station-link:${station.id}`,
         polyline: {
             positions: new Cesium.CallbackProperty((time) => {
+                const currentStation = groundStationLayers.get(station.id);
                 const satellitePosition = satellite.position?.getValue?.(time);
-                if (!satellitePosition) return [];
-                const target = evaluateGroundStationTarget(station, stationPosition, satellitePosition, satelliteRfProfile);
+                if (!currentStation?.visible
+                    || !isCompositeLayerActive(satelliteLayerId)
+                    || getCompositeLayerVisibility(satelliteLayerId) !== true
+                    || !satellitePosition) return [];
+                const target = evaluateGroundStationTarget(currentStation, stationPosition, satellitePosition, satelliteRfProfile);
                 if (!target.usable || target.elevationDeg < minimumElevationDeg) return [];
                 return [stationPosition, satellitePosition];
             }, false),
@@ -8448,6 +8463,7 @@ function setupPropagatedParametersInspector() {
         onShowAllObjects: () => {
             if (isManualOrbitDesignActive()) return false;
             setAllSatellitesVisible(true);
+            syncGroundStationVisibilityLinks();
             for (const stationId of groundStationLayers.keys()) {
                 setCompositeLayerVisibility(stationId, true);
             }
@@ -8460,6 +8476,7 @@ function setupPropagatedParametersInspector() {
             if (isManualOrbitDesignActive()) return false;
             bodyCentricCamera.deactivate();
             setAllSatellitesVisible(false);
+            syncGroundStationVisibilityLinks();
             for (const stationId of groundStationLayers.keys()) {
                 setCompositeLayerVisibility(stationId, false);
             }
