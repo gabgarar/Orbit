@@ -1,5 +1,6 @@
 import path from "node:path";
 import { DEFAULT_PYTHON_BACKEND_URL, normalizePythonBackendUrl } from "./backend-url.js";
+import { readNumericalOrbitProxyTimeoutMs } from "./numerical-orbit-timeout.js";
 import { readPythonStartupTimeoutMs } from "./python-startup-timeout.js";
 
 function readPort(value, fallback) {
@@ -14,6 +15,9 @@ export function getRuntimeSettings({ serverDir, environment = process.env } = {}
         port: readPort(environment.PORT, 8100),
         pythonBackendUrl: normalizePythonBackendUrl(environment.PYTHON_BACKEND_URL, DEFAULT_PYTHON_BACKEND_URL),
         pythonStartupTimeoutMs: readPythonStartupTimeoutMs(environment.ORBIT_PYTHON_STARTUP_TIMEOUT_MS),
+        numericalOrbitProxyTimeoutMs: readNumericalOrbitProxyTimeoutMs(
+            environment.ORBIT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS
+        ),
         configDir: path.join(serverDir, "../config"),
         frontDir: path.join(serverDir, "../front"),
         reactDistDir: path.join(serverDir, "../front/dist"),

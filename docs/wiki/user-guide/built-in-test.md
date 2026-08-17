@@ -2,40 +2,40 @@
 
 [Inicio](../index.md) · [Guía de usuario](index.md) · [Validación](../operations/validation.md)
 
-El botón **Built-In Test**, situado a la derecha de **Help**, abre un panel de
-diagnóstico de solo lectura. No inicia propagaciones largas ni cambia una
-órbita: presenta la última comprobación publicada por el backend y el estado
-actual de la escena.
+El icono **Built-In Test (BIT)**, situado a la derecha de **Help**, abre un
+panel de diagnóstico de solo lectura. No inicia propagaciones largas ni cambia
+una órbita: presenta el resultado del **IBIT** (la comprobación inicial de
+arranque) y el estado continuo actual de Orbit y de la escena.
 
 ## Estados y actualización
 
-Cada tarjeta muestra **Healthy**, **Warning** o **Error**, junto con la última
-hora de validación que el componente publicó. **Actualizar** consulta
-`/api/system/diagnostics` sin bloquear la interfaz; mientras el panel está
-abierto también se actualiza periódicamente. Si se ejecuta contra una versión
-anterior del backend, el panel intenta `/api/diagnostics` y deja claro que los
+El BIT consulta `/api/system/diagnostics` continuamente desde que se abre
+Orbit, también con el panel cerrado. El punto del icono resume el estado de
+los componentes visibles; **Actualizar** solo solicita una consulta inmediata
+sin bloquear la interfaz. Cada tarjeta muestra **Healthy**, **Warning** o
+**Error** y su última hora de validación publicada. Si se ejecuta contra una
+versión anterior del backend, intenta `/api/diagnostics` y deja claro que los
 datos remotos no están disponibles en vez de inventar un estado saludable.
 
 ## Qué comprueba
 
 | Tarjeta | Información publicada |
 | --- | --- |
+| Monitor del runtime | Si el ciclo de comprobación continuo del servicio sigue activo; un fallo aquí nunca queda oculto por la ausencia de productos de escena. |
 | ERP / EOP loader | Si se cargó C01/C04, fecha de actualización, URL de procedencia, cobertura y estado de caché. |
-| Readiness de arranque | Decisión explícita `ready`/`projectReady`, pasos obligatorios, blockers y snapshot de progreso de arranque actual. |
-| SP3 y OEM | Sonda real de sus parsers; para SP3, además, el número de productos y el solape/local EOP conocido por la escena. |
+| IBIT inicial | Resultado del arranque, decisión explícita `ready`/`projectReady`, pasos publicados, avisos, errores, tiempos y progreso conocido. Solo se marca **Superado** cuando el ledger terminal y `ready` son explícitos. |
+| SP3, OEM y MTR | Se muestran solo si la escena contiene el producto o rango correspondiente. Para SP3 incluye el número de productos y el solape/local EOP conocido por la escena. |
 | Propagadores y fuerzas | Sondas deterministas de energía two-body, Cowell/RK4, J2/J3/J4 y disponibilidad de geopotencial, arrastre y SRP bajo el contrato temporal actual. |
 | Caché de gravedad | Fuente EGM96/EGM2008 por modelo, estado de caché y fichero de coeficientes local, huella, `maxDegree`/`maxOrder` detectados y perfil de cobertura, frescura/fallback y cualquier error de validación. |
 | Time manager (MTR) | Rango temporal maestro, estado del clamp y capas SP3/OEM activas de la escena. |
 | Marcos de referencia | Sonda ITRF a EME2000, residual de norma y calidad EOP de la ruta disponible. |
-| CI/CD | Última ejecución que la API pública de GitHub haya podido observar para `quality.yml`, `docs-pages.yml` y `release.yml`. |
+El BIT no muestra CI/CD: una entrega descargable debe proceder de una revisión
+de CI/CD ya aprobada. Las comprobaciones operacionales en ejecución no deben
+confundirse con la aprobación de una release.
 
-El monitor de GitHub es opcional y no utiliza credenciales. Si está desactivado,
-la tarjeta CI/CD muestra **Warning/Unknown**; consulte directamente Actions
-para decidir la aprobación de una release.
+## Interpretar el IBIT inicial
 
-## Interpretar el readiness de arranque
-
-La tarjeta **Readiness de arranque** es la fuente de verdad para saber si Orbit
+El bloque **IBIT inicial** es la fuente de verdad para saber si Orbit
 puede aceptar trabajo de proyecto bloqueado. Exige `ready: true` /
 `projectReady: true`; el estado normalmente es `ready`, o `degraded-ready` con
 su advertencia visible. Un healthcheck del contenedor, una tarjeta Healthy o un

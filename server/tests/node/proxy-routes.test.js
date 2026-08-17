@@ -2,8 +2,10 @@ import express from "express";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PYTHON_PROXY_TIMEOUT_MS } from "../../src/proxy/forwarder.js";
+import { DEFAULT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS } from "../../src/runtime/numerical-orbit-timeout.js";
 import {
     MANUAL_ERP_PREVIEW_JSON_LIMIT,
+    NUMERICAL_ORBIT_PROXY_TIMEOUT_MESSAGE,
     registerManualOrbitErpBodyParser,
     registerManualOrbitErpPreviewProxyRoute,
     PRECISE_PRODUCT_IMPORT_JSON_LIMIT,
@@ -24,7 +26,13 @@ async function withServer(app, callback) {
     }
 }
 
-function createProxyApp(request) {
+function stableForwardOptions(options = {}) {
+    const stableOptions = { ...options };
+    delete stableOptions.signal;
+    return stableOptions;
+}
+
+function createProxyApp(request, { numericalOrbitTimeoutMs } = {}) {
     const app = express();
     // Match production ordering: the bounded large-product parser must run
     // before the normal JSON parser.
@@ -33,7 +41,17 @@ function createProxyApp(request) {
     registerManualOrbitErpBodyParser(app);
     registerManualOrbitErpPreviewProxyRoute(app, { request });
     app.use(express.json({ limit: "25mb" }));
-    registerPythonProxyRoutes(app, { request });
+    registerPythonProxyRoutes(app, {
+        request: async (path, options) => {
+            // Every proxy request now carries a client-disconnect signal. The
+            // ordinary route assertions below intentionally keep checking the
+            // public transport contract without depending on a live signal
+            // object; the focused forwarder test covers its cancellation.
+            const stableOptions = { ...options };
+            delete stableOptions.signal;
+            return request(path, stableOptions);
+        }
+    }, { numericalOrbitTimeoutMs });
     return app;
 }
 
@@ -140,12 +158,13 @@ test("proxy exposes the transient manual-orbits endpoint", async () => {
     assert.equal(calls[0].path, "/manual-orbits");
     assert.equal(calls[0].options.method, "POST");
     assert.equal(calls[0].options.body, JSON.stringify(payload));
+    assert.equal(calls[0].options.timeoutMs, DEFAULT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS);
 });
 
 test("proxy forwards a manually uploaded ERP only through its bounded preview route", async () => {
     const calls = [];
     const app = createProxyApp(async (path, options) => {
-        calls.push({ path, options });
+        calls.push({ path, options: stableForwardOptions(options) });
         return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
     });
     const payload = {
@@ -183,7 +202,7 @@ test("proxy forwards a manually uploaded ERP only through its bounded preview ro
 test("proxy forwards paired precise-product uploads through the dedicated bounded route", async () => {
     const calls = [];
     const app = createProxyApp(async (path, options) => {
-        calls.push({ path, options });
+        calls.push({ path, options: stableForwardOptions(options) });
         return new Response('{"ok":true,"satellites":[]}', { headers: { "content-type": "application/json" } });
     });
     const payload = {
@@ -219,7 +238,7 @@ test("proxy forwards paired precise-product uploads through the dedicated bounde
 test("proxy forwards non-persistent precise-product previews through the same bounded route", async () => {
     const calls = [];
     const app = createProxyApp(async (path, options) => {
-        calls.push({ path, options });
+        calls.push({ path, options: stableForwardOptions(options) });
         return new Response('{"ok":true,"preview":{"satellites":[]}}', {
             headers: { "content-type": "application/json" }
         });
@@ -372,6 +391,7 @@ test("proxy exposes the propagated orbit-parameters endpoint", async () => {
     assert.equal(calls[0].path, "/orbit-parameters");
     assert.equal(calls[0].options.method, "POST");
     assert.equal(calls[0].options.body, JSON.stringify(payload));
+    assert.equal(calls[0].options.timeoutMs, DEFAULT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS);
 });
 
 test("proxy exposes the binary ground-station GeoPackage export endpoint", async () => {
@@ -456,6 +476,27 @@ test("proxy returns a 502 response when the Python service fails", async () => {
         assert.deepEqual(await response.json(), {
             ok: false,
             error: "Python backend unavailable"
+        });
+    });
+});
+
+test("numerical orbit deadlines use the extended bounded timeout and a contextual 504", async () => {
+    const timeoutError = new Error("This operation was aborted");
+    timeoutError.name = "AbortError";
+    const app = createProxyApp(async () => {
+        throw timeoutError;
+    }, { numericalOrbitTimeoutMs: 45_000 });
+
+    await withServer(app, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/manual-orbits`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name: "Manual orbit" })
+        });
+        assert.equal(response.status, 504);
+        assert.deepEqual(await response.json(), {
+            ok: false,
+            error: NUMERICAL_ORBIT_PROXY_TIMEOUT_MESSAGE
         });
     });
 });

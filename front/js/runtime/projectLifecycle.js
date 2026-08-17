@@ -1,5 +1,14 @@
 import { buildProjectDocument, isProjectDocument, normalizeProjectName } from "./projectDocument.js";
 import { downloadProjectDocument, readProjectDocument, saveProjectDocument } from "./projectFileIO.js";
+import {
+    cancelOperation,
+    clearOperationsForScope,
+    completeOperation,
+    failOperation,
+    OPERATION_SCOPES,
+    startOperation,
+    updateOperation
+} from "../features/operations/operationsContract.js";
 
 const GROUND_STATION_RUNTIME_FIELDS = new Set([
     "entity",
@@ -11,6 +20,23 @@ const GROUND_STATION_RUNTIME_FIELDS = new Set([
     "patternPrimitive",
     "pointingConeEntity"
 ]);
+
+let projectOperationSequence = 0;
+
+function projectOperationId(kind) {
+    projectOperationSequence += 1;
+    return `project-${kind}-${Date.now()}-${projectOperationSequence}`;
+}
+
+function beginProjectOperation(kind, title, stage) {
+    const id = projectOperationId(kind);
+    startOperation({ id, title, scope: OPERATION_SCOPES.PROJECT, stage, progress: 0, cancellable: false });
+    return id;
+}
+
+function advanceProjectOperation(id, stage, progress, message = "") {
+    updateOperation({ id, stage, progress, message });
+}
 
 function serializeGroundStation(station) {
     if (!station || typeof station !== "object" || Array.isArray(station)) {
@@ -178,6 +204,17 @@ export function createProjectLifecycle(deps) {
         || (getObjectSidebar()?.getProjectTree?.().folders.length || 0) > 0;
 
     const clearContents = () => {
+        // A project boundary invalidates scene-owned and manual-design work.
+        // Project operations are intentionally left alone so the New/Open
+        // operation that invoked this reset remains visible to the operator.
+        // Give scene producers a chance to abort their owned fetches before
+        // their rows disappear from the activity ledger.  Clearing only the
+        // UI record would otherwise allow a late SP3/OEM response to mutate
+        // the freshly opened project.
+        window.dispatchEvent(new Event("orbit:scene-operations-cancel"));
+        clearOperationsForScope(OPERATION_SCOPES.MANUAL_ORBIT);
+        clearOperationsForScope(OPERATION_SCOPES.ORBIT_DESIGN);
+        clearOperationsForScope(OPERATION_SCOPES.SCENE);
         // `setAllSatelliteLayersActive(false)` deliberately keeps catalogue
         // metadata around, but an OEM's in-memory samples are local project
         // state. Remove those tracks first so a New/Open operation cannot
@@ -196,22 +233,29 @@ export function createProjectLifecycle(deps) {
     };
 
     const startNew = (name = "Untitled project") => {
+        const operationId = beginProjectOperation("new", "Creando proyecto", "Preparando espacio de trabajo");
         try {
-            clearContents();
-        } catch {
-            // Starting a blank project must not leave the user trapped behind
-            // the welcome screen if stale render state cannot be cleaned up.
-            showAlert("No se pudo limpiar completamente el proyecto anterior. Se ha creado uno nuevo vacio.", getAlertTitle());
+            try {
+                clearContents();
+            } catch {
+                // Starting a blank project must not leave the user trapped behind
+                // the welcome screen if stale render state cannot be cleaned up.
+                showAlert("No se pudo limpiar completamente el proyecto anterior. Se ha creado uno nuevo vacio.", getAlertTitle());
+            }
+            advanceProjectOperation(operationId, "Configurando proyecto", 65);
+            setProjectName(normalizeProjectName(name));
+            try {
+                updateTitle();
+                getObjectSidebar()?.renderList?.();
+            } finally {
+                window.dispatchEvent(new Event("orbit:project-opened"));
+            }
+            completeOperation({ id: operationId });
+            return true;
+        } catch (error) {
+            failOperation({ id: operationId, message: error?.message || "No se pudo crear el proyecto." });
+            throw error;
         }
-
-        setProjectName(normalizeProjectName(name));
-        try {
-            updateTitle();
-            getObjectSidebar()?.renderList?.();
-        } finally {
-            window.dispatchEvent(new Event("orbit:project-opened"));
-        }
-        return true;
     };
 
     const selectFileFallback = () => new Promise((resolve) => {
@@ -224,12 +268,19 @@ export function createProjectLifecycle(deps) {
     });
 
     const loadFile = async (file, handle = null) => {
+        const operationId = beginProjectOperation("open", "Abriendo proyecto", "Leyendo archivo de proyecto");
+        try {
         const project = await readProjectDocument(file);
+        advanceProjectOperation(operationId, "Validando proyecto", 15);
         if (!isProjectDocument(project)) throw new Error("Unsupported project file");
         if (hasOpenProject()) {
             const confirmed = await showConfirm(`Ya hay abierto el proyecto '${getProjectName() || "actual"}'. Se perderán los cambios no guardados. ¿Quieres sustituirlo?`, "Abrir otro proyecto", "Abrir proyecto");
-            if (!confirmed) return false;
+            if (!confirmed) {
+                cancelOperation({ id: operationId });
+                return false;
+            }
         }
+        advanceProjectOperation(operationId, "Restableciendo espacio de trabajo", 28);
         clearContents(); setProjectFileHandle(handle);
         setProjectName(normalizeProjectName(project.name || file.name.replace(/\.json$/i, "")));
         const manualOrbits = Array.isArray(project.manualOrbits) ? project.manualOrbits : [];
@@ -254,9 +305,11 @@ export function createProjectLifecycle(deps) {
         } else if (project.simulation?.startDate && project.simulation?.endDate) {
             applySimulationRange(new Date(project.simulation.startDate), new Date(project.simulation.endDate));
         }
+        advanceProjectOperation(operationId, "Restaurando capas de escena", 45);
         const satelliteRestoration = restoreSatelliteIds(restoreCandidates, project);
         restoreCelestialBodies(project.celestialBodies);
         try {
+            advanceProjectOperation(operationId, "Restaurando órbitas manuales", 62);
             const restoration = await restoreManualOrbits(manualOrbits);
             if (Array.isArray(restoration?.failed) && restoration.failed.length) {
                 showAlert("El proyecto se abrio, pero alguna orbita manual no pudo restaurarse.", getAlertTitle());
@@ -268,6 +321,7 @@ export function createProjectLifecycle(deps) {
         }
         let groundStationIdMap = {};
         try {
+            advanceProjectOperation(operationId, "Restaurando estaciones terrestres", 78);
             const restoration = await restoreGroundStations(groundStations);
             groundStationIdMap = normalizeRestorationIdMap(restoration?.idMap);
             if (Array.isArray(restoration?.failed) && restoration.failed.length) {
@@ -289,8 +343,15 @@ export function createProjectLifecycle(deps) {
         if (satelliteRestoration.skipped.length) {
             showAlert("El proyecto contiene una fuente de efem\u00e9rides que no se puede restaurar sin su producto de origen. Imp\u00f3rtela de nuevo.", getAlertTitle());
         }
+        advanceProjectOperation(operationId, "Finalizando proyecto", 94);
         getObjectSidebar()?.setProjectTree?.(remapLayerTree(project.layerTree, groundStationIdMap)); updateTitle(); getObjectSidebar()?.renderList?.();
-        window.dispatchEvent(new Event("orbit:project-opened")); return true;
+        window.dispatchEvent(new Event("orbit:project-opened"));
+        completeOperation({ id: operationId });
+        return true;
+        } catch (error) {
+            failOperation({ id: operationId, message: error?.message || "No se pudo abrir el proyecto." });
+            throw error;
+        }
     };
 
     const restoreDeferredSatelliteLayers = () => {
@@ -307,8 +368,44 @@ export function createProjectLifecycle(deps) {
         return restoration;
     };
 
-    const saveToHandle = async (handle) => saveProjectDocument(handle, buildDocument());
-    const exportProject = async () => downloadProjectDocument(buildDocument());
-    const openProject = async () => { try { let handle = null; let file = null; if (window.showOpenFilePicker) { [handle] = await window.showOpenFilePicker({ types: [{ description: "Orbit project", accept: { "application/json": [".json"] } }] }); file = await handle.getFile(); } else { file = await selectFileFallback(); if (!file) return; } await loadFile(file, handle); } catch (error) { if (error?.name !== "AbortError") showAlert("No se pudo abrir el proyecto.", getAlertTitle()); } };
+    const saveToHandle = async (handle) => {
+        const operationId = beginProjectOperation("save", "Guardando proyecto", "Serializando proyecto");
+        try {
+            const document = buildDocument();
+            advanceProjectOperation(operationId, "Escribiendo archivo", 55);
+            await saveProjectDocument(handle, document);
+            completeOperation({ id: operationId });
+        } catch (error) {
+            failOperation({ id: operationId, message: error?.message || "No se pudo guardar el proyecto." });
+            throw error;
+        }
+    };
+    const exportProject = async () => {
+        const operationId = beginProjectOperation("export", "Exportando proyecto", "Preparando documento descargable");
+        try {
+            const document = buildDocument();
+            advanceProjectOperation(operationId, "Generando descarga", 75);
+            await downloadProjectDocument(document);
+            completeOperation({ id: operationId });
+        } catch (error) {
+            failOperation({ id: operationId, message: error?.message || "No se pudo exportar el proyecto." });
+            throw error;
+        }
+    };
+    const openProject = async () => {
+        try {
+            let handle = null; let file = null;
+            if (window.showOpenFilePicker) {
+                [handle] = await window.showOpenFilePicker({ types: [{ description: "Orbit project", accept: { "application/json": [".json"] } }] });
+                file = await handle.getFile();
+            } else {
+                file = await selectFileFallback();
+                if (!file) return;
+            }
+            await loadFile(file, handle);
+        } catch (error) {
+            if (error?.name !== "AbortError") showAlert("No se pudo abrir el proyecto.", getAlertTitle());
+        }
+    };
     return { buildDocument, updateTitle, hasOpenProject, clearContents, startNew, loadFile, restoreDeferredSatelliteLayers, openProject, saveToHandle, exportProject, getProjectFileHandle };
 }

@@ -1,13 +1,19 @@
 import { createPythonForwarder } from "./forwarder.js";
 import express from "express";
+import { DEFAULT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS } from "../runtime/numerical-orbit-timeout.js";
 
 const API_ROUTES = ["/propagate", "/orbits", "/aos-los", "/ephemeris", "/manual-orbits", "/orbit-parameters"];
 const SATELLITE_API_ROUTES = ["/propagate", "/orbits"];
+const NUMERICAL_ORBIT_ROUTES = new Set(["/manual-orbits", "/orbit-parameters"]);
 export const PRECISE_PRODUCT_IMPORT_JSON_LIMIT = "90mb";
 // ERP uploads are scoped to a single manual orbit.  A 32 MiB binary ERP is
 // roughly 42.7 MiB after base64 encoding, so keep enough JSON headroom while
 // leaving every unrelated manual-orbit request on the regular small parser.
 export const MANUAL_ERP_PREVIEW_JSON_LIMIT = "50mb";
+export const NUMERICAL_ORBIT_PROXY_TIMEOUT_MESSAGE = (
+    "El c\u00e1lculo num\u00e9rico de la \u00f3rbita super\u00f3 el plazo configurado por el despliegue. "
+    + "Aum\u00e9ntalo o establ\u00e9celo a 0; Orbit no ha reducido la ventana solicitada."
+);
 
 function registerForwardingRoute(app, method, route, getPythonPath, forward) {
     app[method](route, (request, response) => forward(request, response, getPythonPath(request)));
@@ -21,8 +27,18 @@ function satellitePath(route, request) {
     return `${route}/${encodeURIComponent(request.params.satId)}`;
 }
 
-export function registerPythonProxyRoutes(app, client) {
+export function registerPythonProxyRoutes(app, client, {
+    numericalOrbitTimeoutMs = DEFAULT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS
+} = {}) {
     const forward = createPythonForwarder(client);
+    // A Cowell request can legitimately calculate thousands of RK4 stages
+    // and frame samples. It must not inherit the short generic API deadline.
+    // The numerical budget is opt-in: default 0 means user-controlled
+    // completion/cancellation rather than a hidden shortened calculation.
+    const forwardNumericalOrbit = createPythonForwarder(client, {
+        timeoutMs: numericalOrbitTimeoutMs,
+        timeoutMessage: NUMERICAL_ORBIT_PROXY_TIMEOUT_MESSAGE
+    });
 
     registerForwardingRoute(app, "post", "/api/export/manual-ephemeris", () => "/export/manual-ephemeris", forward);
     registerForwardingRoute(app, "post", "/api/ground-stations/export", () => "/ground-stations/export", forward);
@@ -44,8 +60,11 @@ export function registerPythonProxyRoutes(app, client) {
     }
 
     for (const route of API_ROUTES) {
-        registerForwardingRoute(app, "get", `/api${route}`, () => route, forward);
-        registerForwardingRoute(app, "post", `/api${route}`, () => route, forward);
+        const routeForwarder = NUMERICAL_ORBIT_ROUTES.has(route)
+            ? forwardNumericalOrbit
+            : forward;
+        registerForwardingRoute(app, "get", `/api${route}`, () => route, routeForwarder);
+        registerForwardingRoute(app, "post", `/api${route}`, () => route, routeForwarder);
     }
 
     for (const route of SATELLITE_API_ROUTES) {

@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef } from "react";
 import PanelCloseButton from "../PanelCloseButton.jsx";
-import useSystemDiagnostics from "../../hooks/useSystemDiagnostics.js";
 import {
-    DIAGNOSTIC_COMPONENTS,
     findDiagnosticComponent,
     normalizeDiagnosticStatus
 } from "../../../../front/js/features/diagnostics/diagnosticsContract.js";
 import { startupStatusFromDiagnosticComponent } from "../../../../front/js/features/diagnostics/startupStatus.js";
+import {
+    continuousBitStatus,
+    initialBitSummary,
+    visibleBitComponents
+} from "../../../../front/js/features/diagnostics/bitPresentation.js";
 
 const statusStyle = {
     healthy: {
@@ -65,25 +68,6 @@ function displayBoolean(value, unavailable = "No publicado") {
     if (["true", "yes", "ok", "ready", "loaded", "healthy", "applied", "available"].includes(normalized)) return "Sí";
     if (["false", "no", "missing", "unavailable", "not_loaded", "not loaded"].includes(normalized)) return "No";
     return normalized ? text(value) : unavailable;
-}
-
-function workflowValue(workflows, aliases) {
-    const value = readValue(workflows, aliases);
-    return record(value)?.status ?? value;
-}
-
-function latestWorkflowUpdate(workflows) {
-    const source = record(workflows);
-    if (!source) return "";
-    const candidates = Object.values(source)
-        .map((value) => record(value))
-        .filter(Boolean)
-        .map((value) => readValue(value, ["updated_at", "updatedAt", "last_run", "lastRun"]))
-        .filter(Boolean)
-        .map((value) => ({ value, time: new Date(value).getTime() }))
-        .filter(({ time }) => Number.isFinite(time));
-    candidates.sort((left, right) => right.time - left.time);
-    return candidates[0]?.value || "";
 }
 
 function list(value) {
@@ -289,17 +273,11 @@ function RemoteFields({ id, component }) {
     if (id === "mtr") {
         return <DiagnosticField label="Service validation" value={component.summary || component.message || "No publicado"} />;
     }
+    if (id === "monitor") {
+        return <DiagnosticField label="Monitor del servicio" value={displayBoolean(componentValue(component, ["running", "active", "available"]))} />;
+    }
     if (id === "frames") {
         return <DiagnosticField label="ITRF / ECI route" value={componentValue(component, ["route", "eci_route", "eciRoute", "transform", "frame_route", "frameRoute"]) || component.summary || component.message || "No publicado"} />;
-    }
-    if (id === "cicd") {
-        const workflows = componentValue(component, ["workflows", "pipeline", "pipelines"]);
-        return <>
-            <DiagnosticField label="Last workflow run" value={utcTimestamp(componentValue(component, ["last_workflow_run", "lastWorkflowRun", "last_run", "lastRun"]) ?? latestWorkflowUpdate(workflows))} />
-            <DiagnosticField label="quality.yml" value={displayBoolean(workflowValue(workflows, ["quality", "quality_yml", "quality.yml"]) ?? componentValue(component, ["quality", "quality_yml", "qualityYml"]))} />
-            <DiagnosticField label="docs-pages.yml" value={displayBoolean(workflowValue(workflows, ["docs", "docs_yml", "docs.yml", "docs-pages", "docs-pages.yml"]) ?? componentValue(component, ["docs", "docs_yml", "docsYml"]))} />
-            <DiagnosticField label="release.yml" value={displayBoolean(workflowValue(workflows, ["release", "release_yml", "release.yml"]) ?? componentValue(component, ["release", "release_yml", "releaseYml"]))} />
-        </>;
     }
     return null;
 }
@@ -337,24 +315,66 @@ function DiagnosticCard({ definition, diagnostics, local }) {
     </section>;
 }
 
-function OverallStatus({ availability, diagnostics }) {
-    const status = availability === "available" ? normalizeDiagnosticStatus(diagnostics?.status) : "warning";
-    const style = statusStyle[status];
+function OverallStatus({ status }) {
+    const normalized = normalizeDiagnosticStatus(status);
+    const style = statusStyle[normalized];
     return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] leading-none font-bold ${style.badge}`}><span className={`size-1.5 rounded-full ${style.dot}`} aria-hidden="true" />{style.label}</span>;
+}
+
+function InitialBitCard({ summary }) {
+    const style = statusStyle[summary.status];
+    const startup = summary.startup;
+    const steps = Array.isArray(startup?.steps) ? startup.steps : [];
+    return <section className="mb-3 rounded-[9px] border border-[#3d5f8d] bg-[linear-gradient(145deg,rgba(18,39,68,.96),rgba(9,24,43,.96))] px-3 py-2.5 shadow-[inset_0_1px_rgba(255,255,255,.035)]" aria-label={`IBIT inicial: ${summary.result}`}>
+        <header className="flex min-w-0 items-start justify-between gap-2">
+            <div className="min-w-0">
+                <span className="block text-[9px] leading-none font-bold tracking-[.13em] text-[#84a8e9]">IBIT · INICIAL</span>
+                <h3 className="mt-1 mb-0 text-[12px] leading-tight font-semibold text-[#edf4ff]">Resultado del arranque: {summary.result}</h3>
+                <p className="mt-1 mb-0 text-[10px] leading-snug text-[#a9bbd3]">{summary.message}</p>
+            </div>
+            <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] leading-none font-bold ${style.badge}`}><span className={`size-1.5 rounded-full ${style.dot}`} aria-hidden="true" />{style.label}</span>
+        </header>
+        {startup && <dl className="mt-2.5 mb-0">
+            <DiagnosticField label="Inicio" value={utcTimestamp(startup.startedAt, "No publicado")} />
+            <DiagnosticField label="Finalizado" value={utcTimestamp(startup.completedAt, summary.terminal ? "No publicado" : "Aún en curso")} />
+            <DiagnosticField label="Pasos" value={steps.length ? `${steps.length} publicados` : "No publicados"} />
+        </dl>}
+        {steps.length > 0 && <ol className="mt-2 mb-0 grid list-none gap-1.5 p-0" aria-label="Historial del IBIT inicial">
+            {steps.map((step) => {
+                const stepStyle = statusStyle[normalizeDiagnosticStatus(step.status)];
+                return <li className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-2 rounded-[6px] border border-[#274466] bg-[#09192c]/70 px-2 py-1.5" key={`${step.id}-${step.timestamp || "current"}`}>
+                    <span className={`mt-0.5 size-1.5 rounded-full ${stepStyle.dot}`} aria-hidden="true" />
+                    <span className="min-w-0"><strong className="block text-[10px] leading-snug font-semibold text-[#dce8f8]">{step.label}</strong>{step.message && <small className="mt-0.5 block text-[9px] leading-snug text-[#9cafc8]">{step.message}</small>}</span>
+                    <time className="whitespace-nowrap text-[9px] leading-snug text-[#91a8c7]" dateTime={step.timestamp || undefined}>{utcTimestamp(step.timestamp, "—")}</time>
+                </li>;
+            })}
+        </ol>}
+    </section>;
 }
 
 function RefreshIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true" className="size-3.5 fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:1.9]"><path d="M20 11a8 8 0 0 0-14.9-3.9L3 9.2M3 4.8v4.4h4.4M4 13a8 8 0 0 0 14.9 3.9l2.1-2.1M21 19.2v-4.4h-4.4" /></svg>;
 }
 
-/** Compact, read-only health view. It never starts a validation itself. */
-export default function BuiltInTestPanel({ onClose }) {
+/** Compact, read-only health view driven by the app-level continuous BIT stream. */
+export default function BuiltInTestPanel({ onClose, diagnosticsState = null }) {
     const panelRef = useRef(null);
     const priorFocusRef = useRef(null);
-    const { availability, endpoint, diagnostics, local, checkedAt, error, refreshing, refresh } = useSystemDiagnostics();
-    const cards = useMemo(() => DIAGNOSTIC_COMPONENTS.map((definition) => (
+    const {
+        availability = "loading",
+        endpoint = "",
+        diagnostics = null,
+        local = null,
+        checkedAt = "",
+        error = "",
+        refreshing = false,
+        refresh = null
+    } = diagnosticsState || {};
+    const cards = useMemo(() => visibleBitComponents({ diagnostics, local }).map((definition) => (
         <DiagnosticCard definition={definition} diagnostics={diagnostics} local={local} key={definition.id} />
     )), [diagnostics, local]);
+    const initial = useMemo(() => initialBitSummary(diagnostics), [diagnostics]);
+    const status = useMemo(() => continuousBitStatus({ availability, diagnostics, local }), [availability, diagnostics, local]);
 
     useEffect(() => {
         priorFocusRef.current = document.activeElement;
@@ -377,20 +397,21 @@ export default function BuiltInTestPanel({ onClose }) {
             <header className="flex min-h-[58px] items-center justify-between gap-3 border-b border-[#294667] bg-[linear-gradient(105deg,rgba(14,30,52,.98),rgba(8,18,33,.98))] px-[clamp(12px,1.4vw,20px)] py-2.5">
                 <div className="min-w-0 font-[system-ui,sans-serif]">
                     <span className="block text-[9px] leading-none font-bold tracking-[.16em] text-[#7298dc]">ORBIT · BUILT-IN TEST</span>
-                    <div className="mt-1 flex min-w-0 items-center gap-2"><h2 id="builtInTestTitle" className="m-0 truncate text-[15px] leading-none font-semibold text-[#edf4ff]">Diagnóstico del sistema</h2><OverallStatus availability={availability} diagnostics={diagnostics} /></div>
-                    <p id="builtInTestDescription" className="mt-1 mb-0 text-[10px] leading-snug text-[#a1b2cb]">Consulta no bloqueante del servicio y estado local de la escena.</p>
+                    <div className="mt-1 flex min-w-0 items-center gap-2"><h2 id="builtInTestTitle" className="m-0 truncate text-[15px] leading-none font-semibold text-[#edf4ff]">BIT continuo</h2><OverallStatus status={status} /></div>
+                    <p id="builtInTestDescription" className="mt-1 mb-0 text-[10px] leading-snug text-[#a1b2cb]">IBIT inicial, comprobaciones continuas y solo los componentes presentes en esta escena.</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                    <button className="inline-flex h-8 items-center justify-center gap-1.5 rounded-[7px] border border-[#36577f] bg-[#102039] px-2.5 text-[10px] leading-none font-semibold text-[#cfe0f8] transition-colors hover:border-[#628bd0] hover:bg-[#173054] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7198ff] disabled:cursor-wait disabled:opacity-60" type="button" onClick={() => void refresh()} disabled={refreshing} aria-label="Actualizar diagnóstico"><RefreshIcon />{refreshing ? "Actualizando…" : "Actualizar"}</button>
+                    <button className="inline-flex h-8 items-center justify-center gap-1.5 rounded-[7px] border border-[#36577f] bg-[#102039] px-2.5 text-[10px] leading-none font-semibold text-[#cfe0f8] transition-colors hover:border-[#628bd0] hover:bg-[#173054] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7198ff] disabled:cursor-wait disabled:opacity-60" type="button" onClick={() => typeof refresh === "function" && void refresh()} disabled={refreshing || typeof refresh !== "function"} aria-label="Actualizar diagnóstico"><RefreshIcon />{refreshing ? "Actualizando…" : "Actualizar"}</button>
                     <PanelCloseButton label="Cerrar Built-In Test" onClick={onClose} />
                 </div>
             </header>
             <div className="min-h-0 overflow-y-auto px-[clamp(12px,1.4vw,20px)] py-3 [scrollbar-color:#426589_transparent] [scrollbar-width:thin]">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-[8px] border border-[#294866] bg-[#0a192c] px-2.5 py-2 text-[10px] leading-snug text-[#a8bad1]" role="status" aria-live="polite">
-                    <span>Última consulta: <strong className="font-semibold text-[#dbe7f8]">{utcTimestamp(checkedAt, "Pendiente")}</strong></span>
+                    <span>BIT continuo · última consulta: <strong className="font-semibold text-[#dbe7f8]">{utcTimestamp(checkedAt, "Pendiente")}</strong></span>
                     {availability === "available" && <span>Endpoint: <code className="text-[#a9c8ff]">{endpoint || "disponible"}</code></span>}
                 </div>
                 {remoteUnavailable && <aside className="mb-3 rounded-[8px] border border-[#85642d] bg-[rgba(86,57,18,.42)] px-3 py-2.5 text-[11px] leading-snug text-[#ffdaa1]" role="status"><strong className="font-semibold">Diagnóstico remoto no disponible.</strong> {error || "Inicia o actualiza Orbit para exponer /api/system/diagnostics (o /api/diagnostics)."} Se muestran únicamente los datos que la escena conoce localmente.</aside>}
+                <InitialBitCard summary={initial} />
                 <div className="grid gap-2.5 md:grid-cols-2">{cards}</div>
             </div>
         </article>

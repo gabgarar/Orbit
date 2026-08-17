@@ -53,6 +53,7 @@ espacio de trabajo; también puede abrirse directamente en una pestaña. La ruta
 | `PORT` | `8100` | Puerto interno del gateway en el contenedor. |
 | `PYTHON_BACKEND_URL` | `http://127.0.0.1:8765` | Origen privado que utiliza el gateway para FastAPI. |
 | `ORBIT_PYTHON_STARTUP_TIMEOUT_MS` | `180000` | Presupuesto de arranque del backend Python en ms; entero entre `10000` y `600000`, especialmente para la rehidratación local estricta de SP3/ERP. |
+| `ORBIT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS` | `0` | Sin plazo de gateway para un calculo numerico manual: conserva toda la ventana solicitada hasta que termine o el operador lo cancele. Un entero explicito entre `30000` y `600000` activa un plazo de despliegue. |
 
 `ORBIT_HTTP_BIND=0.0.0.0` publica Orbit en todas las interfaces del host. No
 hay autenticación ni autorización en la aplicación; use firewall, VPN o proxy

@@ -53,6 +53,7 @@ reserved for the FastAPI backend Swagger interface.
 | `PORT` | `8100` | Internal port of the gateway in the container. |
 | `PYTHON_BACKEND_URL` | `http://127.0.0.1:8765` | Private origin that uses the gateway for FastAPI. |
 | `ORBIT_PYTHON_STARTUP_TIMEOUT_MS` | `180000` | Python-backend startup budget in ms; integer from `10000` to `600000`, especially for strict local SP3/ERP rehydration. |
+| `ORBIT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS` | `0` | No gateway deadline for a manual numerical calculation: it retains the complete requested window until it finishes or the operator cancels it. An explicit integer from `30000` to `600000` enables a deployment deadline. |
 
 `ORBIT_HTTP_BIND=0.0.0.0` publishes Orbit to all host interfaces. No
 there is no authentication or authorization in the application; use firewall, VPN or proxy

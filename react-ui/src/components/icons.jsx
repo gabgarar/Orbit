@@ -10,6 +10,11 @@ export function DiagnosticsIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="3" /><path d="M7 15.5h2.2l1.65-5 2.35 7 1.45-4H17" /><circle cx="17.4" cy="8.1" r="1.15" /></svg>;
 }
 
+/** Circular activity glyph used for real, live work only. */
+export function ActivityIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.8-4.2L3 9" /><path d="M3 4v5h5M4 13a8 8 0 0 0 14.8 4.2L21 15" /><path d="M21 20v-5h-5" /></svg>;
+}
+
 export function FolderIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 8.2A2.2 2.2 0 0 1 5.7 6h3.2l1.9 2.3H17a2.2 2.2 0 0 1 2.2 2.2v6.9a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2Z" /><path d="M3.8 11.1h16.4" /></svg>;
 }

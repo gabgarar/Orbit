@@ -29,6 +29,15 @@ import {
     summarizePreciseProductValidation
 } from "./features/preciseProducts/validationUi.js";
 import { preciseProductSatelliteEntriesFromPayload } from "./satellites.js";
+import {
+    OPERATION_SCOPES,
+    ORBIT_OPERATION_CANCEL_REQUEST_EVENT,
+    cancelOperation,
+    completeOperation,
+    failOperation,
+    startOperation,
+    updateOperation
+} from "./features/operations/operationsContract.js";
 
 export const PRECISE_PRODUCT_PREVIEW_ACTION_LABEL = "Previsualizar satélites";
 export const PRECISE_PRODUCT_PREVIEW_BUSY_LABEL = "Analizando…";
@@ -1138,9 +1147,18 @@ export function setupObjectSidebar({
     let preciseProductPreviewRequestId = 0;
     let preciseProductPreviewActiveRequestId = null;
     let preciseProductPreviewAbortController = null;
+    let preciseProductPreviewOperationId = null;
+    let preciseProductImportAbortController = null;
+    let preciseProductImportOperationId = null;
+    let preciseProductImportRequestId = 0;
+    let preciseProductImportActiveRequestId = null;
     let pendingPreciseProductPreview = null;
     const selectedPreciseProductSatelliteIds = new Set();
     let preciseProductPreviewFilter = "";
+    let catalogRefreshAbortController = null;
+    let catalogRefreshOperationId = null;
+    let sceneOperationSequence = 0;
+    const sceneOperationControllers = new Map();
     // Project ownership will provide persistence later; UI grouping is session-only.
     const layerTree = createLayerTree(null);
     // Bodies are a permanent workspace group rather than user folders, but
@@ -1160,6 +1178,92 @@ export function setupObjectSidebar({
         radio: true,
         passes: true
     };
+
+    // The sidebar owns several heavyweight scene requests.  Keep their
+    // cancellation handles local while reporting their lifecycle through the
+    // transport-neutral ledger used by the top activity glyph.  A different
+    // sidebar instance (for example after a project restore) gets unique IDs
+    // and cannot accidentally finish a later request.
+    function nextSceneOperationId(kind) {
+        sceneOperationSequence += 1;
+        return `scene-${String(kind || "work")}-${Date.now()}-${sceneOperationSequence}`;
+    }
+
+    function beginSceneOperation(kind, {
+        title,
+        stage = "",
+        message = "",
+        progress = 0,
+        controller = null
+    } = {}) {
+        const id = nextSceneOperationId(kind);
+        startOperation({
+            id,
+            title: title || "Operación de escena",
+            scope: OPERATION_SCOPES.SCENE,
+            stage,
+            message,
+            progress,
+            cancellable: Boolean(controller)
+        });
+        if (controller) {
+            sceneOperationControllers.set(id, controller);
+        }
+        return id;
+    }
+
+    function advanceSceneOperation(id, detail = {}) {
+        if (!id) return;
+        updateOperation({ id, ...detail });
+    }
+
+    function completeSceneOperation(id, message = "") {
+        if (!id) return;
+        sceneOperationControllers.delete(id);
+        completeOperation({ id, message });
+    }
+
+    function failSceneOperation(id, error) {
+        if (!id) return;
+        sceneOperationControllers.delete(id);
+        const message = error instanceof Error ? error.message : String(error || "No se pudo completar la operación de escena.");
+        failOperation({ id, message });
+    }
+
+    function cancelSceneOperation(id, message = "") {
+        if (!id) return;
+        const controller = sceneOperationControllers.get(id);
+        sceneOperationControllers.delete(id);
+        if (controller && !controller.signal.aborted) {
+            controller.abort();
+        }
+        cancelOperation({ id, message });
+    }
+
+    function isSceneOperationCancellation(error, controller = null) {
+        return controller?.signal?.aborted === true
+            || error?.name === "AbortError";
+    }
+
+    const onSceneOperationCancelRequest = (event) => {
+        const operationId = String(event?.detail?.id || "").trim();
+        if (!operationId || !sceneOperationControllers.has(operationId)) return;
+        cancelSceneOperation(operationId, "Operación de escena cancelada por el usuario.");
+    };
+    function cancelOwnedSceneOperations(message = "La operación de escena se canceló al cambiar de proyecto.") {
+        abortPreciseProductPreviewRequest();
+        abortPreciseProductImportRequest();
+        abortCatalogRefreshRequest();
+        for (const operationId of [...sceneOperationControllers.keys()]) {
+            cancelSceneOperation(operationId, message);
+        }
+    }
+    const onSceneOperationsCancel = (event) => {
+        const message = String(event?.detail?.message || "La operación de escena se canceló al cambiar de proyecto.").trim();
+        cancelOwnedSceneOperations(message);
+    };
+    window.addEventListener(ORBIT_OPERATION_CANCEL_REQUEST_EVENT, onSceneOperationCancelRequest);
+    window.addEventListener("orbit:scene-operations-cancel", onSceneOperationsCancel);
 
     function normalizeImportFormat(rawFormat) {
         const raw = String(rawFormat || "").trim().toUpperCase();
@@ -3083,6 +3187,15 @@ export function setupObjectSidebar({
         }
     }
 
+    function abortCatalogRefreshRequest(message = "Actualización de catálogo cancelada.") {
+        const controller = catalogRefreshAbortController;
+        const operationId = catalogRefreshOperationId;
+        catalogRefreshAbortController = null;
+        catalogRefreshOperationId = null;
+        if (controller && !controller.signal.aborted) controller.abort();
+        cancelSceneOperation(operationId, message);
+    }
+
     function setCatalogRefreshState({ visible, text = "", value = 0, status = visible ? "pending" : "idle", detail = "", retryAt = null }) {
         catalogRefreshStatus.hidden = !visible;
         catalogRefreshStatus.style.display = visible ? "grid" : "none";
@@ -3112,6 +3225,17 @@ export function setupObjectSidebar({
         }
 
         catalogRefreshBusy = true;
+        const abortController = new AbortController();
+        catalogRefreshAbortController = abortController;
+        const operationId = beginSceneOperation("catalog-refresh", {
+            title: "Actualizando catálogo",
+            stage: "Conectando con CelesTrak",
+            message: "Descargando y validando elementos orbitales.",
+            progress: 4,
+            controller: abortController
+        });
+        catalogRefreshOperationId = operationId;
+        let operationTerminal = false;
         if (catalogSearchInput) catalogSearchInput.hidden = true;
 
         let progress = 4;
@@ -3126,6 +3250,11 @@ export function setupObjectSidebar({
         stopCatalogRefreshProgressTimer();
         catalogRefreshTimer = setInterval(() => {
             progress = Math.min(92, progress + Math.max(1, Math.random() * 7));
+            advanceSceneOperation(operationId, {
+                stage: "Procesando catálogo",
+                message: "Validando los grupos y fuentes recibidos.",
+                progress
+            });
             setCatalogRefreshState({
                 visible: true,
                 status: "pending",
@@ -3136,9 +3265,16 @@ export function setupObjectSidebar({
 
         try {
             const response = await fetch("/api/catalog/refresh", {
-                method: "POST"
+                method: "POST",
+                signal: abortController.signal
             });
             const payload = await response.json().catch(() => null);
+
+            if (abortController.signal.aborted) {
+                cancelSceneOperation(operationId, "Actualización de catálogo cancelada.");
+                operationTerminal = true;
+                return;
+            }
 
             if (!response.ok || !payload?.ok) {
                 const rawError = payload?.error || `Error HTTP ${response.status}`;
@@ -3152,11 +3288,15 @@ export function setupObjectSidebar({
                         value: 0
                     });
                     showErrorPopup(`Actualizacion aplazada\n\n${rawError}\n\nEl catalogo actual sigue disponible.`);
+                    completeSceneOperation(operationId, "Actualización aplazada por CelesTrak.");
+                    operationTerminal = true;
                     return;
                 }
                 const isNetworkBlocked = payload?.networkBlocked === true
                     || /bloquea|block|timeout de conexion|cloud|Codespace/i.test(rawError);
                 if (isNetworkBlocked) {
+                    failSceneOperation(operationId, rawError);
+                    operationTerminal = true;
                     setCatalogRefreshState({
                         visible: true,
                         status: "error",
@@ -3170,6 +3310,11 @@ export function setupObjectSidebar({
                 throw new Error(rawError);
             }
 
+            advanceSceneOperation(operationId, {
+                stage: "Recargando catálogo local",
+                message: "Aplicando los elementos validados a la escena.",
+                progress: 96
+            });
             setCatalogRefreshState({
                 visible: true,
                 status: "pending",
@@ -3179,6 +3324,11 @@ export function setupObjectSidebar({
 
             if (onRefreshCatalog) {
                 await onRefreshCatalog();
+            }
+            if (abortController.signal.aborted) {
+                cancelSceneOperation(operationId, "Actualización de catálogo cancelada.");
+                operationTerminal = true;
+                return;
             }
 
             selectedCatalogIds.clear();
@@ -3221,8 +3371,17 @@ export function setupObjectSidebar({
             if (discardedInvalid > 0) {
                 showErrorPopup(`Se descartaron ${discardedInvalid} entradas con formato invalido durante la actualizacion.`);
             }
+            completeSceneOperation(operationId, "Catálogo actualizado.");
+            operationTerminal = true;
         } catch (error) {
+            if (isSceneOperationCancellation(error, abortController)) {
+                cancelSceneOperation(operationId, "Actualización de catálogo cancelada.");
+                operationTerminal = true;
+                return;
+            }
             const detail = error instanceof Error ? error.message : String(error);
+            failSceneOperation(operationId, detail);
+            operationTerminal = true;
             setCatalogRefreshState({
                 visible: true,
                 status: "error",
@@ -3232,6 +3391,15 @@ export function setupObjectSidebar({
             });
             showErrorPopup(`Error actualizando catalogo: ${detail}`);
         } finally {
+            if (!operationTerminal) {
+                cancelSceneOperation(operationId, "Actualización de catálogo cancelada.");
+            }
+            if (catalogRefreshAbortController === abortController) {
+                catalogRefreshAbortController = null;
+            }
+            if (catalogRefreshOperationId === operationId) {
+                catalogRefreshOperationId = null;
+            }
             stopCatalogRefreshProgressTimer();
             catalogRefreshBusy = false;
             setCatalogBusyState(false);
@@ -3775,15 +3943,43 @@ export function setupObjectSidebar({
     function abortPreciseProductPreviewRequest() {
         const controller = preciseProductPreviewAbortController;
         const hadActiveRequest = preciseProductPreviewActiveRequestId !== null;
+        const operationId = preciseProductPreviewOperationId;
         preciseProductPreviewAbortController = null;
         preciseProductPreviewActiveRequestId = null;
+        preciseProductPreviewOperationId = null;
         preciseProductPreviewBusy = false;
         if (controller && !controller.signal.aborted) controller.abort();
+        cancelSceneOperation(operationId, "Previsualización de producto preciso cancelada.");
         syncPreciseProductPreviewAction();
         // An abort is a terminal state for this preview session. Clear the
         // shared catalog gate synchronously so a new SP3 can be opened even
         // if a non-compliant fetch implementation never settles its promise.
         if (hadActiveRequest) setCatalogBusyState(false, "");
+    }
+
+    function abortPreciseProductImportRequest() {
+        const controller = preciseProductImportAbortController;
+        const operationId = preciseProductImportOperationId;
+        const hadActiveRequest = preciseProductImportActiveRequestId !== null;
+        preciseProductImportRequestId += 1;
+        preciseProductImportAbortController = null;
+        preciseProductImportOperationId = null;
+        preciseProductImportActiveRequestId = null;
+        preciseProductImportBusy = false;
+        if (controller && !controller.signal.aborted) controller.abort();
+        cancelSceneOperation(operationId, "Importación de producto preciso cancelada.");
+        if (hadActiveRequest) {
+            setPreciseProductPreviewImportControls(false);
+            syncPreciseProductPreviewAction();
+            if (preciseProductPreviewModal.classList.contains("open")) {
+                updatePreciseProductPreviewSelectionUi();
+            }
+            setCatalogBusyState(false, "");
+            if (pendingPreciseProductFolderAssignment) {
+                pendingPreciseProductFolderAssignment = null;
+                pendingFolderAssignment = null;
+            }
+        }
     }
 
     function replacePendingPreciseProductSlotFile(kind, file) {
@@ -3857,6 +4053,15 @@ export function setupObjectSidebar({
         preciseProductPreviewAbortController = abortController;
         preciseProductPreviewActiveRequestId = requestId;
         preciseProductPreviewBusy = true;
+        const operationId = beginSceneOperation("precise-preview", {
+            title: "Previsualizando producto SP3",
+            stage: "Leyendo producto local",
+            message: "Preparando la validación estructural sin incorporarlo a la escena.",
+            progress: 0,
+            controller: abortController
+        });
+        preciseProductPreviewOperationId = operationId;
+        let operationTerminal = false;
         syncPreciseProductPreviewAction();
 
         try {
@@ -3872,8 +4077,15 @@ export function setupObjectSidebar({
                 || preciseProductPreviewActiveRequestId !== requestId
                 || !preciseProductImportModal.classList.contains("open")
             ) {
+                cancelSceneOperation(operationId, "Previsualización sustituida por otra solicitud.");
+                operationTerminal = true;
                 return;
             }
+            advanceSceneOperation(operationId, {
+                stage: "Validando estructura SP3",
+                message: "Analizando los satélites y la cobertura declarada.",
+                progress: 30
+            });
             setPreciseProductImportStatus("Analizando el producto GNSS sin importarlo…", "busy");
             setCatalogBusyState(true, "Previsualizando producto preciso...");
             const payload = await fetchPreciseProductPreview(requestPayload, { signal: abortController.signal });
@@ -3882,8 +4094,15 @@ export function setupObjectSidebar({
                 || preciseProductPreviewActiveRequestId !== requestId
                 || !preciseProductImportModal.classList.contains("open")
             ) {
+                cancelSceneOperation(operationId, "Previsualización sustituida por otra solicitud.");
+                operationTerminal = true;
                 return;
             }
+            advanceSceneOperation(operationId, {
+                stage: "Preparando selección",
+                message: "La validación terminó; preparando los satélites detectados.",
+                progress: 92
+            });
             const validation = preciseProductValidationReport(payload);
             if (validation && String(validation.status || "").trim().toLowerCase() !== "passed") {
                 throw new Error(
@@ -3891,15 +4110,26 @@ export function setupObjectSidebar({
                 );
             }
             openPreciseProductPreviewModal(payload);
+            completeSceneOperation(operationId, "Previsualización SP3 preparada.");
+            operationTerminal = true;
         } catch (error) {
             if (
                 requestId !== preciseProductPreviewRequestId
                 || preciseProductPreviewActiveRequestId !== requestId
                 || !preciseProductImportModal.classList.contains("open")
             ) {
+                cancelSceneOperation(operationId, "Previsualización cancelada.");
+                operationTerminal = true;
+                return;
+            }
+            if (isSceneOperationCancellation(error, abortController)) {
+                cancelSceneOperation(operationId, "Previsualización cancelada.");
+                operationTerminal = true;
                 return;
             }
             const message = error instanceof Error ? error.message : String(error);
+            failSceneOperation(operationId, message);
+            operationTerminal = true;
             setPreciseProductImportStatus(
                 message === PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3
                     ? message
@@ -3911,8 +4141,14 @@ export function setupObjectSidebar({
                 focusId: "preciseProductImportConfirmBtn"
             });
         } finally {
+            if (!operationTerminal) {
+                cancelSceneOperation(operationId, "Previsualización cancelada.");
+            }
             if (preciseProductPreviewAbortController === abortController) {
                 preciseProductPreviewAbortController = null;
+            }
+            if (preciseProductPreviewOperationId === operationId) {
+                preciseProductPreviewOperationId = null;
             }
             const ownsRequest = preciseProductPreviewActiveRequestId === requestId;
             if (!ownsRequest) return;
@@ -3960,9 +4196,25 @@ export function setupObjectSidebar({
             return;
         }
         preciseProductImportBusy = true;
+        const requestId = ++preciseProductImportRequestId;
+        const abortController = new AbortController();
+        preciseProductImportAbortController = abortController;
+        preciseProductImportActiveRequestId = requestId;
+        const operationId = beginSceneOperation("precise-import", {
+            title: "Importando producto SP3",
+            stage: "Preparando archivos seleccionados",
+            message: `Preparando ${selectedIds.length} ${selectedIds.length === 1 ? "satélite" : "satélites"} para la escena.`,
+            progress: 0,
+            controller: abortController
+        });
+        preciseProductImportOperationId = operationId;
+        const isCurrentRequest = () => requestId === preciseProductImportRequestId
+            && preciseProductImportActiveRequestId === requestId
+            && abortController.signal.aborted !== true;
         const files = [...pendingPreciseProductFiles];
         const initialButtonLabel = preciseProductPreviewConfirmBtn.textContent;
         let responseAccepted = false;
+        let operationTerminal = false;
 
         try {
             setPreciseProductPreviewStatus(
@@ -3974,13 +4226,29 @@ export function setupObjectSidebar({
             preciseProductPreviewConfirmBtn.setAttribute("aria-busy", "true");
             setPreciseProductPreviewImportControls(true);
             const requestPayload = await buildPreciseProductImportPayload(files, { selectedSatelliteIds: selectedIds });
+            if (!isCurrentRequest()) {
+                cancelSceneOperation(operationId, "Importación de producto preciso cancelada.");
+                operationTerminal = true;
+                return;
+            }
+            advanceSceneOperation(operationId, {
+                stage: "Enviando producto al servicio",
+                message: "El producto se valida antes de incorporarlo a Layers.",
+                progress: 20
+            });
             setCatalogBusyState(true, "Importando producto preciso...");
             const response = await fetch("/api/precise-products/import", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(requestPayload)
+                body: JSON.stringify(requestPayload),
+                signal: abortController.signal
             });
             const payload = await response.json().catch(() => ({}));
+            if (!isCurrentRequest()) {
+                cancelSceneOperation(operationId, "Importación de producto preciso cancelada.");
+                operationTerminal = true;
+                return;
+            }
             if (!response.ok || payload?.ok === false) {
                 throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
             }
@@ -3993,7 +4261,17 @@ export function setupObjectSidebar({
             responseAccepted = true;
 
             const returnedEntries = preciseProductSatelliteEntriesFromPayload(payload);
+            advanceSceneOperation(operationId, {
+                stage: "Registrando satélites precisos",
+                message: "Incorporando los metadatos validados al catálogo local.",
+                progress: 52
+            });
             const registeredIds = await onRegisterPreciseProductEntries(returnedEntries);
+            if (!isCurrentRequest()) {
+                cancelSceneOperation(operationId, "Importación de producto preciso cancelada.");
+                operationTerminal = true;
+                return;
+            }
             const importedIds = [...new Set([
                 ...(Array.isArray(registeredIds) ? registeredIds : []),
                 ...(Array.isArray(payload?.importedIds) ? payload.importedIds : []),
@@ -4010,10 +4288,37 @@ export function setupObjectSidebar({
             // clock before subscribing the new layers so the first runtime
             // request is inside the advertised product interval, rather than
             // a doomed realtime query at "now".
+            advanceSceneOperation(operationId, {
+                stage: "Alineando dominio temporal",
+                message: "Comprobando la cobertura del producto preciso en la escena.",
+                progress: 70
+            });
             const aligned = (await Promise.resolve(onAlignToPreciseProductTimeDomain(returnedEntries, payload))) === true;
+            if (!isCurrentRequest()) {
+                cancelSceneOperation(operationId, "Importación de producto preciso cancelada.");
+                operationTerminal = true;
+                return;
+            }
             let addResult = { added: 0, requested: importedIds.length };
             if (autoAddToView) {
-                addResult = await addImportedSatellitesToView(importedIds);
+                advanceSceneOperation(operationId, {
+                    stage: "Añadiendo capas a la escena",
+                    message: `Activando ${importedIds.length} ${importedIds.length === 1 ? "satélite" : "satélites"} precisos.`,
+                    progress: 84
+                });
+                addResult = await addImportedSatellitesToView(importedIds, {
+                    isCancelled: () => !isCurrentRequest(),
+                    onProgress: (done, total) => advanceSceneOperation(operationId, {
+                        stage: "Añadiendo capas a la escena",
+                        message: `Activando satélites precisos: ${done}/${total}.`,
+                        progress: 84 + ((total > 0 ? done / total : 1) * 12)
+                    })
+                });
+                if (!isCurrentRequest()) {
+                    cancelSceneOperation(operationId, "Importación de producto preciso cancelada.");
+                    operationTerminal = true;
+                    return;
+                }
             }
             selectedId = importedIds[0];
             renderList();
@@ -4041,8 +4346,17 @@ export function setupObjectSidebar({
                     showInfoPopup(`Importado ${productName}: ${importedIds.length} satélite(s), ${addResult.added} añadido(s) a Layers.${timelineNote}`);
                 }
             }
+            completeSceneOperation(operationId, "Producto SP3 incorporado a la escena.");
+            operationTerminal = true;
         } catch (error) {
+            if (isSceneOperationCancellation(error, abortController) || !isCurrentRequest()) {
+                cancelSceneOperation(operationId, "Importación de producto preciso cancelada.");
+                operationTerminal = true;
+                return;
+            }
             const message = error instanceof Error ? error.message : String(error);
+            failSceneOperation(operationId, message);
+            operationTerminal = true;
             setPreciseProductPreviewStatus(
                 message === PRECISE_PRODUCT_IMPORT_ERRORS.missingSp3
                     ? message
@@ -4058,6 +4372,20 @@ export function setupObjectSidebar({
                 showErrorPopup(`El producto fue aceptado, pero no se pudo completar su incorporación a Layers: ${message}`);
             }
         } finally {
+            if (!operationTerminal) {
+                cancelSceneOperation(operationId, "Importación de producto preciso cancelada.");
+            }
+            if (preciseProductImportAbortController === abortController) {
+                preciseProductImportAbortController = null;
+            }
+            if (preciseProductImportOperationId === operationId) {
+                preciseProductImportOperationId = null;
+            }
+            const ownsRequest = preciseProductImportActiveRequestId === requestId;
+            if (ownsRequest) {
+                preciseProductImportActiveRequestId = null;
+            }
+            if (!ownsRequest) return;
             preciseProductImportBusy = false;
             syncPreciseProductPreviewAction();
             if (preciseProductPreviewModal.classList.contains("open")) {
@@ -4269,7 +4597,10 @@ export function setupObjectSidebar({
 
     catalogCloseBtn.addEventListener("click", closeCatalogModal);
 
-    async function addImportedSatellitesToView(importedIds = []) {
+    async function addImportedSatellitesToView(importedIds = [], {
+        isCancelled = () => false,
+        onProgress = null
+    } = {}) {
         const uniqueIds = [...new Set(importedIds.map((id) => String(id || "").trim()).filter(Boolean))];
         const candidates = uniqueIds.filter((id) => !getObjectLayerActive(id));
         if (!candidates.length) {
@@ -4283,7 +4614,13 @@ export function setupObjectSidebar({
         const batchResult = await processInChunks(
             idsToAdd,
             async (id) => {
+                if (isCancelled()) {
+                    return BULK_PROCESS_ABORTED;
+                }
                 const activated = await Promise.resolve(onToggleObjectLayer(id, true));
+                if (isCancelled()) {
+                    return BULK_PROCESS_ABORTED;
+                }
                 if (activated === false) {
                     return BULK_PROCESS_ABORTED;
                 }
@@ -4291,7 +4628,10 @@ export function setupObjectSidebar({
                     addedIds.push(id);
                 }
             },
-            (done, total) => setCatalogBusyState(true, `Anadiendo importados... ${done}/${total}`, { publish: false })
+            (done, total) => {
+                setCatalogBusyState(true, `Anadiendo importados... ${done}/${total}`, { publish: false });
+                onProgress?.(done, total);
+            }
         );
 
         if (addedIds.length > 0) {
@@ -4358,30 +4698,84 @@ export function setupObjectSidebar({
         }
 
         const beforeFormats = getActiveFormatsSummary();
+        const abortController = new AbortController();
+        const operationId = beginSceneOperation("catalog-import", {
+            title: "Importando fichero orbital",
+            stage: "Leyendo fichero local",
+            message: `Preparando ${String(file.name || "fichero orbital")}.`,
+            progress: 0,
+            controller: abortController
+        });
+        let operationTerminal = false;
 
         try {
+            setCatalogBusyState(true, "Leyendo fichero orbital...");
             const content = await file.text();
+            if (abortController.signal.aborted) {
+                cancelSceneOperation(operationId, "Importación de fichero cancelada.");
+                operationTerminal = true;
+                return;
+            }
+            advanceSceneOperation(operationId, {
+                stage: "Validando formato orbital",
+                message: "Comprobando si el fichero contiene TLE, OMM u OEM.",
+                progress: 20
+            });
             if (isNativeOemEphemerisFileName(file.name)) {
                 // This must precede `/api/catalog/import`: a provider may
                 // embed TLE comments in a genuine OEM, but its state samples
                 // and finite coverage remain the authoritative source.
                 setCatalogBusyState(true, "Importando efemérides OEM...");
+                advanceSceneOperation(operationId, {
+                    stage: "Importando efemérides OEM",
+                    message: "Registrando la órbita temporal y su cobertura finita.",
+                    progress: 48
+                });
                 await importNativeOemEphemeris(content, file.name, { beforeFormats, announce });
+                if (abortController.signal.aborted) {
+                    cancelSceneOperation(operationId, "Importación OEM cancelada.");
+                    operationTerminal = true;
+                    return;
+                }
+                completeSceneOperation(operationId, "Efemérides OEM incorporadas a la escena.");
+                operationTerminal = true;
                 return;
             }
             setCatalogBusyState(true, "Importando catalogo...");
+            advanceSceneOperation(operationId, {
+                stage: "Enviando catálogo al servicio",
+                message: "Validando los elementos orbitales antes de guardarlos localmente.",
+                progress: 42
+            });
             const response = await fetch("/api/catalog/import", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ fileName: file.name, content, merge: true })
+                body: JSON.stringify({ fileName: file.name, content, merge: true }),
+                signal: abortController.signal
             });
             const payload = await response.json().catch(() => ({}));
+
+            if (abortController.signal.aborted) {
+                cancelSceneOperation(operationId, "Importación de fichero cancelada.");
+                operationTerminal = true;
+                return;
+            }
 
             if (!response.ok || payload?.ok === false) {
                 throw new Error(payload?.error || `HTTP ${response.status}`);
             }
 
+            advanceSceneOperation(operationId, {
+                stage: "Recargando catálogo local",
+                message: "Sincronizando los elementos importados con la escena.",
+                progress: 68
+            });
             await onRefreshCatalog?.();
+            if (abortController.signal.aborted) {
+                cancelSceneOperation(operationId, "Importación de fichero cancelada.");
+                operationTerminal = true;
+                return;
+            }
             clearCatalogMetaCache();
             renderCatalogList();
             renderList();
@@ -4392,7 +4786,24 @@ export function setupObjectSidebar({
             const renamedConflicts = Array.isArray(payload?.renamedConflicts) ? payload.renamedConflicts : [];
             let addResult = { added: 0, requested: importedNames.length };
             if (autoAddToView && importedNames.length > 0) {
-                addResult = await addImportedSatellitesToView(importedNames);
+                advanceSceneOperation(operationId, {
+                    stage: "Añadiendo capas a la escena",
+                    message: `Activando ${importedNames.length} ${importedNames.length === 1 ? "objeto" : "objetos"} importados.`,
+                    progress: 84
+                });
+                addResult = await addImportedSatellitesToView(importedNames, {
+                    isCancelled: () => abortController.signal.aborted,
+                    onProgress: (done, total) => advanceSceneOperation(operationId, {
+                        stage: "Añadiendo capas a la escena",
+                        message: `Activando objetos importados: ${done}/${total}.`,
+                        progress: 84 + ((total > 0 ? done / total : 1) * 12)
+                    })
+                });
+                if (abortController.signal.aborted) {
+                    cancelSceneOperation(operationId, "Importación de fichero cancelada.");
+                    operationTerminal = true;
+                    return;
+                }
                 renderList();
                 renderInfo();
                 renderCatalogList();
@@ -4425,9 +4836,21 @@ export function setupObjectSidebar({
                     showInfoPopup(`Importado ${file.name}: ${importedCount} entradas al catalogo.`);
                 }
             }
+            completeSceneOperation(operationId, "Fichero orbital importado.");
+            operationTerminal = true;
         } catch (error) {
+            if (isSceneOperationCancellation(error, abortController)) {
+                cancelSceneOperation(operationId, "Importación de fichero cancelada.");
+                operationTerminal = true;
+                return;
+            }
+            failSceneOperation(operationId, error);
+            operationTerminal = true;
             showErrorPopup(`No se pudo importar ${file?.name || "fichero"}: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
+            if (!operationTerminal) {
+                cancelSceneOperation(operationId, "Importación de fichero cancelada.");
+            }
             setCatalogBusyState(false, "");
         }
     }
@@ -5016,6 +5439,14 @@ export function setupObjectSidebar({
             return;
         }
 
+        const abortController = new AbortController();
+        const operationId = beginSceneOperation("catalog-activate", {
+            title: "Añadiendo capas del catálogo",
+            stage: "Preparando activación",
+            message: `Preparando ${idsToAdd.length} ${idsToAdd.length === 1 ? "capa" : "capas"} para la escena.`,
+            progress: 0,
+            controller: abortController
+        });
         setCatalogBusyState(true, `${uiText("addingLayers")} 0/${idsToAdd.length}`);
 
         let firstAddedId = null;
@@ -5023,6 +5454,9 @@ export function setupObjectSidebar({
             const batchResult = await processInChunks(
                 idsToAdd,
                 async (id) => {
+                    if (abortController.signal.aborted) {
+                        return BULK_PROCESS_ABORTED;
+                    }
                     if (getObjectLayerActive(id) && typeof onRequestDuplicateLayer === "function") {
                         const duplicated = onRequestDuplicateLayer(id);
                         if (!firstAddedId && duplicated) {
@@ -5031,6 +5465,9 @@ export function setupObjectSidebar({
                         return;
                     }
                     const activated = await Promise.resolve(onToggleObjectLayer(id, true));
+                    if (abortController.signal.aborted) {
+                        return BULK_PROCESS_ABORTED;
+                    }
                     // `false` is the explicit outcome for a declined MTR
                     // expansion (or an activation refused by the runtime).
                     // Do not keep prompting for later candidates after that
@@ -5042,10 +5479,22 @@ export function setupObjectSidebar({
                         firstAddedId = id;
                     }
                 },
-                (done, total) => setCatalogBusyState(true, `${uiText("addingLayers")} ${done}/${total}`, { publish: false })
+                (done, total) => {
+                    setCatalogBusyState(true, `${uiText("addingLayers")} ${done}/${total}`, { publish: false });
+                    advanceSceneOperation(operationId, {
+                        stage: "Añadiendo capas a la escena",
+                        message: `Activando capas: ${done}/${total}.`,
+                        progress: total > 0 ? (done / total) * 96 : 96
+                    });
+                }
             );
 
             if (batchResult.cancelled) {
+                if (abortController.signal.aborted) {
+                    cancelSceneOperation(operationId, "Activación de capas cancelada.");
+                } else {
+                    completeSceneOperation(operationId, "Activación detenida por el rango temporal maestro.");
+                }
                 if (firstAddedId) {
                     selectedId = firstAddedId;
                     onSelectObject?.(selectedId);
@@ -5057,14 +5506,23 @@ export function setupObjectSidebar({
                 renderList();
                 renderInfo();
                 renderCatalogList();
-                showInfoPopup("No se añadieron más capas: se mantuvo el rango temporal maestro actual.");
+                showInfoPopup(abortController.signal.aborted
+                    ? "Activación de capas cancelada."
+                    : "No se añadieron más capas: se mantuvo el rango temporal maestro actual.");
                 return;
             }
         } catch (error) {
+            if (isSceneOperationCancellation(error, abortController)) {
+                cancelSceneOperation(operationId, "Activación de capas cancelada.");
+            } else {
+                failSceneOperation(operationId, error);
+            }
             setCatalogBusyState(false);
             showErrorPopup(`No se pudieron añadir las capas: ${error instanceof Error ? error.message : String(error)}`);
             return;
         }
+
+        completeSceneOperation(operationId, "Capas del catálogo añadidas a la escena.");
 
         if (firstAddedId) {
             selectedId = firstAddedId;
@@ -6239,6 +6697,7 @@ export function setupObjectSidebar({
                 clearInterval(catalogWaitInterval);
                 catalogWaitInterval = null;
             }
+            cancelOwnedSceneOperations("Operación de escena cancelada al cerrar el panel.");
             stopCatalogRefreshProgressTimer();
             infoRoot.removeEventListener("pointerdown", onInfoTogglePointerDown);
             listRoot.removeEventListener("dragover", onListRootDragOver);
@@ -6252,6 +6711,8 @@ export function setupObjectSidebar({
             window.removeEventListener("orbit:tree-context-menu-ready", onTreeContextMenuReady);
             window.removeEventListener("orbit:tree-context-menu-action", onTreeContextMenuAction);
             window.removeEventListener("orbit:tree-context-menu-dismiss", onTreeContextMenuDismiss);
+            window.removeEventListener(ORBIT_OPERATION_CANCEL_REQUEST_EVENT, onSceneOperationCancelRequest);
+            window.removeEventListener("orbit:scene-operations-cancel", onSceneOperationsCancel);
             sidebar.remove();
             catalogModal.remove();
             contextMenu.remove();

@@ -65,7 +65,9 @@ export function createOrbitApp({ runtime, config, catalog, importer, refresher, 
         refreshCatalog: refresher.refresh
     });
     registerCatalogExportRoutes(app, { catalog });
-    registerPythonProxyRoutes(app, pythonClient);
+    registerPythonProxyRoutes(app, pythonClient, {
+        numericalOrbitTimeoutMs: runtime.numericalOrbitProxyTimeoutMs
+    });
 
     // Body textures are source assets rather than Vite bundle chunks.  Mount
     // them explicitly before the generated frontend so Cesium receives the

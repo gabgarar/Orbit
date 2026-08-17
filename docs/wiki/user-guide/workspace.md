@@ -54,6 +54,22 @@ y puede volver a abrirse desde la barra lateral. El estado de la sesión se
 guarda en el documento del proyecto sólo cuando se ejecuta una acción de
 guardar o exportar.
 
+## Actividad y BIT
+
+El icono giratorio de actividad de la barra superior aparece únicamente cuando
+Orbit está ejecutando una operación real, como importar un producto SP3 u OEM,
+analizar pases, propagar una órbita manual o guardar un proyecto. Al abrirlo se
+muestran el ámbito, la etapa y el progreso disponible; las operaciones que lo
+permiten se pueden cancelar desde ahí. Cerrar el diseñador de órbitas cancela
+sólo su trabajo transitorio: no cancela una importación ni un análisis de la
+escena.
+
+El icono de BIT abre el monitor continuo. El monitor no hace girar el icono de
+actividad y no muestra CI/CD; presenta únicamente los componentes relevantes
+para la escena actual. SP3, OEM y el rango temporal maestro sólo aparecen si
+la escena realmente los contiene. La sección IBIT conserva el resultado del
+chequeo inicial de recursos.
+
 No existe un modo de edición concurrente, bloqueo de capas ni historial
 compartido de cambios. Para auditar cambios, conserve versiones exportadas del
 JSON de proyecto fuera de Orbit.

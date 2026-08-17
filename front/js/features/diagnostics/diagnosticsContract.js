@@ -18,6 +18,7 @@ export const DIAGNOSTIC_ENDPOINT_CANDIDATES = Object.freeze([
 
 export const DIAGNOSTIC_COMPONENTS = Object.freeze([
     { id: "startup", label: "Startup sequence" },
+    { id: "monitor", label: "Runtime monitor" },
     { id: "erp", label: "ERP / EOP loader" },
     { id: "gravity", label: "Gravity models (EGM96 / EGM2008)" },
     { id: "sp3", label: "SP3 parser" },
@@ -63,8 +64,8 @@ const COMPONENT_ALIASES = Object.freeze({
     timemanager: "mtr",
     timemanagement: "mtr",
     time: "mtr",
-    monitor: "mtr",
-    healthmonitor: "mtr",
+    monitor: "monitor",
+    healthmonitor: "monitor",
     frame: "frames",
     frames: "frames",
     referenceframes: "frames",

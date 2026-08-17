@@ -54,6 +54,21 @@ and can be reopened from the sidebar. The session state is
 saved in the project document only when a save action is executed.
 save or export.
 
+## Activity and BIT
+
+The spinning activity icon in the top bar appears only while Orbit is doing
+real work, such as importing an SP3 or OEM product, analysing passes,
+propagating a manual orbit, or saving a project. Opening it shows the scope,
+stage and available progress; operations that support it can be cancelled
+there. Closing the orbit designer cancels only its transient work, not a scene
+import or analysis.
+
+The BIT icon opens the continuous monitor. Monitoring does not make the
+activity icon spin and it does not show CI/CD; it presents only components
+relevant to the current scene. SP3, OEM and the master time range appear only
+when they actually exist in the scene. The IBIT section keeps the initial
+resource-check result.
+
 There is no concurrent editing mode, layer locking, or history
 sharing of changes. To audit changes, retain exported versions of the
 Project JSON outside of Orbit.

@@ -41,7 +41,7 @@ test("a failed startup remains centrally observable until service readiness is e
     assert.match(app, /useStartupWelcomePresentation/);
     assert.match(app, /startupPresentation\.allowProjectActions/);
     assert.match(app, /<ProjectWelcome onAction=\{startProjectAction\} runtimeStatus=\{runtimeStatus\} startup=\{startup\} startupPresentation=\{startupPresentation\} \/>/);
-    assert.match(app, /getStartupProjectReadiness\(startupStatusFromDiagnosticComponent\(component\)\)\.ready/);
+    assert.match(app, /getStartupProjectReadiness\(startup\)\.ready/);
     assert.doesNotMatch(app, /isStartupTerminal/);
 
     // The service owns retries.  The central card shows the real error and

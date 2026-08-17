@@ -277,6 +277,7 @@ export default function GroundStationsPanel() {
             const selected = selectedAnalysisTargetRef.current;
             if (selection && (selection.stationId !== selected.stationId || selection.satelliteLayerId !== selected.satelliteId)) return;
             setLoading(false);
+            if (detail?.cancelled === true) return;
             setResult(detail);
         };
         const invalidateChangedSimulationRange = (event) => setResult((current) => {

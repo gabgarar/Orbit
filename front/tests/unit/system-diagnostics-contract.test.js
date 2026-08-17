@@ -66,8 +66,8 @@ test("diagnostics status accepts only the three user-facing states", () => {
     assert.equal(normalizeDiagnosticStatus("failed"), "error");
     assert.equal(normalizeDiagnosticStatus("unexpected", "error"), "error");
     assert.equal(normalizeDiagnosticComponent({ id: "reference_frames", state: "ready" }).id, "frames");
-    assert.equal(normalizeDiagnosticComponent({ id: "monitor", state: "ready" }).id, "mtr");
-    assert.equal(DIAGNOSTIC_COMPONENTS.length, 10);
+    assert.equal(normalizeDiagnosticComponent({ id: "monitor", state: "ready" }).id, "monitor");
+    assert.equal(DIAGNOSTIC_COMPONENTS.length, 11);
     assert.deepEqual(DIAGNOSTIC_ENDPOINT_CANDIDATES, ["/api/system/diagnostics", "/api/diagnostics"]);
 });
 
@@ -99,7 +99,7 @@ test("an unavailable diagnostics endpoint is an explicit warning state, not a fa
     assert.match(result.error, /connection refused/);
 });
 
-test("Built-In Test mounts accessibly, uses the runtime local-state bridge, and preserves its cache event contract", () => {
+test("Built-In Test is continuous, contextual, and preserves its cache event contract", () => {
     const panel = readFileSync(
         new URL("../../../react-ui/src/components/overlays/BuiltInTestPanel.jsx", import.meta.url),
         "utf8"
@@ -129,13 +129,16 @@ test("Built-In Test mounts accessibly, uses the runtime local-state bridge, and 
 
     assert.match(toolbar, /topBuiltInTestBtn/);
     assert.match(toolbar, /Built-In Test/);
+    assert.match(toolbar, /toolbar-diagnostics-status/);
+    assert.doesNotMatch(toolbar, /<span>Built-In Test<\/span>/);
     assert.match(panel, /role="dialog"/);
     assert.match(panel, /aria-modal="true"/);
-    assert.match(panel, /DIAGNOSTIC_COMPONENTS/);
+    assert.match(panel, /visibleBitComponents/);
+    assert.match(panel, /IBIT/);
     assert.match(panel, /SP3 \/ ERP overlap/);
     assert.match(panel, /Timeline clamp/);
-    assert.match(panel, /quality\.yml/);
-    assert.match(panel, /docs-pages\.yml/);
+    assert.doesNotMatch(panel, /quality\.yml/);
+    assert.doesNotMatch(panel, /docs-pages\.yml/);
     assert.match(panel, /lastValidatedAt/);
     assert.match(contract, /Gravity models \(EGM96 \/ EGM2008\)/);
     assert.match(panel, /EGM96/);
@@ -147,8 +150,9 @@ test("Built-In Test mounts accessibly, uses the runtime local-state bridge, and 
     assert.match(startupHook, /STARTUP_STATUS_EVENT/);
     assert.match(startupHook, /startupStatusFromDiagnosticComponent/);
     assert.doesNotMatch(app, /StartupStatusPanel/);
-    assert.match(app, /getStartupProjectReadiness\(startupStatusFromDiagnosticComponent\(component\)\)\.ready/);
+    assert.match(app, /getStartupProjectReadiness\(startup\)\.ready/);
     assert.match(app, /pollIntervalMs: 2_500/);
+    assert.doesNotMatch(app, /stopWhen:/);
     assert.match(hook, /DIAGNOSTICS_STATE_EVENT/);
     assert.match(hook, /DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT/);
     assert.match(hook, /setInterval/);

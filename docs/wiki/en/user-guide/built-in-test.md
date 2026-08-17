@@ -2,16 +2,17 @@
 
 [Home](../index.md) · [User Guide](index.md) · [Validation](../operations/validation.md)
 
-The **Built-In Test** button, to the right of **Help**, opens a read-only
+The **Built-In Test (BIT)** icon, to the right of **Help**, opens a read-only
 diagnostics panel. It does not start long propagations or alter an orbit: it
-shows the last check published by the backend and the current scene state.
+shows the **IBIT** initial-startup result and Orbit's current continuous state.
 
 ## Statuses and refresh
 
-Each card shows **Healthy**, **Warning**, or **Error**, together with the last
-validation time published by that component. **Refresh** queries
-`/api/system/diagnostics` without blocking the interface; while the panel is
-open it also refreshes periodically. Against an older backend the panel tries
+BIT polls `/api/system/diagnostics` continuously from application startup,
+including while its panel is closed. The icon dot summarizes visible
+components; **Refresh** only requests an immediate non-blocking poll. Each
+card shows **Healthy**, **Warning**, or **Error**, together with the last
+validation time published by that component. Against an older backend it tries
 `/api/diagnostics` and explicitly reports missing remote data instead of
 inventing a healthy status.
 
@@ -19,22 +20,21 @@ inventing a healthy status.
 
 | Card | Published information |
 | --- | --- |
+| Runtime monitor | Whether the service's continuous check loop is still running; a failure here is never hidden merely because scene products are absent. |
 | ERP / EOP loader | Whether C01/C04 loaded, update date, provenance URL, coverage, and cache state. |
-| Startup readiness | Explicit `ready`/`projectReady` decision, required steps, blockers, and the current startup-progress snapshot. |
-| SP3 and OEM | A real probe of their parsers; SP3 also includes product count and scene-known local EOP overlap. |
+| Initial IBIT | Startup result, explicit `ready`/`projectReady` decision, published steps, warnings, errors, timestamps, and known progress. It is marked **Passed** only after an explicit terminal and ready ledger. |
+| SP3, OEM, and MTR | Shown only when the scene contains the respective product or range. SP3 also includes product count and scene-known local EOP overlap. |
 | Propagators and forces | Bounded deterministic probes for two-body energy, Cowell/RK4, J2/J3/J4, plus geopotential, drag, and SRP availability under the current time contract. |
 | Gravity cache | Per-model EGM96/EGM2008 source, local cache and coefficient-file state, digest, detected `maxDegree`/`maxOrder` and coverage profile, freshness/fallback state, and any validation error. |
 | Time manager (MTR) | Master Time Range, clamp state, and active SP3/OEM scene layers. |
 | Reference frames | ITRF-to-EME2000 probe, norm residual, and EOP quality of the available route. |
-| CI/CD | Latest run that the public GitHub API could observe for `quality.yml`, `docs-pages.yml`, and `release.yml`. |
+BIT does not show CI/CD: a downloadable delivery must already originate from
+an approved CI/CD revision. Runtime operational checks must not be confused
+with release approval.
 
-The GitHub monitor is optional and uses no credentials. If it is disabled, the
-CI/CD card displays **Warning/Unknown**; use Actions directly when approving a
-release.
+## Reading the initial IBIT
 
-## Reading startup readiness
-
-The **Startup readiness** card is the source of truth for whether Orbit may
+The **initial IBIT** block is the source of truth for whether Orbit may
 accept gated project work. `ready: true` / `projectReady: true` are required;
 the state is normally `ready`, or `degraded-ready` with its visible caveat. A
 container healthcheck, a card marked Healthy, or a terminal warning does not

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import GlobalSearch from "../GlobalSearch.jsx";
-import { BellIcon, ControlPanelIcon, DiagnosticsIcon, HelpIcon } from "../icons.jsx";
+import { ActivityIcon, BellIcon, ControlPanelIcon, DiagnosticsIcon, HelpIcon } from "../icons.jsx";
 import "./TopToolbar.css";
 
 const navigation = ["Dashboard", "Satellites", "Missions", "Ground Stations", "Analytics"];
@@ -36,7 +36,22 @@ function NavigationItem({ label, active, onActivate }) {
     </button>;
 }
 
-export default function TopToolbar({ hasNotifications, onToggleNotifications, onToggleHelp, onToggleDiagnostics }) {
+const diagnosticStatusLabel = {
+    healthy: "correcto",
+    warning: "con avisos",
+    error: "con errores"
+};
+
+export default function TopToolbar({
+    hasNotifications,
+    activeOperationCount = 0,
+    operationsOpen = false,
+    diagnosticsStatus = "warning",
+    onToggleOperations,
+    onToggleNotifications,
+    onToggleHelp,
+    onToggleDiagnostics
+}) {
     const [activeSection, setActiveSection] = useState("Satellites");
 
     useEffect(() => {
@@ -66,12 +81,22 @@ export default function TopToolbar({ hasNotifications, onToggleNotifications, on
         <GlobalSearch />
         <div className="toolbar-actions">
             <span className="toolbar-action-divider" aria-hidden="true" />
+            {activeOperationCount > 0 ? <button
+                id="topOperationsBtn"
+                className={`${iconButtonClass} toolbar-operation-btn${operationsOpen ? " is-open" : ""}`}
+                type="button"
+                aria-label={`${activeOperationCount} ${activeOperationCount === 1 ? "operación en curso" : "operaciones en curso"}`}
+                aria-controls="orbitOperationsPanel"
+                aria-expanded={operationsOpen}
+                title={`${activeOperationCount} ${activeOperationCount === 1 ? "operación en curso" : "operaciones en curso"}`}
+                onClick={onToggleOperations}
+            ><ActivityIcon /><span className="toolbar-operation-count" aria-hidden="true">{activeOperationCount > 9 ? "9+" : activeOperationCount}</span></button> : null}
             <button id="topNotificationsBtn" className={iconButtonClass} type="button" aria-label="Alertas" onClick={onToggleNotifications}>
                 <BellIcon />
                 {hasNotifications && <span className="toolbar-notification-dot" aria-hidden="true" />}
             </button>
             <button className={iconButtonClass} type="button" aria-label="Panel de ayuda" onClick={onToggleHelp}><HelpIcon /></button>
-            <button id="topBuiltInTestBtn" data-react-owned="true" className="toolbar-built-in-test-btn toolbar-vector-icon" type="button" aria-label="Built-In Test" title="Built-In Test" onClick={onToggleDiagnostics}><DiagnosticsIcon /><span>Built-In Test</span></button>
+            <button id="topBuiltInTestBtn" data-react-owned="true" className="toolbar-built-in-test-btn toolbar-vector-icon" type="button" aria-label={`Built-In Test continuo: ${diagnosticStatusLabel[diagnosticsStatus] || "pendiente"}`} title={`Built-In Test continuo: ${diagnosticStatusLabel[diagnosticsStatus] || "pendiente"}`} onClick={onToggleDiagnostics}><DiagnosticsIcon /><span className={`toolbar-diagnostics-status is-${diagnosticsStatus}`} aria-hidden="true" /></button>
             <button id="topSettingsBtn" data-react-owned="true" className={iconButtonClass} type="button" aria-label="Configuracion general" onClick={() => window.dispatchEvent(new Event("orbit:config-panel-toggle"))}><ControlPanelIcon /></button>
             <span className="toolbar-action-divider" aria-hidden="true" />
             <button id="topUserBtn" className="toolbar-avatar" type="button" aria-label="Perfil de GG">GG</button>

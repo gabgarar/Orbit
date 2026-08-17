@@ -13,6 +13,10 @@ services:
       # Strict SP3/ERP rehydration is local but can take longer than a normal
       # web-service boot. The runtime only accepts 10,000–600,000 ms.
       ORBIT_PYTHON_STARTUP_TIMEOUT_MS: "${ORBIT_PYTHON_STARTUP_TIMEOUT_MS:-180000}"
+      # Manual numerical calculations keep the complete requested window by
+      # default. Set 30,000–600,000 to opt into a deployment deadline; 0
+      # disables it and lets the operator cancel from the activity panel.
+      ORBIT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS: "${ORBIT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS:-0}"
       # Pinned time data is opt-in and remains local to the mounted config
       # volume. Paths here are container paths, normally /app/config/eop/… .
       ORBIT_EOP_C04_PATH: "${ORBIT_EOP_C04_PATH:-}"

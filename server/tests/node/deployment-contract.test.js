@@ -26,6 +26,7 @@ test("Docker local-only bind and host-port override stay aligned with restart an
     assert.match(compose, /\$\{ORBIT_HTTP_BIND:-127\.0\.0\.1\}:\$\{ORBIT_HTTP_PORT:-8100\}:8100/);
     assert.match(compose, /PORT:\s*"8100"/);
     assert.match(compose, /ORBIT_PYTHON_STARTUP_TIMEOUT_MS:\s*"\$\{ORBIT_PYTHON_STARTUP_TIMEOUT_MS:-180000\}"/);
+    assert.match(compose, /ORBIT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS:\s*"\$\{ORBIT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS:-0\}"/);
     assert.doesNotMatch(compose, /8765:8765/);
     assert.doesNotMatch(dockerfile, /EXPOSE\s+8100\s+8765/);
     assert.match(dockerfile, /npm run test:node --prefix server/);

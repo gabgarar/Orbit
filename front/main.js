@@ -153,6 +153,15 @@ import {
     resolveManualOrbitTimePolicy
 } from "./js/features/manualOrbit/timePolicy.js";
 import { createManualErpUploadGate } from "./js/features/manualOrbit/erpUploadGate.js";
+import {
+    OPERATION_SCOPES,
+    cancelOperation,
+    clearOperationsForScope,
+    completeOperation,
+    failOperation,
+    startOperation,
+    updateOperation
+} from "./js/features/operations/operationsContract.js";
 import { createPropagatedParametersContextBuilder } from "./js/features/propagatedParameters/context.js";
 import {
     DIAGNOSTICS_LOCAL_STATE_EVENT,
@@ -423,6 +432,7 @@ let groundStationSequence = 1;
 let groundStationAnalysisLink = null;
 let groundStationAnalysisRequestSequence = 0;
 let groundStationAnalysisAbortController = null;
+let groundStationAnalysisOperationId = null;
 const groundStationVisibilityLinks = new Map();
 let currentProjectFileHandle = null;
 let currentProjectName = null;
@@ -432,11 +442,13 @@ let manualOrbitDefinitionSource = "keplerian";
 let manualOrbitCreateInFlight = false;
 let manualOrbitCreateRequestId = 0;
 let manualOrbitCreateAbortController = null;
+let manualOrbitCreateOperationId = null;
 let manualOrbitBridgeBound = false;
 let propagatedParametersBridgeBound = false;
 let propagatedParametersInspectorBound = false;
 let propagatedParametersAbortController = null;
 let propagatedParametersRequestId = 0;
+let propagatedParametersOperationId = null;
 let propagatedParametersRefreshTimer = null;
 let propagatedParametersLastContext = null;
 const propagatedParametersInspectorState = {
@@ -451,7 +463,10 @@ let manualOrbitDesignSession = null;
 let manualOrbitPreviewTimer = null;
 let manualOrbitPreviewAbortController = null;
 let manualOrbitPreviewRequestId = 0;
+let manualOrbitPreviewOperationId = null;
 const manualOrbitErpUploadGate = createManualErpUploadGate();
+let manualOrbitErpUploadOperationId = null;
+let manualOrbitErpUploadOperationSequence = 0;
 let manualOrbitDesignSettings = null;
 // Set only while the design editor is modifying an already-confirmed local
 // manual orbit. Catalogue/OEM objects never populate this target.
@@ -459,6 +474,93 @@ let manualOrbitEditingTarget = null;
 let globeLightingEnabledByConfig = true;
 const GLOBE_LIGHTING_MIN_HEIGHT_METERS = 1_200_000;
 let runtimeDecayAlertPerigeeKm = 200;
+
+// Main-runtime work that can outlive a click is reported through the same
+// live ledger as sidebar imports and manual design.  Keep cancellation local
+// to the actual owner: clearing a panel or changing a project aborts only
+// its own request, never an unrelated scene/project operation.
+let runtimeSceneOperationSequence = 0;
+const runtimeSceneOperationCancels = new Map();
+
+function runtimeSceneOperationId(kind) {
+    runtimeSceneOperationSequence += 1;
+    return `scene-runtime:${String(kind || "work")}:${Date.now()}:${runtimeSceneOperationSequence}`;
+}
+
+function beginRuntimeSceneOperation(kind, {
+    title,
+    stage = "",
+    message = "",
+    progress = null,
+    cancelWork = null
+} = {}) {
+    const id = runtimeSceneOperationId(kind);
+    startOperation({
+        id,
+        title: title || "Operaci\u00f3n de escena",
+        scope: OPERATION_SCOPES.SCENE,
+        stage,
+        message,
+        progress,
+        cancellable: typeof cancelWork === "function"
+    });
+    if (typeof cancelWork === "function") {
+        runtimeSceneOperationCancels.set(id, cancelWork);
+    }
+    return id;
+}
+
+function advanceRuntimeSceneOperation(id, detail = {}) {
+    if (!id) return;
+    updateOperation({ id, ...detail });
+}
+
+function completeRuntimeSceneOperation(id, message = "") {
+    if (!id) return;
+    runtimeSceneOperationCancels.delete(id);
+    completeOperation({ id, message });
+}
+
+function failRuntimeSceneOperation(id, error) {
+    if (!id) return;
+    runtimeSceneOperationCancels.delete(id);
+    const message = error instanceof Error ? error.message : String(error || "No se pudo completar la operaci\u00f3n de escena.");
+    failOperation({ id, message });
+}
+
+function cancelRuntimeSceneOperation(id, message = "") {
+    if (!id) return;
+    const cancelWork = runtimeSceneOperationCancels.get(id);
+    runtimeSceneOperationCancels.delete(id);
+    try {
+        cancelWork?.(message);
+    } finally {
+        cancelOperation({ id, message });
+    }
+}
+
+function isRuntimeSceneRequestCancellation(error, controller = null) {
+    return controller?.signal?.aborted === true
+        || error?.name === "AbortError"
+        || error?.code === "ABORT_ERR";
+}
+
+function cancelAllRuntimeSceneOperations(message = "La operaci\u00f3n de escena se cancel\u00f3 al cambiar de proyecto.") {
+    for (const id of [...runtimeSceneOperationCancels.keys()]) {
+        cancelRuntimeSceneOperation(id, message);
+    }
+}
+
+window.addEventListener("orbit:operation-cancel-request", (event) => {
+    const detail = event?.detail && typeof event.detail === "object" ? event.detail : {};
+    const scope = String(detail.scope || "").trim();
+    if (scope && scope !== OPERATION_SCOPES.SCENE) return;
+    cancelRuntimeSceneOperation(String(detail.id || "").trim(), "Operaci\u00f3n de escena cancelada por el usuario.");
+});
+window.addEventListener("orbit:scene-operations-cancel", (event) => {
+    const message = String(event?.detail?.message || "La operaci\u00f3n de escena se cancel\u00f3 al cambiar de proyecto.").trim();
+    cancelAllRuntimeSceneOperations(message);
+});
 
 function requestProjectActionDialog(mode) {
     window.dispatchEvent(new CustomEvent("orbit:project-dialog-request", { detail: mode }));
@@ -3555,15 +3657,21 @@ function getGroundStationsForExport(stationId = null) {
     return requestedId ? (selected ? [selected] : []) : [...groundStationLayers.values()];
 }
 
-async function downloadGroundStationsGeoPackage(stations, fileName) {
+async function downloadGroundStationsGeoPackage(stations, fileName, { signal } = {}) {
     const response = await fetch("/api/ground-stations/export", {
         method: "POST",
         headers: {
             Accept: "application/geopackage+sqlite3,application/octet-stream",
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({ format: GROUND_STATION_EXPORT_FORMATS.GPKG, stations })
+        body: JSON.stringify({ format: GROUND_STATION_EXPORT_FORMATS.GPKG, stations }),
+        signal
     });
+    if (signal?.aborted) {
+        const error = new Error("Exportaci\u00f3n de estaciones cancelada.");
+        error.name = "AbortError";
+        throw error;
+    }
     if (!response.ok) {
         let detail = "";
         try {
@@ -3575,6 +3683,11 @@ async function downloadGroundStationsGeoPackage(stations, fileName) {
         throw new Error(detail || `HTTP ${response.status}`);
     }
     const blob = await response.blob();
+    if (signal?.aborted) {
+        const error = new Error("Exportaci\u00f3n de estaciones cancelada.");
+        error.name = "AbortError";
+        throw error;
+    }
     const url = URL.createObjectURL(blob);
     const anchor = Object.assign(document.createElement("a"), { href: url, download: fileName });
     anchor.click();
@@ -3595,22 +3708,54 @@ async function exportGroundStations(stationId = null, format = GROUND_STATION_EX
         return null;
     }
 
+    const fileName = groundStationExportFileName(authoredStations, format);
+    const usesExportService = requiresGroundStationExportService(format);
+    const controller = usesExportService ? new AbortController() : null;
+    const operationId = beginRuntimeSceneOperation("ground-station-export", {
+        title: `Exportando estaciones (${groundStationExportLabel(format)})`,
+        stage: usesExportService ? "Generando producto espacial" : "Preparando descarga local",
+        message: `${authoredStations.length} ${authoredStations.length === 1 ? "estaci\u00f3n seleccionada" : "estaciones seleccionadas"}.`,
+        progress: 0,
+        cancelWork: controller ? () => controller.abort() : null
+    });
+    let operationTerminal = false;
     try {
-        const fileName = groundStationExportFileName(authoredStations, format);
-        const exported = requiresGroundStationExportService(format)
-            ? await downloadGroundStationsGeoPackage(authoredStations, fileName)
+        if (usesExportService) {
+            advanceRuntimeSceneOperation(operationId, {
+                stage: "Solicitando GeoPackage",
+                message: "El servicio est\u00e1 generando el fichero de intercambio.",
+                progress: 30
+            });
+        }
+        const exported = usesExportService
+            ? await downloadGroundStationsGeoPackage(authoredStations, fileName, { signal: controller.signal })
             : downloadGroundStationsExport(authoredStations, format, { fileName });
         const exportedCount = authoredStations.length;
         if (!exportedCount) {
+            completeRuntimeSceneOperation(operationId, "No hab\u00eda estaciones v\u00e1lidas para exportar.");
+            operationTerminal = true;
             void showAppAlert("No se pudo exportar ninguna estación: revisa que las coordenadas WGS-84 sean válidas.");
             return exported;
         }
+        completeRuntimeSceneOperation(operationId, "Exportaci\u00f3n de estaciones completada.");
+        operationTerminal = true;
         void showAppAlert(`${groundStationExportLabel(format)} exportado: ${exportedCount} ${exportedCount === 1 ? "estación" : "estaciones"}.`);
         return exported;
     } catch (error) {
+        if (isRuntimeSceneRequestCancellation(error, controller)) {
+            cancelRuntimeSceneOperation(operationId, "Exportaci\u00f3n de estaciones cancelada.");
+            operationTerminal = true;
+            return null;
+        }
+        failRuntimeSceneOperation(operationId, error);
+        operationTerminal = true;
         const reason = error instanceof Error ? error.message : String(error);
         void showAppAlert(`No se pudo exportar las estaciones: ${reason}`);
         return null;
+    } finally {
+        if (!operationTerminal) {
+            cancelRuntimeSceneOperation(operationId, "Exportaci\u00f3n de estaciones cancelada.");
+        }
     }
 }
 
@@ -3682,12 +3827,17 @@ function requestGroundStationImport() {
     input.click();
 }
 
-function cancelGroundStationPassAnalysis() {
+function cancelGroundStationPassAnalysis(message = "An\u00e1lisis AOS/LOS cancelado.") {
+    const operationId = groundStationAnalysisOperationId;
+    const controller = groundStationAnalysisAbortController;
+    groundStationAnalysisOperationId = null;
+    groundStationAnalysisAbortController = null;
     groundStationAnalysisRequestSequence += 1;
-    if (groundStationAnalysisAbortController) {
-        groundStationAnalysisAbortController.abort();
-        groundStationAnalysisAbortController = null;
+    if (operationId) {
+        cancelRuntimeSceneOperation(operationId, message);
+        return;
     }
+    controller?.abort();
 }
 
 function groundStationAnalysisSignature(station) {
@@ -3958,14 +4108,16 @@ async function analyzeGroundStationPasses(detail = {}) {
         window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", { detail: { error: "Selecciona una estación, satélite y máscara válidos.", passes: [] } }));
         return;
     }
-    if (groundStationAnalysisAbortController) {
-        groundStationAnalysisAbortController.abort();
-    }
+    // A new request supersedes an earlier one, but its cancellation must not
+    // make the panel leave the new calculation in a non-loading state.
+    cancelGroundStationPassAnalysis("An\u00e1lisis AOS/LOS sustituido por una nueva solicitud.");
     const requestId = ++groundStationAnalysisRequestSequence;
     const abortController = new AbortController();
     groundStationAnalysisAbortController = abortController;
     const stationSignature = groundStationAnalysisSignature(station);
     let requestContext = null;
+    let operationId = null;
+    let operationTerminal = false;
     try {
         const declaredFrameStatus = resolveGroundPassFrameStatus(satelliteId);
         if (isPreciseProductLayer(satelliteId) && declaredFrameStatus.available === false) {
@@ -4081,10 +4233,48 @@ async function analyzeGroundStationPasses(detail = {}) {
             }
             return;
         }
+        operationId = beginRuntimeSceneOperation("ground-station-analysis", {
+            title: "Calculando pases AOS/LOS",
+            stage: "Propagando ventana solicitada",
+            message: "Calculando visibilidad y enlace para la estaci\u00f3n seleccionada.",
+            cancelWork: (message) => {
+                if (groundStationAnalysisAbortController === abortController) {
+                    groundStationAnalysisAbortController = null;
+                }
+                if (groundStationAnalysisOperationId === operationId) {
+                    groundStationAnalysisOperationId = null;
+                }
+                groundStationAnalysisRequestSequence += 1;
+                abortController.abort();
+                const cancellationMessage = String(message || "");
+                if (!/sustituido|cambiar de proyecto/i.test(cancellationMessage)) {
+                    window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+                        detail: {
+                            cancelled: true,
+                            error: "C\u00e1lculo de pases cancelado.",
+                            passes: [],
+                            samples: [],
+                            analysisSelection: { stationId, satelliteLayerId },
+                            visibleNow: false
+                        }
+                    }));
+                }
+            }
+        });
+        groundStationAnalysisOperationId = operationId;
         const response = await fetch(request.url, { ...request.requestOptions, signal: abortController.signal });
         if (!response.ok) throw await groundStationPassResponseError(response);
         const result = await response.json();
-        if (!isCurrentGroundStationPassAnalysis(requestContext)) return;
+        if (!isCurrentGroundStationPassAnalysis(requestContext)) {
+            cancelRuntimeSceneOperation(operationId, "An\u00e1lisis AOS/LOS sustituido por una nueva solicitud.");
+            operationTerminal = true;
+            return;
+        }
+        advanceRuntimeSceneOperation(operationId, {
+            stage: "Preparando resultado",
+            message: "Procesando pases y geometr\u00eda de enlace.",
+            progress: 85
+        });
         const resolvedFrameStatus = resolveGroundPassFrameStatus(satelliteId, result);
         if (isPreciseProductLayer(satelliteId) && resolvedFrameStatus.available === false) {
             clearGroundStationAnalysisVisuals();
@@ -4106,6 +4296,8 @@ async function analyzeGroundStationPasses(detail = {}) {
                     visibleNow: false
                 }
             }));
+            failRuntimeSceneOperation(operationId, new Error(unavailablePreciseGroundPassMessage(resolvedFrameStatus)));
+            operationTerminal = true;
             return;
         }
         showGroundStationAnalysisVisuals(station, satelliteLayerId, minElevationDeg);
@@ -4160,9 +4352,17 @@ async function analyzeGroundStationPasses(detail = {}) {
                     : false
             }
         }));
+        completeRuntimeSceneOperation(operationId, "An\u00e1lisis AOS/LOS completado.");
+        operationTerminal = true;
     } catch (error) {
-        if (error?.name === "AbortError") return;
-        if (requestContext && !isCurrentGroundStationPassAnalysis(requestContext)) return;
+        if (isRuntimeSceneRequestCancellation(error, abortController)
+            || (requestContext && !isCurrentGroundStationPassAnalysis(requestContext))) {
+            cancelRuntimeSceneOperation(operationId, "An\u00e1lisis AOS/LOS cancelado.");
+            operationTerminal = true;
+            return;
+        }
+        failRuntimeSceneOperation(operationId, error);
+        operationTerminal = true;
         logger.warn("No se pudo calcular la visibilidad de la estación:", error);
         const reason = error instanceof ManualAosLosRequestError || error instanceof Error
             ? error.message
@@ -4177,8 +4377,14 @@ async function analyzeGroundStationPasses(detail = {}) {
             }
         }));
     } finally {
+        if (!operationTerminal && operationId) {
+            cancelRuntimeSceneOperation(operationId, "An\u00e1lisis AOS/LOS cancelado.");
+        }
         if (requestId === groundStationAnalysisRequestSequence && groundStationAnalysisAbortController === abortController) {
             groundStationAnalysisAbortController = null;
+        }
+        if (groundStationAnalysisOperationId === operationId) {
+            groundStationAnalysisOperationId = null;
         }
     }
 }
@@ -5958,7 +6164,60 @@ function assertManualOrbitTimePolicy({ allowApprovedMasterExpansion = false } = 
     throw new Error("Define un intervalo temporal válido para la órbita manual.");
 }
 
+// The manual designer owns only its transient work. It reports into the
+// shared activity ledger, but it must never clear a project import, a scene
+// analysis, or a system startup operation when the panel is closed.
+const MANUAL_ORBIT_OPERATION_SCOPE = OPERATION_SCOPES.MANUAL_ORBIT;
+
+function manualOrbitOperationId(kind, sequence) {
+    return `manual-orbit:${kind}:${sequence}`;
+}
+
+function startManualOrbitOperation(kind, sequence, {
+    title,
+    stage = "",
+    message = "",
+    cancellable = true
+} = {}) {
+    const id = manualOrbitOperationId(kind, sequence);
+    startOperation({
+        id,
+        title: title || "Operaci\u00f3n orbital manual",
+        scope: MANUAL_ORBIT_OPERATION_SCOPE,
+        stage,
+        message,
+        cancellable
+    });
+    return id;
+}
+
+function updateManualOrbitOperation(id, detail = {}) {
+    if (!id) return;
+    updateOperation({ id, ...detail });
+}
+
+function completeManualOrbitOperation(id, message = "") {
+    if (!id) return;
+    completeOperation({ id, message });
+}
+
+function failManualOrbitOperation(id, error) {
+    if (!id) return;
+    failOperation({ id, error: extractManualOrbitError(error, "No se pudo completar la operaci\u00f3n orbital.") });
+}
+
+function cancelManualOrbitOperation(id, message = "") {
+    if (!id) return;
+    cancelOperation({ id, message });
+}
+
+function clearManualOrbitOperations() {
+    clearOperationsForScope(MANUAL_ORBIT_OPERATION_SCOPE);
+}
+
 function stopManualOrbitPreviewRequest() {
+    const operationId = manualOrbitPreviewOperationId;
+    manualOrbitPreviewOperationId = null;
     if (manualOrbitPreviewTimer) {
         clearTimeout(manualOrbitPreviewTimer);
         manualOrbitPreviewTimer = null;
@@ -5968,23 +6227,30 @@ function stopManualOrbitPreviewRequest() {
         manualOrbitPreviewAbortController = null;
     }
     manualOrbitPreviewRequestId += 1;
+    cancelManualOrbitOperation(operationId, "Previsualizaci\u00f3n cancelada.");
 }
 
 /** Cancel and invalidate a transient ERP upload/preflight. */
 function stopManualOrbitErpUpload() {
+    const operationId = manualOrbitErpUploadOperationId;
+    manualOrbitErpUploadOperationId = null;
     manualOrbitErpUploadGate.cancel();
+    cancelManualOrbitOperation(operationId, "Validaci\u00f3n ERP cancelada.");
 }
 
 function stopManualOrbitCreateRequest() {
     // A confirmation request mutates the workspace when it resolves. Give it
     // its own cancellation generation so closing design mode or replacing the
     // project can never import a late result into the new workspace.
+    const operationId = manualOrbitCreateOperationId;
+    manualOrbitCreateOperationId = null;
     manualOrbitCreateRequestId += 1;
     if (manualOrbitCreateAbortController) {
         manualOrbitCreateAbortController.abort();
         manualOrbitCreateAbortController = null;
     }
     manualOrbitCreateInFlight = false;
+    cancelManualOrbitOperation(operationId, "Creaci\u00f3n de \u00f3rbita cancelada.");
 }
 
 function applyManualOrbitDesignTimeWindow() {
@@ -6140,6 +6406,7 @@ function restoreManualOrbitDesignMode({
     stopManualOrbitErpUpload();
     if (!preserveManualOrbitCreate) {
         stopManualOrbitCreateRequest();
+        clearManualOrbitOperations();
     }
     clearManualOrbitPreview();
     manualOrbitDesignSession = null;
@@ -6213,6 +6480,7 @@ function discardManualOrbitDesignForProjectChange() {
     stopManualOrbitPreviewRequest();
     stopManualOrbitErpUpload();
     stopManualOrbitCreateRequest();
+    clearManualOrbitOperations();
     clearManualOrbitPreview();
     manualOrbitDesignSession = null;
     manualOrbitEditingTarget = null;
@@ -6545,16 +6813,26 @@ async function requestManualOrbitPreview() {
         return;
     }
 
-    const requestId = ++manualOrbitPreviewRequestId;
     if (manualOrbitPreviewAbortController) {
-        manualOrbitPreviewAbortController.abort();
+        stopManualOrbitPreviewRequest();
     }
+    const requestId = ++manualOrbitPreviewRequestId;
     const controller = new AbortController();
     manualOrbitPreviewAbortController = controller;
+    const operationId = startManualOrbitOperation("preview", requestId, {
+        title: "Previsualizando \u00f3rbita manual",
+        stage: "Propagando la ventana solicitada",
+        message: "La previsualizaci\u00f3n conserva la ventana y el muestreo solicitados.",
+        cancellable: true
+    });
+    manualOrbitPreviewOperationId = operationId;
     try {
         const response = await fetch("/api/manual-orbits", {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
+            // Preview and confirmation use the exact same requested design
+            // window and sampling contract. Responsiveness is reported as a
+            // cancellable operation; it never silently coarsens the model.
             body: JSON.stringify(buildManualOrbitRequestPayload(windowRange)),
             signal: controller.signal
         });
@@ -6563,8 +6841,16 @@ async function requestManualOrbitPreview() {
             throw responsePayload || new Error(`HTTP ${response.status}`);
         }
         if (requestId !== manualOrbitPreviewRequestId || !manualOrbitDesignSession?.active) {
+            if (manualOrbitPreviewOperationId === operationId) {
+                manualOrbitPreviewOperationId = null;
+            }
+            cancelManualOrbitOperation(operationId, "Previsualizaci\u00f3n sustituida por una solicitud m\u00e1s reciente.");
             return;
         }
+        updateManualOrbitOperation(operationId, {
+            stage: "Representando trayectoria",
+            message: "Aplicando la trayectoria calculada a la escena de dise\u00f1o."
+        });
         renderManualOrbitPreview(responsePayload, {
             viewer,
             // This is a live design aid and is preserved for the confirmed
@@ -6574,14 +6860,27 @@ async function requestManualOrbitPreview() {
             color: "#65b7ff",
             previewReferenceFrame: getManualOrbitDesignSettings().previewReferenceFrame
         });
+        if (manualOrbitPreviewOperationId === operationId) {
+            manualOrbitPreviewOperationId = null;
+        }
+        completeManualOrbitOperation(operationId, "Previsualizaci\u00f3n actualizada.");
         publishManualOrbitStatus(null, "");
     } catch (error) {
-        if (error?.name === "AbortError" || requestId !== manualOrbitPreviewRequestId) {
+        if (isExpectedManualOrbitRequestCancellation(error, controller)
+            || requestId !== manualOrbitPreviewRequestId) {
+            if (manualOrbitPreviewOperationId === operationId) {
+                manualOrbitPreviewOperationId = null;
+                cancelManualOrbitOperation(operationId, "Previsualizaci\u00f3n cancelada.");
+            }
             return;
         }
         // Do not leave the last valid path on screen when the current edited
         // definition is rejected by the propagation service.
         clearManualOrbitPreview();
+        if (manualOrbitPreviewOperationId === operationId) {
+            manualOrbitPreviewOperationId = null;
+        }
+        failManualOrbitOperation(operationId, error);
         logger.warn("No se pudo previsualizar la órbita manual:", error);
         publishManualOrbitStatus("error", extractManualOrbitError(error, "No se pudo actualizar la previsualización orbital."));
     } finally {
@@ -6606,12 +6905,34 @@ function scheduleManualOrbitPreview({ immediate = false } = {}) {
     }, MANUAL_ORBIT_PREVIEW_DEBOUNCE_MS);
 }
 
+function isExpectedManualOrbitRequestCancellation(error, controller) {
+    // A normal edit, close, or newer preview aborts the browser-owned
+    // controller. Fetch implementations vary between AbortError, ABORT_ERR,
+    // and a TypeError, so the signal itself is the primary source of truth.
+    // Do not classify an upstream 502/504 payload as a cancellation: that
+    // must stay visible to the operator with its actionable server message.
+    return controller?.signal?.aborted === true
+        || error?.name === "AbortError"
+        || error?.code === "ABORT_ERR";
+}
+
+function manualOrbitErrorMessage(message, fallback) {
+    const text = String(message || "").trim();
+    // Backward compatibility with gateways built before they returned the
+    // structured PYTHON_BACKEND_TIMEOUT response. This is an upstream abort,
+    // not a user cancellation, because the caller's controller remains live.
+    if (/^(?:this )?operation was aborted\.?$/i.test(text)) {
+        return "El c\u00e1lculo de la \u00f3rbita fue interrumpido por el servicio antes de terminar. Consulta el estado de operaciones y vuelve a intentarlo.";
+    }
+    return text || fallback;
+}
+
 function extractManualOrbitError(error, fallback = "No se pudo crear la orbita manual.") {
     if (error instanceof Error && error.message) {
-        return error.message;
+        return manualOrbitErrorMessage(error.message, fallback);
     }
     if (typeof error === "string" && error.trim()) {
-        return error.trim();
+        return manualOrbitErrorMessage(error, fallback);
     }
     if (error && typeof error === "object") {
         const detail = error.detail || error.error || error.message;
@@ -6619,9 +6940,9 @@ function extractManualOrbitError(error, fallback = "No se pudo crear la orbita m
             const messages = detail
                 .map((item) => String(item?.msg || item?.message || "").trim())
                 .filter(Boolean);
-            if (messages.length) return messages.join(". ");
+            if (messages.length) return manualOrbitErrorMessage(messages.join(". "), fallback);
         }
-        if (typeof detail === "string" && detail.trim()) return detail.trim();
+        if (typeof detail === "string" && detail.trim()) return manualOrbitErrorMessage(detail, fallback);
     }
     return fallback;
 }
@@ -6760,10 +7081,21 @@ async function createManualOrbitFromEditor(payload = {}) {
         manualOrbitEditorState?.propagator,
         manualOrbitEditorState?.propagationOptions
     );
+    const operationId = startManualOrbitOperation("create", createRequestId, {
+        title: editingTargetAtRequest ? "Actualizando \u00f3rbita manual" : "Creando \u00f3rbita manual",
+        stage: "Preparando propagaci\u00f3n",
+        message: `Modelo seleccionado: ${propagatorLabel}.`,
+        cancellable: true
+    });
+    manualOrbitCreateOperationId = operationId;
     publishManualOrbitStatus("busy", `Generando efemerides ${propagatorLabel}...`);
     try {
         const windowRange = getManualOrbitPropagationWindow();
         const requestPayload = buildManualOrbitRequestPayload(windowRange);
+        updateManualOrbitOperation(operationId, {
+            stage: "Propagando ventana solicitada",
+            message: "Calculando la efem\u00e9ride con el intervalo y muestreo solicitados."
+        });
         const response = await fetch("/api/manual-orbits", {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -6778,6 +7110,10 @@ async function createManualOrbitFromEditor(payload = {}) {
             createRequestId !== manualOrbitCreateRequestId
             || (designSessionAtRequest && manualOrbitDesignSession !== designSessionAtRequest)
         ) {
+            if (manualOrbitCreateOperationId === operationId) {
+                manualOrbitCreateOperationId = null;
+            }
+            cancelManualOrbitOperation(operationId, "Creaci\u00f3n sustituida por un cambio de sesi\u00f3n.");
             return;
         }
 
@@ -6811,6 +7147,10 @@ async function createManualOrbitFromEditor(payload = {}) {
         };
         // The preview owns separate Cesium entities; remove those before the
         // confirmed local layer is created to avoid a doubled trajectory.
+        updateManualOrbitOperation(operationId, {
+            stage: "Registrando \u00f3rbita en la escena",
+            message: "Guardando la trayectoria calculada en el proyecto actual."
+        });
         clearManualOrbitPreview();
         const imported = editingTargetAtRequest
             ? replaceManualOrbitTrack(editingTargetAtRequest.id, committedPayload)
@@ -6863,11 +7203,26 @@ async function createManualOrbitFromEditor(payload = {}) {
                 ? `Orbita manual '${imported.name}' actualizada con ${getManualOrbitPropagatorLabel(manualOrbitEditorState?.propagator, manualOrbitEditorState?.propagationOptions)}.`
                 : `Orbita manual '${imported.name}' creada con ${getManualOrbitPropagatorLabel(manualOrbitEditorState?.propagator, manualOrbitEditorState?.propagationOptions)}.`}${geopotentialAdjustment ? ` ${geopotentialAdjustment}` : ""}`
         );
+        if (manualOrbitCreateOperationId === operationId) {
+            manualOrbitCreateOperationId = null;
+        }
+        completeManualOrbitOperation(operationId, editingTargetAtRequest
+            ? "\u00d3rbita manual actualizada."
+            : "\u00d3rbita manual creada.");
     } catch (error) {
-        if (error?.name === "AbortError" || createRequestId !== manualOrbitCreateRequestId) {
+        if (isExpectedManualOrbitRequestCancellation(error, controller)
+            || createRequestId !== manualOrbitCreateRequestId) {
+            if (manualOrbitCreateOperationId === operationId) {
+                manualOrbitCreateOperationId = null;
+                cancelManualOrbitOperation(operationId, "Creaci\u00f3n de \u00f3rbita cancelada.");
+            }
             return;
         }
         const message = extractManualOrbitError(error);
+        if (manualOrbitCreateOperationId === operationId) {
+            manualOrbitCreateOperationId = null;
+        }
+        failManualOrbitOperation(operationId, error);
         logger.warn("No se pudo crear la orbita manual:", error);
         publishManualOrbitStatus("error", message);
     } finally {
@@ -6911,6 +7266,33 @@ function setupManualOrbitEditorBridge() {
     window.addEventListener("orbit:manual-orbit-close", (event) => closeManualOrbitDesign(event.detail || {}));
     window.addEventListener("orbit:manual-orbit-cancel", (event) => closeManualOrbitDesign(event.detail || {}));
     window.addEventListener("orbit:project-opened", discardManualOrbitDesignForProjectChange);
+    window.addEventListener("orbit:operation-cancel-request", (event) => {
+        const detail = event.detail && typeof event.detail === "object" ? event.detail : {};
+        const requestedScope = String(detail.scope || "").trim();
+        const requestedId = String(detail.id || "").trim();
+        if (!requestedId || (requestedScope && requestedScope !== MANUAL_ORBIT_OPERATION_SCOPE)) {
+            return;
+        }
+        if (requestedId === manualOrbitPreviewOperationId) {
+            stopManualOrbitPreviewRequest();
+            clearManualOrbitPreview();
+            publishManualOrbitStatus("info", "Previsualizaci\u00f3n orbital cancelada.");
+            return;
+        }
+        if (requestedId === manualOrbitCreateOperationId) {
+            stopManualOrbitCreateRequest();
+            publishManualOrbitStatus("info", "Creaci\u00f3n de \u00f3rbita cancelada.");
+            return;
+        }
+        if (requestedId === manualOrbitErpUploadOperationId) {
+            stopManualOrbitErpUpload();
+            publishManualOrbitErpUploadResult({
+                ok: false,
+                cancelled: true,
+                message: "Validaci\u00f3n ERP cancelada."
+            });
+        }
+    });
     window.addEventListener("orbit:manual-orbit-change", (event) => {
         const detail = event.detail || {};
         synchronizeManualOrbitEditor(detail, detail.source);
@@ -6976,12 +7358,17 @@ function publishPropagatedParametersInspectorState(patch = {}) {
     }));
 }
 
-function stopPropagatedParametersRequest() {
+function stopPropagatedParametersRequest(message = "C\u00e1lculo de par\u00e1metros propagados cancelado.") {
+    const operationId = propagatedParametersOperationId;
+    const controller = propagatedParametersAbortController;
+    propagatedParametersOperationId = null;
+    propagatedParametersAbortController = null;
     propagatedParametersRequestId += 1;
-    if (propagatedParametersAbortController) {
-        propagatedParametersAbortController.abort();
-        propagatedParametersAbortController = null;
+    if (operationId) {
+        cancelRuntimeSceneOperation(operationId, message);
+        return;
     }
+    controller?.abort();
 }
 
 function closePropagatedParametersInspector() {
@@ -7234,8 +7621,17 @@ async function previewManualOrbitErpUpload(detail = {}) {
     // A replacement/clear/close invalidates every older result. `arrayBuffer`
     // itself cannot be cancelled on every browser, so guard both sides of it
     // with a monotonic request id as well as aborting fetch.
+    cancelManualOrbitOperation(manualOrbitErpUploadOperationId, "Validaci\u00f3n ERP sustituida por otro fichero.");
+    manualOrbitErpUploadOperationId = null;
     const request = manualOrbitErpUploadGate.begin();
     const { controller } = request;
+    const operationId = startManualOrbitOperation("erp", ++manualOrbitErpUploadOperationSequence, {
+        title: "Validando ERP manual",
+        stage: "Leyendo fichero local",
+        message: name ? `Preparando ${name}.` : "Preparando fichero ERP.",
+        cancellable: true
+    });
+    manualOrbitErpUploadOperationId = operationId;
     try {
         if (!file || typeof file.arrayBuffer !== "function") {
             throw new Error("Seleccione un fichero ERP local para validar.");
@@ -7262,6 +7658,10 @@ async function previewManualOrbitErpUpload(detail = {}) {
         };
         const contentBase64 = arrayBufferToBase64(await file.arrayBuffer());
         if (!request.isCurrent()) return;
+        updateManualOrbitOperation(operationId, {
+            stage: "Comprobando cobertura y formato",
+            message: "Validando el snapshot ERP antes de asociarlo a la \u00f3rbita."
+        });
         const response = await fetch("/api/manual-orbits/time/erp-preview", {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -7327,10 +7727,22 @@ async function previewManualOrbitErpUpload(detail = {}) {
             sceneAlignment: responsePayload.sceneAlignment ?? responsePayload.scene_alignment ?? null,
             message: responsePayload.message
         });
+        if (manualOrbitErpUploadOperationId === operationId) {
+            manualOrbitErpUploadOperationId = null;
+        }
+        completeManualOrbitOperation(operationId, "ERP manual validado.");
     } catch (error) {
-        if (error?.name === "AbortError" || !request.isCurrent()) {
+        if (isExpectedManualOrbitRequestCancellation(error, controller) || !request.isCurrent()) {
+            if (manualOrbitErpUploadOperationId === operationId) {
+                manualOrbitErpUploadOperationId = null;
+                cancelManualOrbitOperation(operationId, "Validaci\u00f3n ERP cancelada.");
+            }
             return;
         }
+        if (manualOrbitErpUploadOperationId === operationId) {
+            manualOrbitErpUploadOperationId = null;
+        }
+        failManualOrbitOperation(operationId, error);
         logger.warn("No se pudo validar el ERP manual:", error);
         publishManualOrbitErpUploadResult({
             ok: false,
@@ -7433,7 +7845,7 @@ async function requestPropagatedParameters(context) {
     // Invalidate an earlier request before *any* preparation. Otherwise an
     // invalid next context (for example OEM) would leave the old request
     // alive and allow its late response to overwrite the new error state.
-    stopPropagatedParametersRequest();
+    stopPropagatedParametersRequest("C\u00e1lculo de par\u00e1metros sustituido por una nueva solicitud.");
     const requestId = ++propagatedParametersRequestId;
     const target = buildPropagatedParametersTarget(context);
     let range;
@@ -7467,11 +7879,44 @@ async function requestPropagatedParameters(context) {
         error: ""
     });
 
+    let operationId = null;
+    let operationTerminal = false;
+    operationId = beginRuntimeSceneOperation("propagated-parameters", {
+        title: "Calculando par\u00e1metros propagados",
+        stage: "Preparando efem\u00e9rides",
+        message: "Calculando el estado orbital para la ventana solicitada.",
+        cancelWork: (message) => {
+            if (propagatedParametersAbortController === controller) {
+                propagatedParametersAbortController = null;
+            }
+            if (propagatedParametersOperationId === operationId) {
+                propagatedParametersOperationId = null;
+            }
+            propagatedParametersRequestId += 1;
+            controller.abort();
+            if (!String(message || "").includes("sustituido")) {
+                publishPropagatedParametersInspectorState({
+                    status: "idle",
+                    result: null,
+                    error: ""
+                });
+            }
+        }
+    });
+    propagatedParametersOperationId = operationId;
+
     try {
         const requestPayload = await buildPropagatedParametersRequest(context, range);
         if (requestId !== propagatedParametersRequestId || propagatedParametersInspectorState.open !== true) {
+            cancelRuntimeSceneOperation(operationId, "C\u00e1lculo de par\u00e1metros sustituido o cerrado antes de propagarse.");
+            operationTerminal = true;
             return;
         }
+        advanceRuntimeSceneOperation(operationId, {
+            stage: "Propagando ventana solicitada",
+            message: "El motor est\u00e1 calculando las efem\u00e9rides solicitadas.",
+            progress: 35
+        });
         const response = await fetch("/api/orbit-parameters", {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -7483,8 +7928,15 @@ async function requestPropagatedParameters(context) {
             throw responsePayload || new Error(`HTTP ${response.status}`);
         }
         if (requestId !== propagatedParametersRequestId || propagatedParametersInspectorState.open !== true) {
+            cancelRuntimeSceneOperation(operationId, "C\u00e1lculo de par\u00e1metros sustituido o cerrado antes de completarse.");
+            operationTerminal = true;
             return;
         }
+        advanceRuntimeSceneOperation(operationId, {
+            stage: "Procesando elementos osculantes",
+            message: "Preparando los par\u00e1metros derivados para la inspecci\u00f3n.",
+            progress: 85
+        });
         const resolvedRange = {
             ...range,
             startTime: responsePayload?.start_time || responsePayload?.startTime || range.startTime,
@@ -7501,20 +7953,35 @@ async function requestPropagatedParameters(context) {
         window.dispatchEvent(new CustomEvent("orbit:propagated-parameters-result", {
             detail: { status: "ready", target, range: resolvedRange, result: responsePayload }
         }));
+        completeRuntimeSceneOperation(operationId, "Par\u00e1metros propagados calculados.");
+        operationTerminal = true;
     } catch (error) {
-        if (error?.name === "AbortError" || requestId !== propagatedParametersRequestId) {
+        if (isRuntimeSceneRequestCancellation(error, controller)
+            || requestId !== propagatedParametersRequestId
+            || propagatedParametersInspectorState.open !== true) {
+            cancelRuntimeSceneOperation(operationId, "C\u00e1lculo de par\u00e1metros propagados cancelado.");
+            operationTerminal = true;
             return;
         }
+        const errorMessage = extractManualOrbitError(error, "No se pudieron calcular las efem\u00e9rides.");
+        failRuntimeSceneOperation(operationId, new Error(errorMessage));
+        operationTerminal = true;
         publishPropagatedParametersInspectorState({
             status: "error",
             target,
             range,
             result: null,
-            error: extractManualOrbitError(error, "No se pudieron calcular las efemérides.")
+            error: errorMessage
         });
     } finally {
+        if (!operationTerminal && operationId) {
+            cancelRuntimeSceneOperation(operationId, "C\u00e1lculo de par\u00e1metros propagados cancelado.");
+        }
         if (propagatedParametersAbortController === controller) {
             propagatedParametersAbortController = null;
+        }
+        if (propagatedParametersOperationId === operationId) {
+            propagatedParametersOperationId = null;
         }
     }
 }

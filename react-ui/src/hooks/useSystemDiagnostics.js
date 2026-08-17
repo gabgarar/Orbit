@@ -33,10 +33,11 @@ function publishDiagnosticsState(snapshot) {
 }
 
 /**
- * Polls an optional diagnostics endpoint only while its panel is mounted.
- * Scene diagnostics arrive separately from the Cesium runtime, which avoids
- * duplicate API calls and lets MTR/SP3 remain visible if a backend predates
- * the endpoint.
+ * Polls an optional diagnostics endpoint while its owner is mounted. App uses
+ * one owner for the full lifetime of the UI, so BIT remains continuous even
+ * when its read-only panel is closed. Scene diagnostics arrive separately
+ * from the Cesium runtime, which lets MTR/SP3 remain visible if a backend
+ * predates the endpoint.
  */
 export default function useSystemDiagnostics({ enabled = true, pollIntervalMs = DEFAULT_POLL_INTERVAL_MS, stopWhen = null } = {}) {
     const [state, setState] = useState(initialState);
