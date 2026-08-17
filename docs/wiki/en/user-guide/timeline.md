@@ -34,6 +34,54 @@ In Simulated, the bottom control offers:
 The cursor is limited to the chosen range. If the end is not after the start,
 the timeline does not represent a valid range.
 
+## AOS/LOS pass markers
+
+In **Simulated** mode, selecting a visible ground station or a visible
+satellite makes Orbit progressively calculate passes for every station--
+satellite pair whose two endpoints are visible in the scene. The calculation
+uses the active simulated window and the same AOS/LOS contract that supplies
+the pass tables; it does not invent a new ephemeris or extrapolate a finite
+source outside its coverage.
+
+Each published pass contributes up to three UTC markers to the timeline:
+
+- **Maximum elevation**, green and above the bar. It is shown only when the
+  analysis published `max_elevation_time`; a midpoint is never presented as a
+  physical maximum.
+- **AOS** and **LOS**, purple and below the bar. They delimit the refined
+  beginning and end of the same access window.
+
+Markers retain the station--satellite pair, AOS, LOS, and reported maximum
+elevation. They can be inspected and used to position the simulation at the
+event's exact UTC instant without quantising it to the visual slider step.
+This makes simultaneous contacts from several stations and satellites
+comparable in one window.
+
+Scene visibility is part of the contract: hiding or removing either the
+station or satellite of a pair immediately removes its three markers. Results
+appear pair by pair as they finish. Changing the selection, simulated window,
+or scene cancels pending requests and discards their results so they cannot
+mix with the new context. The **Activity** panel reports that work and can
+cancel it.
+
+!!! note "Long windows and resolution"
+
+    Event-only requests preserve the requested `step_seconds` exactly, even
+    when the backend has to split a long window into internal chunks. Shared
+    endpoints are joined before AOS/LOS extraction, so a pass spanning a chunk
+    remains one pass. The step is never reduced automatically. To protect the
+    service, this mode permits at most 250&nbsp;000 estimated samples; a larger
+    request fails explicitly and asks the operator to shorten the window or
+    increase the step. Requests that also return chart vertices retain the
+    20&nbsp;000 materialised-sample limit.
+
+!!! info "Foundation for a calendar"
+
+    The flow retains normalised events (`aos`, `max`, `los`) with station and
+    satellite identifiers. A future calendar view can reuse them without
+    reinterpreting geometry. This is not yet an antenna schedule, resource
+    reservation, or confirmation of operational availability.
+
 ## OEM and time domain
 
 A local OEM trajectory can impose its own temporal domain on the space

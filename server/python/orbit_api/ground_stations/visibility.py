@@ -334,40 +334,90 @@ def extract_passes(
     plots inexpensive, while the pass table is no longer displaced to the
     next 30-second sample merely because the transition happened in between.
     """
-    passes: list[dict] = []
-    active_pass: dict | None = None
-    previous_sample: dict | None = None
-
+    extractor = PassExtractor(
+        minimum_elevation_deg,
+        refine_transition=refine_transition,
+    )
     for sample in samples:
+        extractor.push(sample)
+    return extractor.finish()
+
+
+class PassExtractor:
+    """Incrementally extract AOS/LOS windows from ordered visibility samples.
+
+    The HTTP route may scan a long design window in bounded ephemeris chunks.
+    Retaining only the previous sample and the currently-open pass lets that
+    route keep the exact same transition/refinement semantics as
+    :func:`extract_passes`, without materialising a potentially large chart
+    sequence for an event-only client. A chunk boundary is deliberately not a
+    pass boundary: callers feed every non-duplicate sample into one instance.
+    """
+
+    def __init__(
+        self,
+        minimum_elevation_deg: float,
+        *,
+        refine_transition: Callable[[dict, dict], str | None] | None = None,
+    ) -> None:
+        self.minimum_elevation_deg = float(minimum_elevation_deg)
+        self.refine_transition = refine_transition
+        self.passes: list[dict] = []
+        self.active_pass: dict | None = None
+        self.previous_sample: dict | None = None
+
+    def push(self, sample: dict) -> None:
+        """Consume the next ordered visibility sample."""
+
         elevation = float(sample.get("elevation_deg") or -90.0)
         sample_time = sample.get("time")
-        is_visible = bool(sample.get("visible")) if "visible" in sample else elevation >= minimum_elevation_deg
+        is_visible = bool(sample.get("visible")) if "visible" in sample else elevation >= self.minimum_elevation_deg
         if is_visible:
-            if active_pass is None:
-                previous_visible = bool(previous_sample.get("visible")) if previous_sample and "visible" in previous_sample else False
-                aos = refine_transition(previous_sample, sample) if refine_transition and previous_sample and not previous_visible else None
-                active_pass = {
+            if self.active_pass is None:
+                previous_visible = (
+                    bool(self.previous_sample.get("visible"))
+                    if self.previous_sample and "visible" in self.previous_sample
+                    else False
+                )
+                aos = (
+                    self.refine_transition(self.previous_sample, sample)
+                    if self.refine_transition and self.previous_sample and not previous_visible
+                    else None
+                )
+                self.active_pass = {
                     "aos": aos or sample_time,
                     "los": sample_time,
                     "max_elevation_deg": elevation,
                     "max_elevation_time": sample_time,
                 }
-            elif elevation > active_pass["max_elevation_deg"]:
-                active_pass["max_elevation_deg"] = elevation
-                active_pass["max_elevation_time"] = sample_time
-            active_pass["los"] = sample_time
-        elif active_pass is not None:
-            los = refine_transition(previous_sample, sample) if refine_transition and previous_sample else None
+            elif elevation > self.active_pass["max_elevation_deg"]:
+                self.active_pass["max_elevation_deg"] = elevation
+                self.active_pass["max_elevation_time"] = sample_time
+            self.active_pass["los"] = sample_time
+        elif self.active_pass is not None:
+            los = (
+                self.refine_transition(self.previous_sample, sample)
+                if self.refine_transition and self.previous_sample
+                else None
+            )
             # The previous visible vertex is a conservative fallback.  Never
             # publish the first *invisible* sample as LOS.
-            active_pass["los"] = los or previous_sample.get("time") or active_pass["los"]
-            passes.append(active_pass)
-            active_pass = None
-        previous_sample = sample
+            self.active_pass["los"] = (
+                los
+                or self.previous_sample.get("time")
+                or self.active_pass["los"]
+            )
+            self.passes.append(self.active_pass)
+            self.active_pass = None
+        self.previous_sample = sample
 
-    if active_pass is not None:
-        passes.append(active_pass)
-    return passes
+    def finish(self) -> list[dict]:
+        """Close an access window that remains visible at the final sample."""
+
+        if self.active_pass is not None:
+            self.passes.append(self.active_pass)
+            self.active_pass = None
+        return list(self.passes)
 
 
 def _itrf_from_geodetic(

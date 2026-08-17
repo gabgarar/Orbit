@@ -45,6 +45,28 @@ test("toggling a satellite eye reconciles its station links, so hide removes and
         "both hiding and showing a satellite must rebuild the desired station-link set");
 });
 
+test("station and satellite eyes republish the cached pass-timeline events", () => {
+    const linkSynchronizer = sourceBetween(
+        "function syncGroundStationVisibilityLinks()",
+        "function showGroundStationAnalysisVisuals"
+    );
+    const groundStationVisibility = sourceBetween(
+        "const compositeLayers = createCompositeLayerManager({",
+        "function getLayerDisplayName"
+    );
+    const satelliteVisibility = sourceBetween(
+        "function setCompositeLayerVisibility(layerId, visible)",
+        "function isCompositeLayerActive(layerId)"
+    );
+
+    assert.match(groundStationVisibility, /applyGroundStationVisibility:[\s\S]*?syncGroundStationVisibilityLinks\(\)/,
+        "a station eye must use the common link/timeline synchronizer");
+    assert.match(linkSynchronizer, /syncGroundStationTimelineSelection\(\)/,
+        "the common visibility synchronizer must immediately republish filtered pass events");
+    assert.match(satelliteVisibility, /syncGroundStationVisibilityLinks\(\)[\s\S]*?syncGroundStationTimelineSelection\(\)/,
+        "a satellite eye must also refresh the event stream without a new network request");
+});
+
 test("the selected AOS/LOS connector follows the same layer-visibility contract", () => {
     const analysis = sourceBetween(
         "function showGroundStationAnalysisVisuals",

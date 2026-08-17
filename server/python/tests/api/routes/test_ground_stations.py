@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
+from orbit_api.api.routes import ground_stations as ground_station_routes
 from orbit_api.api.routes.ground_stations import (
     GroundStationExportRequest,
     create_ground_stations_router,
@@ -141,6 +142,95 @@ def test_aos_los_uses_position_only_ephemerides_and_can_omit_samples():
     assert response["count"] == 1
     assert response["samples"] == []
     assert len(response["passes"]) == 1
+
+
+def test_event_only_aos_los_streams_long_ranges_in_exact_grid_chunks(monkeypatch):
+    """A pass crossing chunk seams stays one pass and seam points are deduplicated.
+
+    The production runtime cap is deliberately reduced here so a short fixture
+    exercises multiple chunks. The request keeps its original 30-second grid;
+    it is not silently made coarser to fit one ephemeris response.
+    """
+
+    monkeypatch.setattr(ground_station_routes, "MAX_EPHEMERIS_POINTS", 3)
+    calls: list[tuple[datetime, datetime, float]] = []
+    elevations = {
+        0: 20,
+        30: 30,
+        60: 40,
+        90: 50,
+        120: 40,
+        150: 30,
+        180: 25,
+        210: 20,
+        240: 15,
+    }
+
+    def resolve_propagator(*_args):
+        return "TEST", object()
+
+    def build_ephemeris(_name, _propagator, start, end, step_seconds, *_flags):
+        calls.append((start, end, step_seconds))
+        points = []
+        cursor = start
+        while cursor <= end:
+            offset = int((cursor - START).total_seconds())
+            points.append(_itrf_point(
+                elevation_deg=elevations[offset],
+                azimuth_deg=0,
+                time=cursor,
+            ))
+            cursor += timedelta(seconds=step_seconds)
+        return {
+            "points": points,
+            "reference_frame": "ITRF",
+            "transport_time_scale": "UTC",
+        }
+
+    router = create_ground_stations_router(resolve_propagator, build_ephemeris, lambda value: value)
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/aos-los" and "POST" in route.methods)
+    response = endpoint(AosLosRequest(
+        sat_id="TEST",
+        station=StationInput(lat_deg=0, lon_deg=0, min_elevation_deg=10),
+        start_time=START,
+        end_time=START + timedelta(minutes=4),
+        step_seconds=30,
+        include_samples=False,
+    ))
+
+    # Four legal 3-point chunks overlap at 60, 120 and 180 seconds. The
+    # stream sees the nine physical grid vertices exactly once.
+    assert len(calls) == 4
+    assert all(step_seconds == 30 for _start, _end, step_seconds in calls)
+    assert response["ephemeris_chunk_count"] == 4
+    assert response["count"] == 9
+    assert response["samples"] == []
+    assert response["returned_sample_count"] == 0
+    assert len(response["passes"]) == 1
+    access_pass = response["passes"][0]
+    assert access_pass["aos"] == START.isoformat()
+    assert access_pass["los"] == (START + timedelta(minutes=4)).isoformat()
+    assert access_pass["max_elevation_deg"] == pytest.approx(50.0)
+    assert access_pass["max_elevation_time"] == (START + timedelta(seconds=90)).isoformat()
+
+
+def test_event_only_aos_los_rejects_an_abusive_total_sample_budget_without_coarsening(monkeypatch):
+    monkeypatch.setattr(ground_station_routes, "MAX_AOS_LOS_EVENT_ONLY_SAMPLES", 3)
+    endpoint = _post_endpoint_for([_itrf_point(elevation_deg=45, azimuth_deg=0)])
+    request = AosLosRequest(
+        sat_id="TEST",
+        station=StationInput(lat_deg=0, lon_deg=0, min_elevation_deg=10),
+        start_time=START,
+        end_time=START + timedelta(seconds=90),
+        step_seconds=30,
+        include_samples=False,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        endpoint(request)
+
+    assert error.value.status_code == 422
+    assert "no reduce la resoluci" in str(error.value.detail)
 
 
 def test_get_aos_los_can_omit_samples_without_changing_the_count():

@@ -16,18 +16,12 @@ test("pass timeline marker prefers the exact maximum-elevation instant", () => {
     });
 });
 
-test("pass timeline marker falls back to midpoint and then AOS", () => {
+test("pass timeline marker does not fabricate a maximum from midpoint or AOS", () => {
     const aos = "2026-08-07T10:00:00.000Z";
     const los = "2026-08-07T10:08:00.000Z";
 
-    assert.deepEqual(getPassTimelineMarker({ aos, los }), {
-        time: (Date.parse(aos) + Date.parse(los)) / 2,
-        label: "punto medio"
-    });
-    assert.deepEqual(getPassTimelineMarker({ aos }), {
-        time: Date.parse(aos),
-        label: "inicio del pase"
-    });
+    assert.equal(getPassTimelineMarker({ aos, los }), null);
+    assert.equal(getPassTimelineMarker({ aos }), null);
     assert.equal(getPassTimelineMarker({ aos: "not-a-date" }), null);
 });
 

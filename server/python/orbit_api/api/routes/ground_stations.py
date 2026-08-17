@@ -14,6 +14,11 @@ from orbit_api.application.geospatial_exports import (
     geospatial_content_type,
     geospatial_export_bytes,
 )
+from orbit_api.application.manual_erp import (
+    ManualErpError,
+    ManualErpRepository,
+    resolve_manual_erp_input,
+)
 from orbit_api.application.manual_orbits import (
     ManualOrbitError,
     build_manual_orbit_propagator,
@@ -23,11 +28,7 @@ from orbit_api.application.manual_orbits import (
     require_manual_erp_for_force_terms,
     validate_manual_erp_coverage,
 )
-from orbit_api.application.manual_erp import (
-    ManualErpError,
-    ManualErpRepository,
-    resolve_manual_erp_input,
-)
+from orbit_api.core.settings import MAX_EPHEMERIS_POINTS
 from orbit_api.domain.requests import (
     AosLosRequest,
     StationInput,
@@ -35,13 +36,13 @@ from orbit_api.domain.requests import (
 )
 from orbit_api.frames import FrameTransformService
 from orbit_api.ground_stations.visibility import (
+    PassExtractor,
     azimuth_degrees,
     azimuth_is_defined,
     azimuth_within_limits,
     directional_pattern_loss_for_directions_db,
     directional_range_km,
     elevation_degrees,
-    extract_passes,
     slant_range_km,
 )
 from orbit_api.orbits.forces import GravityFieldModel, GravityModelRegistry
@@ -104,6 +105,92 @@ _GROUND_STATION_EXPORT_FIELDS = frozenset({
     "visible",
 })
 
+# Event-only clients such as the simulation pass timeline do not receive the
+# coarse ephemeris vertices, so they can safely scan several bounded runtime
+# chunks without retaining every position in process memory. Keep a finite
+# global budget nevertheless: a tiny requested step over an arbitrary window
+# must fail explicitly rather than turn one click into an unbounded numerical
+# propagation. The public error tells callers to shorten the window or choose
+# a resolution appropriate to their planning task; it never silently changes
+# their requested step.
+MAX_AOS_LOS_EVENT_ONLY_SAMPLES = 250_000
+
+
+def _requested_access_sample_upper_bound(
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+    step_seconds: float,
+) -> int:
+    """Return a conservative count including an explicit non-grid endpoint."""
+
+    span_seconds = max(0.0, (end_time - start_time).total_seconds())
+    return max(1, math.ceil(span_seconds / float(step_seconds)) + 1)
+
+
+def _validate_access_sampling_budget(payload: AosLosRequest) -> None:
+    """Keep long event scans bounded without coarsening their time grid."""
+
+    estimated_samples = _requested_access_sample_upper_bound(
+        payload.start_time,
+        payload.end_time,
+        payload.step_seconds,
+    )
+    maximum_samples = (
+        MAX_EPHEMERIS_POINTS
+        if payload.include_samples
+        else MAX_AOS_LOS_EVENT_ONLY_SAMPLES
+    )
+    if estimated_samples <= maximum_samples:
+        return
+    result_kind = "con muestras de gráfica" if payload.include_samples else "solo con eventos"
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            f"La ventana AOS/LOS requiere aproximadamente {estimated_samples} muestras {result_kind}; "
+            f"el máximo permitido es {maximum_samples}. Reduce la ventana o aumenta step_seconds. "
+            "Orbit no reduce la resolución solicitada automáticamente."
+        ),
+    )
+
+
+def _iter_access_ephemeris_chunks(
+    build_ephemeris: Callable,
+    runtime_name: str,
+    propagator: object,
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+    step_seconds: float,
+):
+    """Yield runtime-legal ephemeris chunks on one unchanged sample grid.
+
+    ``OrbitRuntime.build_ephemeris`` rightly rejects any individual materialised
+    response above ``MAX_EPHEMERIS_POINTS``. AOS/LOS event extraction is
+    linear, however, and needs only adjacent samples. Chunks therefore overlap
+    at exactly one sample endpoint; the route drops that duplicate before
+    feeding the stream into its stateful extractor. This retains the requested
+    step and lets a pass span a chunk boundary without being split or missed.
+    """
+
+    max_intervals = MAX_EPHEMERIS_POINTS - 1
+    if max_intervals < 1:  # Defensive: runtime configuration must support a segment endpoint pair.
+        raise HTTPException(status_code=500, detail="El límite de efemérides AOS/LOS no admite segmentos válidos.")
+    chunk_span = datetime.timedelta(seconds=float(step_seconds) * max_intervals)
+    cursor = start_time
+    while cursor < end_time:
+        chunk_end = min(end_time, cursor + chunk_span)
+        yield build_ephemeris(
+            runtime_name,
+            propagator,
+            cursor,
+            chunk_end,
+            step_seconds,
+            False,
+            True,
+        )
+        if chunk_end >= end_time:
+            break
+        cursor = chunk_end
+
 
 def _finite_station_coordinate(value: object, label: str) -> float:
     try:
@@ -140,9 +227,8 @@ def ground_station_geospatial_features(stations: list[dict[str, object]]) -> lis
         properties: dict[str, object] = {"station_id": station_id, "feature_kind": "ground_station"}
         for field in _GROUND_STATION_EXPORT_FIELDS:
             value = station.get(field)
-            if value is None or isinstance(value, (str, int, float, bool)):
-                if field in station:
-                    properties[field] = value
+            if field in station and (value is None or isinstance(value, (str, int, float, bool))):
+                properties[field] = value
         monitor_ids = station.get("monitor_satellite_ids")
         if isinstance(monitor_ids, list):
             properties["monitor_satellite_ids"] = json.dumps([str(item) for item in monitor_ids], ensure_ascii=False)
@@ -310,24 +396,9 @@ def create_ground_stations_router(
         return manual.name, runtime_name, propagator, source_metadata
 
     def calculate_access_windows(payload: AosLosRequest) -> dict:
+        _validate_access_sampling_budget(payload)
         name, runtime_name, propagator, source_metadata = resolve_access_source(payload)
-        # AOS/LOS consumes only ITRF positions.  Request the runtime's
-        # position-only ephemeris so it does not calculate/serialize velocity
-        # derivatives or duplicate native samples for every planning point.
-        try:
-            ephemeris = build_ephemeris(
-                runtime_name,
-                propagator,
-                payload.start_time,
-                payload.end_time,
-                payload.step_seconds,
-                False,
-                True,
-            )
-        except HTTPException:
-            raise
-        except (ManualOrbitError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         def visibility_sample(point: dict) -> dict:
             position = point.get("position") or {}
             elevation = elevation_degrees(
@@ -483,12 +554,56 @@ def create_ground_stations_router(
 
             return (lower + ((upper - lower) / 2)).isoformat()
 
-        samples = [visibility_sample(point) for point in ephemeris["points"]]
-        passes = extract_passes(
-            samples,
+        # Event-only AOS/LOS requests may span more than one legal runtime
+        # ephemeris response. Keep the original requested step and stream
+        # non-duplicate endpoints into one stateful extractor, so a pass that
+        # crosses a segment boundary remains one pass with the same refined
+        # AOS/LOS semantics as a short single-request analysis. Detailed
+        # chart requests remain bounded by ``MAX_EPHEMERIS_POINTS`` above and
+        # therefore retain their historical full sample response shape.
+        samples: list[dict] = []
+        pass_extractor = PassExtractor(
             payload.station.min_elevation_deg,
             refine_transition=refine_visibility_transition,
         )
+        ephemeris: dict | None = None
+        previous_point_time: object = None
+        sample_count = 0
+        ephemeris_chunk_count = 0
+        try:
+            for chunk in _iter_access_ephemeris_chunks(
+                build_ephemeris,
+                runtime_name,
+                propagator,
+                payload.start_time,
+                payload.end_time,
+                payload.step_seconds,
+            ):
+                if ephemeris is None:
+                    ephemeris = chunk
+                ephemeris_chunk_count += 1
+                for point in chunk.get("points") or []:
+                    point_time = point.get("time")
+                    if point_time is not None and point_time == previous_point_time:
+                        # Each runtime-legal chunk includes the prior
+                        # endpoint. Dropping only that exact duplicate keeps
+                        # the visibility sequence continuous without creating
+                        # a synthetic AOS/LOS at the seam.
+                        continue
+                    if point_time is not None:
+                        previous_point_time = point_time
+                    sample = visibility_sample(point)
+                    pass_extractor.push(sample)
+                    sample_count += 1
+                    if payload.include_samples:
+                        samples.append(sample)
+        except HTTPException:
+            raise
+        except (ManualOrbitError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if ephemeris is None:
+            raise HTTPException(status_code=422, detail="La efeméride AOS/LOS no contiene ningún segmento válido.")
+        passes = pass_extractor.finish()
 
         def parse_utc_time(value: object) -> datetime.datetime | None:
             """Parse an API timestamp without making a malformed sample fatal."""
@@ -576,13 +691,18 @@ def create_ground_stations_router(
             "renderer_reference": ephemeris.get("renderer_reference"),
             "time_scale": str(ephemeris.get("transport_time_scale") or ephemeris.get("time_scale") or "UTC"),
             "step_seconds": payload.step_seconds,
+            # Audit the fact that a long event-only request was evaluated at
+            # its requested resolution over several legal runtime chunks.
+            # This is informational only; callers still receive one logical
+            # pass sequence with no boundary-created windows.
+            "ephemeris_chunk_count": ephemeris_chunk_count,
             "passes": passes,
             # The internal sequence is still evaluated so AOS/LOS and its
             # refined crossings are identical.  Streaming users that only
             # need event windows can avoid a multi-megabyte response; chart
             # clients can request only contact-adjacent vertices.
             "samples": returned_samples,
-            "count": len(samples),
+            "count": sample_count,
             "returned_sample_count": len(returned_samples),
             "sample_scope": sample_scope,
             "chart_padding_seconds": payload.chart_padding_seconds,

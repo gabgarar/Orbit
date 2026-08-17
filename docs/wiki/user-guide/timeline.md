@@ -34,6 +34,56 @@ En Simulated, el control inferior ofrece:
 El cursor se limita al intervalo elegido. Si el fin no es posterior al inicio,
 la línea temporal no representa un rango válido.
 
+## Hitos de pases AOS/LOS
+
+En modo **Simulated**, al seleccionar una estación terrestre visible o un
+satélite visible, Orbit calcula progresivamente los pases de todos los pares
+estación--satélite que tienen ambos extremos visibles en la escena. El cálculo
+usa la ventana simulada activa y el mismo contrato AOS/LOS que alimenta las
+tablas de pases; no inventa una nueva efeméride ni extrapola una fuente finita
+fuera de su cobertura.
+
+Cada pase publicado aporta hasta tres hitos UTC en la barra temporal:
+
+- **Máxima elevación**, en verde y por encima de la barra. Solo se muestra si
+  el análisis publicó el instante `max_elevation_time`; no se presenta un
+  punto medio como si fuera un máximo físico.
+- **AOS** y **LOS**, en morado y por debajo de la barra. Delimitan el comienzo
+  y el final refinados del mismo acceso.
+
+Los hitos conservan el par estación--satélite, AOS, LOS y la elevación máxima
+reportada. Se pueden inspeccionar y llevar la simulación al instante UTC del
+evento sin cuantizarlo al paso visual del deslizador. Esto permite comparar
+contactos simultáneos de varias estaciones y satélites dentro de una misma
+ventana.
+
+La visibilidad de la escena es parte del contrato: si se oculta o elimina la
+estación o el satélite de un par, sus tres hitos desaparecen inmediatamente.
+Los resultados se muestran por pares a medida que terminan. Cambiar la
+selección, la ventana simulada o la escena cancela las solicitudes pendientes
+y descarta sus resultados para que no se mezclen con el nuevo contexto. El
+panel de **Actividad** muestra ese trabajo y permite cancelarlo.
+
+!!! note "Ventanas extensas y resolución"
+
+    Las consultas de hitos sin muestras de gráfica conservan exactamente el
+    `step_seconds` solicitado, incluso cuando el backend debe dividir una
+    ventana larga en segmentos internos. Los extremos compartidos se unen antes
+    de extraer AOS/LOS, por lo que un pase que cruza un segmento sigue siendo
+    un único pase. No se reduce el paso automáticamente. Para proteger el
+    servicio, esa modalidad admite como máximo 250&nbsp;000 muestras estimadas;
+    una petición mayor falla de forma explícita y pide acortar la ventana o
+    aumentar el paso. Las consultas que además devuelven vértices para una
+    gráfica conservan el límite materializado de 20&nbsp;000 muestras.
+
+!!! info "Base para el calendario"
+
+    El flujo conserva eventos normalizados (`aos`, `max`, `los`) con sus
+    identificadores de estación y satélite. Una futura vista de calendario
+    podrá reutilizarlos sin reinterpretar la geometría. No constituye todavía
+    una agenda de antena, reserva de recurso ni confirmación de disponibilidad
+    operativa.
+
 ## OEM y dominio temporal
 
 Una trayectoria OEM local puede imponer su propio dominio temporal al espacio
@@ -60,4 +110,3 @@ La interfaz presenta UTC. Las conversiones UTC, UT1, TAI y TT, junto con los
 productos EOP, se configuran en el backend. Para operaciones reproducibles o
 exportaciones de precisión, consulte [Operación de tiempo y EOP](../operations/time-eop.md)
 y no asuma que el modo visual sin datos locales sea apto para análisis.
-

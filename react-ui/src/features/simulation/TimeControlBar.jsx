@@ -1,6 +1,11 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { CalendarIcon, ChevronDownIcon } from "../../components/icons.jsx";
-import { getPassTimelineMarker, getTimelinePosition } from "../../../../front/js/features/groundStations/passTimeline.js";
+import PassTimelineMarkers from "./PassTimelineMarkers.jsx";
+import { GROUND_STATION_TIMELINE_EVENTS_EVENT } from "../../../../front/js/features/groundStations/passTimelineEvents.js";
+import {
+    legacyGroundStationPassesToTimelineEvents,
+    normalizeGroundStationTimelineEvents
+} from "../../../../front/js/features/groundStations/passTimelinePresentation.js";
 
 const initialSimulation = { mode: "realtime", isPlaying: true, speed: 1, timelineStep: 0, timelineSteps: 1000, currentDate: new Date().toISOString(), startDate: new Date().toISOString(), endDate: new Date().toISOString() };
 // ``datetime-local`` deliberately carries no offset. Treat its displayed
@@ -50,10 +55,8 @@ function buildTimelineMarks(startValue, endValue, count = 6) {
 export default function TimeControlBar() {
     const [collapsed, setCollapsed] = useState(false); const [simulation, setSimulation] = useState(initialSimulation); const [dockLeft, setDockLeft] = useState(null); const [dockHeight, setDockHeight] = useState(null); const [dockBottom, setDockBottom] = useState(null);
     const [speedMenuOpen, setSpeedMenuOpen] = useState(false); const [dateMenuOpen, setDateMenuOpen] = useState(false); const [designMode, setDesignMode] = useState(isManualOrbitDesignActive);
-    const [accessMarks, setAccessMarks] = useState([]);
+    const [timelineEventState, setTimelineEventState] = useState({ source: "none", status: "idle", events: [] });
     const [accessWindow, setAccessWindow] = useState(null);
-    const [accessContext, setAccessContext] = useState({ stationName: "", satelliteName: "", referenceFrame: "Marco no declarado", timeScale: "UTC" });
-    const [hoveredPassMarker, setHoveredPassMarker] = useState(null);
     const sendAction = (type, value) => window.dispatchEvent(new CustomEvent("orbit:simulation-action", { detail: { type, value } }));
 
     useEffect(() => { const sync = (event) => setSimulation((current) => ({ ...current, ...(event.detail || {}) })); window.addEventListener("orbit:simulation-state", sync); return () => window.removeEventListener("orbit:simulation-state", sync); }, []);
@@ -61,18 +64,34 @@ export default function TimeControlBar() {
     useEffect(() => {
         const sync = (event) => {
             const detail = event.detail || {};
-            setAccessMarks(Array.isArray(detail.passes) ? detail.passes : []);
             setAccessWindow(detail.analysisWindow || null);
-            setAccessContext({
-                stationName: String(detail.stationName || detail.station?.name || "").trim(),
-                satelliteName: String(detail.satelliteName || detail.satellite || "").trim(),
-                referenceFrame: String(detail.referenceFrameLabel || detail.reference_frame_label || detail.referenceFrame || detail.reference_frame || "Marco no declarado"),
-                timeScale: String(detail.timeScale || detail.time_scale || "UTC")
+            // A legacy runtime publishes one station/satellite analysis at a
+            // time. It remains a useful fallback until every scene publisher
+            // has moved to the aggregate, visibility-filtered event stream.
+            setTimelineEventState((current) => current.source === "aggregate" ? current : {
+                source: "legacy",
+                status: detail.error ? "error" : "ready",
+                events: legacyGroundStationPassesToTimelineEvents(detail)
             });
-            setHoveredPassMarker(null);
         };
         window.addEventListener("orbit:ground-stations-analysis-result", sync);
         return () => window.removeEventListener("orbit:ground-stations-analysis-result", sync);
+    }, []);
+    useEffect(() => {
+        const sync = (event) => {
+            const detail = event.detail || {};
+            const status = ["loading", "ready", "error"].includes(detail.status) ? detail.status : "ready";
+            setTimelineEventState({
+                source: "aggregate",
+                status,
+                // The runtime publishes completed station/satellite pairs as
+                // they arrive. Keep those markers available during loading;
+                // only an explicit terminal error clears the presentation.
+                events: status === "error" ? [] : normalizeGroundStationTimelineEvents(detail)
+            });
+        };
+        window.addEventListener(GROUND_STATION_TIMELINE_EVENTS_EVENT, sync);
+        return () => window.removeEventListener(GROUND_STATION_TIMELINE_EVENTS_EVENT, sync);
     }, []);
     useEffect(() => {
         const shell = document.getElementById("leftWorkspaceShell"); const panel = document.getElementById("leftSatellitesPanel"); const infoPanel = document.getElementById("leftInfoPanel"); const rail = document.getElementById("leftSidebar"); const projectTimeFooter = document.getElementById("projectTimeFooter");
@@ -128,21 +147,10 @@ export default function TimeControlBar() {
             && Math.abs(analysisStart - timelineStart) < 1_000
             && Math.abs(analysisEnd - timelineEnd) < 1_000;
     })();
-    const timelinePassMarks = analysisRangeMatchesTimeline ? accessMarks : [];
-    const passTimelineMarkers = timelinePassMarks.flatMap((pass, index) => {
-        const marker = getPassTimelineMarker(pass);
-        const position = marker ? getTimelinePosition(marker.time, simulation.startDate, simulation.endDate) : null;
-        if (!marker || position === null || position < 0 || position > 100) return [];
-        return [{
-            id: `${index}-${marker.time}-${String(pass?.aos || "")}`,
-            index,
-            pass,
-            marker,
-            position,
-            maxElevation: Number(pass?.max_elevation_deg)
-        }];
-    });
-    useEffect(() => { setHoveredPassMarker(null); }, [simulation.startDate, simulation.endDate, analysisRangeMatchesTimeline]);
+    const timelineEvents = timelineEventState.status !== "error"
+        && (timelineEventState.source !== "legacy" || analysisRangeMatchesTimeline)
+        ? timelineEventState.events
+        : [];
     const progress = Math.max(0, Math.min(100, ((simulation.timelineStep || 0) / (simulation.timelineSteps || 1000)) * 100));
     const markerPositionClass = progress <= 3
         ? "is-start translate-x-0 after:left-[6px]"
@@ -216,48 +224,27 @@ export default function TimeControlBar() {
                         value={simulation.timelineStep || 0}
                         onChange={(event) => sendAction("timeline", Number(event.target.value))}
                     />
-                    {hoveredPassMarker && <aside
-                        id="ground-station-pass-tooltip"
-                        role="tooltip"
-                        className={classNames(
-                            "pointer-events-none absolute bottom-[calc(100%+9px)] z-20 w-[min(270px,calc(100vw-40px))] rounded-[8px] border border-[#35634f] bg-[linear-gradient(145deg,rgba(8,30,26,.98),rgba(5,16,27,.985))] px-3 py-2.5 font-[system-ui,sans-serif] text-[10px] leading-[1.35] text-[#d8eee2] shadow-[0_14px_34px_rgba(0,0,0,.48)]",
-                            hoveredPassMarker.position <= 10 ? "translate-x-0" : hoveredPassMarker.position >= 90 ? "-translate-x-full" : "-translate-x-1/2"
-                        )}
-                        style={{ left: `${hoveredPassMarker.position}%` }}
-                    >
-                        <div className="flex items-center justify-between gap-3"><strong className="text-[11px] text-[#effff4]">Pase {hoveredPassMarker.index + 1}</strong><span className="shrink-0 text-[#89e7ae]">{hoveredPassMarker.marker.label}</span></div>
-                        <p className="mt-1 mb-2 truncate text-[#a8cabb]">{accessContext.satelliteName || "Satélite"} <span className="text-[#608879]">·</span> {accessContext.stationName || "Estación terrestre"} <span className="text-[#608879]">·</span> {accessContext.referenceFrame} / {accessContext.timeScale}</p>
-                        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-y border-[#285041] py-1.5"><dt className="text-[#8fb7a3]">AOS</dt><dd className="m-0 text-right font-semibold text-[#e0f4e7]">{passTimeLabel(hoveredPassMarker.pass.aos)}</dd><dt className="text-[#8fb7a3]">LOS</dt><dd className="m-0 text-right font-semibold text-[#e0f4e7]">{passTimeLabel(hoveredPassMarker.pass.los)}</dd><dt className="text-[#8fb7a3]">Máx.</dt><dd className="m-0 text-right font-semibold text-[#8fe8b2]">{Number.isFinite(hoveredPassMarker.maxElevation) ? `${hoveredPassMarker.maxElevation.toFixed(1)}°` : "—"} · {passTimeLabel(hoveredPassMarker.marker.time)}</dd></dl>
-                        <p className="mt-2 mb-0 text-[#9dc7af]">Pulsa para situar la simulación en este instante.</p>
-                    </aside>}
-                    <div className="pointer-events-none absolute top-[20px] right-0 left-0 z-[4] h-[18px]" aria-label="Pases calculados de la estación terrestre">
-                        {passTimelineMarkers.map((timelineMarker) => {
-                            const satellite = accessContext.satelliteName || "satélite";
-                            const station = accessContext.stationName || "estación terrestre";
-                            const maximumElevation = Number.isFinite(timelineMarker.maxElevation) ? `, máxima elevación ${timelineMarker.maxElevation.toFixed(1)} grados` : "";
-                            const markerLabel = `Pase ${timelineMarker.index + 1} de ${satellite} desde ${station}: AOS ${passTimeLabel(timelineMarker.pass.aos)}, LOS ${passTimeLabel(timelineMarker.pass.los)}${maximumElevation}. Ir a ${timelineMarker.marker.label}.`;
-                            return <button
-                                key={timelineMarker.id}
-                                className="pointer-events-auto absolute top-[-7px] h-[18px] w-[18px] -translate-x-1/2 cursor-pointer border-0 bg-transparent p-0 before:absolute before:top-[2px] before:left-1/2 before:h-[13px] before:w-[2px] before:-translate-x-1/2 before:rounded before:bg-[#67ed9d] before:shadow-[0_0_7px_rgba(103,237,157,.8)] before:transition-colors hover:before:bg-[#a7ffc5] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#9bf8ba]"
-                                type="button"
-                                aria-label={markerLabel}
-                                aria-describedby={hoveredPassMarker?.id === timelineMarker.id ? "ground-station-pass-tooltip" : undefined}
-                                onPointerEnter={() => setHoveredPassMarker(timelineMarker)}
-                                onPointerLeave={() => setHoveredPassMarker((current) => current?.id === timelineMarker.id ? null : current)}
-                                onFocus={() => setHoveredPassMarker(timelineMarker)}
-                                onBlur={() => setHoveredPassMarker((current) => current?.id === timelineMarker.id ? null : current)}
-                                onClick={() => sendAction("timeline-jump", { time: new Date(timelineMarker.marker.time).toISOString(), source: "ground-station-pass", passIndex: timelineMarker.index })}
-                                style={{ left: `${timelineMarker.position}%` }}
-                            />;
+                    <PassTimelineMarkers
+                        events={timelineEvents}
+                        startDate={simulation.startDate}
+                        endDate={simulation.endDate}
+                        formatTime={passTimeLabel}
+                        onJump={(marker) => sendAction("timeline-jump", {
+                            time: new Date(marker.time).toISOString(),
+                            source: "ground-station-pass",
+                            eventType: marker.eventType,
+                            passId: marker.passId || undefined,
+                            stationId: marker.stationId || undefined,
+                            satelliteId: marker.satelliteId || undefined
                         })}
-                    </div>
+                    />
                     <div className="pointer-events-none absolute top-[20px] right-0 left-0 z-[2] h-[33px]" aria-hidden="true">
                         {Array.from({ length: 21 }, (_, index) => {
                             const mark = Number.isInteger(index / 4) ? marks[index / 4] : null;
                             const labelPositionClass = index === 0 ? "translate-x-0 text-left" : index === 20 ? "-translate-x-full text-right" : "-translate-x-1/2 text-center";
                             return <span className={classNames("absolute top-0 h-full w-px -translate-x-1/2", index === 0 && "translate-x-0", index === 20 && "-translate-x-full", mark && "is-major")} key={index} style={{ left: index * 5 + "%" }}>
                                 <i className={classNames("absolute top-[1px] left-0 h-[7px] w-px bg-[#64738a] opacity-[.56]", mark && "top-[-2px] h-[12px] bg-[#9aa8ba] opacity-[.88]")} />
-                                {mark && <time className={classNames("absolute top-[13px] left-0 grid gap-0 whitespace-nowrap text-[8px] leading-[1.1] font-medium tracking-[.01em] text-[#7890ad]", labelPositionClass)}>{timelineDateLabel(mark.value)}<b className="font-semibold text-[9px] leading-[1.1] tabular-nums text-[#c7d7eb]">{timelineTimeLabel(mark.value)}</b></time>}
+                                {mark && <time className={classNames("absolute top-[22px] left-0 grid gap-0 whitespace-nowrap text-[8px] leading-[1.1] font-medium tracking-[.01em] text-[#7890ad]", labelPositionClass)}>{timelineDateLabel(mark.value)}<b className="font-semibold text-[9px] leading-[1.1] tabular-nums text-[#c7d7eb]">{timelineTimeLabel(mark.value)}</b></time>}
                             </span>;
                         })}
                     </div>

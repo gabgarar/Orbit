@@ -11,19 +11,13 @@ function timestamp(value) {
 /**
  * Select the instant represented by a pass mark in the global timeline.
  *
- * The marker deliberately prefers the instant of maximum elevation: it is the
- * most useful single instant to inspect and it remains inside the validated
- * AOS/LOS window. Older responses without that sample retain the midpoint and
- * AOS fallbacks.
+ * A green maximum-elevation marker must be backed by the physical sample
+ * reported by AOS/LOS. A midpoint (or AOS) can be useful for navigation, but
+ * is not a maximum and must not enter this marker contract as one.
  */
 export function getPassTimelineMarker(pass) {
     const peakTime = timestamp(pass?.max_elevation_time);
     if (peakTime !== null) return { time: peakTime, label: "máxima elevación" };
-
-    const aosTime = timestamp(pass?.aos);
-    const losTime = timestamp(pass?.los);
-    if (aosTime !== null && losTime !== null) return { time: (aosTime + losTime) / 2, label: "punto medio" };
-    if (aosTime !== null) return { time: aosTime, label: "inicio del pase" };
     return null;
 }
 

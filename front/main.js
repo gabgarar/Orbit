@@ -87,6 +87,11 @@ import {
     assessFiniteEphemerisAnalysisRange,
     finiteEphemerisAnalysisRangeMessage
 } from "./js/features/groundStations/timeRangeContract.js";
+import {
+    buildGroundStationPassTimelineEvents,
+    filterGroundStationPassTimelineEvents,
+    GROUND_STATION_TIMELINE_EVENTS_EVENT
+} from "./js/features/groundStations/passTimelineEvents.js";
 import { createProjectLifecycle } from "./js/runtime/projectLifecycle.js";
 import { setupCameraActions } from "./js/runtime/camera/actions.js";
 import { createFreeCameraKeyboardControls } from "./js/runtime/camera/freeKeyboardControls.js";
@@ -435,6 +440,17 @@ let groundStationAnalysisRequestSequence = 0;
 let groundStationAnalysisAbortController = null;
 let groundStationAnalysisOperationId = null;
 const groundStationVisibilityLinks = new Map();
+// The simulation timeline owns a separate, aggregate access forecast.  It
+// must never replace the detailed single-pair AOS/LOS result (table, chart
+// and live selected-link), which remains intentionally independent below.
+let groundStationTimelineSelection = null;
+let groundStationTimelineRequestSequence = 0;
+let groundStationTimelineAbortController = null;
+let groundStationTimelineOperationId = null;
+let groundStationTimelineContextKey = "";
+const groundStationTimelinePairResults = new Map();
+const groundStationTimelinePairCache = new Map();
+const groundStationTimelinePairFailures = new Map();
 let currentProjectFileHandle = null;
 let currentProjectName = null;
 let objectSidebar = null;
@@ -587,6 +603,10 @@ const PROPAGATED_PARAMETERS_MANUAL_REFRESH_DEBOUNCE_MS = 280;
 const GROUND_STATION_ANALYSIS_STEP_SECONDS = 20;
 const GROUND_STATION_BACKGROUND_PASS_STEP_SECONDS = 30;
 const GROUND_STATION_CHART_PADDING_SECONDS = 120;
+// Aggregate forecasts can cover many visible layers.  Limit browser/API work
+// so clicking one station cannot fan out into an unbounded burst of numerical
+// or precise-product propagations.
+const GROUND_STATION_TIMELINE_MAX_CONCURRENCY = 2;
 const PROPAGATED_PARAMETERS_MAX_RANGE_HOURS = 365 * 24;
 
 const simulationState = {
@@ -991,6 +1011,533 @@ function getGroundStationAnalysisWindow() {
         source: "rolling-24h"
     };
 }
+
+/**
+ * Return the one temporal domain in which the lower simulation dock exists.
+ * Timeline events are deliberately never generated for realtime/static: a
+ * rolling forecast would move beneath the operator and make a future calendar
+ * ambiguous about which interval was actually analysed.
+ */
+function getGroundStationTimelineRange() {
+    if (simulationState.mode !== SIMULATION_MODE_RANGE) return null;
+    const startDate = new Date(simulationState.startDate);
+    const endDate = new Date(simulationState.endDate);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || endDate <= startDate) {
+        return null;
+    }
+    return {
+        startDate,
+        endDate,
+        startTime: startDate.toISOString(),
+        endTime: endDate.toISOString(),
+        source: "simulation-range"
+    };
+}
+
+function sameGroundStationTimelineRange(left, right) {
+    if (!left || !right) return false;
+    const leftStart = new Date(left.startDate ?? left.startTime).getTime();
+    const leftEnd = new Date(left.endDate ?? left.endTime).getTime();
+    const rightStart = new Date(right.startDate ?? right.startTime).getTime();
+    const rightEnd = new Date(right.endDate ?? right.endTime).getTime();
+    return [leftStart, leftEnd, rightStart, rightEnd].every(Number.isFinite)
+        && Math.abs(leftStart - rightStart) < 1_000
+        && Math.abs(leftEnd - rightEnd) < 1_000;
+}
+
+function resolveGroundStationTimelineSelection(layerId = selectedSatelliteId) {
+    const id = String(layerId || "").trim();
+    if (!id || !getGroundStationTimelineRange() || !isCompositeLayerActive(id) || getCompositeLayerVisibility(id) !== true) {
+        return null;
+    }
+    if (isGroundStationLayerId(id)) {
+        return groundStationLayers.has(id) ? { kind: "station", id } : null;
+    }
+    if (isCelestialBodyLayerId(id)) return null;
+    return { kind: "satellite", id };
+}
+
+function groundStationTimelineSelectionKey(selection, range = getGroundStationTimelineRange()) {
+    if (!selection || !range) return "";
+    return `${selection.kind}:${selection.id}:${range.startTime}:${range.endTime}`;
+}
+
+function isGroundStationTimelinePairVisible(stationId, satelliteLayerId) {
+    const station = groundStationLayers.get(stationId);
+    return station?.visible === true
+        && isCompositeLayerActive(satelliteLayerId)
+        && getCompositeLayerVisibility(satelliteLayerId) === true;
+}
+
+function groundStationTimelineEvents() {
+    const events = [...groundStationTimelinePairResults.values()]
+        .flatMap((result) => Array.isArray(result?.events) ? result.events : []);
+    return filterGroundStationPassTimelineEvents(events, isGroundStationTimelinePairVisible);
+}
+
+/** Publish the aggregate contract consumed by the simulation timeline UI. */
+function publishGroundStationTimelineEvents({ status = "ready", message = "", totalPairs = null, completedPairs = null, skippedPairs = null } = {}) {
+    const range = getGroundStationTimelineRange();
+    const selection = groundStationTimelineSelection;
+    const context = selection && range
+        ? {
+            kind: selection.kind,
+            id: selection.id,
+            startTime: range.startTime,
+            endTime: range.endTime,
+            source: range.source
+        }
+        : null;
+    const failures = [...groundStationTimelinePairFailures.values()].map((failure) => ({ ...failure }));
+    window.dispatchEvent(new CustomEvent(GROUND_STATION_TIMELINE_EVENTS_EVENT, {
+        detail: {
+            context,
+            status: ["loading", "ready", "error"].includes(status) ? status : "ready",
+            events: context ? groundStationTimelineEvents() : [],
+            ...(message ? { message: String(message) } : {}),
+            ...(Number.isFinite(totalPairs) ? { totalPairs } : {}),
+            ...(Number.isFinite(completedPairs) ? { completedPairs } : {}),
+            ...(Number.isFinite(skippedPairs) ? { skippedPairs } : {}),
+            ...(failures.length ? { failures } : {})
+        }
+    }));
+}
+
+function cancelGroundStationTimelinePasses(message = "C\u00e1lculo de eventos de pases cancelado.") {
+    const operationId = groundStationTimelineOperationId;
+    const controller = groundStationTimelineAbortController;
+    if (operationId) {
+        cancelRuntimeSceneOperation(operationId, message);
+        return;
+    }
+    groundStationTimelineOperationId = null;
+    groundStationTimelineAbortController = null;
+    groundStationTimelineRequestSequence += 1;
+    controller?.abort();
+}
+
+function clearGroundStationTimelinePasses({ clearCache = false, message = "" } = {}) {
+    cancelGroundStationTimelinePasses(message || "El contexto de pases de la simulaci\u00f3n ha cambiado.");
+    groundStationTimelineSelection = null;
+    groundStationTimelineContextKey = "";
+    groundStationTimelinePairResults.clear();
+    groundStationTimelinePairFailures.clear();
+    if (clearCache) groundStationTimelinePairCache.clear();
+    publishGroundStationTimelineEvents({ status: "ready", message });
+}
+
+function invalidateGroundStationTimelineCache() {
+    groundStationTimelinePairCache.clear();
+    if (groundStationTimelineContextKey) {
+        void refreshGroundStationTimelinePasses();
+    }
+}
+
+function timelinePairFailure(pair, reason) {
+    return {
+        stationId: pair.stationId,
+        stationName: pair.stationName,
+        satelliteId: pair.satelliteLayerId,
+        satelliteLayerId: pair.satelliteLayerId,
+        sourceSatelliteId: pair.sourceSatelliteId,
+        satelliteName: pair.satelliteName,
+        reason: String(reason || "No se pudieron calcular los pases.")
+    };
+}
+
+function groundStationTimelineCacheKey(pair, range) {
+    return [
+        pair.stationId,
+        pair.satelliteLayerId,
+        pair.sourceSatelliteId,
+        range.startTime,
+        range.endTime,
+        groundStationAnalysisSignature(pair.station),
+        satelliteRfProfileSignature(pair.sourceSatelliteId),
+        pair.request.method,
+        pair.request.url,
+        pair.request.requestOptions?.body || ""
+    ].join("|");
+}
+
+function collectGroundStationTimelinePairs(selection, range) {
+    const pairs = [];
+    const skipped = [];
+    const satelliteLayerIds = getCompositeLayerIds()
+        .filter((id) => !isGroundStationLayerId(id) && !isCelestialBodyLayerId(id))
+        .filter((id) => isCompositeLayerActive(id) && getCompositeLayerVisibility(id) === true);
+    const stations = [...groundStationLayers.values()].filter((station) => station?.visible === true);
+
+    const candidates = selection.kind === "station"
+        ? satelliteLayerIds.map((satelliteLayerId) => ({
+            station: groundStationLayers.get(selection.id),
+            satelliteLayerId
+        }))
+        : stations.map((station) => ({ station, satelliteLayerId: selection.id }));
+
+    for (const candidate of candidates) {
+        const station = candidate.station;
+        const satelliteLayerId = String(candidate.satelliteLayerId || "").trim();
+        const sourceSatelliteId = getSatelliteSourceIdFromLayerId(satelliteLayerId);
+        if (!station || !satelliteLayerId || !sourceSatelliteId || !isGroundStationTimelinePairVisible(station.id, satelliteLayerId)) {
+            continue;
+        }
+
+        const pair = {
+            key: `${station.id}:${satelliteLayerId}`,
+            station,
+            stationId: station.id,
+            stationName: String(station.name || station.id),
+            satelliteLayerId,
+            sourceSatelliteId,
+            satelliteName: String(getLayerDisplayName(satelliteLayerId) || sourceSatelliteId)
+        };
+        const sourceMeta = getCatalogEntryMeta(sourceSatelliteId) || {};
+        const sourceFormat = String(sourceMeta.sourceFormat ?? sourceMeta.source_format ?? "").toUpperCase();
+        if (sourceFormat === "OEM") {
+            skipped.push(timelinePairFailure(pair, "AOS/LOS no est\u00e1 disponible para una OEM local."));
+            continue;
+        }
+        if (String(getGroundStationRfModel(station).operation_mode || "").toLowerCase() === "scan") {
+            skipped.push(timelinePairFailure(pair, "La estaci\u00f3n requiere una agenda de barrido para publicar pases operativos."));
+            continue;
+        }
+        const linkContract = getGroundStationPassLinkContract(station, sourceSatelliteId);
+        if (!linkContract.available) {
+            skipped.push(timelinePairFailure(pair, `El perfil RF no permite el enlace (${linkContract.reason || "perfil incompleto"}).`));
+            continue;
+        }
+        const finiteRange = assessFiniteEphemerisAnalysisRange(
+            getObjectIntrinsicTimeRange(sourceSatelliteId),
+            range
+        );
+        if (!finiteRange.allowed) {
+            skipped.push(timelinePairFailure(pair, finiteEphemerisAnalysisRangeMessage(finiteRange)));
+            continue;
+        }
+        const declaredFrameStatus = resolveGroundPassFrameStatus(sourceSatelliteId);
+        if (isPreciseProductLayer(sourceSatelliteId) && declaredFrameStatus.available === false) {
+            skipped.push(timelinePairFailure(pair, unavailablePreciseGroundPassMessage(declaredFrameStatus)));
+            continue;
+        }
+        try {
+            const request = createGroundStationPassRequest(station, sourceSatelliteId, range.startDate, range.endDate, {
+                stepSeconds: GROUND_STATION_BACKGROUND_PASS_STEP_SECONDS,
+                includeSamples: false
+            });
+            // A manual source owns its design window. It participates only
+            // when that authored interval is exactly the range on screen;
+            // never fabricate timeline events from another time domain.
+            if (request.analysisWindow && !sameGroundStationTimelineRange(request.analysisWindow, range)) {
+                skipped.push(timelinePairFailure(pair, "La ventana de dise\u00f1o de la \u00f3rbita manual no coincide con el rango de simulaci\u00f3n."));
+                continue;
+            }
+            pair.request = request;
+            pair.cacheKey = groundStationTimelineCacheKey(pair, range);
+            pairs.push(pair);
+        } catch (error) {
+            skipped.push(timelinePairFailure(pair, error instanceof Error ? error.message : String(error)));
+        }
+    }
+    return { pairs, skipped };
+}
+
+function isCurrentGroundStationTimelineRequest({ requestId, selectionKey, range, controller }) {
+    return requestId === groundStationTimelineRequestSequence
+        && controller === groundStationTimelineAbortController
+        && selectionKey === groundStationTimelineContextKey
+        && sameGroundStationTimelineRange(range, getGroundStationTimelineRange());
+}
+
+async function fetchGroundStationTimelinePair(pair, controller) {
+    const response = await fetch(pair.request.url, {
+        ...pair.request.requestOptions,
+        signal: controller.signal
+    });
+    if (!response.ok) throw await groundStationPassResponseError(response);
+    const payload = await response.json();
+    return {
+        ...pair,
+        passes: Array.isArray(payload?.passes) ? payload.passes : [],
+        events: buildGroundStationPassTimelineEvents({
+            stationId: pair.stationId,
+            stationName: pair.stationName,
+            satelliteLayerId: pair.satelliteLayerId,
+            sourceSatelliteId: pair.sourceSatelliteId,
+            satelliteName: pair.satelliteName,
+            passes: payload?.passes
+        })
+    };
+}
+
+async function refreshGroundStationTimelinePasses() {
+    const selection = resolveGroundStationTimelineSelection();
+    const range = getGroundStationTimelineRange();
+    const selectionKey = groundStationTimelineSelectionKey(selection, range);
+    if (!selection || !range || !selectionKey) {
+        clearGroundStationTimelinePasses();
+        return;
+    }
+
+    cancelGroundStationTimelinePasses("La selecci\u00f3n o el rango de pases cambi\u00f3.");
+    groundStationTimelineSelection = selection;
+    groundStationTimelineContextKey = selectionKey;
+    groundStationTimelinePairResults.clear();
+    groundStationTimelinePairFailures.clear();
+
+    const { pairs, skipped } = collectGroundStationTimelinePairs(selection, range);
+    skipped.forEach((failure) => groundStationTimelinePairFailures.set(
+        `${failure.stationId}:${failure.satelliteLayerId}`,
+        failure
+    ));
+    const pending = [];
+    for (const pair of pairs) {
+        const cached = groundStationTimelinePairCache.get(pair.cacheKey);
+        if (cached) {
+            groundStationTimelinePairResults.set(pair.key, cached);
+        } else {
+            pending.push(pair);
+        }
+    }
+
+    const totalPairs = pairs.length;
+    let completedPairs = totalPairs - pending.length;
+    if (!pending.length) {
+        const allFailed = totalPairs === 0 && skipped.length > 0;
+        publishGroundStationTimelineEvents({
+            status: allFailed ? "error" : "ready",
+            message: totalPairs ? "Eventos de pases listos desde cache." : "No hay pares visibles con pases operativos disponibles.",
+            totalPairs,
+            completedPairs,
+            skippedPairs: skipped.length
+        });
+        return;
+    }
+
+    const requestId = ++groundStationTimelineRequestSequence;
+    const controller = new AbortController();
+    groundStationTimelineAbortController = controller;
+    let operationId = null;
+    let terminal = false;
+    operationId = beginRuntimeSceneOperation("ground-station-timeline", {
+        title: "Calculando eventos de pases",
+        stage: "Analizando pares visibles",
+        message: `Calculando AOS/LOS para ${pending.length} pares visibles.`,
+        progress: totalPairs ? Math.round((completedPairs / totalPairs) * 100) : null,
+        cancelWork: () => {
+            const ownsForecast = groundStationTimelineAbortController === controller
+                || groundStationTimelineOperationId === operationId;
+            if (!ownsForecast) return;
+            groundStationTimelineAbortController = null;
+            groundStationTimelineOperationId = null;
+            groundStationTimelineRequestSequence += 1;
+            controller.abort();
+            // A cancellation is an explicit decision not to present a
+            // partial forecast. The cache retains completed pair responses
+            // for a later deliberate refresh, while only this aggregate
+            // timeline state is cleared; detailed single-pair AOS/LOS and
+            // live station links remain entirely independent.
+            groundStationTimelineSelection = null;
+            groundStationTimelineContextKey = "";
+            groundStationTimelinePairResults.clear();
+            groundStationTimelinePairFailures.clear();
+            publishGroundStationTimelineEvents({
+                status: "ready",
+                message: "Cálculo de eventos de pases cancelado."
+            });
+        }
+    });
+    groundStationTimelineOperationId = operationId;
+    publishGroundStationTimelineEvents({
+        status: "loading",
+        totalPairs,
+        completedPairs,
+        skippedPairs: skipped.length
+    });
+
+    let nextIndex = 0;
+    const workerCount = Math.min(GROUND_STATION_TIMELINE_MAX_CONCURRENCY, pending.length);
+    const runWorker = async () => {
+        while (nextIndex < pending.length && !controller.signal.aborted) {
+            const index = nextIndex;
+            nextIndex += 1;
+            const pair = pending[index];
+            try {
+                const result = await fetchGroundStationTimelinePair(pair, controller);
+                if (!isCurrentGroundStationTimelineRequest({ requestId, selectionKey, range, controller })) return;
+                groundStationTimelinePairCache.set(pair.cacheKey, result);
+                groundStationTimelinePairResults.set(pair.key, result);
+            } catch (error) {
+                if (isRuntimeSceneRequestCancellation(error, controller)
+                    || !isCurrentGroundStationTimelineRequest({ requestId, selectionKey, range, controller })) {
+                    return;
+                }
+                groundStationTimelinePairFailures.set(pair.key, timelinePairFailure(
+                    pair,
+                    error instanceof Error ? error.message : String(error)
+                ));
+            }
+            completedPairs += 1;
+            if (!isCurrentGroundStationTimelineRequest({ requestId, selectionKey, range, controller })) return;
+            advanceRuntimeSceneOperation(operationId, {
+                stage: "Preparando eventos de la linea temporal",
+                message: `${completedPairs} de ${totalPairs} pares procesados.`,
+                progress: totalPairs ? Math.round((completedPairs / totalPairs) * 100) : 100
+            });
+            publishGroundStationTimelineEvents({
+                status: "loading",
+                totalPairs,
+                completedPairs,
+                skippedPairs: skipped.length
+            });
+        }
+    };
+
+    try {
+        await Promise.all(Array.from({ length: workerCount }, runWorker));
+        if (!isCurrentGroundStationTimelineRequest({ requestId, selectionKey, range, controller })) {
+            cancelRuntimeSceneOperation(operationId, "C\u00e1lculo de eventos de pases sustituido.");
+            terminal = true;
+            return;
+        }
+        const noResults = groundStationTimelinePairResults.size === 0;
+        const status = noResults && groundStationTimelinePairFailures.size ? "error" : "ready";
+        publishGroundStationTimelineEvents({
+            status,
+            message: status === "error" ? "No se pudieron calcular eventos de pases para los pares visibles." : "Eventos de pases actualizados.",
+            totalPairs,
+            completedPairs,
+            skippedPairs: skipped.length
+        });
+        completeRuntimeSceneOperation(operationId, "Eventos de pases actualizados.");
+        terminal = true;
+    } catch (error) {
+        if (isRuntimeSceneRequestCancellation(error, controller)
+            || !isCurrentGroundStationTimelineRequest({ requestId, selectionKey, range, controller })) {
+            cancelRuntimeSceneOperation(operationId, "C\u00e1lculo de eventos de pases cancelado.");
+            terminal = true;
+            return;
+        }
+        failRuntimeSceneOperation(operationId, error);
+        terminal = true;
+        publishGroundStationTimelineEvents({
+            status: "error",
+            message: error instanceof Error ? error.message : "No se pudieron calcular los eventos de pases.",
+            totalPairs,
+            completedPairs,
+            skippedPairs: skipped.length
+        });
+    } finally {
+        if (!terminal && operationId) {
+            cancelRuntimeSceneOperation(operationId, "C\u00e1lculo de eventos de pases cancelado.");
+        }
+        if (groundStationTimelineAbortController === controller) {
+            groundStationTimelineAbortController = null;
+        }
+        if (groundStationTimelineOperationId === operationId) {
+            groundStationTimelineOperationId = null;
+        }
+    }
+}
+
+function syncGroundStationTimelineSelection() {
+    const next = resolveGroundStationTimelineSelection();
+    const range = getGroundStationTimelineRange();
+    const nextKey = groundStationTimelineSelectionKey(next, range);
+    if (!nextKey) {
+        if (groundStationTimelineContextKey || groundStationTimelinePairResults.size || groundStationTimelineAbortController) {
+            clearGroundStationTimelinePasses();
+        }
+        return;
+    }
+    if (nextKey === groundStationTimelineContextKey) {
+        // Layer-eye toggles republish from the in-memory result set. This is
+        // deliberately free of network work; hiding/showing an existing pair
+        // must be immediate and reappearance must use its validated cache.
+        publishGroundStationTimelineEvents({ status: groundStationTimelineAbortController ? "loading" : "ready" });
+        return;
+    }
+    void refreshGroundStationTimelinePasses();
+}
+
+/**
+ * Rebuild the selected aggregate only when a new/removed workspace layer can
+ * change its pair set. A plain visibility change deliberately goes through
+ * ``syncGroundStationTimelineSelection`` instead: it filters already-known
+ * events synchronously and must not start network work just because an eye
+ * was clicked.
+ */
+function refreshGroundStationTimelineForLayerMembershipChange({
+    layerId = "",
+    kind = "",
+    allSatelliteLayers = false
+} = {}) {
+    const selected = resolveGroundStationTimelineSelection();
+    const normalizedKind = String(kind || "").trim().toLowerCase();
+    const normalizedLayerId = String(layerId || "").trim();
+    if (!selected) {
+        syncGroundStationTimelineSelection();
+        return;
+    }
+    const affectsPairs = allSatelliteLayers === true
+        || selected.id === normalizedLayerId
+        || (selected.kind === "station" && normalizedKind === "satellite")
+        || (selected.kind === "satellite" && normalizedKind === "station");
+    if (affectsPairs) {
+        // Existing pair results remain in the keyed cache. Refreshing here
+        // therefore calculates only newly reachable pairs while also
+        // removing stale rows for a layer that has just been deactivated.
+        void refreshGroundStationTimelinePasses();
+        return;
+    }
+    syncGroundStationTimelineSelection();
+}
+
+// The simulation state is published on every animation tick. Compare only
+// its temporal domain before refreshing: moving the playhead must not restart
+// a full pass forecast, whereas changing mode/start/end must replace it.
+let groundStationTimelineObservedSimulationKey = "";
+function syncGroundStationTimelineForSimulationState() {
+    const range = getGroundStationTimelineRange();
+    const key = range
+        ? `${SIMULATION_MODE_RANGE}:${range.startTime}:${range.endTime}`
+        : `inactive:${simulationState.mode}`;
+    if (key === groundStationTimelineObservedSimulationKey) return;
+    groundStationTimelineObservedSimulationKey = key;
+    syncGroundStationTimelineSelection();
+}
+
+window.addEventListener("orbit:simulation-state", syncGroundStationTimelineForSimulationState);
+window.addEventListener("orbit:scene-operations-cancel", () => {
+    clearGroundStationTimelinePasses({
+        clearCache: true,
+        message: "Los eventos de pases se descartaron al cambiar de proyecto."
+    });
+});
+// The cache stores a prediction for a concrete source definition. A manual
+// replacement (including a new ERP), precise-product hydration, or imported
+// OEM can change that definition under an existing layer id, so those
+// mutations explicitly invalidate it. Ordinary activation/deactivation only
+// changes membership; its exact hook below reuses valid pair cache entries.
+// Visibility is intentionally excluded: it is handled synchronously by
+// filtering the cached event rows above.
+window.addEventListener("orbit:object-state-changed", (event) => {
+    const detail = event?.detail && typeof event.detail === "object" ? event.detail : {};
+    const reason = String(detail.reason || "").trim().toLowerCase();
+    if (["manual-orbit", "precise-product-hydration", "hydration", "oem-import"].includes(reason)) {
+        invalidateGroundStationTimelineCache();
+        return;
+    }
+    if (reason === "activation") {
+        const layerId = String(detail.layerId || detail.sourceId || "").trim();
+        const layerType = String(detail.layerType || "").trim().toUpperCase();
+        refreshGroundStationTimelineForLayerMembershipChange({
+            layerId,
+            kind: layerType === "GROUND_STATION" || isGroundStationLayerId(layerId) ? "station" : "satellite",
+            allSatelliteLayers: detail.scope === "all-satellites"
+        });
+    }
+});
 
 function formatObjectTimeRangeHours(hours) {
     const rounded = Math.round(Math.max(0, Number(hours) || 0) * 100) / 100;
@@ -1693,6 +2240,7 @@ const compositeLayers = createCompositeLayerManager({
         // A station's live links are presentation-only. Do not retain a
         // connector when either end has been hidden in Layers.
         syncGroundStationVisibilityLinks();
+        syncGroundStationTimelineSelection();
     }
 });
 
@@ -2004,6 +2552,9 @@ function setCompositeLayerVisibility(layerId, visible) {
     // changes. The callback has the same guard for a frame-perfect fallback,
     // but removing the entity here avoids a stale line between renders.
     syncGroundStationVisibilityLinks();
+    // The pass timeline has the same Layer-eye contract. Re-publish cached
+    // events immediately rather than waiting for another pass calculation.
+    syncGroundStationTimelineSelection();
 }
 
 function isCompositeLayerActive(layerId) {
@@ -2046,7 +2597,7 @@ function removeGroundStationLayer(layerId) {
     groundStationLayers.delete(layerId);
     syncGroundStationVisibilityLinks();
     layerDisplayNameOverrides.delete(layerId);
-    emitObjectStateChanged({ layerId, sourceId: layerId, reason: "activation" });
+    emitObjectStateChanged({ layerId, sourceId: layerId, layerType: "GROUND_STATION", reason: "activation" });
 }
 
 function setCompositeLayerActive(layerId, active) {
@@ -2122,7 +2673,11 @@ function setCompositeLayerActive(layerId, active) {
 }
 
 function duplicateSatelliteLayer(sourceId) {
-    return compositeLayers.duplicate(String(sourceId || "").trim());
+    const layerId = compositeLayers.duplicate(String(sourceId || "").trim());
+    if (layerId) {
+        refreshGroundStationTimelineForLayerMembershipChange({ layerId, kind: "satellite" });
+    }
+    return layerId;
 }
 
 function renameLayer(layerId, nextName) {
@@ -2975,6 +3530,10 @@ function createGroundStationLayer(params = {}) {
 
     applyGroundStationVisuals(groundStationLayers.get(stationId));
     syncGroundStationVisibilityLinks();
+    // If an already-selected satellite is being inspected in range mode,
+    // this new visible station is a new required pair rather than merely a
+    // visibility flip. Reuse existing pair cache but collect the newcomer.
+    refreshGroundStationTimelineForLayerMembershipChange({ layerId: stationId, kind: "station" });
 
     if (!layerDisplayNameOverrides.has(stationId)) {
         layerDisplayNameOverrides.set(stationId, displayName);
@@ -3054,6 +3613,12 @@ function updateGroundStationLayer(layerId, patch = {}) {
     // A pass table is derived from the station contract, so never retain a
     // calculation made with its previous mask/RF/location values.
     cancelGroundStationPassAnalysis();
+    // The aggregate timeline uses the identical station contract. Its cache
+    // key includes this signature, but the currently displayed result must be
+    // replaced immediately rather than surviving until a new selection.
+    if (groundStationTimelineContextKey) {
+        void refreshGroundStationTimelinePasses();
+    }
     window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
         detail: {
             error: "La configuración de la estación ha cambiado. Vuelve a analizar los pases.",
@@ -3563,6 +4128,10 @@ function syncGroundStationVisibilityLinks() {
             groundStationVisibilityLinks.delete(key);
         }
     }
+    // Bulk show/hide paths call this reconciler directly, bypassing the
+    // per-layer eye setter. Mirror that visibility transition into the
+    // cached timeline event stream without triggering new network work.
+    syncGroundStationTimelineSelection();
 }
 
 function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElevationDeg) {
@@ -4996,6 +5565,10 @@ function setCurrentSelectedSatellite(id) {
     selectedSatelliteId = id ? String(id) : null;
     updateSelectedEpochInfo();
     publishSelectedLayerState();
+    // A selected, visible station shows all of its visible satellite passes;
+    // a selected, visible satellite shows the converse station passes. The
+    // helper is range-mode gated, so ordinary realtime selection stays free.
+    syncGroundStationTimelineSelection();
 }
 
 // React can mount after an object was selected by the imperative runtime.
@@ -8595,7 +9168,14 @@ function setupPropagatedParametersInspector() {
         getObjectTle: (id) => isCelestialBodyLayerId(id) ? null : getSatelliteTle(getSatelliteSourceIdFromLayerId(id)),
         getObjectTleAsync: (id) => isCelestialBodyLayerId(id) ? Promise.resolve(null) : getSatelliteTleAsync(getSatelliteSourceIdFromLayerId(id)),
         getCatalogEntryMeta: (id) => getCompositeLayerMeta(id),
-        onRefreshCatalog: () => refreshSatelliteCatalog(catalogUrl),
+        onRefreshCatalog: async () => {
+            const refreshed = await refreshSatelliteCatalog(catalogUrl);
+            // A catalogue refresh can replace a TLE while retaining the same
+            // layer id. Pass events are source-definition dependent, so do
+            // not reuse a forecast from the previous element set.
+            invalidateGroundStationTimelineCache();
+            return refreshed;
+        },
         onRegisterPreciseProductEntries: (entries) => registerPreciseProductSatelliteEntries(entries),
         onApprovePreciseProductTimeDomain: async (entries, payload) => {
             const coverage = resolvePreciseProductCoverage(entries, payload);
