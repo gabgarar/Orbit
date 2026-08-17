@@ -153,6 +153,7 @@ import {
     resolveManualOrbitTimePolicy
 } from "./js/features/manualOrbit/timePolicy.js";
 import { createManualErpUploadGate } from "./js/features/manualOrbit/erpUploadGate.js";
+import { createManualOrbitPreviewCheckpoint } from "./js/features/manualOrbit/previewCheckpoint.js";
 import {
     OPERATION_SCOPES,
     cancelOperation,
@@ -464,6 +465,10 @@ let manualOrbitPreviewTimer = null;
 let manualOrbitPreviewAbortController = null;
 let manualOrbitPreviewRequestId = 0;
 let manualOrbitPreviewOperationId = null;
+// The panel may optimistically show new force selections while their
+// propagation is running. Retain the last configuration that actually drew
+// a preview so an explicit cancellation can restore a coherent editor/view.
+const manualOrbitPreviewCheckpoint = createManualOrbitPreviewCheckpoint();
 const manualOrbitErpUploadGate = createManualErpUploadGate();
 let manualOrbitErpUploadOperationId = null;
 let manualOrbitErpUploadOperationSequence = 0;
@@ -6215,6 +6220,71 @@ function clearManualOrbitOperations() {
     clearOperationsForScope(MANUAL_ORBIT_OPERATION_SCOPE);
 }
 
+function captureManualOrbitPreviewCheckpoint({ previewRendered = false } = {}) {
+    if (!manualOrbitDesignSession?.active) {
+        return;
+    }
+    manualOrbitPreviewCheckpoint.capture({
+        editorState: manualOrbitEditorState,
+        definitionSource: manualOrbitDefinitionSource,
+        designSettings: getManualOrbitDesignSettings(),
+        previewRendered
+    });
+}
+
+/**
+ * Restore the last configuration that actually corresponds to the transient
+ * preview. A user cancellation is an explicit discard of optimistic preview
+ * edits, so keeping their checked force terms would be misleading.
+ *
+ * The checkpoint deliberately does not roll back name or object metadata:
+ * neither changes the propagated geometry and they may have been edited
+ * while a numerical request was running.
+ */
+function restoreManualOrbitPreviewCheckpoint() {
+    const checkpoint = manualOrbitPreviewCheckpoint.read();
+    if (!checkpoint?.editorState || !checkpoint?.designSettings || !manualOrbitDesignSession?.active) {
+        return { restored: false, previewRendered: false };
+    }
+
+    const currentState = manualOrbitEditorState;
+    const currentSettings = manualOrbitDesignSettings;
+    const currentDefinitionSource = manualOrbitDefinitionSource;
+    manualOrbitEditorState = {
+        ...checkpoint.editorState,
+        name: currentState?.name ?? checkpoint.editorState.name,
+        objectMetadata: currentState?.objectMetadata ?? checkpoint.editorState.objectMetadata
+    };
+    manualOrbitDefinitionSource = checkpoint.definitionSource || "keplerian";
+    manualOrbitDesignSettings = checkpoint.designSettings;
+    try {
+        applyManualOrbitDesignTimeWindow();
+        // A successful prior preview remains rendered while a replacement
+        // request is in flight. Restore its only immediate display toggle so
+        // the visible trajectory and the restored controls agree at once.
+        if (checkpoint.previewRendered) {
+            setManualOrbitPreviewGroundTrack(
+                manualOrbitDesignSettings.groundTrackPreview === true,
+                { viewer }
+            );
+        }
+    } catch (error) {
+        manualOrbitEditorState = currentState;
+        manualOrbitDesignSettings = currentSettings;
+        manualOrbitDefinitionSource = currentDefinitionSource;
+        logger.warn("No se pudo restaurar la previsualizaci\u00f3n orbital anterior:", error);
+        return { restored: false, previewRendered: false, error };
+    }
+
+    publishManualOrbitState({
+        previewRestored: true,
+        previewRestoreMessage: checkpoint.previewRendered
+            ? "Previsualizaci\u00f3n cancelada. Se restaur\u00f3 la \u00faltima configuraci\u00f3n aplicada."
+            : "Previsualizaci\u00f3n cancelada. Se restaur\u00f3 la configuraci\u00f3n inicial de dise\u00f1o."
+    });
+    return { restored: true, previewRendered: checkpoint.previewRendered === true };
+}
+
 function stopManualOrbitPreviewRequest() {
     const operationId = manualOrbitPreviewOperationId;
     manualOrbitPreviewOperationId = null;
@@ -6362,6 +6432,12 @@ function enterManualOrbitDesignMode() {
         sceneTimeContext
     };
 
+    // Start every isolated design session with an undo point. It is marked
+    // non-rendered until the first propagation succeeds, which covers a user
+    // cancelling during the initial calculation as well as later edits.
+    manualOrbitPreviewCheckpoint.clear();
+    captureManualOrbitPreviewCheckpoint({ previewRendered: false });
+
     viewer.selectedEntity = undefined;
     viewer.trackedEntity = undefined;
     layersPanel?.classList.remove("open");
@@ -6409,6 +6485,7 @@ function restoreManualOrbitDesignMode({
         clearManualOrbitOperations();
     }
     clearManualOrbitPreview();
+    manualOrbitPreviewCheckpoint.clear();
     manualOrbitDesignSession = null;
     if (!preserveManualOrbitEditing) {
         // Closing or cancelling an edit never mutates the confirmed object.
@@ -6482,6 +6559,7 @@ function discardManualOrbitDesignForProjectChange() {
     stopManualOrbitCreateRequest();
     clearManualOrbitOperations();
     clearManualOrbitPreview();
+    manualOrbitPreviewCheckpoint.clear();
     manualOrbitDesignSession = null;
     manualOrbitEditingTarget = null;
 
@@ -6860,6 +6938,10 @@ async function requestManualOrbitPreview() {
             color: "#65b7ff",
             previewReferenceFrame: getManualOrbitDesignSettings().previewReferenceFrame
         });
+        // Only a fully rendered response becomes the rollback point.  While
+        // newer force selections are calculating, this preserves a coherent
+        // state/trajectory pair for an explicit Activity-panel cancellation.
+        captureManualOrbitPreviewCheckpoint({ previewRendered: true });
         if (manualOrbitPreviewOperationId === operationId) {
             manualOrbitPreviewOperationId = null;
         }
@@ -7275,8 +7357,27 @@ function setupManualOrbitEditorBridge() {
         }
         if (requestedId === manualOrbitPreviewOperationId) {
             stopManualOrbitPreviewRequest();
-            clearManualOrbitPreview();
-            publishManualOrbitStatus("info", "Previsualizaci\u00f3n orbital cancelada.");
+            const rollback = restoreManualOrbitPreviewCheckpoint();
+            if (!rollback.restored) {
+                // There is no safe trajectory to retain if the session never
+                // obtained a valid preview or its saved TIME range cannot be
+                // restored. Do not leave controls claiming otherwise.
+                clearManualOrbitPreview();
+                publishManualOrbitStatus(
+                    "error",
+                    rollback.error
+                        ? extractManualOrbitError(rollback.error, "No se pudo restaurar la previsualizaci\u00f3n anterior.")
+                        : "Previsualizaci\u00f3n cancelada antes de que hubiera una trayectoria v\u00e1lida."
+                );
+                return;
+            }
+            if (!rollback.previewRendered) {
+                // Cancelling the initial propagation restores the clean
+                // session draft. Launch its baseline preview once so the
+                // editor does not remain with controls but no trajectory.
+                clearManualOrbitPreview();
+                scheduleManualOrbitPreview({ immediate: true });
+            }
             return;
         }
         if (requestedId === manualOrbitCreateOperationId) {

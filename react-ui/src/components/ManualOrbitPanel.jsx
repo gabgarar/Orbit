@@ -36,11 +36,14 @@ const MAX_MANUAL_ERP_FILE_BYTES = 32 * 1024 * 1024;
  * - `orbit:manual-orbit-state` ({ open?, tab?, keplerian?, stateVector?,
  *   epochUtc?, epochStartUtc?, epochEndUtc?, groundTrackPreview?,
  *   previewReferenceFrame?, propagator?, objectMetadata?,
- *   propagationOptions? })
+ *   propagationOptions?, previewRestored? })
  *   to hydrate or synchronize the form. `epochUtc` remains the compatibility
  *   alias for the initial epoch. State
  *   vectors use `{ positionEciKm: { x, y, z }, velocityEciKmS: { x, y, z } }`.
- * - `orbit:manual-orbit-status` ({ kind: "error" | "busy" | "success" | "warning",
+ *   A `previewRestored` payload is the complete last successfully rendered
+ *   preview checkpoint, so a cancelled request cannot leave selected force
+ *   controls out of sync with the canvas.
+ * - `orbit:manual-orbit-status` ({ kind: "error" | "busy" | "success" | "warning" | "info",
  *   message }) for non-blocking runtime feedback.
  *
  * Events emitted by this component:
@@ -1085,7 +1088,14 @@ export default function ManualOrbitPanel() {
         };
         const onState = (event) => {
             const detail = event.detail || {};
-            setForm((current) => mergeIncomingForm(current, detail));
+            setForm((current) => {
+                const next = mergeIncomingForm(current, detail);
+                // A cancellation can be immediately followed by another
+                // action. Keep the ref aligned with the authoritative
+                // rollback in the same event turn.
+                if (detail.previewRestored === true) formRef.current = next;
+                return next;
+            });
             if (Object.hasOwn(detail, "editingManualOrbitId")) {
                 const id = String(detail.editingManualOrbitId || "").trim();
                 setEditingManualOrbitId(id || null);
@@ -1094,10 +1104,18 @@ export default function ManualOrbitPanel() {
             if (detail.tab === "keplerian" || detail.tab === "state-vector") setDefinitionTab(detail.tab);
             const requestedTopLevelTab = detail.activeTab ?? detail.panelTab;
             if (["overview", "orbit", "time", "propagation"].includes(requestedTopLevelTab)) setActiveTab(requestedTopLevelTab);
+            if (detail.previewRestored === true) {
+                // The controls now describe the exact checkpoint restored on
+                // the canvas, instead of the cancelled in-flight draft.
+                setStatus({
+                    kind: "info",
+                    message: String(detail.previewRestoreMessage || "Se restaur\u00f3 la \u00faltima previsualizaci\u00f3n calculada.")
+                });
+            }
         };
         const onStatus = (event) => {
             const detail = event.detail || {};
-            const kind = ["error", "busy", "success", "warning"].includes(detail.kind) ? detail.kind : null;
+            const kind = ["error", "busy", "success", "warning", "info"].includes(detail.kind) ? detail.kind : null;
             if (!kind) {
                 setStatus(null);
                 return;
@@ -1108,6 +1126,8 @@ export default function ManualOrbitPanel() {
                     ? "Manual orbit created."
                     : kind === "warning"
                         ? "Manual orbit created with a validated warning."
+                        : kind === "info"
+                            ? "Manual orbit preview restored."
                         : "Unable to create the manual orbit.";
             setStatus({ kind, message: String(detail.message || fallback) });
         };
@@ -1553,6 +1573,8 @@ export default function ManualOrbitPanel() {
         ? "border-[#874252] bg-[#291821] text-[#ffd0d9]"
         : status?.kind === "success"
             ? "border-[#2d7252] bg-[#102a22] text-[#b8f1d0]"
+            : status?.kind === "info"
+                ? "border-[#315a91] bg-[#112844] text-[#c1dbff]"
             : "border-[#776035] bg-[#2d2617] text-[#f5d38e]";
     const isEditingManualOrbit = Boolean(editingManualOrbitId);
     const dragEnabled = selectedPropagator.value === "cowell-rk4" && activeForceTerms.includes("drag");
@@ -1695,7 +1717,7 @@ export default function ManualOrbitPanel() {
             </nav>
 
             {status && <div className={`mt-3 flex items-start gap-2 rounded-lg border px-2.5 py-2 text-[10px] leading-[1.35] font-semibold ${statusTone}`} role="status" aria-live="polite">
-                <i className={`mt-[3px] size-1.5 shrink-0 rounded-full ${status.kind === "error" ? "bg-[#ff7890]" : status.kind === "success" ? "bg-[#64d997]" : "bg-[#f4bb4e]"}`} aria-hidden="true" />
+                <i className={`mt-[3px] size-1.5 shrink-0 rounded-full ${status.kind === "error" ? "bg-[#ff7890]" : status.kind === "success" ? "bg-[#64d997]" : status.kind === "info" ? "bg-[#79aaff]" : "bg-[#f4bb4e]"}`} aria-hidden="true" />
                 <span>{status.message}</span>
             </div>}
 

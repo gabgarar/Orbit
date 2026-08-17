@@ -10,7 +10,7 @@
     },
     "satellites": {
       "label_size_px": 10,
-      "model_scale": 1,
+      "model_scale": 3,
       "use_3d_model": true,
       "size_mode": "visual",
       "decay_alert_perigee_km": 200

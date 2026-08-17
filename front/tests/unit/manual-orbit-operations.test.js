@@ -35,3 +35,27 @@ test("legacy upstream abort text is made actionable without asking Orbit to trun
     assert.match(runtimeSource, /operation was aborted[\s\S]*Consulta el estado de operaciones/);
     assert.doesNotMatch(runtimeSource, /operation was aborted[\s\S]*reduce la ventana de dise/i);
 });
+
+test("cancelling an active preview restores its last applied controls and trajectory checkpoint", () => {
+    assert.match(runtimeSource, /createManualOrbitPreviewCheckpoint/);
+    assert.match(
+        runtimeSource,
+        /renderManualOrbitPreview\(responsePayload,[\s\S]*?captureManualOrbitPreviewCheckpoint\(\{ previewRendered: true \}\)/,
+        "only a response that was rendered may become the rollback checkpoint"
+    );
+    assert.match(
+        runtimeSource,
+        /requestedId === manualOrbitPreviewOperationId[\s\S]*?stopManualOrbitPreviewRequest\(\);[\s\S]*?restoreManualOrbitPreviewCheckpoint\(\)/,
+        "the Activity cancel action must restore instead of leaving the optimistic draft active"
+    );
+    assert.match(runtimeSource, /previewRestored: true/);
+    const cancellationBranch = runtimeSource.slice(
+        runtimeSource.indexOf("if (requestedId === manualOrbitPreviewOperationId)"),
+        runtimeSource.indexOf("if (requestedId === manualOrbitCreateOperationId)")
+    );
+    assert.doesNotMatch(
+        cancellationBranch,
+        /stopManualOrbitPreviewRequest\(\);\s*clearManualOrbitPreview\(\);/,
+        "a valid prior design preview must remain visible during rollback"
+    );
+});
