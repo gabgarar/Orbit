@@ -56,3 +56,30 @@ test("the selected AOS/LOS connector follows the same layer-visibility contract"
     assert.match(analysis, /getCompositeLayerVisibility\(satelliteLayerId\)\s*!==\s*true/,
         "the one-off analysis line must also disappear when its satellite eye is closed");
 });
+
+test("ground-station connectors use a straight Cartesian line of sight, never an Earth arc", () => {
+    const liveLinks = sourceBetween(
+        "function syncGroundStationVisibilityLinks()",
+        "function showGroundStationAnalysisVisuals"
+    );
+    const aosLos = sourceBetween(
+        "function showGroundStationAnalysisVisuals",
+        "function publishGroundStationsState"
+    );
+
+    for (const [label, source] of [
+        ["live station-to-satellite links", liveLinks],
+        ["the selected AOS/LOS connector", aosLos]
+    ]) {
+        const polylineStart = source.indexOf("polyline: {");
+        const positionsStart = source.indexOf("positions: new Cesium.CallbackProperty", polylineStart);
+        const polylineOptions = source.slice(polylineStart, positionsStart);
+
+        assert.ok(polylineStart >= 0, `${label} must define a Cesium polyline`);
+        assert.ok(positionsStart > polylineStart, `${label} must provide dynamic endpoints`);
+        assert.match(polylineOptions, /arcType:\s*Cesium\.ArcType\.NONE/,
+            `${label} must not be geodesically interpolated over the ellipsoid`);
+        assert.match(polylineOptions, /clampToGround:\s*false/,
+            `${label} must remain an elevated Cartesian line of sight`);
+    }
+});

@@ -3525,6 +3525,12 @@ function syncGroundStationVisibilityLinks() {
             const entity = viewer.entities.add({
                 id: `ground-station-visibility:${key}`,
                 polyline: {
+                    // A station-to-satellite link is a line of sight in
+                    // Cartesian space, not a ground route. Cesium's default
+                    // geodesic interpolation bends a two-point polyline over
+                    // the ellipsoid and is physically misleading here.
+                    arcType: Cesium.ArcType.NONE,
+                    clampToGround: false,
                     positions: new Cesium.CallbackProperty((time) => {
                         const currentStation = groundStationLayers.get(station.id);
                         const satellitePosition = satellite.position?.getValue?.(time);
@@ -3569,6 +3575,11 @@ function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElev
     groundStationAnalysisLink = viewer.entities.add({
         id: `ground-station-link:${station.id}`,
         polyline: {
+            // AOS/LOS uses the same instantaneous line-of-sight geometry as
+            // the lightweight live links above: never interpolate along the
+            // Earth surface.
+            arcType: Cesium.ArcType.NONE,
+            clampToGround: false,
             positions: new Cesium.CallbackProperty((time) => {
                 const currentStation = groundStationLayers.get(station.id);
                 const satellitePosition = satellite.position?.getValue?.(time);
