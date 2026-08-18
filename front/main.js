@@ -92,6 +92,18 @@ import {
     filterGroundStationPassTimelineEvents,
     GROUND_STATION_TIMELINE_EVENTS_EVENT
 } from "./js/features/groundStations/passTimelineEvents.js";
+import {
+    buildPlannerPassEvents,
+    buildPlannerResourceEvents,
+    normalizeManualPlannerEvent,
+    normalizePlannerEvents,
+    normalizePlannerState,
+    PLANNER_MANUAL_EVENT_REMOVE_EVENT,
+    PLANNER_MANUAL_EVENT_UPSERT_EVENT,
+    PLANNER_STATE_EVENT,
+    toPlannerEpochMs
+} from "./js/features/planner/plannerEvents.js";
+import { buildPlannerSourceSnapshot } from "./js/features/planner/plannerRuntimeSources.js";
 import { createProjectLifecycle } from "./js/runtime/projectLifecycle.js";
 import { setupCameraActions } from "./js/runtime/camera/actions.js";
 import { createFreeCameraKeyboardControls } from "./js/runtime/camera/freeKeyboardControls.js";
@@ -170,8 +182,10 @@ import {
 } from "./js/features/operations/operationsContract.js";
 import { createPropagatedParametersContextBuilder } from "./js/features/propagatedParameters/context.js";
 import {
+    DIAGNOSTICS_STATE_EVENT,
     DIAGNOSTICS_LOCAL_STATE_EVENT,
-    DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT
+    DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT,
+    findDiagnosticComponent
 } from "./js/features/diagnostics/diagnosticsContract.js";
 import {
     publishStartupStatus,
@@ -451,6 +465,45 @@ let groundStationTimelineContextKey = "";
 const groundStationTimelinePairResults = new Map();
 const groundStationTimelinePairCache = new Map();
 const groundStationTimelinePairFailures = new Map();
+// Planner facts are a read-only aggregation of the scene. Only
+// `plannerManualEvents` is authored state and is therefore eligible for a
+// project document; passes and resource horizons always refresh from source.
+const plannerPassSource = {
+    status: "ready",
+    events: [],
+    context: null,
+    failures: [],
+    message: ""
+};
+// The planner owns a second aggregate that is deliberately independent from
+// the selected-object timeline. It is populated only while the planner is
+// open in Simulated mode, so opening the calendar never changes the markers
+// presented by TimeControlBar or the selected station/satellite.
+const plannerPassForecast = {
+    status: "ready",
+    events: [],
+    context: null,
+    failures: [],
+    message: "",
+    totalPairs: 0,
+    completedPairs: 0,
+    skippedPairs: 0
+};
+let plannerPassForecastOpen = false;
+let plannerPassForecastRequestSequence = 0;
+let plannerPassForecastAbortController = null;
+let plannerPassForecastOperationId = null;
+let plannerPassForecastContextKey = "";
+let plannerPassForecastObservedSimulationKey = "";
+const plannerPassForecastPairResults = new Map();
+const plannerPassForecastPairFailures = new Map();
+// React's continuous diagnostics owner can already have published before a
+// hot reload / late main-runtime initialization. Seed from its cache as well
+// as listening for future events so the planner never waits for the next poll.
+let plannerRemoteDiagnostics = window.__orbitDiagnosticsState ?? null;
+let plannerLocalDiagnostics = window.__orbitDiagnosticsLocalState ?? null;
+let plannerManualEvents = [];
+const plannerRuntimeErrors = new Map();
 let currentProjectFileHandle = null;
 let currentProjectName = null;
 let objectSidebar = null;
@@ -607,6 +660,9 @@ const GROUND_STATION_CHART_PADDING_SECONDS = 120;
 // so clicking one station cannot fan out into an unbounded burst of numerical
 // or precise-product propagations.
 const GROUND_STATION_TIMELINE_MAX_CONCURRENCY = 2;
+// The planner can inspect every visible station/satellite pair, so keep the
+// same deliberately small fan-out as the selected timeline forecast.
+const PLANNER_PASS_FORECAST_MAX_CONCURRENCY = 2;
 const PROPAGATED_PARAMETERS_MAX_RANGE_HOURS = 365 * 24;
 
 const simulationState = {
@@ -654,6 +710,9 @@ const projectLifecycle = createProjectLifecycle({
     getManualOrbitEntries: getManualOrbitProjectEntries,
     restoreManualOrbits: restoreManualOrbitsFromProject,
     restoreGroundStations: restoreGroundStationsFromProject,
+    getPlannerManualEvents: getPlannerManualEventsForProject,
+    restorePlannerManualEvents: restorePlannerManualEventsFromProject,
+    clearPlannerManualEvents,
     getSimulationState: () => simulationState,
     getMasterTimeRange: () => masterTimeRangeDetail(),
     clearMasterTimeRange: clearMasterTimeRangeForProject,
@@ -1131,6 +1190,9 @@ function invalidateGroundStationTimelineCache() {
     if (groundStationTimelineContextKey) {
         void refreshGroundStationTimelinePasses();
     }
+    if (plannerPassForecastOpen) {
+        void refreshPlannerPassForecast({ force: true });
+    }
 }
 
 function timelinePairFailure(pair, reason) {
@@ -1168,12 +1230,17 @@ function collectGroundStationTimelinePairs(selection, range) {
         .filter((id) => isCompositeLayerActive(id) && getCompositeLayerVisibility(id) === true);
     const stations = [...groundStationLayers.values()].filter((station) => station?.visible === true);
 
-    const candidates = selection.kind === "station"
-        ? satelliteLayerIds.map((satelliteLayerId) => ({
-            station: groundStationLayers.get(selection.id),
+    const candidates = selection.kind === "planner"
+        ? stations.flatMap((station) => satelliteLayerIds.map((satelliteLayerId) => ({
+            station,
             satelliteLayerId
-        }))
-        : stations.map((station) => ({ station, satelliteLayerId: selection.id }));
+        })))
+        : selection.kind === "station"
+            ? satelliteLayerIds.map((satelliteLayerId) => ({
+                station: groundStationLayers.get(selection.id),
+                satelliteLayerId
+            }))
+            : stations.map((station) => ({ station, satelliteLayerId: selection.id }));
 
     for (const candidate of candidates) {
         const station = candidate.station;
@@ -1472,6 +1539,12 @@ function refreshGroundStationTimelineForLayerMembershipChange({
     kind = "",
     allSatelliteLayers = false
 } = {}) {
+    // The selected timeline may have no active selection at all, while the
+    // planner still owns a scene-wide agenda. Refresh its pair membership
+    // independently; cached pairs remain local and do not refetch.
+    if (plannerPassForecastOpen) {
+        void refreshPlannerPassForecast({ force: true });
+    }
     const selected = resolveGroundStationTimelineSelection();
     const normalizedKind = String(kind || "").trim().toLowerCase();
     const normalizedLayerId = String(layerId || "").trim();
@@ -1493,6 +1566,302 @@ function refreshGroundStationTimelineForLayerMembershipChange({
     syncGroundStationTimelineSelection();
 }
 
+/**
+ * The calendar deliberately owns a second pass aggregate.  The selected
+ * simulation timeline remains a focused aid for one station or satellite;
+ * the planner, by contrast, is the scene-wide agenda and therefore includes
+ * every currently visible operational pair while it is open.
+ */
+function plannerPassForecastVisibleEvents() {
+    const events = [...plannerPassForecastPairResults.values()]
+        .flatMap((result) => Array.isArray(result?.events) ? result.events : []);
+    return filterGroundStationPassTimelineEvents(events, isGroundStationTimelinePairVisible);
+}
+
+function plannerPassForecastKey(range = getGroundStationTimelineRange()) {
+    if (!range) return "";
+    return `planner:${range.startTime}:${range.endTime}`;
+}
+
+function plannerPassForecastContext(range = getGroundStationTimelineRange()) {
+    if (!range) return null;
+    return {
+        kind: "planner",
+        startTime: range.startTime,
+        endTime: range.endTime,
+        source: range.source,
+        totalPairs: plannerPassForecast.totalPairs,
+        completedPairs: plannerPassForecast.completedPairs,
+        skippedPairs: plannerPassForecast.skippedPairs
+    };
+}
+
+function isCurrentPlannerPassForecastRequest({ requestId, contextKey, range, controller }) {
+    return plannerPassForecastOpen === true
+        && requestId === plannerPassForecastRequestSequence
+        && controller === plannerPassForecastAbortController
+        && contextKey === plannerPassForecastContextKey
+        && sameGroundStationTimelineRange(range, getGroundStationTimelineRange());
+}
+
+function publishPlannerPassForecast({ status = plannerPassForecast.status, message = plannerPassForecast.message } = {}) {
+    plannerPassForecast.status = ["loading", "ready", "error"].includes(status) ? status : "ready";
+    plannerPassForecast.message = String(message || "");
+    plannerPassForecast.events = plannerPassForecastVisibleEvents();
+    plannerPassForecast.failures = [...plannerPassForecastPairFailures.values()].map((failure) => ({ ...failure }));
+    plannerPassForecast.context = plannerPassForecastContext();
+    publishPlannerState();
+}
+
+function cancelPlannerPassForecast(message = "Cálculo de pases del planificador cancelado.") {
+    const operationId = plannerPassForecastOperationId;
+    const controller = plannerPassForecastAbortController;
+    if (operationId) {
+        cancelRuntimeSceneOperation(operationId, message);
+        return;
+    }
+    plannerPassForecastOperationId = null;
+    plannerPassForecastAbortController = null;
+    plannerPassForecastRequestSequence += 1;
+    controller?.abort();
+}
+
+function clearPlannerPassForecast({ clearCache = false, message = "" } = {}) {
+    cancelPlannerPassForecast(message || "El contexto de pases del planificador ha cambiado.");
+    plannerPassForecastContextKey = "";
+    plannerPassForecastPairResults.clear();
+    plannerPassForecastPairFailures.clear();
+    plannerPassForecast.status = "ready";
+    plannerPassForecast.events = [];
+    plannerPassForecast.context = null;
+    plannerPassForecast.failures = [];
+    plannerPassForecast.message = String(message || "");
+    plannerPassForecast.totalPairs = 0;
+    plannerPassForecast.completedPairs = 0;
+    plannerPassForecast.skippedPairs = 0;
+    if (clearCache) groundStationTimelinePairCache.clear();
+    publishPlannerState();
+}
+
+/**
+ * Start (or reuse) the planner-only all-pairs forecast.  It shares only the
+ * validated pair-response cache with the selected timeline; it never emits
+ * `orbit:ground-station-timeline-events` and cannot replace its selection.
+ */
+async function refreshPlannerPassForecast({ force = false } = {}) {
+    if (!plannerPassForecastOpen) return;
+    const range = getGroundStationTimelineRange();
+    if (!range) {
+        clearPlannerPassForecast({
+            message: "Los pases del planificador requieren el modo Simulated y un rango UTC válido."
+        });
+        setPlannerRuntimeError("forecast", "Los pases del planificador solo se calculan en modo Simulated con un rango UTC válido.");
+        publishPlannerState();
+        return;
+    }
+
+    const contextKey = plannerPassForecastKey(range);
+    const hasReusableSnapshot = plannerPassForecast.status === "ready"
+        || plannerPassForecastAbortController !== null;
+    if (!force && contextKey === plannerPassForecastContextKey && hasReusableSnapshot) {
+        publishPlannerPassForecast();
+        return;
+    }
+
+    setPlannerRuntimeError("forecast", "");
+    cancelPlannerPassForecast("El rango o los elementos del planificador cambiaron.");
+    plannerPassForecastContextKey = contextKey;
+    plannerPassForecastPairResults.clear();
+    plannerPassForecastPairFailures.clear();
+
+    const { pairs, skipped } = collectGroundStationTimelinePairs({ kind: "planner" }, range);
+    skipped.forEach((failure) => plannerPassForecastPairFailures.set(
+        `${failure.stationId}:${failure.satelliteLayerId}`,
+        failure
+    ));
+    const pending = [];
+    for (const pair of pairs) {
+        const cached = groundStationTimelinePairCache.get(pair.cacheKey);
+        if (cached) {
+            plannerPassForecastPairResults.set(pair.key, cached);
+        } else {
+            pending.push(pair);
+        }
+    }
+
+    const totalPairs = pairs.length;
+    let completedPairs = totalPairs - pending.length;
+    plannerPassForecast.totalPairs = totalPairs;
+    plannerPassForecast.completedPairs = completedPairs;
+    plannerPassForecast.skippedPairs = skipped.length;
+    plannerPassForecast.context = plannerPassForecastContext(range);
+
+    if (!pending.length) {
+        const allFailed = totalPairs === 0 && skipped.length > 0;
+        publishPlannerPassForecast({
+            status: allFailed ? "error" : "ready",
+            message: totalPairs
+                ? "Eventos de pases del planificador listos desde caché."
+                : "No hay pares visibles con pases operativos disponibles."
+        });
+        return;
+    }
+
+    const requestId = ++plannerPassForecastRequestSequence;
+    const controller = new AbortController();
+    plannerPassForecastAbortController = controller;
+    let operationId = null;
+    let terminal = false;
+    operationId = beginRuntimeSceneOperation("planner-pass-forecast", {
+        title: "Calculando eventos del planificador",
+        stage: "Analizando estaciones y satélites visibles",
+        message: `Calculando AOS/LOS para ${pending.length} pares visibles.`,
+        progress: totalPairs ? Math.round((completedPairs / totalPairs) * 100) : null,
+        cancelWork: () => {
+            const ownsForecast = plannerPassForecastAbortController === controller
+                || plannerPassForecastOperationId === operationId;
+            if (!ownsForecast) return;
+            plannerPassForecastAbortController = null;
+            plannerPassForecastOperationId = null;
+            plannerPassForecastRequestSequence += 1;
+            controller.abort();
+            // Closing the panel or cancelling from the activity drawer must
+            // discard its partial agenda. The shared response cache remains
+            // valid and gives a future deliberate opening a fast restart.
+            plannerPassForecastContextKey = "";
+            plannerPassForecastPairResults.clear();
+            plannerPassForecastPairFailures.clear();
+            plannerPassForecast.status = "ready";
+            plannerPassForecast.events = [];
+            plannerPassForecast.context = null;
+            plannerPassForecast.failures = [];
+            plannerPassForecast.message = "Cálculo de pases del planificador cancelado.";
+            plannerPassForecast.totalPairs = 0;
+            plannerPassForecast.completedPairs = 0;
+            plannerPassForecast.skippedPairs = 0;
+            publishPlannerState();
+        }
+    });
+    plannerPassForecastOperationId = operationId;
+    publishPlannerPassForecast({ status: "loading", message: "Calculando eventos de pases de la escena." });
+
+    let nextIndex = 0;
+    const workerCount = Math.min(PLANNER_PASS_FORECAST_MAX_CONCURRENCY, pending.length);
+    const runWorker = async () => {
+        while (nextIndex < pending.length && !controller.signal.aborted) {
+            const index = nextIndex;
+            nextIndex += 1;
+            const pair = pending[index];
+            try {
+                const result = await fetchGroundStationTimelinePair(pair, controller);
+                if (!isCurrentPlannerPassForecastRequest({ requestId, contextKey, range, controller })) return;
+                groundStationTimelinePairCache.set(pair.cacheKey, result);
+                plannerPassForecastPairResults.set(pair.key, result);
+            } catch (error) {
+                if (isRuntimeSceneRequestCancellation(error, controller)
+                    || !isCurrentPlannerPassForecastRequest({ requestId, contextKey, range, controller })) {
+                    return;
+                }
+                plannerPassForecastPairFailures.set(pair.key, timelinePairFailure(
+                    pair,
+                    error instanceof Error ? error.message : String(error)
+                ));
+            }
+            completedPairs += 1;
+            if (!isCurrentPlannerPassForecastRequest({ requestId, contextKey, range, controller })) return;
+            plannerPassForecast.completedPairs = completedPairs;
+            advanceRuntimeSceneOperation(operationId, {
+                stage: "Preparando agenda de pases",
+                message: `${completedPairs} de ${totalPairs} pares procesados.`,
+                progress: totalPairs ? Math.round((completedPairs / totalPairs) * 100) : 100
+            });
+            publishPlannerPassForecast({ status: "loading" });
+        }
+    };
+
+    try {
+        await Promise.all(Array.from({ length: workerCount }, runWorker));
+        if (!isCurrentPlannerPassForecastRequest({ requestId, contextKey, range, controller })) {
+            cancelRuntimeSceneOperation(operationId, "Cálculo de pases del planificador sustituido.");
+            terminal = true;
+            return;
+        }
+        const noResults = plannerPassForecastPairResults.size === 0;
+        const status = noResults && plannerPassForecastPairFailures.size ? "error" : "ready";
+        publishPlannerPassForecast({
+            status,
+            message: status === "error"
+                ? "No se pudieron calcular eventos de pases para los pares visibles."
+                : "Eventos de pases del planificador actualizados."
+        });
+        completeRuntimeSceneOperation(operationId, "Eventos del planificador actualizados.");
+        terminal = true;
+    } catch (error) {
+        if (isRuntimeSceneRequestCancellation(error, controller)
+            || !isCurrentPlannerPassForecastRequest({ requestId, contextKey, range, controller })) {
+            cancelRuntimeSceneOperation(operationId, "Cálculo de pases del planificador cancelado.");
+            terminal = true;
+            return;
+        }
+        failRuntimeSceneOperation(operationId, error);
+        terminal = true;
+        publishPlannerPassForecast({
+            status: "error",
+            message: error instanceof Error ? error.message : "No se pudieron calcular los eventos del planificador."
+        });
+    } finally {
+        if (!terminal && operationId) {
+            cancelRuntimeSceneOperation(operationId, "Cálculo de pases del planificador cancelado.");
+        }
+        if (plannerPassForecastAbortController === controller) {
+            plannerPassForecastAbortController = null;
+        }
+        if (plannerPassForecastOperationId === operationId) {
+            plannerPassForecastOperationId = null;
+        }
+    }
+}
+
+function requestPlannerPassForecast() {
+    plannerPassForecastOpen = true;
+    const range = getGroundStationTimelineRange();
+    if (!range) {
+        void refreshPlannerPassForecast();
+        return;
+    }
+    const contextKey = plannerPassForecastKey(range);
+    if (contextKey === plannerPassForecastContextKey
+        && (plannerPassForecastAbortController || plannerPassForecast.status === "ready")) {
+        publishPlannerPassForecast();
+        return;
+    }
+    void refreshPlannerPassForecast();
+}
+
+function syncPlannerPassForecastVisibility() {
+    if (!plannerPassForecastOpen) return;
+    // Visibility is a view-level filter over already validated pair results.
+    // Do not restart numerical pass work just because a layer eye changed.
+    publishPlannerPassForecast();
+}
+
+function closePlannerPassForecast() {
+    plannerPassForecastOpen = false;
+    setPlannerRuntimeError("forecast", "");
+    clearPlannerPassForecast({ message: "El planificador se cerró; los pases pendientes se descartaron." });
+}
+
+function syncPlannerPassForecastForSimulationState() {
+    const range = getGroundStationTimelineRange();
+    const key = range
+        ? `${SIMULATION_MODE_RANGE}:${range.startTime}:${range.endTime}`
+        : `inactive:${simulationState.mode}`;
+    if (key === plannerPassForecastObservedSimulationKey) return;
+    plannerPassForecastObservedSimulationKey = key;
+    if (!plannerPassForecastOpen) return;
+    void refreshPlannerPassForecast({ force: true });
+}
+
 // The simulation state is published on every animation tick. Compare only
 // its temporal domain before refreshing: moving the playhead must not restart
 // a full pass forecast, whereas changing mode/start/end must replace it.
@@ -1508,10 +1877,15 @@ function syncGroundStationTimelineForSimulationState() {
 }
 
 window.addEventListener("orbit:simulation-state", syncGroundStationTimelineForSimulationState);
+window.addEventListener("orbit:simulation-state", syncPlannerPassForecastForSimulationState);
 window.addEventListener("orbit:scene-operations-cancel", () => {
     clearGroundStationTimelinePasses({
         clearCache: true,
         message: "Los eventos de pases se descartaron al cambiar de proyecto."
+    });
+    clearPlannerPassForecast({
+        clearCache: true,
+        message: "Los eventos del planificador se descartaron al cambiar de proyecto."
     });
 });
 // The cache stores a prediction for a concrete source definition. A manual
@@ -1837,6 +2211,325 @@ function publishDiagnosticsLocalState() {
     window.dispatchEvent(new CustomEvent(DIAGNOSTICS_LOCAL_STATE_EVENT, { detail }));
     return detail;
 }
+
+function plannerRecord(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function plannerText(value) {
+    return value === undefined || value === null ? "" : String(value).trim();
+}
+
+function setPlannerRuntimeError(scope, message) {
+    const normalizedScope = plannerText(scope) || "runtime";
+    const normalizedMessage = plannerText(message);
+    if (normalizedMessage) {
+        plannerRuntimeErrors.set(normalizedScope, normalizedMessage);
+    } else {
+        plannerRuntimeErrors.delete(normalizedScope);
+    }
+}
+
+function plannerManualOnly(events) {
+    return normalizePlannerEvents(events)
+        .filter((event) => event.source === "manual" && event.kind === "manual");
+}
+
+function getPlannerManualEventsForProject() {
+    return plannerManualOnly(plannerManualEvents);
+}
+
+function remapPlannerManualEventGroundStations(event, groundStationIdMap = {}) {
+    const source = plannerRecord(event);
+    const metadata = plannerRecord(source.metadata);
+    const remap = plannerRecord(groundStationIdMap);
+    const stationId = plannerText(metadata.stationId);
+    const stationLayerId = plannerText(metadata.stationLayerId);
+    const nextMetadata = {
+        ...metadata,
+        ...(stationId && remap[stationId] ? { stationId: remap[stationId] } : {}),
+        ...(stationLayerId && remap[stationLayerId] ? { stationLayerId: remap[stationLayerId] } : {})
+    };
+    return normalizeManualPlannerEvent({ ...source, metadata: nextMetadata });
+}
+
+function restorePlannerManualEventsFromProject(events, { groundStationIdMap = {} } = {}) {
+    plannerManualEvents = plannerManualOnly((Array.isArray(events) ? events : [])
+        .map((event) => remapPlannerManualEventGroundStations(event, groundStationIdMap)));
+    setPlannerRuntimeError("manual", "");
+    publishPlannerState();
+    return plannerManualEvents;
+}
+
+function clearPlannerManualEvents() {
+    plannerManualEvents = [];
+    setPlannerRuntimeError("manual", "");
+    publishPlannerState();
+}
+
+function getPlannerManualErpReferences() {
+    const candidates = [];
+    const add = (value) => {
+        const normalized = normalizeManualOrbitErpReference(value);
+        if (normalized) candidates.push(normalized);
+    };
+    for (const entry of getManualOrbitProjectEntries()) {
+        const reference = manualOrbitErpValueFromPayload(entry);
+        if (reference.present) add(reference.value);
+    }
+    // The open design is useful in the planner as a transient, clearly
+    // snapshot-backed source fact, but it remains excluded from project data
+    // until the orbit itself is confirmed.
+    if (manualOrbitDesignSettings?.manualErp) add(manualOrbitDesignSettings.manualErp);
+    return candidates;
+}
+
+function getPlannerErpDiagnosticComponent() {
+    const diagnostics = plannerRecord(plannerRemoteDiagnostics).diagnostics;
+    return findDiagnosticComponent(diagnostics, "erp");
+}
+
+function getPlannerLayerFacts() {
+    return getCompositeLayerIds().map((layerId) => {
+        const id = plannerText(layerId);
+        const type = getLayerType(id);
+        const sourceId = type === "SATELLITE" ? getSatelliteSourceIdFromLayerId(id) : id;
+        const metadata = getCompositeLayerMeta(id);
+        const range = type === "SATELLITE" ? getObjectIntrinsicTimeRange(sourceId) : null;
+        return {
+            id,
+            name: getLayerDisplayName(id),
+            type,
+            sourceId,
+            active: isCompositeLayerActive(id),
+            visible: getCompositeLayerVisibility(id) === true,
+            sourceFormat: plannerText(metadata?.sourceFormat ?? metadata?.source_format),
+            sourceOrigin: plannerText(metadata?.sourceOrigin ?? metadata?.source_origin),
+            validation: range ? "scene-intrinsic-range" : "scene-state-only",
+            ...(range?.startTime ? { validityStart: range.startTime } : {}),
+            ...(range?.endTime ? { validityEnd: range.endTime } : {})
+        };
+    });
+}
+
+function getPlannerSourceSnapshot() {
+    const preciseRanges = getLoadedPreciseProductTimeRanges();
+    const oemRanges = getLoadedOemEphemerisTimeRanges();
+    const preciseNames = new Map(preciseRanges.map((range) => [
+        range.id,
+        getSatelliteDisplayName(range.id, range.id)
+    ]));
+    const oemNames = new Map(oemRanges.map((range) => [
+        range.id,
+        getSatelliteDisplayName(range.id, range.id)
+    ]));
+    return buildPlannerSourceSnapshot({
+        manualErps: getPlannerManualErpReferences(),
+        erpDiagnostic: getPlannerErpDiagnosticComponent(),
+        preciseRanges,
+        preciseNames,
+        oemRanges,
+        oemNames,
+        layers: getPlannerLayerFacts()
+    });
+}
+
+function plannerPassAggregate() {
+    // A mounted planner is always authoritative over its own aggregate. The
+    // selected-object timeline remains a useful fallback for legacy consumers
+    // while the planner is closed, but it must never narrow the open agenda.
+    return plannerPassForecastOpen ? plannerPassForecast : plannerPassSource;
+}
+
+function plannerSourceErrors() {
+    const errors = [...plannerRuntimeErrors.values()];
+    const passSource = plannerPassAggregate();
+    if (passSource.status === "error") {
+        if (passSource.message) errors.push(passSource.message);
+    }
+    for (const failure of passSource.failures || []) {
+        // If an endpoint disappears while an aggregate is running, neither
+        // its events nor its stale failure should remain in the open agenda.
+        if (passSource === plannerPassForecast
+            && !isGroundStationTimelinePairVisible(failure?.stationId, failure?.satelliteLayerId || failure?.satelliteId)) {
+            continue;
+        }
+        const reason = plannerText(failure?.reason);
+        if (reason) errors.push(reason);
+    }
+    const erp = getPlannerErpDiagnosticComponent();
+    if (erp?.status === "error") {
+        errors.push(plannerText(erp.message || erp.summary) || "La validación ERP publicada por el servicio falló.");
+    }
+    for (const key of ["sp3", "oem"]) {
+        const local = plannerRecord(plannerLocalDiagnostics)[key];
+        if (local?.status === "error") {
+            errors.push(plannerText(local.message) || `La validación local de ${key.toUpperCase()} falló.`);
+        }
+    }
+    return [...new Set(errors.filter(Boolean))];
+}
+
+function plannerContext() {
+    const masterRange = masterTimeRangeDetail();
+    const current = getDisplayedSimulationDate();
+    const passSource = plannerPassAggregate();
+    return {
+        passes: passSource.context ? { ...passSource.context } : null,
+        simulation: {
+            mode: simulationState.mode,
+            startTime: simulationState.startDate?.toISOString?.() || null,
+            endTime: simulationState.endDate?.toISOString?.() || null,
+            currentTime: current instanceof Date && !Number.isNaN(current.getTime()) ? current.toISOString() : null,
+            masterTimeRange: masterRange
+        }
+    };
+}
+
+/**
+ * Publish the planner's canonical state. State requests may deliberately
+ * initiate this panel's isolated all-pairs forecast, but this publisher itself
+ * remains observational and never changes the selected timeline aggregate.
+ */
+function publishPlannerState() {
+    if (typeof window === "undefined") return null;
+    const sourceSnapshot = getPlannerSourceSnapshot();
+    const errors = plannerSourceErrors();
+    const passSource = plannerPassAggregate();
+    const status = passSource.status === "loading"
+        ? "loading"
+        : errors.length
+            ? "error"
+            : "ready";
+    const state = normalizePlannerState({
+        status,
+        events: [
+            ...buildPlannerPassEvents(passSource.events),
+            ...buildPlannerResourceEvents(sourceSnapshot.resources),
+            ...plannerManualOnly(plannerManualEvents)
+        ],
+        updatedAt: new Date().toISOString(),
+        errors
+    });
+    const detail = {
+        ...state,
+        // These source facts explain an event without treating coverage as a
+        // publisher expiry. They are intentionally runtime-only.
+        resources: sourceSnapshot.resources,
+        layers: sourceSnapshot.layers,
+        context: plannerContext()
+    };
+    window.__orbitPlannerState = detail;
+    window.dispatchEvent(new CustomEvent(PLANNER_STATE_EVENT, { detail }));
+    return detail;
+}
+
+function syncPlannerPassSource(event) {
+    const detail = plannerRecord(event?.detail);
+    plannerPassSource.status = ["loading", "ready", "error"].includes(detail.status) ? detail.status : "ready";
+    plannerPassSource.events = Array.isArray(detail.events) ? detail.events.slice() : [];
+    plannerPassSource.context = detail.context && typeof detail.context === "object" ? { ...detail.context } : null;
+    plannerPassSource.failures = Array.isArray(detail.failures) ? detail.failures.slice() : [];
+    plannerPassSource.message = plannerText(detail.message);
+    publishPlannerState();
+}
+
+function syncPlannerRemoteDiagnostics(event) {
+    plannerRemoteDiagnostics = plannerRecord(event?.detail);
+    publishPlannerState();
+}
+
+function syncPlannerLocalDiagnostics(event) {
+    plannerLocalDiagnostics = plannerRecord(event?.detail);
+    publishPlannerState();
+}
+
+function upsertPlannerManualEvent(event) {
+    const detail = plannerRecord(event?.detail);
+    const normalized = normalizeManualPlannerEvent(detail.event ?? detail);
+    if (!normalized) {
+        setPlannerRuntimeError("manual", "El evento manual requiere inicio, fin, color permitido y una fecha UTC válida.");
+        publishPlannerState();
+        return false;
+    }
+    const byId = new Map(plannerManualOnly(plannerManualEvents).map((item) => [item.id, item]));
+    byId.set(normalized.id, normalized);
+    plannerManualEvents = plannerManualOnly([...byId.values()]);
+    setPlannerRuntimeError("manual", "");
+    publishPlannerState();
+    return true;
+}
+
+function removePlannerManualEvent(event) {
+    const detail = event?.detail;
+    const id = plannerText(plannerRecord(detail).id || plannerRecord(detail).eventId || detail);
+    if (!id) {
+        setPlannerRuntimeError("manual", "No se puede eliminar un evento manual sin identificador.");
+        publishPlannerState();
+        return false;
+    }
+    plannerManualEvents = plannerManualOnly(plannerManualEvents.filter((item) => item.id !== id));
+    setPlannerRuntimeError("manual", "");
+    publishPlannerState();
+    return true;
+}
+
+function activatePlannerEvent(event) {
+    const detail = plannerRecord(event?.detail);
+    const plannerEvent = plannerRecord(detail.event ?? detail);
+    const targetMs = toPlannerEpochMs(plannerEvent.time ?? plannerEvent.start ?? plannerEvent.startTime);
+    const target = targetMs === null ? null : new Date(targetMs);
+    const start = new Date(simulationState.startDate);
+    const end = new Date(simulationState.endDate);
+    const withinSimulation = target && !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())
+        && target >= start && target <= end;
+    if (!target || !withinSimulation) {
+        setPlannerRuntimeError("activation", "El evento no tiene una hora UTC válida dentro del rango de simulación activo.");
+        publishPlannerState();
+        return false;
+    }
+    if (getMasterTimeRange() && !isInsideMasterRange(target)) {
+        setPlannerRuntimeError("activation", "El evento queda fuera del Rango Temporal Maestro y no se ha movido la simulación.");
+        publishPlannerState();
+        return false;
+    }
+    setPlannerRuntimeError("activation", "");
+    // Reuse the exact-jump command used by pass markers; routing through the
+    // finite slider would quantize the AOS/LOS/max or manual interval start.
+    window.dispatchEvent(new CustomEvent("orbit:simulation-action", {
+        detail: { type: "timeline-jump", value: { time: target.toISOString() } }
+    }));
+    publishPlannerState();
+    return true;
+}
+
+window.addEventListener(GROUND_STATION_TIMELINE_EVENTS_EVENT, syncPlannerPassSource);
+window.addEventListener(DIAGNOSTICS_STATE_EVENT, syncPlannerRemoteDiagnostics);
+window.addEventListener(DIAGNOSTICS_LOCAL_STATE_EVENT, syncPlannerLocalDiagnostics);
+window.addEventListener("orbit:manual-orbit-state", () => publishPlannerState());
+window.addEventListener("orbit:object-state-changed", () => publishPlannerState());
+window.addEventListener("orbit:project-opened", () => {
+    publishPlannerState();
+    if (plannerPassForecastOpen) {
+        void refreshPlannerPassForecast({ force: true });
+    }
+});
+window.addEventListener(PLANNER_MANUAL_EVENT_UPSERT_EVENT, upsertPlannerManualEvent);
+window.addEventListener(PLANNER_MANUAL_EVENT_REMOVE_EVENT, removePlannerManualEvent);
+window.addEventListener("orbit:planner-event-activate", activatePlannerEvent);
+window.addEventListener("orbit:planner-open", requestPlannerPassForecast);
+window.addEventListener("orbit:planner-close", closePlannerPassForecast);
+window.addEventListener("orbit:planner-state-request", () => {
+    // A late-mounted panel can be created by a host integration without the
+    // toolbar lifecycle. Treat its pull request as an idempotent open so the
+    // scene-wide forecast is never silently omitted.
+    requestPlannerPassForecast();
+    if (window.__orbitPlannerState) {
+        window.dispatchEvent(new CustomEvent(PLANNER_STATE_EVENT, { detail: window.__orbitPlannerState }));
+    } else {
+        publishPlannerState();
+    }
+});
 
 /**
  * Apply the authoritative Master Time Range to the interactive timeline.
@@ -2241,6 +2934,7 @@ const compositeLayers = createCompositeLayerManager({
         // connector when either end has been hidden in Layers.
         syncGroundStationVisibilityLinks();
         syncGroundStationTimelineSelection();
+        syncPlannerPassForecastVisibility();
     }
 });
 
@@ -2540,6 +3234,7 @@ function setCompositeLayerVisibility(layerId, visible) {
         }
         compositeLayers.setVisibility(layerId, visible);
         emitObjectStateChanged({ layerId, sourceId: layerId, reason: "visibility" });
+        syncPlannerPassForecastVisibility();
         return;
     }
     if (visible !== true) {
@@ -2555,6 +3250,7 @@ function setCompositeLayerVisibility(layerId, visible) {
     // The pass timeline has the same Layer-eye contract. Re-publish cached
     // events immediately rather than waiting for another pass calculation.
     syncGroundStationTimelineSelection();
+    syncPlannerPassForecastVisibility();
 }
 
 function isCompositeLayerActive(layerId) {
@@ -3618,6 +4314,9 @@ function updateGroundStationLayer(layerId, patch = {}) {
     // replaced immediately rather than surviving until a new selection.
     if (groundStationTimelineContextKey) {
         void refreshGroundStationTimelinePasses();
+    }
+    if (plannerPassForecastOpen) {
+        void refreshPlannerPassForecast({ force: true });
     }
     window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
         detail: {

@@ -75,12 +75,13 @@ cancel it.
     increase the step. Requests that also return chart vertices retain the
     20&nbsp;000 materialised-sample limit.
 
-!!! info "Foundation for a calendar"
+!!! info "Event planner"
 
     The flow retains normalised events (`aos`, `max`, `los`) with station and
-    satellite identifiers. A future calendar view can reuse them without
-    reinterpreting geometry. This is not yet an antenna schedule, resource
-    reservation, or confirmation of operational availability.
+    satellite identifiers. The [event planner](planner.md) presents them with
+    availability boundaries and manual blocks without reinterpreting geometry.
+    It is not an antenna schedule, resource reservation, or confirmation of
+    operational availability.
 
 ## OEM and time domain
 

@@ -1,4 +1,4 @@
-import { buildProjectDocument, isProjectDocument, normalizeProjectName } from "./projectDocument.js";
+import { buildProjectDocument, isProjectDocument, normalizeProjectName, normalizeProjectPlannerEvents } from "./projectDocument.js";
 import { downloadProjectDocument, readProjectDocument, saveProjectDocument } from "./projectFileIO.js";
 import {
     cancelOperation,
@@ -91,6 +91,7 @@ export function createProjectLifecycle(deps) {
         getSimulationState, getMasterTimeRange = () => null, clearMasterTimeRange = () => {}, applySimulationRange, restoreSimulation = null, showConfirm, showAlert, getAlertTitle,
         getManualOrbitEntries = () => [], restoreManualOrbits = async () => ({ restored: [], failed: [] }),
         restoreGroundStations = async () => ({ restored: [], failed: [], idMap: {} }),
+        getPlannerManualEvents = () => [], restorePlannerManualEvents = async () => {}, clearPlannerManualEvents = () => {},
         getCelestialBodies = () => [], restoreCelestialBodies = () => [], clearCelestialBodies = () => {},
         // Local OEM tracks are intentionally not serialised: their samples
         // live only in the imported file/runtime. SP3 entries, by contrast,
@@ -170,6 +171,7 @@ export function createProjectLifecycle(deps) {
                     && shouldPersistSatellite(normalizedId) !== false;
             }),
             manualOrbits,
+            plannerEvents: getPlannerManualEvents(),
             celestialBodies: getCelestialBodies(),
             layerNames: Object.fromEntries(getLayerNameOverrides()),
             layerTree: getObjectSidebar()?.getProjectTree?.(),
@@ -201,6 +203,7 @@ export function createProjectLifecycle(deps) {
         || getActiveSatelliteIds().length > 0
         || getGroundStationLayers().size > 0
         || getCelestialBodies().length > 0
+        || getPlannerManualEvents().length > 0
         || (getObjectSidebar()?.getProjectTree?.().folders.length || 0) > 0;
 
     const clearContents = () => {
@@ -226,6 +229,7 @@ export function createProjectLifecycle(deps) {
             }
         }
         deferredSatelliteIds.clear();
+        clearPlannerManualEvents();
         setAllSatelliteLayersActive(false);
         for (const stationId of [...getGroundStationLayers().keys()]) removeGroundStationLayer(stationId);
         clearCelestialBodies(); clearDuplicateLayers(); getLayerNameOverrides().clear(); clearSatelliteVisualizationConfigs();
@@ -332,6 +336,17 @@ export function createProjectLifecycle(deps) {
             // station must not prevent satellites, bodies or manual orbits
             // from opening with the rest of the project.
             showAlert("El proyecto se abrio, pero alguna estacion terrestre no pudo restaurarse.", getAlertTitle());
+        }
+        try {
+            // Only authored manual blocks are restored. The callback owns
+            // schema validation so a legacy document with malformed entries
+            // cannot stop the remainder of the project from opening.
+            await restorePlannerManualEvents(
+                normalizeProjectPlannerEvents(project.plannerEvents),
+                { groundStationIdMap }
+            );
+        } catch {
+            showAlert("El proyecto se abrio, pero algun evento manual del planificador no pudo restaurarse.", getAlertTitle());
         }
         Object.entries(remapLayerNames(project.layerNames, groundStationIdMap))
             .forEach(([id, name]) => getLayerNameOverrides().set(id, name));

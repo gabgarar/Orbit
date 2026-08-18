@@ -183,6 +183,7 @@ plugins:
                 - Visualisation: user-guide/visualization.md
                 - 3D view: user-guide/three-d-view.md
                 - Timeline: user-guide/timeline.md
+                - Event planner: user-guide/planner.md
                 - Master Time Range: user-guide/master-time-range.md
                 - Built-In Test: user-guide/built-in-test.md
                 - Import: user-guide/import.md
@@ -408,6 +409,7 @@ nav:
       - Visualización: user-guide/visualization.md
       - Vista 3D: user-guide/three-d-view.md
       - Línea temporal: user-guide/timeline.md
+      - Planificador de eventos: user-guide/planner.md
       - Built-In Test: user-guide/built-in-test.md
       - Importación: user-guide/import.md
       - Exportación: user-guide/export.md

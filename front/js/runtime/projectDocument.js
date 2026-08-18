@@ -1,3 +1,5 @@
+import { normalizePlannerEvents } from "../features/planner/plannerEvents.js";
+
 export const PROJECT_FORMAT = "orbit-project";
 export const PROJECT_VERSION = 1;
 
@@ -46,7 +48,13 @@ function normalizeCelestialBodies(value) {
     }, []);
 }
 
-export function buildProjectDocument({ name, satellites, layerNames, layerTree, groundStations, simulation, manualOrbits, celestialBodies }) {
+/** Keep only authored planner blocks in v1 project data. */
+export function normalizeProjectPlannerEvents(value) {
+    return normalizePlannerEvents(value)
+        .filter((event) => event.source === "manual" && event.kind === "manual");
+}
+
+export function buildProjectDocument({ name, satellites, layerNames, layerTree, groundStations, simulation, manualOrbits, celestialBodies, plannerEvents }) {
     return {
         format: PROJECT_FORMAT,
         version: PROJECT_VERSION,
@@ -59,6 +67,10 @@ export function buildProjectDocument({ name, satellites, layerNames, layerTree, 
         // Positions are calculated again by Cesium from the current scene
         // clock; project data only preserves the active body layers.
         celestialBodies: normalizeCelestialBodies(celestialBodies),
+        // Only authored planner blocks arrive here. Passes, diagnostics and
+        // resource horizons are runtime-derived facts and must be recomputed
+        // instead of being frozen into a project document.
+        plannerEvents: normalizeProjectPlannerEvents(plannerEvents),
         layerNames: layerNames && typeof layerNames === "object" ? layerNames : {},
         layerTree: layerTree && typeof layerTree === "object" ? layerTree : { folders: [], layerParents: {} },
         groundStations: Array.isArray(groundStations) ? groundStations : [],

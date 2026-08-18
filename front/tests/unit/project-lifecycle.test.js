@@ -98,6 +98,72 @@ test("project lifecycle persists and restores a static simulation frame", async 
     }
 });
 
+test("project lifecycle round-trips authored planner events but never derived pass events", async () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const events = new EventTarget();
+    globalThis.window = events;
+    globalThis.document = { querySelectorAll: () => [] };
+    try {
+        let projectName = "Planner mission";
+        let plannerEvents = [{
+            id: "manual-review",
+            kind: "manual",
+            title: "Review",
+            start: "2026-08-18T10:00:00.000Z",
+            end: "2026-08-18T11:00:00.000Z",
+            color: "blue",
+            metadata: { stationId: "station:legacy" }
+        }];
+        let clearCount = 0;
+        let restored = null;
+        const lifecycle = createProjectLifecycle({
+            getProjectName: () => projectName,
+            setProjectName: (value) => { projectName = value; },
+            getProjectFileHandle: () => null,
+            setProjectFileHandle: () => {},
+            getActiveSatelliteIds: () => [],
+            setAllSatelliteLayersActive: () => {},
+            setSatelliteLayerActive: () => {},
+            getGroundStationLayers: () => new Map(),
+            removeGroundStationLayer: () => {},
+            clearDuplicateLayers: () => {},
+            getLayerNameOverrides: () => new Map(),
+            clearSatelliteVisualizationConfigs: () => {},
+            getObjectSidebar: () => null,
+            getPlannerManualEvents: () => plannerEvents,
+            clearPlannerManualEvents: () => { clearCount += 1; plannerEvents = []; },
+            restorePlannerManualEvents: async (items, context) => { restored = { items, context }; plannerEvents = items; },
+            restoreGroundStations: async () => ({ restored: ["station:new"], failed: [], idMap: { "station:legacy": "station:new" } }),
+            getSimulationState: () => ({ mode: "range", startDate: new Date("2026-08-18T00:00:00.000Z"), endDate: new Date("2026-08-19T00:00:00.000Z") }),
+            applySimulationRange: () => {},
+            showConfirm: async () => true,
+            showAlert: () => {},
+            getAlertTitle: () => "Orbit"
+        });
+
+        const saved = lifecycle.buildDocument();
+        assert.deepEqual(saved.plannerEvents.map((event) => event.id), ["manual-review"]);
+        const file = {
+            name: "planner.json",
+            text: async () => JSON.stringify({
+                ...saved,
+                plannerEvents: [
+                    ...saved.plannerEvents,
+                    { id: "derived", kind: "pass-aos", time: "2026-08-18T10:30:00.000Z" }
+                ]
+            })
+        };
+        assert.equal(await lifecycle.loadFile(file), true);
+        assert.equal(clearCount, 1);
+        assert.deepEqual(restored?.items.map((event) => event.id), ["manual-review"]);
+        assert.deepEqual(restored?.context.groundStationIdMap, { "station:legacy": "station:new" });
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+    }
+});
+
 test("project lifecycle serializes manual orbits separately and restores them without catalogue activation", async () => {
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;

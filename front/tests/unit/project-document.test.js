@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildProjectDocument, isProjectDocument, normalizeProjectName, PROJECT_FORMAT, PROJECT_VERSION } from "../../js/runtime/projectDocument.js";
+import { buildProjectDocument, isProjectDocument, normalizeProjectName, normalizeProjectPlannerEvents, PROJECT_FORMAT, PROJECT_VERSION } from "../../js/runtime/projectDocument.js";
 
 test("project document normalizes optional data into a stable export contract", () => {
     const manualOrbit = {
@@ -31,4 +31,26 @@ test("project document normalizes optional data into a stable export contract", 
 test("project document validation rejects unrelated content and supplies a name fallback", () => {
     assert.equal(isProjectDocument({ format: PROJECT_FORMAT, version: 2 }), false);
     assert.equal(normalizeProjectName("   "), "Untitled project");
+});
+
+test("project documents persist only valid authored manual planner events", () => {
+    const manual = {
+        id: "planner:review",
+        kind: "manual",
+        title: "Mission review",
+        start: "2026-08-18T10:00:00.000Z",
+        end: "2026-08-18T11:00:00.000Z",
+        color: "purple",
+        metadata: { stationId: "station:old" }
+    };
+    const events = [
+        manual,
+        { id: "derived-pass", kind: "pass-aos", time: "2026-08-18T10:30:00.000Z" },
+        { id: "bad-manual", kind: "manual", title: "Bad", start: manual.end, end: manual.start, color: "blue" }
+    ];
+    const document = buildProjectDocument({ name: "Planner", plannerEvents: events });
+    assert.deepEqual(document.plannerEvents.map((event) => [event.id, event.source, event.kind, event.colorToken]), [
+        ["planner:review", "manual", "manual", "purple"]
+    ]);
+    assert.deepEqual(normalizeProjectPlannerEvents(events), document.plannerEvents);
 });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CesiumGlobe from "./components/CesiumGlobe.jsx";
 import TopToolbar from "./components/layout/TopToolbar.jsx";
 import BuiltInTestPanel from "./components/overlays/BuiltInTestPanel.jsx";
@@ -7,7 +7,9 @@ import NotificationCenter from "./components/overlays/NotificationCenter.jsx";
 import OperationsPanel from "./components/overlays/OperationsPanel.jsx";
 import OrbitOverlays from "./components/overlays/OrbitOverlays.jsx";
 import ProjectWelcome from "./components/overlays/ProjectWelcome.jsx";
+import PlannerPanel from "./features/planner/PlannerPanel.jsx";
 import TimeControlBar from "./features/simulation/TimeControlBar.jsx";
+import { ORBIT_PLANNER_CLOSE_EVENT, ORBIT_PLANNER_OPEN_EVENT } from "./features/planner/plannerUiModel.js";
 import useOrbitNotifications from "./hooks/useOrbitNotifications.js";
 import useOrbitOperations from "./hooks/useOrbitOperations.js";
 import useProjectWelcome from "./hooks/useProjectWelcome.js";
@@ -29,6 +31,11 @@ export default function App() {
     const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
     const [notificationsOpen, setNotificationsOpen] = useState(false);
     const [operationsOpen, setOperationsOpen] = useState(false);
+    const [plannerOpen, setPlannerOpen] = useState(false);
+    // Keep this synchronous guard separate from React state: state updater
+    // functions can be intentionally replayed by Strict Mode, whereas closing
+    // the planner must emit exactly one cancellation signal.
+    const plannerOpenRef = useRef(false);
     const notifications = useOrbitNotifications();
     const operations = useOrbitOperations();
     const { isOpen: welcomeOpen, runtimeStatus } = useProjectWelcome();
@@ -84,18 +91,52 @@ export default function App() {
             window.dispatchEvent(new CustomEvent("orbit:project-dialog-request", { detail: action }));
         }
     };
+    const closePlanner = useCallback(() => {
+        if (!plannerOpenRef.current) return;
+        plannerOpenRef.current = false;
+        window.dispatchEvent(new Event(ORBIT_PLANNER_CLOSE_EVENT));
+        setPlannerOpen(false);
+    }, []);
+    const openPlanner = useCallback(({ announce = true } = {}) => {
+        if (plannerOpenRef.current) return;
+        plannerOpenRef.current = true;
+        setPlannerOpen(true);
+        // The runtime owns the scene-wide forecast.  Publishing after the
+        // synchronous guard is set makes the toolbar path and external
+        // "open planner" commands equivalent without re-entering this
+        // listener when the event comes back through App.
+        if (announce) window.dispatchEvent(new Event(ORBIT_PLANNER_OPEN_EVENT));
+    }, []);
+    const togglePlanner = useCallback(() => {
+        if (plannerOpenRef.current) closePlanner();
+        else openPlanner();
+    }, [closePlanner, openPlanner]);
+
+    useEffect(() => () => {
+        // Covers an application teardown while the modal is open without
+        // duplicating the ordinary close path above.
+        if (!plannerOpenRef.current) return;
+        plannerOpenRef.current = false;
+        window.dispatchEvent(new Event(ORBIT_PLANNER_CLOSE_EVENT));
+    }, []);
+
     useEffect(() => {
         const openHelp = () => setHelpOpen(true);
         const openDiagnostics = () => setDiagnosticsOpen(true);
         const openOperations = () => setOperationsOpen(true);
+        // An external command has already notified the runtime. Do not emit a
+        // nested duplicate merely to mount the React surface.
+        const openPlannerFromEvent = () => openPlanner({ announce: false });
         window.addEventListener("orbit:help-open", openHelp);
         window.addEventListener("orbit:diagnostics-open", openDiagnostics);
         window.addEventListener("orbit:operations-open", openOperations);
+        window.addEventListener(ORBIT_PLANNER_OPEN_EVENT, openPlannerFromEvent);
         return () => {
             window.removeEventListener("orbit:help-open", openHelp);
             window.removeEventListener("orbit:diagnostics-open", openDiagnostics);
             window.removeEventListener("orbit:operations-open", openOperations);
+            window.removeEventListener(ORBIT_PLANNER_OPEN_EVENT, openPlannerFromEvent);
         };
-    }, []);
-    return <><TopToolbar hasNotifications={notifications.length > 0} activeOperationCount={operations.length} operationsOpen={operationsOpen} diagnosticsStatus={bitStatus} onToggleOperations={() => setOperationsOpen((value) => !value)} onToggleNotifications={() => setNotificationsOpen((value) => !value)} onToggleHelp={() => setHelpOpen((value) => !value)} onToggleDiagnostics={() => setDiagnosticsOpen((value) => !value)} /><CesiumGlobe /><OrbitOverlays /><TimeControlBar />{welcomeOpen && <ProjectWelcome onAction={startProjectAction} runtimeStatus={runtimeStatus} startup={startup} startupPresentation={startupPresentation} />}{operationsOpen && <OperationsPanel operations={operations} onClose={() => setOperationsOpen(false)} />}{notificationsOpen && <NotificationCenter notifications={notifications} onClose={() => setNotificationsOpen((value) => !value)} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}{diagnosticsOpen && <BuiltInTestPanel onClose={() => setDiagnosticsOpen(false)} diagnosticsState={systemDiagnostics} />}</>;
+    }, [openPlanner]);
+    return <><TopToolbar hasNotifications={notifications.length > 0} activeOperationCount={operations.length} operationsOpen={operationsOpen} plannerOpen={plannerOpen} diagnosticsStatus={bitStatus} onToggleOperations={() => setOperationsOpen((value) => !value)} onTogglePlanner={togglePlanner} onToggleNotifications={() => setNotificationsOpen((value) => !value)} onToggleHelp={() => setHelpOpen((value) => !value)} onToggleDiagnostics={() => setDiagnosticsOpen((value) => !value)} /><CesiumGlobe /><OrbitOverlays /><TimeControlBar />{welcomeOpen && <ProjectWelcome onAction={startProjectAction} runtimeStatus={runtimeStatus} startup={startup} startupPresentation={startupPresentation} />}{plannerOpen && <PlannerPanel onClose={closePlanner} />}{operationsOpen && <OperationsPanel operations={operations} onClose={() => setOperationsOpen(false)} />}{notificationsOpen && <NotificationCenter notifications={notifications} onClose={() => setNotificationsOpen((value) => !value)} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}{diagnosticsOpen && <BuiltInTestPanel onClose={() => setDiagnosticsOpen(false)} diagnosticsState={systemDiagnostics} />}</>;
 }

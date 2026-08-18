@@ -76,13 +76,13 @@ panel de **Actividad** muestra ese trabajo y permite cancelarlo.
     aumentar el paso. Las consultas que además devuelven vértices para una
     gráfica conservan el límite materializado de 20&nbsp;000 muestras.
 
-!!! info "Base para el calendario"
+!!! info "Planificador de eventos"
 
     El flujo conserva eventos normalizados (`aos`, `max`, `los`) con sus
-    identificadores de estación y satélite. Una futura vista de calendario
-    podrá reutilizarlos sin reinterpretar la geometría. No constituye todavía
-    una agenda de antena, reserva de recurso ni confirmación de disponibilidad
-    operativa.
+    identificadores de estación y satélite. El [Planificador de eventos](planner.md)
+    los presenta junto con límites de disponibilidad y bloques manuales, sin
+    reinterpretar la geometría. No constituye una agenda de antena, reserva de
+    recurso ni confirmación de disponibilidad operativa.
 
 ## OEM y dominio temporal
 

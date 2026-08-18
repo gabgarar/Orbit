@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import GlobalSearch from "../GlobalSearch.jsx";
-import { ActivityIcon, BellIcon, ControlPanelIcon, DiagnosticsIcon, HelpIcon } from "../icons.jsx";
+import { ActivityIcon, BellIcon, CalendarIcon, ControlPanelIcon, DiagnosticsIcon, HelpIcon } from "../icons.jsx";
 import "./TopToolbar.css";
 
 const navigation = ["Dashboard", "Satellites", "Missions", "Ground Stations", "Analytics"];
@@ -46,8 +46,10 @@ export default function TopToolbar({
     hasNotifications,
     activeOperationCount = 0,
     operationsOpen = false,
+    plannerOpen = false,
     diagnosticsStatus = "warning",
     onToggleOperations,
+    onTogglePlanner,
     onToggleNotifications,
     onToggleHelp,
     onToggleDiagnostics
@@ -76,6 +78,16 @@ export default function TopToolbar({
                 if (target === "Ground Stations") window.dispatchEvent(new Event("orbit:ground-stations-open"));
                 if (target === "Satellites") window.dispatchEvent(new Event("orbit:ground-stations-close"));
             }} />)}
+            <button
+                id="topPlannerBtn"
+                className={`toolbar-planner-btn toolbar-vector-icon${plannerOpen ? " is-open" : ""}`}
+                type="button"
+                aria-label="Planificador"
+                aria-controls="orbitPlannerPanel"
+                aria-expanded={plannerOpen}
+                title="Planificador"
+                onClick={onTogglePlanner}
+            ><CalendarIcon /></button>
         </nav>
         <div className="toolbar-spacer" />
         <GlobalSearch />

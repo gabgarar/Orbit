@@ -17,6 +17,7 @@ límites que afectan a la conservación de datos y a la interpretación técnica
 | [Visualización](visualization.md) | Configurar el aspecto de objetos, órbitas, mapa y escena. |
 | [Vista 3D](three-d-view.md) | Cambiar proyección, navegación, cámara y grabación local. |
 | [Línea temporal](timeline.md) | Trabajar en modo estático, tiempo real o simulación de rango. |
+| [Planificador de eventos](planner.md) | Consultar pases, límites de validez y eventos manuales en las vistas de día, semana o mes. |
 | [Estaciones de tierra](ground-stations.md) | Configurar estaciones y consultar visibilidad muestreada. |
 | [Rango temporal maestro](master-time-range.md) | Mantener una ventana UTC coherente para objetos con cobertura finita. |
 | [Built-In Test](built-in-test.md) | Consultar la salud publicada del runtime y el estado local de la escena. |

@@ -116,9 +116,33 @@
 
 #topToolbar .toolbar-nav-link:focus-visible,
 #topToolbar .toolbar-icon-btn:focus-visible,
+#topToolbar .toolbar-planner-btn:focus-visible,
 #topToolbar .toolbar-avatar:focus-visible {
     outline: 2px solid var(--orbit-toolbar-accent);
     outline-offset: 2px;
+}
+
+/* The planner belongs to navigation, immediately after Analytics, rather
+   than the right-side utility cluster.  It intentionally stays icon-only. */
+#topToolbar .toolbar-planner-btn {
+    display: grid;
+    width: 28px;
+    height: 30px;
+    flex: 0 0 auto;
+    margin-left: clamp(-6px, -.25vw, -2px);
+    place-items: center;
+    border: 0;
+    border-radius: calc(var(--orbit-toolbar-radius) - 3px);
+    background: transparent;
+    color: var(--orbit-toolbar-text-muted);
+    cursor: pointer;
+    transition: color 150ms ease, background 150ms ease;
+}
+
+#topToolbar .toolbar-planner-btn:hover,
+#topToolbar .toolbar-planner-btn.is-open {
+    background: rgba(127, 167, 255, .14);
+    color: var(--orbit-toolbar-text);
 }
 
 #topToolbar .toolbar-nav-icon {
