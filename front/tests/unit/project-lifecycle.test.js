@@ -115,8 +115,10 @@ test("project lifecycle round-trips authored planner events but never derived pa
             color: "blue",
             metadata: { stationId: "station:legacy" }
         }];
+        let plannerHiddenLayerIds = ["station:legacy", "sat:visible"];
         let clearCount = 0;
         let restored = null;
+        let restoredHidden = null;
         const lifecycle = createProjectLifecycle({
             getProjectName: () => projectName,
             setProjectName: (value) => { projectName = value; },
@@ -134,6 +136,9 @@ test("project lifecycle round-trips authored planner events but never derived pa
             getPlannerManualEvents: () => plannerEvents,
             clearPlannerManualEvents: () => { clearCount += 1; plannerEvents = []; },
             restorePlannerManualEvents: async (items, context) => { restored = { items, context }; plannerEvents = items; },
+            getPlannerHiddenLayerIds: () => plannerHiddenLayerIds,
+            clearPlannerHiddenLayerIds: () => { plannerHiddenLayerIds = []; },
+            restorePlannerHiddenLayerIds: async (items, context) => { restoredHidden = { items, context }; plannerHiddenLayerIds = items; },
             restoreGroundStations: async () => ({ restored: ["station:new"], failed: [], idMap: { "station:legacy": "station:new" } }),
             getSimulationState: () => ({ mode: "range", startDate: new Date("2026-08-18T00:00:00.000Z"), endDate: new Date("2026-08-19T00:00:00.000Z") }),
             applySimulationRange: () => {},
@@ -144,6 +149,7 @@ test("project lifecycle round-trips authored planner events but never derived pa
 
         const saved = lifecycle.buildDocument();
         assert.deepEqual(saved.plannerEvents.map((event) => event.id), ["manual-review"]);
+        assert.deepEqual(saved.plannerHiddenLayerIds, ["station:legacy", "sat:visible"]);
         const file = {
             name: "planner.json",
             text: async () => JSON.stringify({
@@ -158,6 +164,8 @@ test("project lifecycle round-trips authored planner events but never derived pa
         assert.equal(clearCount, 1);
         assert.deepEqual(restored?.items.map((event) => event.id), ["manual-review"]);
         assert.deepEqual(restored?.context.groundStationIdMap, { "station:legacy": "station:new" });
+        assert.deepEqual(restoredHidden?.items, ["station:new", "sat:visible"]);
+        assert.deepEqual(restoredHidden?.context.groundStationIdMap, { "station:legacy": "station:new" });
     } finally {
         globalThis.window = previousWindow;
         globalThis.document = previousDocument;

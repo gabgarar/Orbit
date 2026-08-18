@@ -80,14 +80,15 @@ export default function TopToolbar({
             }} />)}
             <button
                 id="topPlannerBtn"
-                className={`toolbar-planner-btn toolbar-vector-icon${plannerOpen ? " is-open" : ""}`}
+                className={`toolbar-nav-link toolbar-planner-btn is-available${plannerOpen ? " is-active is-open" : ""}`}
                 type="button"
-                aria-label="Planificador"
+                aria-label="Planner"
                 aria-controls="orbitPlannerPanel"
                 aria-expanded={plannerOpen}
+                aria-current={plannerOpen ? "page" : undefined}
                 title="Planificador"
                 onClick={onTogglePlanner}
-            ><CalendarIcon /></button>
+            ><span className="toolbar-nav-icon"><CalendarIcon /></span>Planner</button>
         </nav>
         <div className="toolbar-spacer" />
         <GlobalSearch />

@@ -116,33 +116,15 @@
 
 #topToolbar .toolbar-nav-link:focus-visible,
 #topToolbar .toolbar-icon-btn:focus-visible,
-#topToolbar .toolbar-planner-btn:focus-visible,
 #topToolbar .toolbar-avatar:focus-visible {
     outline: 2px solid var(--orbit-toolbar-accent);
     outline-offset: 2px;
 }
 
-/* The planner belongs to navigation, immediately after Analytics, rather
-   than the right-side utility cluster.  It intentionally stays icon-only. */
+/* Planner belongs to the primary navigation immediately after Analytics.
+   It deliberately shares the same icon + label rhythm and active underline. */
 #topToolbar .toolbar-planner-btn {
-    display: grid;
-    width: 28px;
-    height: 30px;
-    flex: 0 0 auto;
-    margin-left: clamp(-6px, -.25vw, -2px);
-    place-items: center;
-    border: 0;
-    border-radius: calc(var(--orbit-toolbar-radius) - 3px);
-    background: transparent;
-    color: var(--orbit-toolbar-text-muted);
     cursor: pointer;
-    transition: color 150ms ease, background 150ms ease;
-}
-
-#topToolbar .toolbar-planner-btn:hover,
-#topToolbar .toolbar-planner-btn.is-open {
-    background: rgba(127, 167, 255, .14);
-    color: var(--orbit-toolbar-text);
 }
 
 #topToolbar .toolbar-nav-icon {
@@ -152,7 +134,8 @@
     color: var(--orbit-toolbar-accent);
 }
 
-#topToolbar .toolbar-nav-icon-svg {
+#topToolbar .toolbar-nav-icon-svg,
+#topToolbar .toolbar-nav-icon > svg {
     display: block;
     width: 16px;
     height: 16px;
@@ -394,7 +377,7 @@
         padding-inline: 10px;
     }
 
-    #topToolbar .toolbar-nav-link:not(.is-active),
+    #topToolbar .toolbar-nav-link:not(.is-active):not(.toolbar-planner-btn),
     #topToolbar .toolbar-action-divider,
     #topToolbar .toolbar-avatar {
         display: none;

@@ -1,4 +1,10 @@
-import { buildProjectDocument, isProjectDocument, normalizeProjectName, normalizeProjectPlannerEvents } from "./projectDocument.js";
+import {
+    buildProjectDocument,
+    isProjectDocument,
+    normalizeProjectName,
+    normalizeProjectPlannerEvents,
+    normalizeProjectPlannerHiddenLayerIds
+} from "./projectDocument.js";
 import { downloadProjectDocument, readProjectDocument, saveProjectDocument } from "./projectFileIO.js";
 import {
     cancelOperation,
@@ -77,6 +83,11 @@ function remapLayerTree(snapshot, idMap) {
     return { ...snapshot, layerParents };
 }
 
+function remapPlannerHiddenLayerIds(layerIds, idMap) {
+    return normalizeProjectPlannerHiddenLayerIds(layerIds)
+        .map((layerId) => idMap[layerId] || layerId);
+}
+
 function normalizeSatelliteRestoreDisposition(value) {
     const disposition = String(value || "").trim().toLowerCase();
     return ["restore", "defer", "skip"].includes(disposition) ? disposition : "restore";
@@ -92,6 +103,7 @@ export function createProjectLifecycle(deps) {
         getManualOrbitEntries = () => [], restoreManualOrbits = async () => ({ restored: [], failed: [] }),
         restoreGroundStations = async () => ({ restored: [], failed: [], idMap: {} }),
         getPlannerManualEvents = () => [], restorePlannerManualEvents = async () => {}, clearPlannerManualEvents = () => {},
+        getPlannerHiddenLayerIds = () => [], restorePlannerHiddenLayerIds = async () => {}, clearPlannerHiddenLayerIds = () => {},
         getCelestialBodies = () => [], restoreCelestialBodies = () => [], clearCelestialBodies = () => {},
         // Local OEM tracks are intentionally not serialised: their samples
         // live only in the imported file/runtime. SP3 entries, by contrast,
@@ -172,6 +184,7 @@ export function createProjectLifecycle(deps) {
             }),
             manualOrbits,
             plannerEvents: getPlannerManualEvents(),
+            plannerHiddenLayerIds: getPlannerHiddenLayerIds(),
             celestialBodies: getCelestialBodies(),
             layerNames: Object.fromEntries(getLayerNameOverrides()),
             layerTree: getObjectSidebar()?.getProjectTree?.(),
@@ -204,6 +217,7 @@ export function createProjectLifecycle(deps) {
         || getGroundStationLayers().size > 0
         || getCelestialBodies().length > 0
         || getPlannerManualEvents().length > 0
+        || getPlannerHiddenLayerIds().length > 0
         || (getObjectSidebar()?.getProjectTree?.().folders.length || 0) > 0;
 
     const clearContents = () => {
@@ -230,6 +244,7 @@ export function createProjectLifecycle(deps) {
         }
         deferredSatelliteIds.clear();
         clearPlannerManualEvents();
+        clearPlannerHiddenLayerIds();
         setAllSatelliteLayersActive(false);
         for (const stationId of [...getGroundStationLayers().keys()]) removeGroundStationLayer(stationId);
         clearCelestialBodies(); clearDuplicateLayers(); getLayerNameOverrides().clear(); clearSatelliteVisualizationConfigs();
@@ -347,6 +362,17 @@ export function createProjectLifecycle(deps) {
             );
         } catch {
             showAlert("El proyecto se abrio, pero algun evento manual del planificador no pudo restaurarse.", getAlertTitle());
+        }
+        try {
+            // This is planner-local presentation state. Restore it after
+            // stations so regenerated ids can retain their filter setting;
+            // unknown satellite ids remain valid for deferred hydration.
+            await restorePlannerHiddenLayerIds(
+                remapPlannerHiddenLayerIds(project.plannerHiddenLayerIds, groundStationIdMap),
+                { groundStationIdMap }
+            );
+        } catch {
+            showAlert("El proyecto se abrio, pero los filtros de capas del planificador no pudieron restaurarse.", getAlertTitle());
         }
         Object.entries(remapLayerNames(project.layerNames, groundStationIdMap))
             .forEach(([id, name]) => getLayerNameOverrides().set(id, name));

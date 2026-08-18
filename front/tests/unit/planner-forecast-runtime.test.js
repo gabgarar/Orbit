@@ -39,10 +39,10 @@ test("planner forecast filters cached endpoints and keeps partial failures obser
         "function plannerContext()"
     );
 
-    assert.match(visibleEvents, /filterGroundStationPassTimelineEvents\(events, isGroundStationTimelinePairVisible\)/);
+    assert.match(visibleEvents, /filterGroundStationPassTimelineEvents\(events, isPlannerGroundStationTimelinePairVisible\)/);
     assert.match(publication, /plannerPassForecast\.failures = \[\.\.\.plannerPassForecastPairFailures\.values\(\)\]/);
     assert.match(errors, /for \(const failure of passSource\.failures \|\| \[\]\)/);
-    assert.match(errors, /passSource === plannerPassForecast[\s\S]*?!isGroundStationTimelinePairVisible\(/);
+    assert.match(errors, /passSource === plannerPassForecast[\s\S]*?!isPlannerGroundStationTimelinePairVisible\(/);
     assert.match(errors, /const reason = plannerText\(failure\?\.reason\)/);
 });
 
@@ -58,6 +58,18 @@ test("planner republishes cached forecast facts immediately when either endpoint
 
     assert.match(stationVisibility, /syncPlannerPassForecastVisibility\(\)/);
     assert.match(layerVisibility, /syncPlannerPassForecastVisibility\(\)/);
+});
+
+test("planner-only layer filters do not narrow collection work and republish cached events", () => {
+    const refresh = sourceBetween(
+        "async function refreshPlannerPassForecast",
+        "function requestPlannerPassForecast"
+    );
+    assert.match(refresh, /Planner filters are presentation-only/);
+    assert.match(refresh, /collectGroundStationTimelinePairs\(\{ kind: "planner" \}, range\)/);
+    assert.doesNotMatch(refresh, /respectPlannerLayerFilters/);
+    assert.match(mainSource, /window\.addEventListener\("orbit:planner-layer-filter", updatePlannerLayerFilter\)/);
+    assert.match(mainSource, /plannerHiddenLayerIds: getPlannerHiddenLayerIdsForProject\(\)/);
 });
 
 test("planner lifecycle starts from open or late state request and cancels on close/range/project boundaries", () => {

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildProjectDocument, isProjectDocument, normalizeProjectName, normalizeProjectPlannerEvents, PROJECT_FORMAT, PROJECT_VERSION } from "../../js/runtime/projectDocument.js";
+import {
+    buildProjectDocument,
+    isProjectDocument,
+    normalizeProjectName,
+    normalizeProjectPlannerEvents,
+    normalizeProjectPlannerHiddenLayerIds,
+    PROJECT_FORMAT,
+    PROJECT_VERSION
+} from "../../js/runtime/projectDocument.js";
 
 test("project document normalizes optional data into a stable export contract", () => {
     const manualOrbit = {
@@ -53,4 +61,16 @@ test("project documents persist only valid authored manual planner events", () =
         ["planner:review", "manual", "manual", "purple"]
     ]);
     assert.deepEqual(normalizeProjectPlannerEvents(events), document.plannerEvents);
+});
+
+test("project documents persist planner-only hidden layer ids separately from scene visibility", () => {
+    const document = buildProjectDocument({
+        name: "Planner filters",
+        plannerHiddenLayerIds: ["station:old", "sat:one", "station:old", "", null]
+    });
+    assert.deepEqual(document.plannerHiddenLayerIds, ["station:old", "sat:one"]);
+    assert.deepEqual(
+        normalizeProjectPlannerHiddenLayerIds(["station:old", "station:old", "sat:one"]),
+        document.plannerHiddenLayerIds
+    );
 });

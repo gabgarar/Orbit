@@ -1,4 +1,5 @@
 import { normalizePlannerEvents } from "../features/planner/plannerEvents.js";
+import { normalizePlannerHiddenLayerIds } from "../features/planner/plannerRuntimeContext.js";
 
 export const PROJECT_FORMAT = "orbit-project";
 export const PROJECT_VERSION = 1;
@@ -54,7 +55,12 @@ export function normalizeProjectPlannerEvents(value) {
         .filter((event) => event.source === "manual" && event.kind === "manual");
 }
 
-export function buildProjectDocument({ name, satellites, layerNames, layerTree, groundStations, simulation, manualOrbits, celestialBodies, plannerEvents }) {
+/** Keep only the project-owned planner layer filter, never scene visibility. */
+export function normalizeProjectPlannerHiddenLayerIds(value) {
+    return normalizePlannerHiddenLayerIds(value);
+}
+
+export function buildProjectDocument({ name, satellites, layerNames, layerTree, groundStations, simulation, manualOrbits, celestialBodies, plannerEvents, plannerHiddenLayerIds }) {
     return {
         format: PROJECT_FORMAT,
         version: PROJECT_VERSION,
@@ -71,6 +77,9 @@ export function buildProjectDocument({ name, satellites, layerNames, layerTree, 
         // resource horizons are runtime-derived facts and must be recomputed
         // instead of being frozen into a project document.
         plannerEvents: normalizeProjectPlannerEvents(plannerEvents),
+        // Planner-only visibility is authored per project. It intentionally
+        // does not mutate `visible` in the scene layer tree.
+        plannerHiddenLayerIds: normalizeProjectPlannerHiddenLayerIds(plannerHiddenLayerIds),
         layerNames: layerNames && typeof layerNames === "object" ? layerNames : {},
         layerTree: layerTree && typeof layerTree === "object" ? layerTree : { folders: [], layerParents: {} },
         groundStations: Array.isArray(groundStations) ? groundStations : [],
