@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 BASE_DIR = Path(__file__).resolve().parents[4]
 CONFIG_DIR = BASE_DIR / "config"
 DATA_DIR = BASE_DIR / "data"
@@ -11,6 +10,10 @@ DATA_DIR = BASE_DIR / "data"
 # runtime so a validated cache survives a container rebuild/restart.
 ERP_DATA_DIR = DATA_DIR / "erp"
 IERS_EOP_C01_CACHE_PATH = ERP_DATA_DIR / "EOP_C01_IAU2000_1846-now.txt"
+# The official IERS Rapid Service/Prediction Centre product continues the
+# historical C01 coverage with final, rapid and explicitly predicted samples.
+# It remains mutable operational cache alongside C01, never project data.
+IERS_FINALS2000A_CACHE_PATH = ERP_DATA_DIR / "finals2000A.all"
 # NGA gravity archives are an operational cache like generic IERS C01 data.
 # They are deliberately outside ``config``: their mutable bytes are never
 # serialised into an Orbit project or treated as an image-build input.

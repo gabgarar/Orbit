@@ -24,12 +24,13 @@ from orbit_api.application.diagnostics import (
     SystemDiagnostics,
     SystemHealthMonitor,
 )
-from orbit_api.application.orbit_runtime import OrbitRuntime
 from orbit_api.application.manual_erp import ManualErpRepository
+from orbit_api.application.orbit_runtime import OrbitRuntime
 from orbit_api.core.settings import (
     COMPRESSION_THRESHOLD,
     CONFIG_DIR,
     IERS_EOP_C01_CACHE_PATH,
+    IERS_FINALS2000A_CACHE_PATH,
     MANUAL_ERP_SNAPSHOTS_DIR,
 )
 from orbit_api.frames import build_frame_transformer_from_environment
@@ -38,7 +39,7 @@ from orbit_api.orbits.forces import (
     build_gravity_field_from_environment,
     build_gravity_model_registry_from_environment,
 )
-from orbit_api.timekeeping import IersEopCacheService, ensure_utc
+from orbit_api.timekeeping import IersAutomaticEarthOrientationService, ensure_utc
 
 
 def _enabled(value: object) -> bool:
@@ -57,7 +58,7 @@ def create_app() -> FastAPI:
     environment = os.environ
     frame_transformer = build_frame_transformer_from_environment(environment)
     configured_c04_path = str(environment.get("ORBIT_EOP_C04_PATH", "")).strip()
-    automatic_eop: IersEopCacheService | None = None
+    automatic_eop: IersAutomaticEarthOrientationService | None = None
     pinned_eop_diagnostics: PinnedEopDiagnostics | None = None
     if configured_c04_path:
         # A mounted, checksum-controlled C04 is an explicit reproducible
@@ -68,17 +69,23 @@ def create_app() -> FastAPI:
             source=str(environment.get("ORBIT_EOP_SOURCE", "IERS EOP C04")),
         )
     else:
-        # C01 is a generic global fallback only. It is installed before the
-        # runtime is built, but initially returns an explicitly labelled
-        # nominal provider until the non-blocking monitor validates cache or
-        # download data. SP3/manual ERP routes clone and override this service
-        # with their product-bound provider, so no product provenance changes.
-        cache_path = Path(
+        # The automatic route prefers C01 and then continues with the official
+        # IERS finals2000A product. It is installed before the runtime is
+        # built, but initially returns an explicitly labelled nominal provider
+        # until the non-blocking monitor validates/downloads both snapshots.
+        # SP3/manual ERP routes clone and override this service with their
+        # product-bound provider, so no product provenance changes.
+        c01_cache_path = Path(
             str(environment.get("ORBIT_EOP_C01_CACHE_PATH", "")).strip()
             or IERS_EOP_C01_CACHE_PATH
         ).expanduser()
-        automatic_eop = IersEopCacheService(
-            cache_path,
+        finals_cache_path = Path(
+            str(environment.get("ORBIT_FINALS2000A_CACHE_PATH", "")).strip()
+            or IERS_FINALS2000A_CACHE_PATH
+        ).expanduser()
+        automatic_eop = IersAutomaticEarthOrientationService(
+            c01_cache_path,
+            finals_cache_path,
             leap_seconds=frame_transformer.leap_second_table,
         )
         frame_transformer = frame_transformer.with_earth_orientation_provider(automatic_eop)

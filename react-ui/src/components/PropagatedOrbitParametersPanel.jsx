@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { downloadChartPng } from "../../../front/js/runtime/chartPngExport.js";
 import { formatReferenceFrame } from "../../../front/js/features/frames/referenceFrame.js";
 import { resolvePreciseProductFrameStatus } from "../../../front/js/features/preciseProducts/frameStatus.js";
+import { describeEarthOrientationCoverageDetail } from "../../../front/js/features/timekeeping/eopCoveragePolicy.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
 
 /*
@@ -19,6 +20,8 @@ const EMPTY_PANEL_STATE = {
     target: null,
     range: null,
     result: null,
+    earthOrientationPreflight: null,
+    earthOrientationProvenance: null,
     error: ""
 };
 
@@ -264,6 +267,22 @@ function statusDescriptor(status, error, hasTarget, count) {
     if (["busy", "loading", "pending", "propagating"].includes(String(status).toLowerCase())) return ["PROPAGANDO", "bg-[rgba(67,118,255,.16)] text-[#9fc1ff]", "Calculando la serie temporal solicitada."];
     if (count > 0) return ["LISTO", "bg-[rgba(55,197,126,.14)] text-[#76e7a1]", count.toLocaleString("en-US") + " muestras propagadas disponibles."];
     return ["LISTO", "bg-[rgba(144,162,187,.12)] text-[#a8b7cc]", "No hay muestras propagadas para este intervalo."];
+}
+
+function earthOrientationPanelNotice(panel) {
+    const actual = panel?.earthOrientationProvenance;
+    const preflight = panel?.earthOrientationPreflight;
+    const detail = actual || preflight;
+    if (!detail || detail.requiresNotice !== true || !Array.isArray(detail.segments) || !detail.segments.length) {
+        return null;
+    }
+    return {
+        actual: Boolean(actual),
+        warning: detail.requiresWarning === true,
+        message: describeEarthOrientationCoverageDetail(detail, {
+            operation: actual ? "Proveniencia de orientación terrestre" : "Preflight de orientación terrestre"
+        })
+    };
 }
 
 function viewportBounds() {
@@ -926,7 +945,9 @@ export default function PropagatedOrbitParametersPanel() {
                 target: envelope.target ?? result.satellite ?? result.target ?? current.target ?? null,
                 range: envelope.range ?? current.range,
                 error: envelope.error ?? "",
-                result
+                result,
+                earthOrientationPreflight: envelope.earthOrientationPreflight ?? current.earthOrientationPreflight,
+                earthOrientationProvenance: envelope.earthOrientationProvenance ?? current.earthOrientationProvenance
             }));
         };
         const applyContext = (event) => {
@@ -1045,6 +1066,7 @@ export default function PropagatedOrbitParametersPanel() {
     const visibleReferenceFrame = displayFrame || referenceFrame;
     const errorText = errorMessage(panel.error);
     const [statusLabel, statusClass, statusText] = statusDescriptor(panel.status, errorText, hasTarget, samples.length);
+    const earthOrientationNotice = earthOrientationPanelNotice(panel);
 
     useEffect(() => {
         const next = { start: toDateTimeInput(start), end: toDateTimeInput(end) };
@@ -1179,6 +1201,8 @@ export default function PropagatedOrbitParametersPanel() {
         <nav className="grid shrink-0 grid-cols-3 border-b border-[#203550] px-3" role="tablist" aria-label="Secciones del inspector">
             {tabs.map(([id, label]) => <button className={"relative cursor-pointer border-0 bg-transparent px-2 py-3 text-[10px] font-bold " + (activeTab === id ? "text-[#eaf1ff] after:absolute after:right-1 after:bottom-0 after:left-1 after:h-0.5 after:bg-[#5481ff] after:shadow-[0_0_8px_#5481ff] after:content-['']" : "text-[#8495ae] hover:text-[#cbd9ed]")} type="button" key={id} role="tab" aria-selected={activeTab === id} onClick={() => setActiveTab(id)}>{label}</button>)}
         </nav>
+
+        {earthOrientationNotice && <p className={`mx-3.5 mt-3 mb-0 shrink-0 rounded-[7px] border px-2.5 py-2 text-[9px] leading-[1.35] ${earthOrientationNotice.warning ? "border-[#874252] bg-[rgba(82,28,42,.36)] text-[#ffd0d9]" : "border-[#776035] bg-[rgba(78,59,20,.3)] text-[#f5d38e]"}`} role={earthOrientationNotice.warning ? "alert" : "status"} data-testid="propagated-parameters-eop-coverage-notice"><strong>{earthOrientationNotice.actual ? "Proveniencia usada. " : "Preflight de la ventana. "}</strong>{earthOrientationNotice.message}{earthOrientationNotice.actual ? "" : " El servicio no ha devuelto aún la procedencia de ejecución."}</p>}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3.5">
             {activeTab === "info" && <InformationTab panel={panel} result={result} samples={samples} targetLabel={targetLabel} targetId={targetId} hasTarget={hasTarget} source={source} propagator={propagator} referenceFrame={referenceFrame} displayFrame={displayFrame} rendererReference={rendererReference} start={start} end={end} statusLabel={statusLabel} statusClass={statusClass} statusText={statusText} draftRange={draftRange} setDraftRange={setDraftRange} onUpdateRange={updateRange} onApplySimulation={applySimulation} onRefresh={requestRefresh} />}

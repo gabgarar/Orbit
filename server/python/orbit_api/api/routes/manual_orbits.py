@@ -7,15 +7,9 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException
 
-from orbit_api.application.manual_orbits import (
-    EARTH_EQUATORIAL_RADIUS_KM,
-    ManualOrbitError,
-    build_manual_orbit_propagator,
-    canonical_manual_orbit,
-    manual_erp_frame_transformer,
-    manual_orbit_requires_erp,
-    require_manual_erp_for_force_terms,
-    validate_manual_erp_coverage,
+from orbit_api.api.routes.startup_gate import (
+    StartupReadinessProvider,
+    require_project_startup_ready,
 )
 from orbit_api.application.manual_erp import (
     ManualErpError,
@@ -23,9 +17,16 @@ from orbit_api.application.manual_erp import (
     ManualErpSnapshot,
     resolve_manual_erp_input,
 )
-from orbit_api.api.routes.startup_gate import (
-    StartupReadinessProvider,
-    require_project_startup_ready,
+from orbit_api.application.manual_orbits import (
+    EARTH_EQUATORIAL_RADIUS_KM,
+    ManualOrbitError,
+    automatic_earth_orientation_window,
+    build_manual_orbit_propagator,
+    canonical_manual_orbit,
+    manual_erp_frame_transformer,
+    manual_orbit_requires_erp,
+    require_manual_erp_for_force_terms,
+    validate_manual_erp_coverage,
 )
 from orbit_api.domain.requests import (
     MAX_MANUAL_COWELL_GEOPOTENTIAL_DEGREE,
@@ -473,6 +474,17 @@ def create_manual_orbits_router(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         response_ephemeris = _display_ephemeris(payload.name, ephemeris)
         epoch_utc = ensure_utc(payload.epoch).isoformat()
+        automatic_eop_window = (
+            automatic_earth_orientation_window(
+                frame_transformer,
+                min(ensure_utc(payload.epoch), start_time),
+                max(ensure_utc(payload.epoch), end_time),
+            )
+            if requires_manual_erp and manual_erp is None
+            else None
+        )
+        if automatic_eop_window is not None:
+            propagator_metadata["earth_orientation_window"] = automatic_eop_window
         return {
             "name": payload.name,
             # Return the canonical engine ID even when an accepted legacy
@@ -513,6 +525,8 @@ def create_manual_orbits_router(
                 propagator_metadata,
                 propagation_options,
             ),
+            "earth_orientation_window": automatic_eop_window,
+            "earthOrientationWindow": automatic_eop_window,
             "ephemeris": response_ephemeris,
         }
 

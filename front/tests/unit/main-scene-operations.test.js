@@ -41,7 +41,7 @@ test("ground-station export, AOS/LOS, and propagated parameters complete every a
 
     assert.match(analysisWork, /beginRuntimeSceneOperation\("ground-station-analysis"/);
     assert.match(analysisWork, /fetch\(request\.url, \{ \.\.\.request\.requestOptions, signal: abortController\.signal \}\)/);
-    assert.match(analysisWork, /completeRuntimeSceneOperation\(operationId/);
+    assert.match(analysisWork, /completeRuntimeSceneOperation\(\s*operationId/);
     assert.match(analysisWork, /failRuntimeSceneOperation\(operationId/);
     assert.match(analysisWork, /cancelRuntimeSceneOperation\(operationId/);
     assert.match(analysisWork, /finally \{/);
@@ -49,7 +49,7 @@ test("ground-station export, AOS/LOS, and propagated parameters complete every a
     assert.match(parametersWork, /beginRuntimeSceneOperation\("propagated-parameters"/);
     assert.match(parametersWork, /fetch\("\/api\/orbit-parameters", \{/);
     assert.match(parametersWork, /signal: controller\.signal/);
-    assert.match(parametersWork, /completeRuntimeSceneOperation\(operationId/);
+    assert.match(parametersWork, /completeRuntimeSceneOperation\(\s*operationId/);
     assert.match(parametersWork, /failRuntimeSceneOperation\(operationId/);
     assert.match(parametersWork, /cancelRuntimeSceneOperation\(operationId/);
     assert.match(parametersWork, /finally \{/);

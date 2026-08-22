@@ -53,6 +53,10 @@ NOMINAL_EARTH_ORIENTATION_WARNING = (
     "No hay datos ERP disponibles. El geopotencial y el arrastre atmosférico "
     "usarán una rotación terrestre nominal."
 )
+LINEAR_EARTH_ORIENTATION_WARNING = (
+    "La cobertura IERS terminó. El geopotencial y el arrastre atmosférico "
+    "usan una extrapolación lineal EOP explícitamente etiquetada."
+)
 
 
 def manual_orbit_requires_erp(force_terms: tuple[str, ...] | list[str]) -> bool:
@@ -64,6 +68,31 @@ def manual_orbit_requires_erp(force_terms: tuple[str, ...] | list[str]) -> bool:
     """
 
     return bool(_MANUAL_ERP_FORCE_TERMS.intersection(force_terms))
+
+
+def automatic_earth_orientation_window(
+    frame_transformer: FrameTransformService | None,
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+) -> dict[str, object] | None:
+    """Return the global automatic EOP route for an operation window.
+
+    The automatic C01/finals service is intentionally discovered by its small
+    ``classify_window`` capability instead of coupling manual-orbit code to a
+    concrete cache implementation.  Explicit manual ERP remains an isolated
+    strict provider and therefore does not publish this automatic provenance.
+    """
+
+    if frame_transformer is None or frame_transformer.uses_manual_earth_orientation_provider:
+        return None
+    classify = getattr(frame_transformer.earth_orientation_provider, "classify_window", None)
+    if not callable(classify):
+        return None
+    try:
+        result = classify(start_time, end_time)
+    except (TypeError, ValueError):
+        return None
+    return result if isinstance(result, dict) else None
 
 
 def require_manual_erp_for_force_terms(
@@ -802,8 +831,8 @@ def build_manual_orbit_propagator(
             )
         else:
             metadata["earth_fixed_force_route"] = (
-                "EME2000 -> ITRF -> EME2000 (IERS EOP automatic; "
-                "nominal rotation when coverage is unavailable)"
+                "EME2000 -> ITRF -> EME2000 (IERS EOP automatic: C01/finals2000A; "
+                "bounded linear extrapolation, then nominal rotation when coverage is unavailable)"
             )
             try:
                 orientation = effective_transformer.earth_orientation_at(ensure_utc(epoch))
@@ -812,6 +841,15 @@ def build_manual_orbit_propagator(
             if orientation is None or orientation.quality == "approximate":
                 metadata["warnings"] = [NOMINAL_EARTH_ORIENTATION_WARNING]
                 metadata["earth_orientation_status"] = "nominal"
+            elif orientation.quality == "extrapolated":
+                metadata["warnings"] = [LINEAR_EARTH_ORIENTATION_WARNING]
+                metadata["earth_orientation_status"] = "extrapolated"
+                metadata["earth_orientation"] = {
+                    "source": orientation.source,
+                    "version": orientation.version,
+                    "quality": orientation.quality,
+                    "snapshot_id": orientation.snapshot_id,
+                }
             else:
                 metadata["earth_orientation_status"] = "iers"
                 metadata["earth_orientation"] = {

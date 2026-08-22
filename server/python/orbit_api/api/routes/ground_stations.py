@@ -21,6 +21,7 @@ from orbit_api.application.manual_erp import (
 )
 from orbit_api.application.manual_orbits import (
     ManualOrbitError,
+    automatic_earth_orientation_window,
     build_manual_orbit_propagator,
     canonical_manual_orbit,
     manual_erp_frame_transformer,
@@ -393,6 +394,14 @@ def create_ground_stations_router(
             # historical central-force response shape unchanged when no ERP
             # was selected.
             source_metadata["manual_erp"] = manual_erp.payload()
+        elif manual_orbit_requires_erp(tuple(propagation_options["force_terms"])):
+            automatic_eop_window = automatic_earth_orientation_window(
+                frame_transformer,
+                min(manual.epoch, payload.start_time),
+                max(manual.epoch, payload.end_time),
+            )
+            if automatic_eop_window is not None:
+                source_metadata["earth_orientation_window"] = automatic_eop_window
         return manual.name, runtime_name, propagator, source_metadata
 
     def calculate_access_windows(payload: AosLosRequest) -> dict:
@@ -674,6 +683,8 @@ def create_ground_stations_router(
         return {
             "satellite": name,
             "source": source_metadata,
+            "earth_orientation_window": source_metadata.get("earth_orientation_window"),
+            "earthOrientationWindow": source_metadata.get("earth_orientation_window"),
             "station": payload.station.model_dump(),
             "start_time": ensure_utc(payload.start_time).isoformat(),
             "end_time": ensure_utc(payload.end_time).isoformat(),

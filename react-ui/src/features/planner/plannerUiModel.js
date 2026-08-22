@@ -67,6 +67,38 @@ function record(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+/**
+ * Planner facts may originate in a local product import, an operational
+ * resource, or an operator-authored entry. Keep the presentation tolerant of
+ * the supported detail keys while keeping the canonical event schema
+ * unchanged: descriptive text always lives in metadata.
+ */
+export function plannerEventDescription(event) {
+    const source = record(event);
+    const metadata = record(source.metadata);
+    for (const candidate of [metadata.description, metadata.details, metadata.detail]) {
+        const description = text(candidate);
+        if (description) return description;
+    }
+    return "";
+}
+
+/**
+ * EOP source coverage is an interval rather than a series of independent
+ * deadlines.  The runtime explicitly marks these facts so the presentation
+ * can draw one continuous coverage rail instead of repeating a full event
+ * chip for every UTC day that the interval intersects.  Old planner snapshots
+ * without the marker deliberately remain ordinary point events.
+ */
+export function isPlannerEopRangeEvent(event) {
+    const source = record(event);
+    const metadata = record(source.metadata);
+    if (metadata.eopRange !== true || text(metadata.resourceType).toLowerCase() !== "erp") return false;
+    const start = plannerIsoTimestamp(source.start);
+    const end = plannerIsoTimestamp(source.end);
+    return Boolean(start && end && Date.parse(end) > Date.parse(start));
+}
+
 function utcDay(value = new Date()) {
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) return null;
@@ -186,6 +218,88 @@ export function normalizePlannerUiState(detail = {}) {
     };
 }
 
+function plannerEpoch(value) {
+    const iso = plannerIsoTimestamp(value);
+    return iso ? Date.parse(iso) : null;
+}
+
+/**
+ * Determine whether the read-only planner may ask the runtime to move the
+ * scene to an event.  The runtime remains authoritative; this mirror only
+ * prevents a button that appears to work but is guaranteed to be rejected by
+ * the active Simulated/MTR domain.
+ *
+ * Finite range facts (notably IERS ERP coverage) use their first usable
+ * instant inside the active domain.  A range that overlaps the simulation is
+ * therefore actionable even if its published start precedes the SP3 window.
+ */
+export function plannerEventActivation(event, context = {}) {
+    const source = record(event);
+    const simulation = record(record(context).simulation);
+    const targetMs = plannerEpoch(source.time ?? source.start ?? source.startTime);
+    if (targetMs === null) {
+        return {
+            enabled: false,
+            targetTime: "",
+            reason: "El evento no tiene una hora UTC válida para mover la escena."
+        };
+    }
+
+    const mode = text(simulation.mode).toLowerCase();
+    if (mode !== "range" && mode !== "simulated") {
+        return {
+            enabled: false,
+            targetTime: "",
+            reason: "Cambia a Simulated para mover la escena a un evento."
+        };
+    }
+
+    const simulationStart = plannerEpoch(simulation.startTime ?? simulation.startDate);
+    const simulationEnd = plannerEpoch(simulation.endTime ?? simulation.endDate);
+    if (simulationStart === null || simulationEnd === null || simulationEnd < simulationStart) {
+        return {
+            enabled: false,
+            targetTime: "",
+            reason: "El intervalo UTC de simulación activo no es válido."
+        };
+    }
+
+    let domainStart = simulationStart;
+    let domainEnd = simulationEnd;
+    const masterRange = record(simulation.masterTimeRange);
+    const masterStart = plannerEpoch(masterRange.startTime ?? masterRange.startDate);
+    const masterEnd = plannerEpoch(masterRange.endTime ?? masterRange.endDate);
+    if (masterStart !== null && masterEnd !== null && masterEnd >= masterStart) {
+        domainStart = Math.max(domainStart, masterStart);
+        domainEnd = Math.min(domainEnd, masterEnd);
+    }
+    if (domainEnd < domainStart) {
+        return {
+            enabled: false,
+            targetTime: "",
+            reason: "El intervalo Simulated no se solapa con el Rango Temporal Maestro."
+        };
+    }
+
+    const eventEnd = plannerEpoch(source.end ?? source.endTime);
+    const isFiniteInterval = eventEnd !== null && eventEnd > targetMs;
+    const candidate = isFiniteInterval ? Math.max(targetMs, domainStart) : targetMs;
+    const intervalEnd = isFiniteInterval ? eventEnd : targetMs;
+    if (candidate > domainEnd || intervalEnd < domainStart) {
+        return {
+            enabled: false,
+            targetTime: "",
+            reason: "Este evento queda fuera del intervalo de simulación activo y no puede mover la escena."
+        };
+    }
+
+    return {
+        enabled: true,
+        targetTime: new Date(candidate).toISOString(),
+        reason: ""
+    };
+}
+
 function eventLayerReferences(event, layers) {
     if (event?.kind === PLANNER_EVENT_KINDS.MANUAL) return { direct: [], sourceGroups: [] };
     const metadata = record(event?.metadata);
@@ -248,6 +362,10 @@ export function makeManualEventPayload(fields = {}, id) {
     const title = text(fields.title);
     const start = parseUtcInput(fields.start);
     const end = parseUtcInput(fields.end);
+    // Keep an optional operator note in the same metadata field used by
+    // generated file/resource notices. The UI also caps its textarea at this
+    // size; the payload cap protects programmatic callers too.
+    const description = text(fields.description).slice(0, 2_000);
     if (!title) return { ok: false, error: "Indica un título para el evento." };
     if (!start || !end) return { ok: false, error: "Indica una fecha y hora UTC válida para el inicio y el fin." };
     if (Date.parse(end) <= Date.parse(start)) return { ok: false, error: "El fin debe ser posterior al inicio." };
@@ -256,7 +374,8 @@ export function makeManualEventPayload(fields = {}, id) {
         title,
         start,
         end,
-        colorToken: text(fields.color) || PLANNER_COLOR_TOKENS.BLUE
+        colorToken: text(fields.color) || PLANNER_COLOR_TOKENS.BLUE,
+        metadata: description ? { description } : {}
     });
     return event ? { ok: true, event } : { ok: false, error: "El evento manual no cumple el formato permitido." };
 }

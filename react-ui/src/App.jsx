@@ -3,6 +3,7 @@ import CesiumGlobe from "./components/CesiumGlobe.jsx";
 import TopToolbar from "./components/layout/TopToolbar.jsx";
 import BuiltInTestPanel from "./components/overlays/BuiltInTestPanel.jsx";
 import HelpPanel from "./components/overlays/HelpPanel.jsx";
+import InitialBitWarningNotice from "./components/overlays/InitialBitWarningNotice.jsx";
 import NotificationCenter from "./components/overlays/NotificationCenter.jsx";
 import OperationsPanel from "./components/overlays/OperationsPanel.jsx";
 import OrbitOverlays from "./components/overlays/OrbitOverlays.jsx";
@@ -12,6 +13,7 @@ import TimeControlBar from "./features/simulation/TimeControlBar.jsx";
 import { ORBIT_PLANNER_CLOSE_EVENT, ORBIT_PLANNER_OPEN_EVENT } from "./features/planner/plannerUiModel.js";
 import useOrbitNotifications from "./hooks/useOrbitNotifications.js";
 import useOrbitOperations from "./hooks/useOrbitOperations.js";
+import useInitialBitWarningNotice from "./hooks/useInitialBitWarningNotice.js";
 import useProjectWelcome from "./hooks/useProjectWelcome.js";
 import useStartupStatus from "./hooks/useStartupStatus.js";
 import useStartupWelcomePresentation from "./hooks/useStartupWelcomePresentation.js";
@@ -43,6 +45,7 @@ export default function App() {
     // It deliberately never stops at project readiness: a later cache, frame
     // or force-model degradation must remain observable in the same BIT.
     const systemDiagnostics = useSystemDiagnostics({ pollIntervalMs: 2_500 });
+    const initialBitWarning = useInitialBitWarningNotice(systemDiagnostics.diagnostics);
     const startup = useStartupStatus(systemDiagnostics);
     const startupPresentation = useStartupWelcomePresentation({
         startup,
@@ -138,5 +141,5 @@ export default function App() {
             window.removeEventListener(ORBIT_PLANNER_OPEN_EVENT, openPlannerFromEvent);
         };
     }, [openPlanner]);
-    return <><TopToolbar hasNotifications={notifications.length > 0} activeOperationCount={operations.length} operationsOpen={operationsOpen} plannerOpen={plannerOpen} diagnosticsStatus={bitStatus} onToggleOperations={() => setOperationsOpen((value) => !value)} onTogglePlanner={togglePlanner} onToggleNotifications={() => setNotificationsOpen((value) => !value)} onToggleHelp={() => setHelpOpen((value) => !value)} onToggleDiagnostics={() => setDiagnosticsOpen((value) => !value)} /><CesiumGlobe /><OrbitOverlays /><TimeControlBar />{welcomeOpen && <ProjectWelcome onAction={startProjectAction} runtimeStatus={runtimeStatus} startup={startup} startupPresentation={startupPresentation} />}{plannerOpen && <PlannerPanel onClose={closePlanner} />}{operationsOpen && <OperationsPanel operations={operations} onClose={() => setOperationsOpen(false)} />}{notificationsOpen && <NotificationCenter notifications={notifications} onClose={() => setNotificationsOpen((value) => !value)} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}{diagnosticsOpen && <BuiltInTestPanel onClose={() => setDiagnosticsOpen(false)} diagnosticsState={systemDiagnostics} />}</>;
+    return <><TopToolbar hasNotifications={notifications.length > 0} activeOperationCount={operations.length} operationsOpen={operationsOpen} plannerOpen={plannerOpen} diagnosticsStatus={bitStatus} onToggleOperations={() => setOperationsOpen((value) => !value)} onTogglePlanner={togglePlanner} onToggleNotifications={() => setNotificationsOpen((value) => !value)} onToggleHelp={() => setHelpOpen((value) => !value)} onToggleDiagnostics={() => setDiagnosticsOpen((value) => !value)} /><CesiumGlobe /><OrbitOverlays /><TimeControlBar />{welcomeOpen && <ProjectWelcome onAction={startProjectAction} runtimeStatus={runtimeStatus} startup={startup} startupPresentation={startupPresentation} />}{plannerOpen && <PlannerPanel onClose={closePlanner} />}{operationsOpen && <OperationsPanel operations={operations} onClose={() => setOperationsOpen(false)} />}{notificationsOpen && <NotificationCenter notifications={notifications} onClose={() => setNotificationsOpen((value) => !value)} />}{helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}{diagnosticsOpen && <BuiltInTestPanel onClose={() => setDiagnosticsOpen(false)} diagnosticsState={systemDiagnostics} />}<InitialBitWarningNotice notice={initialBitWarning.notice} onDismiss={initialBitWarning.dismiss} onOpenDiagnostics={() => setDiagnosticsOpen(true)} /></>;
 }

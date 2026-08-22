@@ -54,6 +54,22 @@ preview/create and orbit-parameter work with the published HTTP 503 readiness
 reason. A first download can take longer; a later valid cached start normally
 only validates local files and finishes faster.
 
+## Initial BIT notice when Orbit opens
+
+When the terminal **initial BIT check** ledger (also called PBIT or initial
+IBIT) publishes one or more warnings but no blocking error, Orbit shows a
+compact, non-modal card when the application opens. It summarizes up to three
+actionable reasons and offers
+**Review BIT** to open the complete diagnostic. It does not change `ready`,
+`projectReady`, or the project-creation decision: a degradable warning can
+still permit work under the contract published by the service.
+
+The card can be dismissed with **Understood** or its close button. Once
+acknowledged it does not reopen on every BIT refresh during that application
+session; reloading Orbit may present the current startup result again.
+Readiness failures and blocks are not disguised as this card: they remain on
+the startup surface and in BIT as conditions requiring correction.
+
 !!! warning "Not mission certification"
 
     The panel uses small bounded probes. Healthy means the checked route and

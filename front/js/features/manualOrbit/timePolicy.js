@@ -1,3 +1,8 @@
+import {
+    assessEarthOrientationCoverage,
+    eopUtcInstant
+} from "../timekeeping/eopCoveragePolicy.js";
+
 /**
  * Time-domain policy for a manually designed orbit.
  *
@@ -209,6 +214,7 @@ export function resolveManualOrbitTimePolicy({
     designWindow,
     physicalEpoch,
     erpCoverage,
+    automaticEopDiagnostic = null,
     forceTerms = [],
     sceneWindow,
     finiteEphemerisRanges = []
@@ -261,10 +267,51 @@ export function resolveManualOrbitTimePolicy({
         warnings.push("no-common-window-with-active-scene");
     }
 
+    // The automatic provider is a non-blocking, source-qualified path. A
+    // manual ERP remains strict and reproducible above; if the operator did
+    // not choose one, C01/finals/extrapolation is surfaced instead of being
+    // silently collapsed into a generic nominal-rotation message.
+    const canAssessAutomaticEop = requiresErp && !hasManualErpOverride && automaticEopDiagnostic;
+    const automaticEopAssessment = canAssessAutomaticEop && design
+        ? assessEarthOrientationCoverage(automaticEopDiagnostic, design)
+        : null;
+    const physicalEpochIso = Number.isFinite(physicalEpochMs)
+        ? eopUtcInstant(physicalEpochMs)
+        : null;
+    const automaticEopPhysicalAssessment = canAssessAutomaticEop && physicalEpochIso
+        ? assessEarthOrientationCoverage(automaticEopDiagnostic, {
+            startTime: physicalEpochIso,
+            // An instant is represented as the smallest ISO interval. The
+            // state epoch can precede the visual design window, so it needs
+            // its own provenance assessment before numerical integration.
+            endTime: new Date(physicalEpochMs + 1).toISOString()
+        })
+        : null;
+    // The automatic backend classifies the full numerical interval, which
+    // starts at the state epoch when it predates the visible design window.
+    // Keep this preflight identical to that contract: showing only the
+    // design range could say "C01" while integration already needs finals,
+    // extrapolation, or nominal rotation before the first displayed sample.
+    const automaticEopEffectiveWindow = design && Number.isFinite(physicalEpochMs)
+        ? rangeFromMilliseconds(
+            Math.min(design.startMs, physicalEpochMs),
+            Math.max(design.endMs, physicalEpochMs)
+        )
+        : design;
+    const automaticEopEffectiveAssessment = canAssessAutomaticEop && automaticEopEffectiveWindow
+        ? assessEarthOrientationCoverage(automaticEopDiagnostic, automaticEopEffectiveWindow)
+        : null;
+
     return Object.freeze({
         canCreate: blockingReasons.length === 0,
         requiresErp,
         usesAutomaticIers: requiresErp && !hasManualErpOverride,
+        automaticEopAssessment,
+        automaticEopPhysicalAssessment,
+        automaticEopEffectiveWindow,
+        automaticEopEffectiveAssessment,
+        automaticEopRequiresNotice: Boolean(automaticEopEffectiveAssessment?.requiresNotice),
+        automaticEopRequiresWarning: Boolean(automaticEopEffectiveAssessment?.requiresWarning),
         hasManualErpOverride,
         erpCoversDesign: Boolean(erp && design && utcRangeCovers(erp, design)),
         physicalEpoch: Number.isFinite(physicalEpochMs)

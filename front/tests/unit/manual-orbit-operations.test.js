@@ -17,7 +17,11 @@ test("manual preview preserves the full planner request and publishes its activi
         "preview must use the exact normal planner payload and remain cancellable"
     );
     assert.match(runtimeSource, /startManualOrbitOperation\("preview", requestId/);
-    assert.match(runtimeSource, /completeManualOrbitOperation\(operationId, "Previsualizaci\\u00f3n actualizada\."\)/);
+    assert.match(
+        runtimeSource,
+        /completeManualOrbitOperation\([\s\S]*?actualEarthOrientation[\s\S]*?Previsualizaci(?:\\u00f3|ó)n actualizada/,
+        "the completed activity must retain the actual EOP provenance when the backend returned it"
+    );
     assert.doesNotMatch(panelSource, /manual-orbit-cowell-preview-policy/);
 });
 

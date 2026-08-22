@@ -15,10 +15,13 @@ import {
     filterPlannerEventsByLayerVisibility,
     formatUtcInput,
     formatUtcMonth,
+    isPlannerEopRangeEvent,
     layoutPlannerEventLanes,
     makeManualEventPayload,
     normalizePlannerUiState,
     parseUtcInput,
+    plannerEventActivation,
+    plannerEventDescription,
     plannerViewRangePayload
 } from "../../../react-ui/src/features/planner/plannerUiModel.js";
 
@@ -47,7 +50,8 @@ test("time grids stay fluid and keep their only required 24-hour scroll visually
     assert.match(panelCss, /\.orbit-planner-time-scroll \{[\s\S]*overflow-x: hidden;[\s\S]*overflow-y: auto;[\s\S]*scrollbar-width: none;/);
     assert.match(panelCss, /\.orbit-planner-time-header,[\s\S]*\.orbit-planner-hours \{[\s\S]*width: 100%;[\s\S]*min-width: 0;/);
     assert.match(panelCss, /\.orbit-planner-detail \{[\s\S]*overflow-x: hidden;[\s\S]*box-sizing: border-box;/);
-    assert.match(panelCss, /\.orbit-planner-time-scroll::\-webkit-scrollbar,[\s\S]*\.orbit-planner-detail::\-webkit-scrollbar/);
+    assert.match(panelCss, /\.orbit-planner-detail-body \{[\s\S]*overflow-y: auto;/);
+    assert.match(panelCss, /\.orbit-planner-time-scroll::\-webkit-scrollbar,[\s\S]*\.orbit-planner-detail-body::\-webkit-scrollbar/);
 });
 
 test("planner reads canonical state late and requests a fresh snapshot", () => {
@@ -102,15 +106,30 @@ test("month/year picker and published viewport stay UTC-only across day, week an
         startTime: "2026-08-17T00:00:00.000Z",
         endTime: "2026-08-24T00:00:00.000Z"
     });
+    assert.deepEqual(plannerViewRangePayload("week", "2026-08-23T23:59:59Z"), {
+        view: "week",
+        startTime: "2026-08-17T00:00:00.000Z",
+        endTime: "2026-08-24T00:00:00.000Z"
+    }, "UTC Sunday remains the final day of a Monday-first week");
     assert.deepEqual(plannerViewRangePayload("month", "2026-02-12T12:00:00Z"), {
         view: "month",
         startTime: "2026-02-01T00:00:00.000Z",
         endTime: "2026-03-01T00:00:00.000Z"
     });
+    assert.match(panel, /const goToToday = \(\) => \{[\s\S]*setCursor\(utcDay\(\)\);[\s\S]*setView\("day"\);/);
+    assert.match(panel, /className="orbit-planner-today" title="Ir al día actual en UTC" onClick=\{goToToday\}/);
+    assert.match(panel, /className="orbit-planner-range-stepper"/);
+    assert.match(panel, /className="orbit-planner-period-value"/);
+    assert.match(panel, /<ChevronDownIcon\s*\/>/);
     assert.match(panel, /type="month"/);
-    assert.match(panel, /Ir a mes y año en UTC/);
+    assert.match(panel, /Seleccionar mes y año en UTC/);
+    assert.doesNotMatch(panel, /rangeTitle\(/);
     assert.match(panel, /ORBIT_PLANNER_VIEW_RANGE_EVENT/);
     assert.match(panel, /plannerViewRangePayload\(view, cursor\)/);
+    assert.match(panel, /const WEEKDAY_LABELS = \["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"\]/);
+    assert.match(panel, /const mondayOffset = \(value\.getUTCDay\(\) \+ 6\) % 7;/);
+    assert.match(panel, /const gridStart = startOfUtcWeek\(first\);/);
+    assert.match(panel, /const start = view === "week" \? startOfUtcWeek\(cursor\) : utcDay\(cursor\);/);
 });
 
 test("planner-only layer filters keep manual project events and clear hidden scene references", () => {
@@ -158,14 +177,16 @@ test("planner-only layer filters keep manual project events and clear hidden sce
     assert.match(panel, /!visibleEvents\.some\(\(event\) => event\.id === selectedEvent\.id\)/);
 });
 
-test("static and realtime remain useful planner contexts without consuming summary space", () => {
+test("static and realtime remain useful planner contexts without redundant summary chrome", () => {
     assert.match(panel, /function plannerMode\(context\)/);
     assert.doesNotMatch(panel, /plannerModeDescription/);
     assert.doesNotMatch(panel, /plannerModeLabel/);
     assert.doesNotMatch(panel, /orbit-planner-mode/);
     assert.doesNotMatch(panelCss, /\.orbit-planner-mode/);
-    assert.match(panel, /canActivate=\{mode === "simulated"\}/);
-    assert.match(panel, /orbit-planner-forecast/);
+    assert.match(panel, /plannerEventActivation\(selected, plannerState\.context\)/);
+    assert.doesNotMatch(panel, /canActivate=\{mode === "simulated"\}/);
+    assert.doesNotMatch(panel, /orbit-planner-forecast/);
+    assert.match(panel, /orbit-planner-status/);
     assert.match(panelCss, /\.orbit-planner-layers \{/);
     assert.match(panelCss, /@media \(max-width: 860px\)[\s\S]*grid-template-columns: minmax\(162px, 196px\)/);
     assert.match(panelCss, /@media \(max-width: 680px\)[\s\S]*\.orbit-planner-layers \{/);
@@ -187,12 +208,16 @@ test("manual planner events are strict UTC intervals and use the canonical mutat
         title: "Contacto de prueba",
         start: "2026-08-18T14:30",
         end: "2026-08-18T15:15",
-        color: PLANNER_COLOR_TOKENS.PURPLE
+        color: PLANNER_COLOR_TOKENS.PURPLE,
+        description: "Coordinar antena y equipo RF."
     }, "manual-test");
     assert.equal(created.ok, true);
     assert.equal(created.event.kind, "manual");
     assert.equal(created.event.colorToken, "purple");
     assert.equal(created.event.start, "2026-08-18T14:30:00.000Z");
+    assert.equal(created.event.metadata.description, "Coordinar antena y equipo RF.");
+    assert.equal(plannerEventDescription(created.event), "Coordinar antena y equipo RF.");
+    assert.equal(plannerEventDescription({ metadata: { details: "Detalle generado por una carga local." } }), "Detalle generado por una carga local.");
     const rejected = makeManualEventPayload({ title: "No", start: "2026-08-18T15:00", end: "2026-08-18T15:00" });
     assert.equal(rejected.ok, false);
     assert.match(rejected.error, /fin debe ser posterior/i);
@@ -200,12 +225,99 @@ test("manual planner events are strict UTC intervals and use the canonical mutat
     assert.equal(ORBIT_PLANNER_MANUAL_EVENT_REMOVE_EVENT, "orbit:planner-manual-event-remove");
     assert.match(panel, /ORBIT_PLANNER_MANUAL_EVENT_UPSERT_EVENT/);
     assert.match(panel, /ORBIT_PLANNER_MANUAL_EVENT_REMOVE_EVENT/);
+    assert.match(panel, /Detalles \(opcional\)<textarea/);
+    assert.match(panel, /plannerEventDescription\(event\)/);
+});
+
+test("event details have bottom icon pagination across every visible filtered event", () => {
+    assert.match(panel, /const selectedEventIndex = useMemo\(\(\) => visibleEvents\.findIndex/);
+    assert.match(panel, /const selectAdjacentEvent = \(direction\) => \{/);
+    assert.match(panel, /plannerAdjacentVisibleEvent\(visibleEvents, selectedEvent\?\.id, direction\)/);
+    assert.match(panel, /plannerCursorForEvent\(next\)/);
+    assert.match(panel, /plannerEventIsInView\(next, \{ start: viewRange\.startTime, end: viewRange\.endTime \}\)/);
+    assert.match(panel, /eventCount=\{visibleEvents\.length\}/);
+    assert.match(panel, /<nav className="orbit-planner-detail-pager" aria-label="Navegación entre todos los eventos visibles">/);
+    assert.match(panel, /aria-label="Evento anterior"/);
+    assert.match(panel, /aria-label="Evento siguiente"/);
+    assert.match(panel, /\{safeIndex \+ 1\}\/\{safeCount\}/);
+    assert.match(panelCss, /\.orbit-planner-detail-pager \{[\s\S]*border-top: 1px solid #294562;/);
+    assert.match(panelCss, /\.orbit-planner-detail-pager-button \{[\s\S]*width: 28px;[\s\S]*height: 28px;/);
+});
+
+test("event activation only dispatches a usable UTC instant and keeps overlapping ERP ranges actionable", () => {
+    const context = {
+        simulation: {
+            mode: "range",
+            startTime: "2026-08-10T00:00:00.000Z",
+            endTime: "2026-08-20T00:00:00.000Z",
+            masterTimeRange: {
+                startDate: "2026-08-11T00:00:00.000Z",
+                endDate: "2026-08-19T00:00:00.000Z"
+            }
+        }
+    };
+    const overlap = plannerEventActivation({
+        start: "2026-08-01T00:00:00.000Z",
+        end: "2026-08-25T00:00:00.000Z",
+        metadata: { eopRange: true }
+    }, context);
+    assert.deepEqual(overlap, {
+        enabled: true,
+        targetTime: "2026-08-11T00:00:00.000Z",
+        reason: ""
+    });
+    const outside = plannerEventActivation({ start: "2026-08-30T00:00:00.000Z" }, context);
+    assert.equal(outside.enabled, false);
+    assert.match(outside.reason, /fuera del intervalo de simulación activo/i);
+    const staticMode = plannerEventActivation({ start: "2026-08-12T00:00:00.000Z" }, {
+        simulation: { ...context.simulation, mode: "static" }
+    });
+    assert.equal(staticMode.enabled, false);
+    assert.match(staticMode.reason, /cambia a simulated/i);
+    assert.match(panel, /const selectedActivation = useMemo\(\(\) => plannerEventActivation\(selected, plannerState\.context\)/);
+    assert.match(panel, /detail: \{ \.\.\.event, time: activation\.targetTime \}/);
+    assert.match(panel, /orbit-planner-detail-activation-note/);
+    assert.match(panel, /ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT/);
+    assert.match(panel, /window\.addEventListener\(ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT, rebaseViewRange\)/);
 });
 
 test("UI consumes semantic planner kinds and colour tokens instead of a parallel event schema", () => {
     assert.match(panel, /PLANNER_EVENT_KINDS\.MANUAL/);
     assert.match(panel, /event\.colorToken/);
     assert.doesNotMatch(panel, /event\.eventType/);
+});
+
+test("finite EOP source coverage is rendered as a range only when the runtime marks it", () => {
+    assert.equal(isPlannerEopRangeEvent({
+        start: "2026-07-20T00:00:00Z",
+        end: "2026-08-20T00:00:00Z",
+        isPoint: false,
+        metadata: { resourceType: "erp", eopRange: true }
+    }), true);
+    assert.equal(isPlannerEopRangeEvent({
+        start: "2026-07-20T00:00:00Z",
+        end: "2026-08-20T00:00:00Z",
+        isPoint: false,
+        metadata: { resourceType: "erp" }
+    }), false, "legacy boundary facts remain discrete events");
+    assert.equal(isPlannerEopRangeEvent({
+        start: "2026-09-20T00:00:00Z",
+        isPoint: true,
+        metadata: { resourceType: "erp", eopRange: true, openEnded: true }
+    }), false, "an open-ended nominal fallback must not be drawn as a finite rail");
+    assert.match(panel, /isPlannerEopRangeEvent/);
+    assert.match(panel, /orbit-planner-month-eop-ranges/);
+    assert.match(panel, /orbit-planner-time-eop-ranges/);
+    assert.match(panel, /buildPlannerCoverageSegments/);
+    assert.match(panel, /const eopRangeSegments = buildPlannerCoverageSegments/);
+    assert.match(panel, /gridColumnOffset=\{2\}/);
+});
+
+test("top period arrows centre their SVG glyphs inside their buttons", () => {
+    assert.match(panel, /className="orbit-planner-icon-button"/);
+    assert.match(panelCss, /\.orbit-planner-icon-button \{[\s\S]*display: inline-grid;[\s\S]*width: 28px;[\s\S]*height: 28px;[\s\S]*box-sizing: border-box;[\s\S]*place-items: center;/);
+    assert.match(panelCss, /\.orbit-planner-navigation button\.orbit-planner-icon-button \{[\s\S]*padding: 0;[\s\S]*line-height: 0;/);
+    assert.match(panelCss, /\.orbit-planner-icon-button > svg \{[\s\S]*display: block;[\s\S]*margin: auto;/);
 });
 
 test("overlapping AOS/LOS/maximum-style instants receive separate timed-event lanes", () => {
@@ -248,8 +360,8 @@ test("planner is a fresh, bounded floating workspace with compact operational ch
     assert.match(panel, /PLANNER_RESIZE_DIRECTIONS\.map\(\(direction\) => <span[\s\S]*className="orbit-planner-resize-handle"[\s\S]*data-direction=\{direction\}/);
     assert.match(panel, /isPlannerWindowCompactViewport\(\) \? undefined : \{/);
 
-    assert.match(panel, /orbit-planner-forecast\$\{showDetail \? " is-expanded" : " is-compact"\}/);
-    assert.match(panel, /aria-expanded=\{showDetail\}/);
+    assert.doesNotMatch(panel, /orbit-planner-forecast/);
+    assert.doesNotMatch(panel, /orbit-planner-eop-notice/);
     assert.match(panel, /orbit-planner-request-toast/);
     assert.match(panel, /PLANNER_REQUEST_MESSAGE_TIMEOUT_MS = 4_500/);
 

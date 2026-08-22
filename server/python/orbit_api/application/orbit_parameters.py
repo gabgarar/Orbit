@@ -16,8 +16,14 @@ from bisect import bisect_left
 from collections.abc import Callable
 from typing import Any
 
+from orbit_api.application.manual_erp import (
+    ManualErpError,
+    ManualErpRepository,
+    resolve_manual_erp_input,
+)
 from orbit_api.application.manual_orbits import (
     ManualOrbitError,
+    automatic_earth_orientation_window,
     build_manual_orbit_propagator,
     canonical_manual_orbit,
     manual_erp_frame_transformer,
@@ -29,7 +35,6 @@ from orbit_api.domain.requests import (
     OrbitParametersRequest,
     require_manual_orbit_runtime_propagator,
 )
-from orbit_api.application.manual_erp import ManualErpError, ManualErpRepository, resolve_manual_erp_input
 from orbit_api.frames import FrameTransformService, StateVector
 from orbit_api.orbits.forces import GravityFieldModel, GravityModelRegistry
 from orbit_api.orbits.propagators.classical import (
@@ -514,6 +519,23 @@ def build_orbit_parameters(
             "elements": elements,
         })
 
+    automatic_eop_window: dict[str, object] | None = None
+    if payload.source.kind == "manual":
+        manual = payload.source.manual_orbit
+        force_terms = tuple(model.get("force_terms") or [])
+        if (
+            manual is not None
+            and identity.get("manual_erp") is None
+            and manual_orbit_requires_erp(force_terms)
+        ):
+            automatic_eop_window = automatic_earth_orientation_window(
+                frame_transformer,
+                min(normalise_utc(manual.epoch), start_time),
+                max(normalise_utc(manual.epoch), end_time),
+            )
+            if automatic_eop_window is not None:
+                model["earth_orientation_window"] = automatic_eop_window
+
     return {
         "source": identity,
         "satellite": name,
@@ -526,4 +548,6 @@ def build_orbit_parameters(
         "samples_requested": payload.samples,
         "count": len(points),
         "samples": points,
+        "earth_orientation_window": automatic_eop_window,
+        "earthOrientationWindow": automatic_eop_window,
     }

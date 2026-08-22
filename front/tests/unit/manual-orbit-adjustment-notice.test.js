@@ -10,7 +10,7 @@ const runtimeSource = readFileSync(new URL("../../main.js", import.meta.url), "u
 
 test("a server-side geopotential clamp remains visible after the manual editor closes", () => {
     const closeIndex = runtimeSource.indexOf('publishManualOrbitState({ open: false });');
-    const warningIndex = runtimeSource.indexOf('geopotentialAdjustment ? "warning" : "success"');
+    const warningIndex = runtimeSource.indexOf('geopotentialAdjustment || actualEarthOrientation?.requiresWarning ? "warning" : "success"');
     assert.ok(closeIndex >= 0, "creation must close the editor after committing the orbit");
     assert.ok(warningIndex > closeIndex, "the clamp warning is emitted after the closing state");
 

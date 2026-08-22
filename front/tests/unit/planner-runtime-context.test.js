@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
     assessPlannerForecastRange,
+    clampPlannerViewRangeToSimulationDomain,
     defaultPlannerViewRange,
     normalizePlannerHiddenLayerIds,
     normalizePlannerViewRange
@@ -68,6 +69,45 @@ test("static and realtime accept a visible finite UTC interval without a moving 
     });
 });
 
+test("a whole calendar period clips safely to a short simulated/MTR domain without inventing dates", () => {
+    const requested = {
+        view: "month",
+        startTime: "1974-01-01T00:00:00.000Z",
+        endTime: "1974-02-01T00:00:00.000Z"
+    };
+    const domain = {
+        startDate: new Date("1974-01-01T06:00:00.000Z"),
+        endDate: new Date("1974-01-02T18:00:00.000Z")
+    };
+    const clipped = clampPlannerViewRangeToSimulationDomain({
+        range: requested,
+        mode: "range",
+        simulationRange: domain,
+        masterRange: domain
+    });
+    assert.equal(clipped.clamped, true);
+    assert.equal(clipped.range.startTime, "1974-01-01T06:00:00.000Z");
+    assert.equal(clipped.range.endTime, "1974-01-02T18:00:00.000Z");
+    assert.equal(clipped.range.view, "month");
+    assert.equal(clipped.range.source, "planner-view-range-clamped");
+    assert.equal(assessPlannerForecastRange({
+        range: clipped.range,
+        mode: "range",
+        simulationRange: domain,
+        masterRange: domain
+    }).allowed, true);
+
+    const outside = clampPlannerViewRangeToSimulationDomain({
+        range: { view: "week", startTime: "1974-02-05T00:00:00.000Z", endTime: "1974-02-12T00:00:00.000Z" },
+        mode: "range",
+        simulationRange: domain,
+        masterRange: domain
+    });
+    assert.equal(outside.range, null);
+    assert.equal(outside.domain.startTime, "1974-01-01T06:00:00.000Z");
+    assert.match(outside.reason, /no intersecta/i);
+});
+
 test("planner hidden layer ids are compact project state, not a scene mutation", () => {
     assert.deepEqual(normalizePlannerHiddenLayerIds([
         "station:legacy", "sat:one", "station:legacy", "", 42, "x".repeat(1025)
@@ -83,4 +123,6 @@ test("main runtime wires explicit view/filter events and keeps static/realtime a
     assert.match(mainSource, /event\?\.kind === PLANNER_EVENT_KINDS\.MANUAL\) return true/);
     assert.match(mainSource, /if \(simulationState\.mode !== SIMULATION_MODE_RANGE\)[\s\S]*La agenda no mueve la escena/);
     assert.match(mainSource, /simulationState\.mode === SIMULATION_MODE_RANGE[\s\S]*String\(simulationState\.mode \|\| ""\)/);
+    assert.match(mainSource, /clampPlannerViewRangeToSimulationDomain\(/);
+    assert.match(mainSource, /orbit:planner-view-range-rebase/);
 });

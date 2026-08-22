@@ -148,6 +148,110 @@ def test_cache_uses_fresh_valid_file_without_network_and_exposes_coverage(tmp_pa
     }
 
 
+def test_fresh_cache_without_current_coverage_refreshes_from_iers(tmp_path):
+    """A recent file mtime must not hide a C01 publication/coverage gap."""
+
+    now = datetime(2026, 8, 21, 12, tzinfo=UTC)
+    cache = tmp_path / "EOP_C01_IAU2000_1846-now.txt"
+    cached = _c01(
+        _row(now - timedelta(days=2)),
+        _row(now - timedelta(days=1), ut1_tai=-36.79),
+    )
+    refreshed = _c01(
+        _row(now.replace(hour=0)),
+        _row(now.replace(hour=0) + timedelta(days=1), ut1_tai=-36.79),
+    )
+    cache.write_bytes(cached)
+    # The bytes were freshly downloaded, but their last valid C01 sample is
+    # still yesterday. This is the July/August operational failure mode.
+    os.utime(cache, (now.timestamp(), now.timestamp()))
+    downloads: list[object] = []
+    service = IersEopCacheService(
+        cache,
+        fetcher=lambda *_: downloads.append(object()) or refreshed,
+        now=lambda: now,
+    )
+
+    status = service.refresh_if_needed()
+
+    assert len(downloads) == 1
+    assert cache.read_bytes() == refreshed
+    assert status.status == "ok"
+    assert status.cache_fresh is True
+    assert status.coverage_current is True
+    assert status.refresh_due is False
+    assert status.refresh_reasons == ()
+
+
+def test_current_coverage_gap_is_reported_separately_when_iers_has_no_newer_c01(tmp_path):
+    """Never relabel an IERS publication lag as a stale local cache."""
+
+    now = datetime(2026, 8, 21, 12, tzinfo=UTC)
+    cache = tmp_path / "EOP_C01_IAU2000_1846-now.txt"
+    cached = _c01(
+        _row(now - timedelta(days=33)),
+        _row(now - timedelta(days=32), ut1_tai=-36.79),
+    )
+    cache.write_bytes(cached)
+    os.utime(cache, (now.timestamp(), now.timestamp()))
+    downloads: list[object] = []
+    service = IersEopCacheService(
+        cache,
+        # The official endpoint may legitimately still publish the same
+        # historical C01. It is validated but does not become current EOP.
+        fetcher=lambda *_: downloads.append(object()) or cached,
+        now=lambda: now,
+    )
+
+    status = service.refresh_if_needed()
+
+    assert len(downloads) == 1
+    assert status.status == "warning"
+    assert status.cache_fresh is True
+    assert status.coverage_current is False
+    assert status.refresh_due is True
+    assert status.refresh_reasons == ("coverage",)
+    assert status.using_cached_fallback is False
+    assert "fuente publicada" in (status.error or "")
+    assert "termina el" in (status.error or "")
+    assert "antigüedad máxima" not in (status.error or "")
+    payload = service.diagnostics_payload()
+    assert payload["cacheFresh"] is True
+    assert payload["coverageCurrent"] is False
+    assert payload["refreshReasons"] == ["coverage"]
+    # Automatic C01 keeps its nominal fallback outside a factual coverage
+    # window; product-bound precise ERP providers are not involved here.
+    assert service.at(now).quality == "approximate"
+
+
+def test_cache_age_and_coverage_gap_remain_distinct_after_failed_refresh(tmp_path):
+    now = datetime(2026, 8, 21, 12, tzinfo=UTC)
+    cache = tmp_path / "EOP_C01_IAU2000_1846-now.txt"
+    cached = _c01(
+        _row(now - timedelta(days=34)),
+        _row(now - timedelta(days=33), ut1_tai=-36.79),
+    )
+    cache.write_bytes(cached)
+    old_mtime = now - timedelta(days=8)
+    os.utime(cache, (old_mtime.timestamp(), old_mtime.timestamp()))
+    service = IersEopCacheService(
+        cache,
+        fetcher=lambda *_: (_ for _ in ()).throw(OSError("offline")),
+        now=lambda: now,
+    )
+
+    status = service.refresh_if_needed()
+
+    assert status.status == "warning"
+    assert status.cache_fresh is False
+    assert status.coverage_current is False
+    assert status.refresh_due is True
+    assert status.refresh_reasons == ("cache", "coverage")
+    assert status.using_cached_fallback is True
+    assert "antigüedad máxima" in (status.error or "")
+    assert "termina el" in (status.error or "")
+
+
 def test_invalid_fresh_local_cache_is_rejected_and_replaced_by_a_valid_download(tmp_path):
     """Cache age never substitutes for parsing the C01 snapshot at startup."""
 

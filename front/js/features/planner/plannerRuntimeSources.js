@@ -1,4 +1,8 @@
-import { plannerIsoTimestamp } from "./plannerEvents.js";
+import {
+    buildPlannerEopCoverageLayer,
+    buildPlannerProductErpCoverageLayer,
+    plannerIsoTimestamp
+} from "./plannerEvents.js";
 
 function record(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -53,6 +57,166 @@ function finiteCoverage({ id, resourceType, name, start, end, validation, metada
         validation: text(validation) || "verified-coverage",
         metadata: { ...metadata }
     };
+}
+
+function booleanValue(value) {
+    if (value === true || value === false) return value;
+    const normalized = text(value).toLowerCase();
+    if (["true", "1", "yes", "si", "sí"].includes(normalized)) return true;
+    if (["false", "0", "no"].includes(normalized)) return false;
+    return null;
+}
+
+function firstRecord(sources, keys) {
+    for (const source of sources) {
+        const candidate = record(source);
+        for (const key of keys) {
+            const value = candidate[key];
+            if (value && typeof value === "object" && !Array.isArray(value)) return value;
+        }
+    }
+    return {};
+}
+
+function firstAcross(sources, keys) {
+    for (const source of sources) {
+        const value = firstValue(source, keys);
+        if (value !== undefined) return value;
+    }
+    return undefined;
+}
+
+function productErpEvidence(entry) {
+    const source = record(entry);
+    const inputMetadata = record(firstAcross([source], ["inputMetadata", "input_metadata", "sourceMetadata", "source_metadata"]));
+    const sp3 = firstRecord([source, inputMetadata], ["sp3", "preciseProduct", "precise_product"]);
+    const metadata = [sp3, inputMetadata, source];
+    const erp = firstRecord(metadata, ["erp", "earthOrientation", "earth_orientation"]);
+    const conversion = firstRecord(metadata, ["eci_conversion", "eciConversion", "inertial_conversion", "inertialConversion"]);
+    const conversionCoverage = firstRecord([conversion], ["coverage", "eciCoverage", "eci_coverage"]);
+    const attached = booleanValue(firstAcross([erp], ["present", "erpPresent", "erp_present"])) === true
+        || Boolean(text(firstAcross([erp], ["file", "fileName", "file_name", "snapshotId", "snapshot_id"])))
+        || booleanValue(firstAcross([conversion, ...metadata], ["erp_present", "erpPresent", "has_erp", "hasErp"])) === true;
+    const coverageStart = iso(firstAcross([erp], [
+        "coverageStart", "coverage_start", "start", "startTime", "start_time"
+    ]) ?? firstAcross([conversionCoverage, conversion], [
+        "erp_start", "erpStart", "coverageStart", "coverage_start"
+    ]));
+    const coverageEnd = iso(firstAcross([erp], [
+        "coverageEnd", "coverage_end", "end", "endTime", "end_time"
+    ]) ?? firstAcross([conversionCoverage, conversion], [
+        "erp_end", "erpEnd", "coverageEnd", "coverage_end"
+    ]));
+    const startMs = coverageStart ? Date.parse(coverageStart) : Number.NaN;
+    const endMs = coverageEnd ? Date.parse(coverageEnd) : Number.NaN;
+    const sourceId = text(firstAcross([source, inputMetadata], ["id", "catalogId", "catalog_id", "sourceId", "source_id"]));
+    const productId = text(firstAcross(metadata, ["product_id", "productId", "id"]));
+    const snapshotId = text(firstAcross([erp], ["snapshot_id", "snapshotId"]));
+    const fileName = text(firstAcross([erp], ["file", "fileName", "file_name", "name"]));
+    const name = text(firstAcross(metadata, ["product_name", "productName", "name", "display_name", "displayName"]))
+        || productId
+        || sourceId;
+    if (!attached || !sourceId || !coverageStart || !coverageEnd
+        || !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+        return null;
+    }
+    return {
+        // Product ID is preferred because every selected member of one SP3
+        // product shares this ERP companion. The source id remains part of
+        // the grouping fallback for older payloads without a product id.
+        productId: productId || snapshotId || sourceId,
+        sourceId,
+        name,
+        coverageStart,
+        coverageEnd,
+        coverageStartMs: startMs,
+        coverageEndMs: endMs,
+        fileName,
+        snapshotId,
+        source: text(firstAcross([erp], ["source", "provider"])),
+        version: text(firstAcross([erp], ["version"])),
+        quality: text(firstAcross([erp], ["quality", "productClass", "product_class"]))
+    };
+}
+
+/**
+ * Extract the ERP companion actually attached to an active SP3 payload.
+ * Only an explicit attachment plus a strictly ordered UTC interval is
+ * accepted. A filename alone, a product update timestamp, or a generic IERS
+ * diagnostic can never suppress the automatic IERS route.
+ */
+export function normalizePlannerProductErpCoverages(entries) {
+    const grouped = new Map();
+    for (const entry of Array.isArray(entries) ? entries : []) {
+        const candidate = productErpEvidence(entry);
+        if (!candidate) continue;
+        const key = [candidate.productId, candidate.coverageStart, candidate.coverageEnd].join("\u001f");
+        const existing = grouped.get(key);
+        if (existing) {
+            if (!existing.sourceIds.includes(candidate.sourceId)) existing.sourceIds.push(candidate.sourceId);
+            continue;
+        }
+        grouped.set(key, {
+            id: candidate.productId,
+            productId: candidate.productId,
+            name: candidate.name,
+            coverageStart: candidate.coverageStart,
+            coverageEnd: candidate.coverageEnd,
+            coverageStartMs: candidate.coverageStartMs,
+            coverageEndMs: candidate.coverageEndMs,
+            sourceIds: [candidate.sourceId],
+            fileName: candidate.fileName,
+            snapshotId: candidate.snapshotId,
+            source: candidate.source,
+            version: candidate.version,
+            quality: candidate.quality
+        });
+    }
+    return [...grouped.values()]
+        .map((coverage) => ({ ...coverage, sourceIds: [...coverage.sourceIds].sort() }))
+        .sort((left, right) => (
+            left.coverageStartMs - right.coverageStartMs
+            || left.coverageEndMs - right.coverageEndMs
+            || left.id.localeCompare(right.id)
+        ));
+}
+
+function finitePlannerRange(range) {
+    const start = iso(range?.startTime ?? range?.start ?? range?.startTimeMs);
+    const end = iso(range?.endTime ?? range?.end ?? range?.endTimeMs);
+    if (!start || !end || Date.parse(end) <= Date.parse(start)) return null;
+    return { start, end, startMs: Date.parse(start), endMs: Date.parse(end), id: text(range?.id) };
+}
+
+/**
+ * Automatic IERS is optional only when every active SP3 finite range is
+ * backed by an attached ERP that covers that member's whole published
+ * interval. This is deliberately all-or-nothing: a second SP3 without a
+ * valid companion keeps the IERS layer visible rather than hiding a needed
+ * source behind the first product's success.
+ */
+export function plannerProductErpSuppressesAutomaticEop({ preciseRanges = [], productErpCoverages = [] } = {}) {
+    const ranges = (Array.isArray(preciseRanges) ? preciseRanges : [])
+        .map(finitePlannerRange)
+        .filter(Boolean);
+    const coverages = Array.isArray(productErpCoverages) ? productErpCoverages : [];
+    if (!ranges.length || !coverages.length) return false;
+    return ranges.every((range) => coverages.some((coverage) => (
+        Array.isArray(coverage?.sourceIds)
+        && coverage.sourceIds.includes(range.id)
+        && Number.isFinite(coverage.coverageStartMs)
+        && Number.isFinite(coverage.coverageEndMs)
+        && coverage.coverageStartMs <= range.startMs
+        && coverage.coverageEndMs >= range.endMs
+    )));
+}
+
+function hasActiveNonPreciseSatelliteLayer(layers) {
+    return (Array.isArray(layers) ? layers : []).some((layer) => (
+        layer?.active === true
+        && text(layer?.type).toUpperCase() === "SATELLITE"
+        && text(layer?.sourceFormat).toUpperCase() !== "SP3"
+    ));
 }
 
 function normalizeManualErp(reference) {
@@ -165,6 +329,13 @@ export function normalizePlannerLayerFacts(layers) {
                 visible: layer?.visible === true,
                 sourceFormat: text(layer?.sourceFormat),
                 sourceOrigin: text(layer?.sourceOrigin),
+                // Import and TLE epoch timestamps are source facts. They are
+                // deliberately kept separate from a finite coverage range:
+                // neither one says that the source expires at that instant.
+                ...(iso(layer?.importedAt) ? { importedAt: iso(layer.importedAt) } : {}),
+                ...(text(layer?.importFileName) ? { importFileName: text(layer.importFileName) } : {}),
+                ...(iso(layer?.tleEpoch) ? { tleEpoch: iso(layer.tleEpoch) } : {}),
+                ...(text(layer?.sourceProvider) ? { sourceProvider: text(layer.sourceProvider) } : {}),
                 validation: text(layer?.validation) || "scene-state-only",
                 ...(iso(layer?.validityStart) ? { validityStart: iso(layer.validityStart) } : {}),
                 ...(iso(layer?.validityEnd) ? { validityEnd: iso(layer.validityEnd) } : {})
@@ -209,6 +380,7 @@ function layerCoverageResources(layers) {
 export function buildPlannerSourceSnapshot({
     manualErps = [],
     erpDiagnostic = null,
+    preciseProducts = [],
     preciseRanges = [],
     preciseNames = new Map(),
     oemRanges = [],
@@ -216,16 +388,37 @@ export function buildPlannerSourceSnapshot({
     layers = []
 } = {}) {
     const layerFacts = normalizePlannerLayerFacts(layers);
-    const erpDiagnosticResource = buildPlannerErpDiagnosticResource(erpDiagnostic);
+    const productErpCoverages = normalizePlannerProductErpCoverages(preciseProducts);
+    const automaticEopEnabled = hasActiveNonPreciseSatelliteLayer(layerFacts)
+        || !plannerProductErpSuppressesAutomaticEop({
+        preciseRanges,
+        productErpCoverages
+    });
+    const eopLayer = automaticEopEnabled ? buildPlannerEopCoverageLayer(erpDiagnostic) : null;
+    const productErpLayer = buildPlannerProductErpCoverageLayer(productErpCoverages);
+    const plannerLayers = uniqueById([
+        ...layerFacts,
+        ...(eopLayer ? [eopLayer] : []),
+        ...(productErpLayer ? [productErpLayer] : [])
+    ]);
     const resources = [
         ...(Array.isArray(manualErps) ? manualErps.map(normalizeManualErp).filter(Boolean) : []),
-        ...(erpDiagnosticResource ? [erpDiagnosticResource] : []),
+        // Automatic IERS diagnostics are represented by the explicit EOP
+        // source intervals, under one hideable planner layer. Do not also
+        // turn their broad aggregate coverage into an ERP validity-end point:
+        // that was the source of an extra, misleading "fin de cobertura".
         ...normalizeFiniteRanges(preciseRanges, "sp3", preciseNames),
         ...normalizeFiniteRanges(oemRanges, "oem", oemNames),
-        ...layerCoverageResources(layerFacts)
+        ...layerCoverageResources(plannerLayers)
     ];
     return {
         resources: uniqueById(resources),
-        layers: layerFacts
+        layers: plannerLayers,
+        // Runtime-only context for an exact product-ERP preflight. The
+        // normalized resource events remain the public calendar facts.
+        preciseRanges: (Array.isArray(preciseRanges) ? preciseRanges : []).map((range) => ({ ...range })),
+        productErpCoverages,
+        automaticEopEnabled,
+        automaticEopSuppressed: !automaticEopEnabled
     };
 }

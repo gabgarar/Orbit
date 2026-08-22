@@ -127,6 +127,67 @@ test("missing manual ERP selects automatic IERS for Earth-fixed forces", () => {
     assert.equal(inertial.requiresErp, false);
 });
 
+test("automatic EOP source changes warn without blocking a manual propagation", () => {
+    const policy = resolveManualOrbitTimePolicy({
+        designWindow: {
+            startTime: "2026-07-19T00:00:00Z",
+            endTime: "2026-08-16T00:00:00Z"
+        },
+        physicalEpoch: "2026-07-19T00:00:00Z",
+        forceTerms: ["central", "drag"],
+        automaticEopDiagnostic: {
+            details: {
+                coverageTimeline: [
+                    { kind: "iers-c01", start: "2026-07-01T00:00:00Z", end: "2026-07-20T00:00:00Z" },
+                    { kind: "finals2000A", start: "2026-07-20T00:00:00Z", end: "2026-08-15T00:00:00Z", quality: "predicted" },
+                    { kind: "linear-extrapolation", start: "2026-08-15T00:00:00Z", end: null }
+                ]
+            }
+        }
+    });
+
+    assert.equal(policy.canCreate, true, "automatic source provenance must not silently become a hard block");
+    assert.equal(policy.usesAutomaticIers, true);
+    assert.equal(policy.automaticEopAssessment.classification, "mixed");
+    assert.equal(policy.automaticEopRequiresNotice, true);
+    assert.equal(policy.automaticEopRequiresWarning, true);
+    assert.deepEqual(policy.blockingReasons, []);
+});
+
+test("automatic EOP preflight covers the numerical interval from the physical epoch", () => {
+    const policy = resolveManualOrbitTimePolicy({
+        designWindow: {
+            startTime: "2026-08-21T00:00:00Z",
+            endTime: "2026-08-22T00:00:00Z"
+        },
+        // Integrating backwards from this state epoch crosses from C01 into
+        // finals2000A even though every displayed design sample is in C01.
+        physicalEpoch: "2026-08-26T00:00:00Z",
+        forceTerms: ["drag"],
+        automaticEopDiagnostic: {
+            details: {
+                coverageTimeline: [
+                    { kind: "iers-c01", start: "2026-08-20T00:00:00Z", end: "2026-08-25T00:00:00Z" },
+                    { kind: "finals2000A", start: "2026-08-25T00:00:00Z", end: "2026-08-27T00:00:00Z", quality: "rapid" },
+                    { kind: "linear-extrapolation", start: "2026-08-27T00:00:00Z", end: "2026-09-26T00:00:00Z" }
+                ]
+            }
+        }
+    });
+
+    assert.equal(policy.automaticEopAssessment.classification, "iers-c01");
+    assert.deepEqual(policy.automaticEopEffectiveWindow, {
+        startMs: Date.parse("2026-08-21T00:00:00Z"),
+        endMs: Date.parse("2026-08-26T00:00:00Z"),
+        startTime: "2026-08-21T00:00:00.000Z",
+        endTime: "2026-08-26T00:00:00.000Z"
+    });
+    assert.equal(policy.automaticEopEffectiveAssessment.classification, "mixed-exact");
+    assert.equal(policy.automaticEopEffectiveAssessment.hasFinals, true);
+    assert.equal(policy.automaticEopRequiresNotice, true);
+    assert.equal(policy.automaticEopRequiresWarning, false);
+});
+
 test("scene and finite SP3/OEM coverage produce a common UTC joint-operation interval", () => {
     const policy = resolveManualOrbitTimePolicy({
         designWindow: {

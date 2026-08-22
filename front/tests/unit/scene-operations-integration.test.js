@@ -36,6 +36,16 @@ test("scene imports and catalogue refresh report a cancellable lifecycle to the 
     assert.match(refresh, /advanceSceneOperation\(operationId/);
 });
 
+test("an immediately activated catalogue import hydrates its TLE provenance despite catalogue pagination", () => {
+    const catalogImport = sourceBetween("async function importCatalogFile", "importSatelliteFileInput?.addEventListener");
+    const mainSource = readFileSync(new URL("../../main.js", import.meta.url), "utf8");
+
+    assert.match(catalogImport, /autoAddToView \? \{ includeEntries: true \} : \{\}/);
+    assert.match(catalogImport, /onHydrateCatalogEntries\(Array\.isArray\(payload\?\.importedEntries\) \? payload\.importedEntries : \[\]\)/);
+    assert.match(mainSource, /hydrateCatalogEntries,/);
+    assert.match(mainSource, /onHydrateCatalogEntries: \(entries\) => hydrateCatalogEntries\(entries\)/);
+});
+
 test("project resets and sidebar teardown cancel only owned scene work and remove listeners", () => {
     const teardown = sourceBetween("destroy() {", "sidebar.remove();");
 

@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildPlannerResourceEvents } from "../../js/features/planner/plannerEvents.js";
+import {
+    buildPlannerEopCoverageEvents,
+    buildPlannerLayerEvents,
+    buildPlannerProductErpCoverageEvents,
+    buildPlannerResourceEvents,
+    PLANNER_EOP_LAYER_ID,
+    PLANNER_PRODUCT_ERP_LAYER_ID
+} from "../../js/features/planner/plannerEvents.js";
 import {
     buildPlannerErpDiagnosticResource,
     buildPlannerSourceSnapshot,
-    normalizePlannerLayerFacts
+    normalizePlannerLayerFacts,
+    normalizePlannerProductErpCoverages,
+    plannerProductErpSuppressesAutomaticEop
 } from "../../js/features/planner/plannerRuntimeSources.js";
 
 const T0 = "2026-08-18T00:00:00.000Z";
@@ -73,6 +82,187 @@ test("ERP diagnostic uses only named coverage and explicitly declared expiry fie
     assert.equal("validityEnd" in validationOnly, false);
     assert.equal("expiresAt" in validationOnly, false);
     assert.deepEqual(buildPlannerResourceEvents([validationOnly]), []);
+});
+
+test("automatic EOP diagnostics use one hideable layer and do not duplicate a generic ERP endpoint", () => {
+    const erpDiagnostic = {
+        status: "warning",
+        details: {
+            coverage: { start: T0, end: T2 },
+            coverageTimeline: [
+                {
+                    kind: "iers-c01",
+                    start: T0,
+                    end: T1,
+                    source: "IERS C01",
+                    quality: "final"
+                },
+                {
+                    kind: "iers-finals2000a",
+                    start: T1,
+                    end: T2,
+                    source: "IERS finals2000A",
+                    quality: "rapid"
+                }
+            ]
+        }
+    };
+    const snapshot = buildPlannerSourceSnapshot({ erpDiagnostic });
+
+    assert.deepEqual(snapshot.resources, []);
+    assert.deepEqual(snapshot.layers, [{
+        id: PLANNER_EOP_LAYER_ID,
+        name: "IERS ERP Time",
+        type: "SYSTEM",
+        sourceId: PLANNER_EOP_LAYER_ID,
+        active: true,
+        visible: true,
+        sourceFormat: "EOP",
+        sourceOrigin: "IERS",
+        validation: "diagnostics-coverage-timeline"
+    }]);
+    assert.deepEqual(buildPlannerEopCoverageEvents(erpDiagnostic).map((event) => event.metadata.layerId), [
+        PLANNER_EOP_LAYER_ID,
+        PLANNER_EOP_LAYER_ID
+    ]);
+});
+
+test("a validated ERP bound to every active SP3 replaces the automatic IERS planner layer", () => {
+    const preciseProducts = [{
+        id: "precise:demo:G01",
+        product_id: "precise-demo",
+        product_name: "Demo precise product",
+        sp3: {
+            erp: {
+                present: true,
+                file: "demo.ERP",
+                coverage_start: T0,
+                coverage_end: T2,
+                source: "IGS",
+                snapshot_id: "erp-demo",
+                quality: "final"
+            },
+            eci_conversion: {
+                coverage: { erp_start: T0, erp_end: T2 }
+            }
+        }
+    }];
+    const preciseRanges = [{ id: "precise:demo:G01", startTime: T0, endTime: T1 }];
+    const coverages = normalizePlannerProductErpCoverages(preciseProducts);
+
+    assert.deepEqual(coverages.map((coverage) => ({
+        id: coverage.id,
+        sourceIds: coverage.sourceIds,
+        coverageStart: coverage.coverageStart,
+        coverageEnd: coverage.coverageEnd,
+        fileName: coverage.fileName
+    })), [{
+        id: "precise-demo",
+        sourceIds: ["precise:demo:G01"],
+        coverageStart: T0,
+        coverageEnd: T2,
+        fileName: "demo.ERP"
+    }]);
+    assert.equal(plannerProductErpSuppressesAutomaticEop({ preciseRanges, productErpCoverages: coverages }), true);
+
+    const snapshot = buildPlannerSourceSnapshot({
+        preciseProducts,
+        preciseRanges,
+        erpDiagnostic: {
+            details: {
+                coverageTimeline: [{ kind: "iers-c01", start: T0, end: T2 }]
+            }
+        }
+    });
+    assert.equal(snapshot.automaticEopEnabled, false);
+    assert.equal(snapshot.automaticEopSuppressed, true);
+    assert.equal(snapshot.layers.some((layer) => layer.id === PLANNER_EOP_LAYER_ID), false);
+    assert.deepEqual(snapshot.layers.find((layer) => layer.id === PLANNER_PRODUCT_ERP_LAYER_ID), {
+        id: PLANNER_PRODUCT_ERP_LAYER_ID,
+        name: "ERP asociado a SP3",
+        type: "SYSTEM",
+        sourceId: PLANNER_PRODUCT_ERP_LAYER_ID,
+        active: true,
+        visible: true,
+        sourceFormat: "ERP",
+        sourceOrigin: "SP3",
+        validation: "product-bound-erp-coverage"
+    });
+    assert.deepEqual(buildPlannerProductErpCoverageEvents(snapshot.productErpCoverages).map((event) => [
+        event.kind,
+        event.start,
+        event.end,
+        event.colorToken,
+        event.metadata.layerId,
+        event.metadata.eopRange
+    ]), [[
+        "product-erp-coverage", T0, T2, "cyan", PLANNER_PRODUCT_ERP_LAYER_ID, true
+    ]]);
+});
+
+test("a missing or partial second SP3 ERP never hides automatic IERS coverage", () => {
+    const preciseRanges = [
+        { id: "precise:demo:G01", startTime: T0, endTime: T2 },
+        { id: "precise:demo:G02", startTime: T0, endTime: T2 }
+    ];
+    const partial = normalizePlannerProductErpCoverages([{
+        id: "precise:demo:G01",
+        product_id: "precise-one",
+        sp3: { erp: { present: true, coverage_start: T0, coverage_end: T1 } }
+    }]);
+    assert.equal(plannerProductErpSuppressesAutomaticEop({ preciseRanges, productErpCoverages: partial }), false);
+
+    const snapshot = buildPlannerSourceSnapshot({
+        preciseRanges,
+        preciseProducts: [{
+            id: "precise:demo:G01",
+            product_id: "precise-one",
+            sp3: { erp: { present: true, coverage_start: T0, coverage_end: T2 } }
+        }, {
+            id: "precise:demo:G02",
+            product_id: "precise-two",
+            sp3: { erp: { present: true, file: "unbounded.ERP" } }
+        }],
+        erpDiagnostic: { details: { coverageTimeline: [{ kind: "iers-c01", start: T0, end: T2 }] } }
+    });
+    assert.equal(snapshot.automaticEopEnabled, true);
+    assert.equal(snapshot.layers.some((layer) => layer.id === PLANNER_EOP_LAYER_ID), true);
+    assert.equal(snapshot.productErpCoverages.length, 1, "the unbounded file is not promoted to a temporal fact");
+});
+
+test("a mixed satellite scene retains IERS while exposing the exact SP3-bound ERP", () => {
+    const preciseProducts = [{
+        id: "precise:demo:G01",
+        product_id: "precise-one",
+        sp3: { erp: { present: true, coverage_start: T0, coverage_end: T2 } }
+    }];
+    const snapshot = buildPlannerSourceSnapshot({
+        preciseRanges: [{ id: "precise:demo:G01", startTime: T0, endTime: T1 }],
+        preciseProducts,
+        layers: [
+            {
+                id: "precise:demo:G01",
+                sourceId: "precise:demo:G01",
+                type: "SATELLITE",
+                active: true,
+                visible: true,
+                sourceFormat: "SP3"
+            },
+            {
+                id: "catalog:tle:25544",
+                sourceId: "25544",
+                type: "SATELLITE",
+                active: true,
+                visible: true,
+                sourceFormat: "TLE"
+            }
+        ],
+        erpDiagnostic: { details: { coverageTimeline: [{ kind: "iers-c01", start: T0, end: T2 }] } }
+    });
+
+    assert.equal(snapshot.automaticEopEnabled, true);
+    assert.equal(snapshot.layers.some((layer) => layer.id === PLANNER_EOP_LAYER_ID), true);
+    assert.equal(snapshot.layers.some((layer) => layer.id === PLANNER_PRODUCT_ERP_LAYER_ID), true);
 });
 
 test("a legacy validated ERP snapshot stays inspectable without inventing a coverage date", () => {
@@ -158,4 +348,49 @@ test("layer facts retain visibility and provenance but do not fabricate temporal
         sourceOrigin: "USER",
         validation: "scene-state-only"
     }]);
+});
+
+test("custom TLE layer provenance produces import and epoch notices while retaining a separate validity boundary", () => {
+    const snapshot = buildPlannerSourceSnapshot({
+        layers: [{
+            id: "custom-tle",
+            sourceId: "custom-tle",
+            name: "Operator TLE",
+            type: "SATELLITE",
+            active: true,
+            visible: true,
+            sourceFormat: "TLE",
+            sourceOrigin: "CUSTOM",
+            importFileName: "operator-upload.tle",
+            importedAt: T1,
+            tleEpoch: T0,
+            sourceProvider: "Local operator",
+            validityStart: T0,
+            validityEnd: T2,
+            validation: "source-declared-range"
+        }]
+    });
+
+    assert.deepEqual(snapshot.layers, [{
+        id: "custom-tle",
+        name: "Operator TLE",
+        type: "SATELLITE",
+        sourceId: "custom-tle",
+        active: true,
+        visible: true,
+        sourceFormat: "TLE",
+        sourceOrigin: "CUSTOM",
+        importedAt: T1,
+        importFileName: "operator-upload.tle",
+        tleEpoch: T0,
+        sourceProvider: "Local operator",
+        validation: "source-declared-range",
+        validityStart: T0,
+        validityEnd: T2
+    }]);
+    assert.deepEqual(buildPlannerLayerEvents(snapshot.layers).map((event) => [event.kind, event.start, event.metadata.importFileName]), [
+        ["tle-epoch", T0, "operator-upload.tle"],
+        ["layer-imported", T1, "operator-upload.tle"]
+    ]);
+    assert.deepEqual(buildPlannerResourceEvents(snapshot.resources).map((event) => event.kind), ["layer-validity-end"]);
 });

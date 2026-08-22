@@ -10,6 +10,14 @@
 }
 
 .orbit-planner-panel {
+    /* Month all-day events and EOP coverage are rendered in the same visual
+       lane. Keep their outer box contract in one place so a labelled coverage
+       segment cannot grow taller than its unlabelled continuation. */
+    --orbit-planner-compact-event-height: 19px;
+    --orbit-planner-compact-event-padding: 2px 4px;
+    --orbit-planner-compact-event-font-size: 10px;
+    --orbit-planner-compact-event-font-weight: 650;
+    --orbit-planner-compact-event-line-height: 1.15;
     position: absolute;
     display: flex;
     width: min(1220px, calc(100vw - 24px));
@@ -140,37 +148,77 @@
 .orbit-planner-navigation {
     min-width: 0;
     flex: 1 1 auto;
+    gap: 8px;
+}
+
+.orbit-planner-today,
+.orbit-planner-range-stepper,
+.orbit-planner-period-picker {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+}
+
+.orbit-planner-today {
     gap: 6px;
 }
 
+.orbit-planner-today > svg,
+.orbit-planner-icon-button > svg,
+.orbit-planner-period-picker > svg,
+.orbit-planner-detail-pager-button > svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentcolor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8;
+}
+
+.orbit-planner-range-stepper {
+    gap: 2px;
+}
+
 .orbit-planner-period-picker {
-    display: inline-flex;
-    min-width: 0;
-    align-items: center;
-    gap: 5px;
-    margin-left: auto;
-    color: #8da9d1;
-    font-size: 10px;
-    font-weight: 650;
+    position: relative;
+    min-height: 28px;
+    gap: 3px;
+    color: #eaf2ff;
+    cursor: pointer;
+}
+
+.orbit-planner-period-value {
+    overflow: hidden;
+    max-width: 220px;
+    color: #eef5ff;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    line-height: 1;
+    text-overflow: ellipsis;
+    text-transform: capitalize;
     white-space: nowrap;
 }
 
 .orbit-planner-period-picker input {
-    width: 118px;
-    height: 28px;
-    box-sizing: border-box;
-    border: 1px solid #365474;
-    border-radius: 6px;
-    background: #10233a;
-    padding: 0 5px;
-    color: #dce9ff;
-    font: 650 11px / 1 var(--orbit-font-ui, "Inter", ui-sans-serif, system-ui, sans-serif);
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    cursor: pointer;
+    opacity: 0;
 }
 
 .orbit-planner-period-picker input:focus-visible {
-    border-color: #78a4ff;
-    outline: 2px solid rgba(112, 157, 255, .32);
-    outline-offset: 1px;
+    outline: 0;
+}
+
+.orbit-planner-period-picker:has(input:focus-visible) {
+    border-radius: 5px;
+    outline: 2px solid rgba(112, 157, 255, .42);
+    outline-offset: 3px;
 }
 
 .orbit-planner-navigation button,
@@ -198,13 +246,33 @@
     line-height: 1;
 }
 
-.orbit-planner-navigation button:first-child,
-.orbit-planner-navigation button:nth-child(3) {
+.orbit-planner-icon-button {
+    display: inline-grid;
+    min-width: 28px;
+    min-height: 28px;
     width: 28px;
+    height: 28px;
+    box-sizing: border-box;
+    align-content: center;
+    justify-content: center;
+    place-items: center;
     padding: 0;
-    color: #a8c4f6;
-    font-size: 21px;
-    font-weight: 400;
+    line-height: 0;
+}
+
+/* The generic toolbar button rule has a more specific selector. Override its
+   text-button padding explicitly so both chevrons remain geometrically
+   centred, including in a narrow/resized planner window. */
+.orbit-planner-navigation button.orbit-planner-icon-button {
+    padding: 0;
+    line-height: 0;
+}
+
+.orbit-planner-icon-button > svg {
+    display: block;
+    width: 17px;
+    height: 17px;
+    margin: auto;
 }
 
 .orbit-planner-navigation button:hover,
@@ -213,17 +281,6 @@
     border-color: #638fea;
     background: #1a3760;
     color: #f2f7ff;
-}
-
-.orbit-planner-navigation strong {
-    overflow: hidden;
-    margin-left: 6px;
-    color: #eef5ff;
-    font-size: 13px;
-    font-weight: 650;
-    text-overflow: ellipsis;
-    text-transform: capitalize;
-    white-space: nowrap;
 }
 
 .orbit-planner-view-buttons {
@@ -255,105 +312,6 @@
 .orbit-planner-new-event:hover,
 .orbit-planner-editor-save:hover {
     background: #3a60bf;
-}
-
-.orbit-planner-forecast {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: 5px 9px;
-    margin: 6px 12px 0;
-    border: 1px solid #31567a;
-    border-radius: 8px;
-    background: linear-gradient(90deg, rgba(15, 40, 69, .88), rgba(11, 29, 50, .82));
-    padding: 5px 8px;
-}
-
-.orbit-planner-forecast-copy {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 7px;
-}
-
-.orbit-planner-forecast-copy strong {
-    overflow: hidden;
-    color: #e5efff;
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 1.2;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.orbit-planner-forecast-detail {
-    grid-column: 1 / -1;
-    overflow: hidden;
-    margin: 0;
-    color: #a6bddf;
-    font-size: 10px;
-    line-height: 1.25;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.orbit-planner-forecast-metrics {
-    display: flex;
-    align-items: center;
-    align-self: center;
-    justify-content: flex-end;
-    gap: 8px;
-    color: #91acd0;
-    font-size: 10px;
-    line-height: 1.2;
-    white-space: nowrap;
-}
-
-.orbit-planner-forecast-metrics b {
-    color: #e6f0ff;
-}
-
-.orbit-planner-forecast-toggle {
-    min-height: 23px;
-    flex: 0 0 auto;
-    border: 1px solid #365474;
-    border-radius: 5px;
-    background: #10233a;
-    padding: 0 7px;
-    color: #aac7ef;
-    font: 700 9px / 1 var(--orbit-font-ui, "Inter", ui-sans-serif, system-ui, sans-serif);
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.orbit-planner-forecast-toggle:hover,
-.orbit-planner-forecast-toggle:focus-visible {
-    border-color: #6896ef;
-    background: #1a3760;
-    color: #fff;
-}
-
-.orbit-planner-forecast-toggle:disabled {
-    border-color: #3a5069;
-    background: #102139;
-    color: #8ca3c3;
-    cursor: default;
-}
-
-.orbit-planner-forecast-progress {
-    grid-column: 1 / -1;
-    height: 3px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: #173553;
-}
-
-.orbit-planner-forecast-progress span {
-    display: block;
-    height: 100%;
-    border-radius: inherit;
-    background: linear-gradient(90deg, #5b93ff, #77d4f0);
-    transition: width 180ms ease;
 }
 
 .orbit-planner-state-error {
@@ -557,6 +515,11 @@
     text-shadow: 0 0 7px rgba(99, 237, 157, .42);
 }
 
+.orbit-planner-layer-scene-state.is-planner-only {
+    color: #91b4ff;
+    font-weight: 800;
+}
+
 .orbit-planner-layers-empty {
     padding: 14px 12px;
 }
@@ -601,6 +564,7 @@
 }
 
 .orbit-planner-month-grid {
+    position: relative;
     min-height: 0;
     flex: 1 1 auto;
     /* Keep the six complete UTC weeks inside the modal instead of growing a
@@ -657,6 +621,152 @@
     gap: 3px;
 }
 
+/* EOP is a source-coverage interval, not a daily countdown. The overlay uses
+   one grid segment per week row, so a coverage range stays continuous instead
+   of becoming a cloned rail/button in every UTC day cell. */
+.orbit-planner-month-eop-ranges {
+    position: absolute;
+    z-index: 3;
+    inset: 0;
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-template-rows: repeat(6, minmax(0, 1fr));
+    pointer-events: none;
+}
+
+.orbit-planner-month-eop-ranges > .orbit-planner-eop-range {
+    align-self: start;
+    margin: 28px 0 0;
+    pointer-events: auto;
+}
+
+.orbit-planner-month-day.has-eop-coverage .orbit-planner-month-events {
+    padding-top: 20px;
+}
+
+.orbit-planner-eop-range {
+    --planner-eop-gradient-start: var(--planner-event-color);
+    --planner-eop-gradient-end: color-mix(in srgb, var(--planner-event-color) 52%, #eff6ff);
+    --planner-eop-surface-start: color-mix(in srgb, var(--planner-event-color) 30%, #11243d);
+    --planner-eop-surface-end: color-mix(in srgb, var(--planner-event-color) 10%, #0b1b30);
+    --planner-eop-border: color-mix(in srgb, var(--planner-event-color) 58%, transparent);
+    --planner-eop-glow: color-mix(in srgb, var(--planner-event-color) 45%, transparent);
+    --orbit-planner-eop-start-inset: 0%;
+    --orbit-planner-eop-end-inset: 0%;
+    position: relative;
+    display: block;
+    overflow: visible;
+    min-width: 0;
+    height: var(--orbit-planner-compact-event-height);
+    min-height: var(--orbit-planner-compact-event-height);
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    box-shadow: none;
+    padding: var(--orbit-planner-compact-event-padding);
+    color: #f5f9ff;
+    cursor: pointer;
+    text-align: left;
+    transition: outline-color 140ms ease;
+}
+
+.orbit-planner-eop-range[data-eop-tone="emerald"] {
+    --planner-eop-gradient-start: #2bc77b;
+    --planner-eop-gradient-end: #98f3bd;
+    --planner-eop-surface-start: rgba(20, 137, 79, .48);
+    --planner-eop-surface-end: rgba(11, 58, 43, .35);
+    --planner-eop-border: rgba(110, 241, 164, .72);
+    --planner-eop-glow: rgba(44, 218, 125, .35);
+}
+
+.orbit-planner-eop-range[data-eop-tone="amber"] {
+    --planner-eop-gradient-start: #f0ad3f;
+    --planner-eop-gradient-end: #ffe59d;
+    --planner-eop-surface-start: rgba(151, 91, 13, .51);
+    --planner-eop-surface-end: rgba(79, 48, 10, .34);
+    --planner-eop-border: rgba(255, 205, 106, .75);
+    --planner-eop-glow: rgba(244, 177, 59, .33);
+}
+
+.orbit-planner-eop-range[data-eop-tone="rose"] {
+    --planner-eop-gradient-start: #ff5f70;
+    --planner-eop-gradient-end: #ffb0ba;
+    --planner-eop-surface-start: rgba(151, 37, 57, .53);
+    --planner-eop-surface-end: rgba(80, 18, 31, .36);
+    --planner-eop-border: rgba(255, 139, 152, .78);
+    --planner-eop-glow: rgba(255, 82, 105, .38);
+}
+
+.orbit-planner-eop-range-line {
+    position: absolute;
+    z-index: 0;
+    top: 0;
+    right: var(--orbit-planner-eop-end-inset);
+    bottom: 0;
+    left: var(--orbit-planner-eop-start-inset);
+    display: block;
+    min-width: 0;
+    box-sizing: border-box;
+    border: 1px solid var(--planner-eop-border);
+    border-radius: inherit;
+    background: linear-gradient(102deg, var(--planner-eop-surface-start), var(--planner-eop-surface-end));
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .035), 0 0 10px var(--planner-eop-glow);
+    transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.orbit-planner-eop-range:hover .orbit-planner-eop-range-line,
+.orbit-planner-eop-range:focus-visible .orbit-planner-eop-range-line {
+    border-color: var(--planner-eop-gradient-end);
+    background: linear-gradient(102deg, color-mix(in srgb, var(--planner-eop-surface-start) 78%, #fff), var(--planner-eop-surface-end));
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .11), 0 0 15px var(--planner-eop-glow);
+}
+
+.orbit-planner-eop-range:focus-visible {
+    outline: 2px solid #edf5ff;
+    outline-offset: 1px;
+}
+
+.orbit-planner-eop-range-label {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    right: var(--orbit-planner-eop-end-inset);
+    bottom: 0;
+    left: var(--orbit-planner-eop-start-inset);
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    min-width: 0;
+    box-sizing: border-box;
+    gap: 5px;
+    padding: var(--orbit-planner-compact-event-padding);
+    color: #e7f0ff;
+    font-size: var(--orbit-planner-compact-event-font-size);
+    font-weight: var(--orbit-planner-compact-event-font-weight);
+    line-height: var(--orbit-planner-compact-event-line-height);
+    text-shadow: 0 1px 2px rgba(3, 13, 26, .85);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.orbit-planner-eop-range-label::before {
+    width: 3px;
+    height: 100%;
+    flex: 0 0 3px;
+    border-radius: 2px;
+    background: linear-gradient(180deg, var(--planner-eop-gradient-start), var(--planner-eop-gradient-end));
+    content: "";
+}
+
+.orbit-planner-eop-range-label-text {
+    overflow: hidden;
+    min-width: 0;
+    flex: 1 1 auto;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .orbit-planner-event {
     display: flex;
     min-width: 0;
@@ -705,8 +815,10 @@
 }
 
 .orbit-planner-event.is-compact {
-    min-height: 19px;
-    padding: 2px 4px;
+    height: var(--orbit-planner-compact-event-height);
+    min-height: var(--orbit-planner-compact-event-height);
+    box-sizing: border-box;
+    padding: var(--orbit-planner-compact-event-padding);
 }
 
 .orbit-planner-event.is-compact .orbit-planner-event-dot {
@@ -785,6 +897,28 @@
 .orbit-planner-time-header .is-today {
     background: rgba(74, 121, 224, .17);
     color: #dfeaff;
+}
+
+.orbit-planner-time-eop-ranges {
+    position: sticky;
+    z-index: 3;
+    top: 38px;
+    display: grid;
+    min-width: 0;
+    min-height: 8px;
+    border-bottom: 1px solid #294562;
+    background: #0a1b30;
+}
+
+.orbit-planner-time-eop-ranges > span {
+    min-width: 0;
+    border-right: 1px solid #294562;
+}
+
+.orbit-planner-time-eop-ranges > .orbit-planner-eop-range {
+    align-self: stretch;
+    min-width: 0;
+    margin: 2px 0;
 }
 
 .orbit-planner-hours {
@@ -878,26 +1012,38 @@
     width: auto;
     min-width: 0;
     flex: 0 0 auto;
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    box-sizing: border-box;
+    border-left: 1px solid #294562;
+    background: #0c1b2f;
+}
+
+.orbit-planner-time-scroll::-webkit-scrollbar,
+.orbit-planner-detail-body::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+}
+
+.orbit-planner-detail-body {
+    min-height: 0;
+    flex: 1 1 auto;
     overflow-x: hidden;
     overflow-y: auto;
     box-sizing: border-box;
     overscroll-behavior: contain;
     -ms-overflow-style: none;
     scrollbar-width: none;
-    border-left: 1px solid #294562;
     padding: 17px 15px;
-    background: #0c1b2f;
-}
-
-.orbit-planner-time-scroll::-webkit-scrollbar,
-.orbit-planner-detail::-webkit-scrollbar {
-    width: 0;
-    height: 0;
-    display: none;
 }
 
 .orbit-planner-detail-empty {
     display: grid;
+    padding: 17px 15px;
     place-content: center;
     color: #8da8cd;
     font-size: 11px;
@@ -948,6 +1094,15 @@
 .orbit-planner-detail-description {
     margin-top: 12px;
     white-space: pre-wrap;
+}
+
+.orbit-planner-detail-activation-note {
+    margin: 12px 0 0;
+    border-left: 2px solid #d5a548;
+    padding-left: 7px;
+    color: #e6c681;
+    font-size: 10px;
+    line-height: 1.35;
 }
 
 .orbit-planner-detail-meta {
@@ -1009,6 +1164,53 @@
 .orbit-planner-detail-actions {
     gap: 6px;
     margin-top: 8px;
+}
+
+.orbit-planner-detail-pager {
+    display: grid;
+    min-height: 39px;
+    flex: 0 0 auto;
+    grid-template-columns: 28px minmax(42px, auto) 28px;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border-top: 1px solid #294562;
+    padding: 5px 12px;
+    background: rgba(7, 19, 35, .64);
+}
+
+.orbit-planner-detail-pager > span {
+    color: #b7cbea;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+}
+
+.orbit-planner-detail-pager-button {
+    display: grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border: 1px solid #365474;
+    border-radius: 6px;
+    background: #10233a;
+    color: #bdd4fa;
+    cursor: pointer;
+}
+
+.orbit-planner-detail-pager-button:hover:not(:disabled),
+.orbit-planner-detail-pager-button:focus-visible:not(:disabled) {
+    border-color: #6696f3;
+    background: #1a3760;
+    color: #fff;
+}
+
+.orbit-planner-detail-pager-button:disabled {
+    border-color: #314862;
+    background: #0c1d31;
+    color: #5f789d;
+    cursor: default;
 }
 
 .orbit-planner-detail-remove {
@@ -1092,7 +1294,8 @@
 }
 
 .orbit-planner-editor input,
-.orbit-planner-editor select {
+.orbit-planner-editor select,
+.orbit-planner-editor textarea {
     min-width: 0;
     height: 34px;
     box-sizing: border-box;
@@ -1104,8 +1307,17 @@
     font: 500 12px / 1 var(--orbit-font-ui, "Inter", ui-sans-serif, system-ui, sans-serif);
 }
 
+.orbit-planner-editor textarea {
+    height: auto;
+    min-height: 78px;
+    padding: 8px 9px;
+    line-height: 1.35;
+    resize: vertical;
+}
+
 .orbit-planner-editor input:focus,
-.orbit-planner-editor select:focus {
+.orbit-planner-editor select:focus,
+.orbit-planner-editor textarea:focus {
     border-color: #75a0ff;
     outline: 2px solid rgba(112, 157, 255, .28);
     outline-offset: 1px;
@@ -1193,13 +1405,13 @@
         max-height: 158px;
         border-top: 1px solid #294562;
         border-left: 0;
+        padding: 0;
+    }
+
+    .orbit-planner-detail-body {
         padding: 11px 13px;
     }
 
-    .orbit-planner-forecast-metrics {
-        gap: 5px;
-        font-size: 9px;
-    }
 }
 
 @container orbit-planner-panel (max-width: 780px) {
@@ -1217,22 +1429,8 @@
         font-size: 15px;
     }
 
-    .orbit-planner-forecast {
-        gap: 4px 7px;
-        margin: 5px 9px 0;
-        padding: 4px 6px;
-    }
-
-    .orbit-planner-forecast-metrics span:last-child {
-        display: none;
-    }
-
-    .orbit-planner-navigation strong {
+    .orbit-planner-period-value {
         max-width: 145px;
-    }
-
-    .orbit-planner-period-picker input {
-        width: 110px;
     }
 }
 
@@ -1266,17 +1464,10 @@
         border-left: 0;
     }
 
-    .orbit-planner-navigation strong {
+    .orbit-planner-period-value {
         max-width: 170px;
     }
 
-    .orbit-planner-period-picker {
-        margin-left: 0;
-    }
-
-    .orbit-planner-forecast {
-        grid-template-columns: minmax(0, 1fr) auto auto;
-    }
 }
 
 @media (max-width: 680px) {
@@ -1363,26 +1554,8 @@
         border-left: 0;
     }
 
-    .orbit-planner-navigation strong {
+    .orbit-planner-period-value {
         max-width: 145px;
-    }
-
-    .orbit-planner-period-picker {
-        margin-left: 0;
-    }
-
-    .orbit-planner-forecast-copy {
-        flex-wrap: wrap;
-    }
-
-    .orbit-planner-forecast-copy strong,
-    .orbit-planner-forecast-detail {
-        white-space: normal;
-    }
-
-    .orbit-planner-forecast-metrics {
-        flex-wrap: wrap;
-        white-space: normal;
     }
 
     .orbit-planner-request-toast {
@@ -1394,7 +1567,30 @@
 
 @media (prefers-reduced-motion: reduce) {
     .orbit-planner-event,
+    .orbit-planner-eop-range,
     .orbit-planner-timed-event {
         transition: none;
+    }
+}
+
+@media (forced-colors: active) {
+    .orbit-planner-eop-range {
+        forced-color-adjust: none;
+        color: CanvasText;
+    }
+
+    .orbit-planner-eop-range-line {
+        border-color: CanvasText;
+        background: Highlight;
+        box-shadow: none;
+    }
+
+    .orbit-planner-eop-range:hover .orbit-planner-eop-range-line,
+    .orbit-planner-eop-range:focus-visible .orbit-planner-eop-range-line {
+        border-color: Highlight;
+    }
+
+    .orbit-planner-eop-range:focus-visible {
+        outline-color: Highlight;
     }
 }

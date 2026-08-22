@@ -27,6 +27,23 @@ test("planner runtime keeps authored mutations separate and activation fails clo
     assert.match(lifecycleSource, /normalizeProjectPlannerEvents\(project\.plannerEvents\)/);
 });
 
+test("planner derives loaded-layer provenance from the TLE cache instead of persisting synthetic notices", () => {
+    assert.match(mainSource, /const tleEpoch = type === "SATELLITE"[\s\S]*parseTleEpochDate\(getSatelliteTle\(sourceId\)\?\.line1\)/);
+    assert.match(mainSource, /importedAt: plannerText\(metadata\?\.importedAt \?\? metadata\?\.imported_at\)/);
+    assert.match(mainSource, /importFileName: plannerText\(metadata\?\.importFileName \?\? metadata\?\.import_file_name\)/);
+    assert.match(mainSource, /buildPlannerLayerEvents\(sourceSnapshot\.layers\)/);
+    assert.match(lifecycleSource, /plannerEvents: getPlannerManualEvents\(\)/, "only authored planner blocks are supplied to the project document");
+});
+
+test("planner uses a complete SP3-bound ERP coverage map before publishing automatic IERS", () => {
+    assert.match(mainSource, /const preciseProducts = getActivePreciseProductEntries\(\)/);
+    assert.match(mainSource, /preciseProducts,[\s\S]*preciseRanges,/);
+    assert.match(mainSource, /sourceSnapshot\.automaticEopEnabled[\s\S]*buildPlannerEopCoverageEvents/);
+    assert.match(mainSource, /buildPlannerProductErpCoverageEvents\(sourceSnapshot\.productErpCoverages\)/);
+    assert.match(mainSource, /function plannerProductErpPreflight\(range\)/);
+    assert.match(mainSource, /assessPlannerEarthOrientationPreflight\(/);
+});
+
 test("planner forecast is scene-wide, bounded, visibility-aware and isolated from the selected timeline", () => {
     assert.match(mainSource, /const PLANNER_PASS_FORECAST_MAX_CONCURRENCY = 2/);
     assert.match(mainSource, /collectGroundStationTimelinePairs\(\{ kind: "planner" \}, range\)/);

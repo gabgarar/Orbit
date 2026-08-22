@@ -29,7 +29,8 @@ export function registerCatalogActionRoutes(app, { catalog, importCatalog, refre
             const result = await importCatalog({
                 fileName: request.body?.fileName,
                 content: request.body?.content,
-                merge: request.body?.merge !== false
+                merge: request.body?.merge !== false,
+                ...(request.body?.includeEntries === true ? { includeEntries: true } : {})
             });
             return response.status(result.ok ? 200 : result.status || 500).json(result);
         } catch (error) {

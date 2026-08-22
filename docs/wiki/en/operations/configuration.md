@@ -92,6 +92,7 @@ provenance contract.
 | ORBIT_PYTHON_STARTUP_TIMEOUT_MS | Python-backend startup budget: `180000` ms by default; only integer values from `10000` to `600000` are accepted. Leave enough time to rehydrate strict local GNSS products (SP3/ERP) before the service is declared available. |
 | ORBIT_EOP_* | Policy and origin of the local C04 snapshot. |
 | ORBIT_EOP_C01_CACHE_PATH | Mutable automatic C01 cache; defaults to `/app/data/erp/EOP_C01_IAU2000_1846-now.txt`. It is used only when `ORBIT_EOP_C04_PATH` is not configured. |
+| ORBIT_FINALS2000A_CACHE_PATH | Separate mutable cache for official IERS `finals2000A.all`; defaults to `/app/data/erp/finals2000A.all`. It is used only by the automatic C01 → finals chain when `ORBIT_EOP_C04_PATH` is not configured; it never replaces SP3-bound or manual ERP. |
 | ORBIT_LEAP_SECONDS_* | Local UTC–TAI table policy. |
 | ORBIT_DIAGNOSTICS_MONITOR_INTERVAL_SECONDS | Health-monitor interval; defaults to `21600` (6 h), accepted from 30 s to 24 h. |
 | ORBIT_GITHUB_ACTIONS_MONITOR | `true` enables a bounded public token-free query of recent workflows for Built-In Test; defaults to `false`. |

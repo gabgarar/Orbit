@@ -50,6 +50,49 @@ test("catalog import treats .omm XML as an OMM catalog instead of OEM", async ()
     assert.equal(reloads, 1);
 });
 
+test("catalog import retains factual file provenance and import time for derived planner notices", async () => {
+    let savedEntries;
+    const importedAt = "2026-08-21T10:15:00.000Z";
+    const importer = createCatalogImportService({
+        catalog: {
+            get: async () => ({ entries: [] }),
+            replace: async (entries) => { savedEntries = entries; }
+        },
+        serialize: {},
+        reloadPython: async () => true,
+        now: () => new Date(importedAt)
+    });
+
+    const result = await importer.importContent({
+        fileName: "operator-upload.tle",
+        content: tleContent("PLANNER TLE"),
+        merge: false,
+        includeEntries: true
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(savedEntries.map((entry) => ({
+        name: entry.name,
+        sourceOrigin: entry.sourceOrigin,
+        importFileName: entry.importFileName,
+        importedAt: entry.importedAt
+    })), [{
+        name: "PLANNER TLE",
+        sourceOrigin: "CUSTOM",
+        importFileName: "operator-upload.tle",
+        importedAt
+    }]);
+    assert.deepEqual(result.importedEntries.map((entry) => ({
+        name: entry.name,
+        importFileName: entry.importFileName,
+        importedAt: entry.importedAt
+    })), [{
+        name: "PLANNER TLE",
+        importFileName: "operator-upload.tle",
+        importedAt
+    }]);
+});
+
 test("a custom import replaces a catalog entry with the same NORAD ID", async () => {
     let savedEntries;
     const importer = createCatalogImportService({
@@ -79,11 +122,17 @@ test("an existing custom entry remains authoritative during a merged import", as
         reloadPython: async () => {}
     });
 
-    await importer.importContent({ fileName: "custom.tle", content: tleContent("NEW CUSTOM") });
+    const result = await importer.importContent({
+        fileName: "custom.tle",
+        content: tleContent("NEW CUSTOM"),
+        includeEntries: true
+    });
 
     assert.equal(savedEntries.length, 1);
     assert.equal(savedEntries[0].name, "EXISTING CUSTOM");
     assert.equal(savedEntries[0].sourceOrigin, "CUSTOM");
+    assert.deepEqual(result.importedNames, ["EXISTING CUSTOM"]);
+    assert.deepEqual(result.importedEntries.map((entry) => entry.name), ["EXISTING CUSTOM"]);
 });
 
 test("a replacement import does not read the existing catalog", async () => {

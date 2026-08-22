@@ -5,6 +5,7 @@ import {
     physicalEpochAtDesignWindowStart,
     resolveManualOrbitTimePolicy
 } from "../../../front/js/features/manualOrbit/timePolicy.js";
+import { describeEarthOrientationCoverage } from "../../../front/js/features/timekeeping/eopCoveragePolicy.js";
 import {
     GEOPOTENTIAL_MODEL_LIMITS,
     geopotentialHarmonicTermCount,
@@ -1646,6 +1647,7 @@ export default function ManualOrbitPanel() {
     const erpCoverage = manualErp?.coverageStart && manualErp?.coverageEnd
         ? { startTime: manualErp.coverageStart, endTime: manualErp.coverageEnd }
         : null;
+    const automaticErpDiagnostic = findDiagnosticComponent(diagnostics, "erp");
     const timePolicy = resolveManualOrbitTimePolicy({
         designWindow: {
             startTime: form.epochStartUtc || form.epochUtc,
@@ -1653,16 +1655,29 @@ export default function ManualOrbitPanel() {
         },
         physicalEpoch: form.epochUtc,
         erpCoverage,
+        automaticEopDiagnostic: automaticErpDiagnostic,
         forceTerms: activeForceTerms,
         sceneWindow: form.timeData?.sceneWindow,
         finiteEphemerisRanges: form.timeData?.finiteEphemerisRanges || []
     });
-    const automaticErpDiagnostic = findDiagnosticComponent(diagnostics, "erp");
     const automaticErpLoaded = diagnosticsAvailability === "available"
         && automaticErpDiagnostic?.details?.loaded === true
         && automaticErpDiagnostic?.status !== "error";
-    const automaticErpMessage = automaticErpLoaded
-        ? "IERS ERP automático disponible para las fuerzas terrestres."
+    // This matches the numerical interval: it includes an earlier state
+    // epoch as well as the visible design range.
+    const automaticEopAssessment = timePolicy.automaticEopEffectiveAssessment
+        || timePolicy.automaticEopAssessment;
+    const automaticEopNotice = timePolicy.usesAutomaticIers && automaticEopAssessment?.requiresNotice === true;
+    const automaticEopWarning = automaticEopNotice && automaticEopAssessment?.requiresWarning === true;
+    const automaticEopMessage = automaticEopAssessment
+        ? describeEarthOrientationCoverage(automaticEopAssessment, { operation: "La ventana de propagación" })
+        : "";
+    const automaticErpMessage = manualErp
+        ? "El ERP local validado cubre la ventana de diseño y sustituye al proveedor automático."
+        : automaticEopAssessment?.classification === "iers-c01"
+            ? "IERS C01 cubre toda la ventana de propagación para las fuerzas terrestres."
+        : automaticErpLoaded
+        ? "La orientación terrestre automática está disponible; revise la procedencia temporal de esta ventana."
         : diagnosticsAvailability === "available"
             ? "No hay datos ERP disponibles. El geopotencial y el arrastre atmosférico usarán una rotación terrestre nominal."
             : "Comprobando el ERP automático de IERS…";
@@ -1791,6 +1806,7 @@ export default function ManualOrbitPanel() {
                     </label>
                     {!epochRangeValid && <p className="mt-2 mb-0 text-[10px] leading-[1.35] font-semibold text-[#ff9cab]" role="alert">El epoch final debe ser posterior al inicial.</p>}
                     {timePolicy.requiresErp && <p className={`mt-2 mb-0 rounded border px-2 py-1.5 text-[9px] leading-[1.35] font-semibold ${timePolicy.canCreate ? (automaticErpLoaded ? "border-[#2d7252] bg-[#102a22] text-[#b8f1d0]" : "border-[#776035] bg-[#2d2617] text-[#f5d38e]") : "border-[#874252] bg-[#291821] text-[#ffd0d9]"}`} role={timePolicy.canCreate ? "status" : "alert"}>{timePolicy.canCreate ? automaticErpMessage : timeBlockMessage}</p>}
+                    {automaticEopNotice && <p className={`mt-2 mb-0 rounded border px-2 py-1.5 text-[9px] leading-[1.4] font-semibold ${automaticEopWarning ? "border-[#874252] bg-[#291821] text-[#ffd0d9]" : "border-[#776035] bg-[#2d2617] text-[#f5d38e]"}`} role={automaticEopWarning ? "alert" : "status"} data-testid="manual-orbit-eop-coverage-notice"><strong className="mr-1">Cobertura de orientación terrestre.</strong>{automaticEopMessage} La operación continúa con la procedencia indicada; Orbit no la convierte en una cobertura ERP válida.</p>}
                 </section>
 
                 <section className="rounded-lg border border-[#315a8d] bg-[#0a182b] p-2.5" aria-labelledby="manualOrbitErpTitle">
@@ -1999,7 +2015,8 @@ export default function ManualOrbitPanel() {
                 </div>}
             </section>
 
-            <button className="mt-3 inline-flex min-h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#294d7b] bg-[#0d1d33] px-3 py-2 text-[10px] leading-none font-bold text-[#b7d4ff] hover:border-[#5787c9] hover:bg-[#142a49] hover:text-[#edf5ff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before inspecting ephemerides." : propagationBlockMessage || "Inspect the ephemerides over this design window."} disabled={!epochRangeValid || !timePolicy.canCreate || !canRunSelectedPropagation || selectedPropagator.unavailable} onClick={openPropagatedParameters}>Ver efemérides</button>
+            {automaticEopNotice && <p className={`mt-3 mb-0 rounded border px-2 py-1.5 text-[9px] leading-[1.4] font-semibold ${automaticEopWarning ? "border-[#874252] bg-[#291821] text-[#ffd0d9]" : "border-[#776035] bg-[#2d2617] text-[#f5d38e]"}`} role={automaticEopWarning ? "alert" : "status"} data-testid="manual-orbit-eop-propagation-notice"><strong className="mr-1">Antes de propagar:</strong>{automaticEopMessage}</p>}
+            <button className="mt-3 inline-flex min-h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#294d7b] bg-[#0d1d33] px-3 py-2 text-[10px] leading-none font-bold text-[#b7d4ff] hover:border-[#5787c9] hover:bg-[#142a49] hover:text-[#edf5ff] disabled:cursor-not-allowed disabled:opacity-45" type="button" title={selectedPropagator.unavailable ? "Choose an installed propagator before inspecting ephemerides." : propagationBlockMessage || (automaticEopWarning ? "La ventana incluye extrapolación lineal o una cobertura EOP no declarada; revise TIME antes de continuar." : "Inspect the ephemerides over this design window.")} disabled={!epochRangeValid || !timePolicy.canCreate || !canRunSelectedPropagation || selectedPropagator.unavailable} onClick={openPropagatedParameters}>Ver efemérides</button>
             </>}
             <button className="mt-3 w-full cursor-pointer rounded-lg border border-[#39445a] bg-[#111a29] px-3 py-2 text-[10px] leading-none font-bold text-[#b7c5da] hover:border-[#637c9f] hover:bg-[#17253a] hover:text-[#ecf3ff]" type="button" onClick={reset}>Reset values</button>
         </div>

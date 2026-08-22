@@ -693,6 +693,11 @@ function createCatalogEntryMeta(entry = {}, fallbackName = "") {
         launchSite: catalogMetadataText(entry, ["launchSite", "launch_site", "site"]),
         tleSource: catalogMetadataText(entry, ["tleSource", "tle_source", "sourceProvider", "source_provider", "sourceName", "source_name", "provider", "providerName"]),
         updatedAt: catalogMetadataText(entry, ["updatedAt", "updated_at", "lastUpdated", "last_updated", "tleUpdatedAt", "tle_updated_at"]),
+        // These values are created by the local import service.  They retain
+        // provenance for Planner without reclassifying a catalogue refresh as
+        // a user import or deriving any source validity from the timestamp.
+        importedAt: catalogMetadataText(entry, ["importedAt", "imported_at"]),
+        importFileName: catalogMetadataText(entry, ["importFileName", "import_file_name"]),
         epoch: catalogMetadataText(entry, ["epoch", "epochUtc", "epoch_utc", "epochTime", "epoch_time"]),
         dataQuality: catalogMetadataText(entry, ["dataQuality", "data_quality", "quality", "precision", "accuracy"]),
         // Keep format-specific source metadata intact when the catalogue API
@@ -2984,6 +2989,33 @@ export async function fetchCatalogPage({
         owners: Array.isArray(payload?.owners) ? payload.owners : [],
         decayPerigeeKm: Number(payload?.decayPerigeeKm) || null
     };
+}
+
+/**
+ * Cache entries which have just been accepted by the local import service.
+ * A normal catalogue refresh starts with a bounded first page, so an imported
+ * object can otherwise be activated before its TLE and provenance land in the
+ * client cache. This is a cache hydration only: persistence remains owned by
+ * the catalog service and invalid input is ignored.
+ */
+export function hydrateCatalogEntries(entries) {
+    let hydrated = 0;
+    for (const item of Array.isArray(entries) ? entries : []) {
+        const name = String(item?.name || "").trim();
+        const catalogId = String(item?.catalogId || item?.catalog_id || name).trim();
+        const line1 = String(item?.line1 || "").trim();
+        const line2 = String(item?.line2 || "").trim();
+        if (!name || !catalogId || !line1 || !line2) continue;
+        catalogSatelliteIds.add(catalogId);
+        tleBySatelliteId.set(catalogId, { line1, line2 });
+        catalogEntryMetaBySatelliteId.set(catalogId, createCatalogEntryMeta(item, name));
+        hydrated += 1;
+    }
+    if (hydrated) {
+        satelliteIdsDirty = true;
+        catalogLoaded = true;
+    }
+    return hydrated;
 }
 
 export async function preloadSatelliteCatalog(catalogUrl = "/config/catalog.json") {

@@ -20,11 +20,11 @@ resized. When an operator narrows a desktop agenda, its internal regions adapt
 to the agenda's actual width, rather than only the viewport width, to avoid
 incidental horizontal rails.
 
-The operational summary stays on one line when ready. **Details** expands its
-explanation without hiding information; while calculation is in progress, the
-progress remains visible. Action acknowledgements are short-lived floating
-notices, so they do not consume calendar height. Persistent errors remain
-alerts inside the window.
+The header retains only temporal navigation and agenda actions. An operation's
+state appears in the global activity panel or, when it applies to a concrete
+time, as an agenda event or range; it does not occupy a fixed strip above the
+calendar. Action acknowledgements are short-lived floating notices, while
+persistent errors remain alerts inside the window.
 
 ## Views, UTC interval, and temporal modes
 
@@ -39,12 +39,23 @@ currently shown by the scene. When opening a historical simulated scene, the
 cursor is first anchored to that simulated domain (rather than today's
 wall-clock date), so no invalid viewport is requested before scene state arrives.
 
-This visible interval is the pass-forecast domain; it is not an expiry date and
-does not itself alter the scene.
+This visible interval is the requested pass-forecast domain; it is not an
+expiry date and does not itself alter the scene. In **Simulated**, when a day,
+week, or month view only partly overlaps the simulated/MTR domain, Orbit
+calculates only their exact intersection. When there is no overlap it emits no
+invalid request: the agenda returns to the start of the active temporal domain.
+It never extends an SP3 or fills dates outside published coverage just to
+complete a calendar grid.
+
+The detail pager traverses every event already published and visible to the
+agenda, not only the current month, week, or day. When the next event lies
+outside the current view, the cursor moves to its period without closing the
+planner. Passes are calculated on demand for the interval being consulted;
+Orbit neither invents nor precomputes passes for an unbounded time window.
 
 | Mode | Agenda and pass behaviour |
 | --- | --- |
-| **Simulated** | Computes AOS, maximum, and LOS for the visible UTC interval only when the complete interval lies inside the simulated range and, when present, the Master Time Range (MTR). If it does not fit completely, it fails closed and explains the boundary. |
+| **Simulated** | Computes AOS, maximum, and LOS for the safe intersection of the visible UTC interval, simulated range, and, when present, the Master Time Range (MTR). A view with no overlap is rebased to the active domain and does not produce an out-of-coverage request. |
 | **Real time** | Calculates the chosen finite UTC interval as an agenda snapshot. It does not shift or recalculate that interval on every realtime tick. Opening or navigating the agenda does not move the scene. |
 | **Static** | Calculates the chosen finite UTC interval without changing the scene's static instant. Opening or navigating the agenda does not move the scene. |
 
@@ -60,8 +71,48 @@ the scene remains unchanged and the state explains why.
 | `pass-aos` | Purple, below the timeline | Refined start of access for one station--satellite pair. |
 | `pass-los` | Purple, below the timeline | Refined end of that same access. |
 | `erp-validity-end`, `sp3-validity-end`, `oem-validity-end`, `layer-validity-end` | Availability event | Explicitly verified end of coverage for the corresponding resource. It is not a publisher expiry. |
+| `iers-c01-coverage`, `finals2000a-coverage`, `erp-linear-extrapolation` | Range in the **IERS ERP Time** layer | A verified interval resolved respectively with C01, `finals2000A.all`, or local linear extrapolation (at most 30 days). Overlap is resolved with C01 → Finals → extrapolation priority, so internal quality changes do not create several “coverage end” markers. C01 is shown in green; Finals `final`/`rapid` in amber; and `predicted` in red. |
+| `erp-nominal-fallback` | Open point in the **IERS ERP Time** layer | Nominal Earth-rotation fallback begins (no ERP) after the linear limit or where two compatible samples do not exist. It has `approximate` quality, is neither IERS nor ERP, and is not an expiry. It remains a point because the source does not publish an honest end for that state. |
+| `product-erp-coverage` | Cyan range in **SP3-bound ERP** | Verified UTC coverage of an ERP file attached to the SP3 product. It is neither IERS nor a date inferred from a filename. |
 | `*-expiry` | Expiry event | Shown only when a source explicitly declares a valid expiry date. Orbit never derives expiry from coverage. |
+| `layer-imported` | Cyan, associated with the layer | A locally recorded layer import. It appears only when the service saved both the import instant and source file name; it is not inferred from a generic catalogue update. |
+| `tle-epoch` | Blue, associated with the layer | The epoch written in a TLE/OMM containing a TLE. It is a property of the element, not an expiry date or accuracy guarantee. |
 | `manual` | User-selected palette colour | A user-authored time block; it is neither a pass nor a confirmed reservation. |
+
+### Reading **IERS ERP Time**
+
+This layer's traffic light communicates provenance and the required operational
+attention. It is not a universal numeric error value or a mission
+certification. Event details retain the exact source, quality, and interval.
+
+| Agenda colour | Meaning | Operator decision |
+| --- | --- | --- |
+| Green — **IERS C01 / normal** | The combined/final C01 product covers the epoch. It is Orbit's preferred automatic source while that coverage exists. | Normal route. Check the range when an operation approaches its boundary. |
+| Amber — **OK: Finals `final` or `rapid`** | C01 does not cover the epoch and Orbit uses `finals2000A.all`. `final` has a complete Bulletin B tuple (LOD remains Bulletin A or optional); `rapid` has operational Bulletin A determinations with `I` flags. Both are usable published data, but amber does **not** claim that they have precision identical to C01 for every parameter or use. | The operation may continue under its contract, but inspect the precise label and coverage for sensitive work. |
+| Red — **Bulletin A `predicted`** | At least one parameter has a `P` flag: it is an official Bulletin A forecast, not an observation. | Plan cautiously, confirm the interval, and update/recompute when observed or final data become available. Do not treat it as product-attached ERP. |
+
+After Finals, a separate red band can mean local linear extrapolation; that is
+not an IERS prediction either. The event detail always distinguishes the two.
+For parameter-level selection and strict routes, see
+[Time, EOP and ITRF](../operations/time-eop.md).
+
+### ERP attached to an SP3
+
+When **every** active SP3 that contributes temporal coverage to the scene has
+an attached, validated ERP covering its complete published interval, the agenda
+replaces the automatic **IERS ERP Time** layer by default with **SP3-bound
+ERP**. Each cyan rail shows exactly the UTC start and end published by that
+product; its detail retains the file, snapshot, and provenance when available.
+For a combined forecast Orbit declares that ERP as the temporal source only
+when participating satellites are SP3 and their attached coverage spans the
+whole effective window.
+
+The replacement is intentionally strict: a second SP3 without ERP, a partial
+ERP, a file without a verified UTC range, **or an active non-SP3 satellite**
+leaves **IERS ERP Time** visible. In a mixed scene the cyan rails still show
+the exact SP3 ERP, but are not presented as the source for other satellites.
+Orbit never derives coverage from a filename, import time, or `erp_file`, so it
+does not hide an automatic source that may still be needed.
 
 Passes enter through the ground-station aggregate: its source `aos`, `max`, and
 `los` markers are adapted to `pass-aos`, `pass-maximum`, and `pass-los`. In
@@ -86,7 +137,11 @@ scene layer: the scene eye does change physical visibility and determines
 whether a station/satellite may participate in a pass forecast.
 
 Filtered layers disappear from derived events and resource notices in the
-agenda, but still exist in the scene. Manual events belong to the project and
+agenda, but still exist in the scene. **IERS ERP Time** is a synthetic agenda
+layer: it hides only its C01, Finals, extrapolation, and nominal-fallback facts
+without changing diagnostics, the scene, or the time provider. When an SP3
+scene meets the attached-ERP contract, this layer is replaced by the synthetic
+**SP3-bound ERP** layer, which filters only its verified rails. Manual events belong to the project and
 remain visible: a layer is not yet their explicit owner. The underlying forecast
 and cache remain: when a layer is shown again, its already calculated events
 reappear immediately without touching the scene or starting new work solely
@@ -115,13 +170,46 @@ event.
 - a manual ERP is identified by its validated snapshot, provenance, and
   coverage range when the service published those fields;
 - SP3 and OEM contribute only their finite ranges validated in the scene;
+- `diagnostics.erp.coverageTimeline` publishes, when available, verified C01
+  and `finals2000A.all` intervals, `linear-extrapolation` with start, end, and
+  a 30-day maximum, and `nominal-fallback` with no finite end. Each fact
+  retains `coverageStart`/`coverageEnd` or `start`/`end`, `source`, `quality`,
+  and a description; the agenda never invents a boundary that diagnostics did
+  not declare;
 - active layers expose their available type, visibility, provenance, and
   verifiable state, without turning a visual layer into a scientific guarantee.
+  For a locally imported TLE/OMM, Orbit can also publish the recorded source
+  file/import instant and the epoch read from the element itself.
+
+A newly imported TLE can therefore appear even before there is a ground station
+or a computed pass: when both dates exist, the agenda shows its import and its
+epoch. These are read-only provenance details; a TLE layer does not thereby
+publish a coverage end. Layers imported before the catalogue recorded an import
+instant still expose the TLE epoch when its element is available.
 
 Ended coverage is an availability boundary (`validity-end`), not an expiry
 date. If a source has no verifiable date, no fictitious event is shown. A source
 error, pending validation, or invalid time remains a state/error rather than a
 positive availability claim.
+
+The Earth-orientation layer shows ranges rather than a collection of fixed
+alerts: C01 is preferred while it covers the epoch; `finals2000A.all` with
+`final`, `rapid`, or `predicted` quality can follow; then the local linear
+extrapolation range begins, limited to 30 days. Afterwards no automatic EOP
+remains: an `erp-nominal-fallback` point marks the approximate-quality nominal
+rotation and a strict route rejects. The dates come from the installed snapshot,
+not a fixed IERS calendar. When an operation crosses one of these boundaries,
+preflight shows the subintervals and corresponding warning before starting work;
+a window only partly inside C01 is not marked precise throughout. Explicit SP3
+or manual-orbit ERP is not filled with this automatic chain: it keeps its own
+strict coverage contract.
+
+An EOP band is one temporal fact: it is drawn continuously within each week row
+rather than cloning a chip into every day. If Finals changes from `final` to
+`rapid` without changing its amber operational signal, Orbit groups the
+presentation while retaining the exact subranges and qualities in its details.
+It never groups a red prediction with red degraded extrapolation, because those
+are distinct operational routes.
 
 ## Manual events, preferences, and projects
 

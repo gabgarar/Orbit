@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PanelCloseButton from "../../components/PanelCloseButton.jsx";
-import { CalendarIcon } from "../../components/icons.jsx";
+import { CalendarIcon, ChevronDownIcon } from "../../components/icons.jsx";
 import {
     ORBIT_PLANNER_EVENT_ACTIVATE_EVENT,
     ORBIT_PLANNER_EVENTS_COMPAT_EVENT,
@@ -17,9 +17,12 @@ import {
     filterPlannerEventsByLayerVisibility,
     formatUtcMonth,
     formatUtcInput,
+    isPlannerEopRangeEvent,
     layoutPlannerEventLanes,
     makeManualEventPayload,
     normalizePlannerUiState,
+    plannerEventActivation,
+    plannerEventDescription,
     plannerViewRangePayload
 } from "./plannerUiModel.js";
 import {
@@ -30,11 +33,18 @@ import {
     plannerWindowViewport,
     resizePlannerWindowRect
 } from "./plannerWindowLayout.js";
+import {
+    buildPlannerCoverageSegments,
+    plannerAdjacentVisibleEvent,
+    plannerCursorForEvent,
+    plannerEventIsInView
+} from "./plannerCoverageLayout.js";
 import "./PlannerPanel.css";
 
 const WEEKDAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const HOUR_HEIGHT = 52;
 export const PLANNER_REQUEST_MESSAGE_TIMEOUT_MS = 4_500;
+const ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT = "orbit:planner-view-range-rebase";
 const PLANNER_RESIZE_DIRECTIONS = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 const formatter = new Intl.DateTimeFormat("es-ES", {
     timeZone: "UTC",
@@ -108,23 +118,74 @@ function eventColorStyle(event) {
     return { "--planner-event-color": PLANNER_EVENT_COLORS[event.colorToken] || PLANNER_EVENT_COLORS[PLANNER_COLOR_TOKENS.BLUE] };
 }
 
-function rangeTitle(view, cursor) {
-    if (view === "day") return dayFormatter.format(cursor);
-    if (view === "month") return monthFormatter.format(cursor);
-    const start = startOfUtcWeek(cursor);
-    const end = addUtcDays(start, 6);
-    const startLabel = new Intl.DateTimeFormat("es-ES", { timeZone: "UTC", day: "numeric", month: "short" }).format(start);
-    const endLabel = new Intl.DateTimeFormat("es-ES", { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" }).format(end);
-    return `${startLabel} — ${endLabel}`;
+const EOP_VISUAL_STATE_COLOR_TOKENS = Object.freeze({
+    normal: PLANNER_COLOR_TOKENS.EMERALD,
+    ok: PLANNER_COLOR_TOKENS.AMBER,
+    predicted: PLANNER_COLOR_TOKENS.ROSE,
+    degraded: PLANNER_COLOR_TOKENS.ROSE
+});
+const IERS_ERP_TIME_LAYER_NAME = "IERS ERP Time";
+
+function knownPlannerColorToken(value) {
+    const token = String(value || "").trim().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(PLANNER_EVENT_COLORS, token) ? token : "";
+}
+
+function ChevronLeftIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5.5-6 6 6 6" /></svg>;
+}
+
+function ChevronRightIcon() {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5.5 6 6-6 6" /></svg>;
 }
 
 function plannerRecord(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-function plannerNumber(value) {
-    const number = Number(value);
-    return Number.isFinite(number) && number >= 0 ? number : null;
+/**
+ * The runtime publishes a semantic EOP visual state alongside its canonical
+ * colour token. Prefer that explicit contract, but retain a safe palette for
+ * an older cached planner snapshot which only carries the semantic state.
+ */
+function eopCoverageColorToken(event) {
+    const metadata = plannerRecord(event?.metadata);
+    return knownPlannerColorToken(metadata.eopColorToken)
+        || knownPlannerColorToken(event?.colorToken)
+        || EOP_VISUAL_STATE_COLOR_TOKENS[String(metadata.eopVisualState || "").trim().toLowerCase()]
+        || PLANNER_COLOR_TOKENS.BLUE;
+}
+
+function eopCoverageStyle(event) {
+    const colorToken = eopCoverageColorToken(event);
+    return {
+        "--planner-event-color": PLANNER_EVENT_COLORS[colorToken],
+        "--planner-eop-tone": colorToken
+    };
+}
+
+function eopCoverageStateLabel(event) {
+    const state = String(plannerRecord(event?.metadata).eopVisualState || "").trim().toLowerCase();
+    if (state === "normal") return "Cobertura de referencia";
+    if (state === "ok") return "Cobertura válida; confirme la calidad publicada";
+    if (state === "predicted") return "Predicción; requiere atención";
+    if (state === "degraded") return "Cobertura degradada; requiere atención";
+    return "Cobertura de orientación terrestre";
+}
+
+function isIersErpTimeLayer(layer) {
+    const source = plannerRecord(layer);
+    const id = String(source.id || "").trim().toLowerCase();
+    const sourceId = String(source.sourceId || "").trim().toLowerCase();
+    const format = String(source.sourceFormat || "").trim().toUpperCase();
+    const origin = String(source.sourceOrigin || "").trim().toUpperCase();
+    return id === "planner:iers-eop"
+        || sourceId === "planner:iers-eop"
+        || (source.type === "SYSTEM" && format === "EOP" && origin === "IERS");
+}
+
+function plannerLayerDisplayName(layer) {
+    return isIersErpTimeLayer(layer) ? IERS_ERP_TIME_LAYER_NAME : layer.name;
 }
 
 function plannerMode(context) {
@@ -146,56 +207,9 @@ function plannerCursorFromState(state) {
     return null;
 }
 
-function utcWindowLabel(startValue, endValue) {
-    const start = new Date(startValue);
-    const end = new Date(endValue);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return "";
-    const short = new Intl.DateTimeFormat("es-ES", {
-        timeZone: "UTC",
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23"
-    });
-    return `${short.format(start)} — ${short.format(end)} UTC`;
-}
-
 function isModeBoundaryMessage(message, mode) {
     if (mode === "simulated") return false;
     return /pases del planificador.*(?:simulated|rango utc)|(?:simulated|rango utc).*pases del planificador/i.test(String(message || ""));
-}
-
-function PlannerForecastSummary({ plannerState, visibleEventCount, totalEventCount, modeMessages, expanded, onToggleExpanded }) {
-    const context = plannerRecord(plannerState.context);
-    const passes = plannerRecord(context.passes);
-    const simulation = plannerRecord(context.simulation);
-    const totalPairs = plannerNumber(passes.totalPairs);
-    const completedPairs = plannerNumber(passes.completedPairs);
-    const skippedPairs = plannerNumber(passes.skippedPairs);
-    const progress = totalPairs && completedPairs !== null ? Math.min(100, Math.round((completedPairs / totalPairs) * 100)) : null;
-    const windowLabel = utcWindowLabel(passes.startTime || simulation.startTime, passes.endTime || simulation.endTime);
-    const loading = plannerState.status === "loading";
-    const detail = plannerState.message || modeMessages.at(0)
-        || (loading ? "Actualizando eventos de la agenda." : plannerState.status === "error" ? "Hay información de la agenda que no se ha podido actualizar." : "");
-    // A temporal boundary can be represented as a mode message (rather than a
-    // generic error alert). Keep it expanded until the operator can read it.
-    const detailIsForced = loading || modeMessages.length > 0 || plannerState.status === "error";
-    const hasDetail = Boolean(detail);
-    const showDetail = hasDetail && (detailIsForced || expanded);
-    return <section className={`orbit-planner-forecast${showDetail ? " is-expanded" : " is-compact"}`} aria-label="Estado operativo de la agenda">
-        <div className="orbit-planner-forecast-copy">
-            <strong title={windowLabel || "Sin ventana UTC fijada"}>{windowLabel || "Sin ventana UTC fijada"}</strong>
-        </div>
-        <div className="orbit-planner-forecast-metrics" aria-label="Resumen de la agenda">
-            <span><b>{visibleEventCount}</b> de {totalEventCount} eventos visibles</span>
-            {totalPairs !== null ? <span><b>{completedPairs ?? 0}</b>/{totalPairs} pares{skippedPairs ? ` · ${skippedPairs} omitidos` : ""}</span> : null}
-        </div>
-        {hasDetail ? <button type="button" className="orbit-planner-forecast-toggle" aria-expanded={showDetail} aria-controls="orbitPlannerForecastDetails" disabled={detailIsForced} title={detailIsForced ? "El estado operativo debe permanecer visible" : undefined} onClick={onToggleExpanded}>{detailIsForced ? "Estado" : showDetail ? "Menos" : "Detalles"}</button> : null}
-        {showDetail ? <p id="orbitPlannerForecastDetails" className="orbit-planner-forecast-detail">{detail}</p> : null}
-        {progress !== null && plannerState.status === "loading" ? <div className="orbit-planner-forecast-progress" aria-label={`${progress}% de pares procesados`}><span style={{ width: `${progress}%` }} /></div> : null}
-    </section>;
 }
 
 function PlannerLayerSidebar({ layers, hiddenLayerIds, onVisibilityChange, onShowAll }) {
@@ -213,16 +227,19 @@ function PlannerLayerSidebar({ layers, hiddenLayerIds, onVisibilityChange, onSho
         <div className="orbit-planner-layer-list">
             {!sortedLayers.length ? <p className="orbit-planner-layers-empty">No hay capas publicadas por la escena.</p> : sortedLayers.map((layer) => {
                 const enabled = !hidden.has(layer.id);
-                const sceneState = layer.visible ? "Escena visible" : "Escena oculta";
+                const plannerOnly = layer.type === "SYSTEM";
+                const sceneState = plannerOnly ? "Capa disponible solo en la agenda" : layer.visible ? "Escena visible" : "Escena oculta";
+                const layerTypeLabel = plannerOnly ? "Agenda" : layer.type;
+                const layerName = plannerLayerDisplayName(layer);
                 return <label className={`orbit-planner-layer${enabled ? "" : " is-hidden"}`} key={layer.id}>
                     <input
                         type="checkbox"
                         checked={enabled}
                         onChange={(event) => onVisibilityChange(layer.id, event.target.checked)}
-                        aria-label={`${enabled ? "Mostrar" : "Ocultar"} ${layer.name} en el planificador`}
+                        aria-label={`${enabled ? "Mostrar" : "Ocultar"} ${layerName} en el planificador`}
                     />
-                    <span className="orbit-planner-layer-copy"><b>{layer.name}</b><small>{layer.type} · {layer.active ? "Activa" : "Inactiva"}</small></span>
-                    <span className={`orbit-planner-layer-scene-state${layer.visible ? " is-visible" : ""}`} title={sceneState}>{layer.visible ? "●" : "○"}</span>
+                    <span className="orbit-planner-layer-copy"><b>{layerName}</b><small>{layerTypeLabel} · {layer.active ? "Activa" : "Inactiva"}</small></span>
+                    <span className={`orbit-planner-layer-scene-state${layer.visible && !plannerOnly ? " is-visible" : ""}${plannerOnly ? " is-planner-only" : ""}`} title={sceneState}>{plannerOnly ? "—" : layer.visible ? "●" : "○"}</span>
                 </label>;
             })}
         </div>
@@ -234,8 +251,37 @@ function createEditorFields(event) {
         title: event?.title || "",
         start: formatUtcInput(event?.start || new Date()),
         end: formatUtcInput(event?.end || new Date(Date.now() + 60 * 60 * 1000)),
-        color: event?.colorToken || PLANNER_COLOR_TOKENS.BLUE
+        color: event?.colorToken || PLANNER_COLOR_TOKENS.BLUE,
+        description: plannerEventDescription(event)
     };
+}
+
+function EopCoverageBand({ event, labelled, onSelect, segment, gridColumnOffset = 1 }) {
+    const stateLabel = eopCoverageStateLabel(event);
+    const label = `${event.title} · ${stateLabel} · ${eventTimeLabel(event)}`;
+    const accessibleLabel = labelled ? label : `Continuación de ${label}`;
+    const startInset = segment ? Math.max(0, Math.min(100, (Number(segment.startFraction) || 0) * 100 / segment.span)) : 0;
+    const endInset = segment ? Math.max(0, Math.min(100, (Number(segment.endInsetFraction) || 0) * 100 / segment.span)) : 0;
+    const segmentStyle = segment ? {
+        gridRow: String(segment.row + 1),
+        gridColumn: `${segment.column + gridColumnOffset} / span ${segment.span}`,
+        "--orbit-planner-eop-start-inset": `${startInset}%`,
+        "--orbit-planner-eop-end-inset": `${endInset}%`
+    } : {};
+    return <button
+        type="button"
+        className={`orbit-planner-eop-range${labelled ? " has-label" : ""}`}
+        style={{ ...eopCoverageStyle(event), ...segmentStyle }}
+        onClick={() => onSelect(event)}
+        title={label}
+        aria-label={accessibleLabel}
+        data-planner-eop-range="true"
+        data-eop-tone={eopCoverageColorToken(event)}
+        data-eop-state={String(plannerRecord(event?.metadata).eopVisualState || "").trim().toLowerCase() || "unknown"}
+    >
+        <span className="orbit-planner-eop-range-line" aria-hidden="true" />
+        {labelled ? <span className="orbit-planner-eop-range-label"><span className="orbit-planner-eop-range-label-text">{event.title}</span></span> : null}
+    </button>;
 }
 
 function EventButton({ event, onSelect, compact = false }) {
@@ -258,13 +304,22 @@ function MonthView({ cursor, events, onSelect, onOpenDay }) {
     const gridStart = startOfUtcWeek(first);
     const today = utcDay();
     const cells = Array.from({ length: 42 }, (_, index) => addUtcDays(gridStart, index));
+    const gridEnd = addUtcDays(gridStart, cells.length);
+    const eopRangeEvents = events.filter(isPlannerEopRangeEvent);
+    const ordinaryEvents = events.filter((event) => !isPlannerEopRangeEvent(event));
+    const eopRangeSegments = buildPlannerCoverageSegments(eopRangeEvents, {
+        start: gridStart.toISOString(),
+        end: gridEnd.toISOString(),
+        columns: 7
+    });
     return <section className="orbit-planner-month" aria-label="Vista mensual">
         <div className="orbit-planner-weekdays" aria-hidden="true">{WEEKDAY_LABELS.map((label) => <span key={label}>{label}</span>)}</div>
         <div className="orbit-planner-month-grid">
             {cells.map((day) => {
-                const dayEvents = eventsForDay(events, day);
+                const dayEvents = eventsForDay(ordinaryEvents, day);
+                const hasEopCoverage = eventsForDay(eopRangeEvents, day).length > 0;
                 const inCurrentMonth = day.getUTCMonth() === cursor.getUTCMonth();
-                return <article className={`orbit-planner-month-day${inCurrentMonth ? "" : " is-outside"}${sameUtcDay(day, today) ? " is-today" : ""}`} key={day.toISOString()}>
+                return <article className={`orbit-planner-month-day${inCurrentMonth ? "" : " is-outside"}${sameUtcDay(day, today) ? " is-today" : ""}${hasEopCoverage ? " has-eop-coverage" : ""}`} key={day.toISOString()}>
                     <button type="button" className="orbit-planner-day-number" onClick={() => onOpenDay(day)} aria-label={`Ver el día ${dayFormatter.format(day)}`}>{day.getUTCDate()}</button>
                     <div className="orbit-planner-month-events">
                         {dayEvents.slice(0, 3).map((event) => <EventButton event={event} key={`${event.id}:${day.toISOString()}`} compact onSelect={onSelect} />)}
@@ -272,6 +327,9 @@ function MonthView({ cursor, events, onSelect, onOpenDay }) {
                     </div>
                 </article>;
             })}
+            {eopRangeSegments.length ? <div className="orbit-planner-month-eop-ranges" aria-label="Cobertura de orientación terrestre">
+                {eopRangeSegments.map((segment) => <EopCoverageBand event={segment.event} key={`${segment.event.id}:${segment.row}:${segment.column}:${segment.span}`} segment={segment} labelled={segment.labelled} onSelect={onSelect} />)}
+            </div> : null}
         </div>
     </section>;
 }
@@ -305,21 +363,33 @@ function TimedEvent({ layout, day, onSelect }) {
 function TimeGrid({ view, cursor, events, onSelect }) {
     const start = view === "week" ? startOfUtcWeek(cursor) : utcDay(cursor);
     const days = view === "week" ? Array.from({ length: 7 }, (_, index) => addUtcDays(start, index)) : [start];
+    const end = addUtcDays(start, days.length);
     const today = utcDay();
+    const eopRangeEvents = events.filter(isPlannerEopRangeEvent);
+    const ordinaryEvents = events.filter((event) => !isPlannerEopRangeEvent(event));
+    const eopRangeSegments = buildPlannerCoverageSegments(eopRangeEvents, {
+        start: start.toISOString(),
+        end: end.toISOString(),
+        columns: days.length
+    });
     return <section className={`orbit-planner-time-grid is-${view}`} aria-label={view === "week" ? "Vista semanal" : "Vista diaria"}>
         <div className="orbit-planner-time-scroll">
             <div className="orbit-planner-time-header" style={{ gridTemplateColumns: `52px repeat(${days.length}, minmax(0, 1fr))` }}>
                 <span aria-hidden="true" />
                 {days.map((day, index) => <span className={sameUtcDay(day, today) ? "is-today" : ""} key={day.toISOString()}>{WEEKDAY_LABELS[index + (view === "day" ? (day.getUTCDay() + 6) % 7 : 0)]}<b>{day.getUTCDate()}</b></span>)}
             </div>
+            {eopRangeSegments.length ? <div className="orbit-planner-time-eop-ranges" style={{ gridTemplateColumns: `52px repeat(${days.length}, minmax(0, 1fr))` }} aria-label="Cobertura de orientación terrestre">
+                <span aria-hidden="true" />
+                {eopRangeSegments.map((segment) => <EopCoverageBand event={segment.event} key={`${segment.event.id}:${segment.row}:${segment.column}:${segment.span}`} segment={segment} gridColumnOffset={2} labelled={segment.labelled} onSelect={onSelect} />)}
+            </div> : null}
             <div className="orbit-planner-hours" style={{ gridTemplateColumns: `52px repeat(${days.length}, minmax(0, 1fr))` }}>
                 <div className="orbit-planner-hour-labels" aria-hidden="true">{Array.from({ length: 24 }, (_, hour) => <span key={hour}>{String(hour).padStart(2, "0")}:00</span>)}</div>
                 {days.map((day) => {
-                    const timedLayouts = layoutPlannerEventLanes(eventsForDay(events.filter((event) => !event.allDay), day));
+                    const timedLayouts = layoutPlannerEventLanes(eventsForDay(ordinaryEvents.filter((event) => !event.allDay), day));
                     return <div className="orbit-planner-time-day" key={day.toISOString()}>
                     {Array.from({ length: 24 }, (_, hour) => <div className="orbit-planner-hour-line" key={hour} />)}
                     {timedLayouts.map((layout) => <TimedEvent layout={layout} day={day} key={`${layout.event.id}:${day.toISOString()}`} onSelect={onSelect} />)}
-                    {eventsForDay(events.filter((event) => event.allDay), day).map((event) => <EventButton event={event} key={`${event.id}:all-day:${day.toISOString()}`} compact onSelect={onSelect} />)}
+                    {eventsForDay(ordinaryEvents.filter((event) => event.allDay), day).map((event) => <EventButton event={event} key={`${event.id}:all-day:${day.toISOString()}`} compact onSelect={onSelect} />)}
                 </div>;
                 })}
             </div>
@@ -327,19 +397,33 @@ function TimeGrid({ view, cursor, events, onSelect }) {
     </section>;
 }
 
-function EventDetails({ event, onEdit, onRemove, canActivate }) {
+function EventDetails({ event, onEdit, onRemove, activation, onActivate, eventIndex, eventCount, onPrevious, onNext }) {
     if (!event) return <aside className="orbit-planner-detail orbit-planner-detail-empty" aria-live="polite"><CalendarIcon /><p>Selecciona un evento para ver sus detalles.</p></aside>;
     const isManual = event.kind === PLANNER_EVENT_KINDS.MANUAL;
-    const description = typeof event.metadata?.description === "string" ? event.metadata.description : "";
+    const description = plannerEventDescription(event);
+    const metadata = plannerRecord(event.metadata);
+    const metadataEntries = Object.entries(metadata)
+        .filter(([key, value]) => !["description", "details", "detail"].includes(key) && ["string", "number", "boolean"].includes(typeof value))
+        .slice(0, 5);
+    const safeIndex = Number.isInteger(eventIndex) && eventIndex >= 0 ? eventIndex : 0;
+    const safeCount = Number.isInteger(eventCount) && eventCount > 0 ? eventCount : 1;
     return <aside className="orbit-planner-detail" aria-label="Detalle del evento">
-        <span className="orbit-planner-detail-color" style={eventColorStyle(event)} aria-hidden="true" />
-        <span className="orbit-planner-detail-kicker">{isManual ? "Evento manual" : "Evento de Orbit"}</span>
-        <h3>{event.title}</h3>
-        <p className="orbit-planner-detail-time">{eventTimeLabel(event)}</p>
-        {description ? <p className="orbit-planner-detail-description">{description}</p> : null}
-        {event.metadata ? <dl className="orbit-planner-detail-meta">{Object.entries(event.metadata).filter(([, value]) => ["string", "number", "boolean"].includes(typeof value)).slice(0, 5).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl> : null}
-        <button type="button" className="orbit-planner-detail-action" disabled={!canActivate} title={canActivate ? "Mover la simulación a este instante" : "Cambiar a una ventana Simulated para saltar a un evento"} onClick={() => window.dispatchEvent(new CustomEvent(ORBIT_PLANNER_EVENT_ACTIVATE_EVENT, { detail: event }))}>Ir al evento</button>
-        {isManual ? <div className="orbit-planner-detail-actions"><button type="button" className="orbit-planner-detail-action" onClick={() => onEdit(event)}>Editar</button><button type="button" className="orbit-planner-detail-remove" onClick={() => onRemove(event)}>Eliminar</button></div> : null}
+        <div className="orbit-planner-detail-body">
+            <span className="orbit-planner-detail-color" style={eventColorStyle(event)} aria-hidden="true" />
+            <span className="orbit-planner-detail-kicker">{isManual ? "Evento manual" : "Evento de Orbit"}</span>
+            <h3>{event.title}</h3>
+            <p className="orbit-planner-detail-time">{eventTimeLabel(event)}</p>
+            {description ? <p className="orbit-planner-detail-description">{description}</p> : null}
+            {metadataEntries.length ? <dl className="orbit-planner-detail-meta">{metadataEntries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl> : null}
+            {!activation.enabled ? <p className="orbit-planner-detail-activation-note" role="status">{activation.reason}</p> : null}
+            <button type="button" className="orbit-planner-detail-action" disabled={!activation.enabled} title={activation.enabled ? "Abrir el día del evento y mover la simulación al instante válido" : activation.reason} onClick={() => onActivate(event, activation)}>Ir al evento</button>
+            {isManual ? <div className="orbit-planner-detail-actions"><button type="button" className="orbit-planner-detail-action" onClick={() => onEdit(event)}>Editar</button><button type="button" className="orbit-planner-detail-remove" onClick={() => onRemove(event)}>Eliminar</button></div> : null}
+        </div>
+        <nav className="orbit-planner-detail-pager" aria-label="Navegación entre todos los eventos visibles">
+            <button type="button" className="orbit-planner-detail-pager-button" aria-label="Evento anterior" disabled={safeIndex <= 0} onClick={onPrevious}><ChevronLeftIcon /></button>
+            <span aria-live="polite">{safeIndex + 1}/{safeCount}</span>
+            <button type="button" className="orbit-planner-detail-pager-button" aria-label="Evento siguiente" disabled={safeIndex >= safeCount - 1} onClick={onNext}><ChevronRightIcon /></button>
+        </nav>
     </aside>;
 }
 
@@ -356,6 +440,7 @@ function ManualEventEditor({ event, onClose, onSubmit, error }) {
             <label>Título<input autoFocus value={fields.title} onChange={update("title")} maxLength="160" required /></label>
             <label>Inicio (UTC)<input type="datetime-local" value={fields.start} onChange={update("start")} required /></label>
             <label>Fin (UTC)<input type="datetime-local" value={fields.end} onChange={update("end")} required /></label>
+            <label>Detalles (opcional)<textarea value={fields.description} onChange={update("description")} maxLength="2000" rows="4" placeholder="Notas para el equipo operativo" /></label>
             <label>Color<select value={fields.color} onChange={update("color")}><option value={PLANNER_COLOR_TOKENS.BLUE}>Azul</option><option value={PLANNER_COLOR_TOKENS.CYAN}>Cian</option><option value={PLANNER_COLOR_TOKENS.EMERALD}>Verde</option><option value={PLANNER_COLOR_TOKENS.PURPLE}>Morado</option><option value={PLANNER_COLOR_TOKENS.AMBER}>Ámbar</option><option value={PLANNER_COLOR_TOKENS.ROSE}>Rojo</option><option value={PLANNER_COLOR_TOKENS.SLATE}>Gris</option></select></label>
             {error ? <p className="orbit-planner-editor-error" role="alert">{error}</p> : null}
             <p className="orbit-planner-editor-note">Se guarda únicamente dentro de este proyecto.</p>
@@ -382,7 +467,6 @@ export default function PlannerPanel({ onClose }) {
     const [editorEvent, setEditorEvent] = useState(undefined);
     const [editorError, setEditorError] = useState("");
     const [requestMessage, setRequestMessage] = useState("");
-    const [forecastExpanded, setForecastExpanded] = useState(false);
     const [layerVisibilityOverrides, setLayerVisibilityOverrides] = useState(() => new Map());
     const [windowRect, setWindowRect] = useState(() => initialPlannerWindowRect());
     const [windowInteraction, setWindowInteraction] = useState(null);
@@ -401,6 +485,21 @@ export default function PlannerPanel({ onClose }) {
             window.removeEventListener(ORBIT_PLANNER_STATE_EVENT, sync);
             window.removeEventListener(ORBIT_PLANNER_EVENTS_COMPAT_EVENT, syncLegacy);
         };
+    }, []);
+
+    useEffect(() => {
+        const rebaseViewRange = (event) => {
+            const startTime = event?.detail?.startTime;
+            if (!startTime) return;
+            const nextCursor = utcDay(startTime);
+            if (!nextCursor || Number.isNaN(nextCursor.getTime())) return;
+            cursorWasNavigatedByUser.current = true;
+            setViewportCursorReady(true);
+            setCursor(nextCursor);
+            setRequestMessage("La agenda se ha centrado en el intervalo operativo de la escena.");
+        };
+        window.addEventListener(ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT, rebaseViewRange);
+        return () => window.removeEventListener(ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT, rebaseViewRange);
     }, []);
 
     useEffect(() => {
@@ -495,19 +594,25 @@ export default function PlannerPanel({ onClose }) {
     const viewRange = useMemo(() => plannerViewRangePayload(view, cursor), [view, cursor]);
     const eventsInView = useMemo(() => {
         if (!viewRange) return visibleEvents;
-        const start = Date.parse(viewRange.startTime);
-        const end = Date.parse(viewRange.endTime);
-        return visibleEvents.filter((event) => (
-            event.isPoint
-                ? event.startMs >= start && event.startMs < end
-                : event.startMs < end && event.endMs > start
-        ));
+        return visibleEvents.filter((event) => plannerEventIsInView(event, {
+            start: viewRange.startTime,
+            end: viewRange.endTime
+        }));
     }, [visibleEvents, viewRange]);
     const mode = plannerMode(plannerState.context);
-    const modeMessages = useMemo(() => plannerState.errors.filter((message) => isModeBoundaryMessage(message, mode)), [plannerState.errors, mode]);
     const visibleErrors = useMemo(() => plannerState.errors.filter((message) => !isModeBoundaryMessage(message, mode)), [plannerState.errors, mode]);
-    const presentationStatus = plannerState.status === "error" && !visibleErrors.length && modeMessages.length ? "ready" : plannerState.status;
-    const selected = useMemo(() => visibleEvents.find((event) => event.id === selectedEvent?.id) || null, [visibleEvents, selectedEvent]);
+    const presentationStatus = plannerState.status === "loading"
+        ? "loading"
+        : visibleErrors.length
+            ? "error"
+            : "ready";
+    // Detail navigation follows the complete currently visible-filtered event
+    // stream. When the adjacent event lies outside this period, its cursor is
+    // brought into the existing day/week/month view without closing the panel
+    // or losing the selected detail.
+    const selectedEventIndex = useMemo(() => visibleEvents.findIndex((event) => event.id === selectedEvent?.id), [visibleEvents, selectedEvent]);
+    const selected = selectedEventIndex >= 0 ? visibleEvents[selectedEventIndex] : null;
+    const selectedActivation = useMemo(() => plannerEventActivation(selected, plannerState.context), [selected, plannerState.context]);
 
     useEffect(() => {
         const actualHidden = new Set(plannerState.plannerHiddenLayerIds);
@@ -539,11 +644,44 @@ export default function PlannerPanel({ onClose }) {
     const selectEvent = (event) => {
         setSelectedEvent(event);
     };
+    const selectAdjacentEvent = (direction) => {
+        const next = plannerAdjacentVisibleEvent(visibleEvents, selectedEvent?.id, direction);
+        if (!next) return;
+        setSelectedEvent(next);
+        if (viewRange && !plannerEventIsInView(next, { start: viewRange.startTime, end: viewRange.endTime })) {
+            const nextCursor = plannerCursorForEvent(next);
+            if (nextCursor) {
+                cursorWasNavigatedByUser.current = true;
+                setViewportCursorReady(true);
+                setCursor(nextCursor);
+            }
+        }
+    };
     const openDay = (day) => {
         cursorWasNavigatedByUser.current = true;
         setViewportCursorReady(true);
         setCursor(utcDay(day));
         setView("day");
+    };
+    const goToToday = () => {
+        cursorWasNavigatedByUser.current = true;
+        setViewportCursorReady(true);
+        setCursor(utcDay());
+        setView("day");
+    };
+    const activateEvent = (event, activation) => {
+        if (!activation?.enabled || !activation.targetTime) return;
+        const targetDay = utcDay(activation.targetTime);
+        if (targetDay) {
+            cursorWasNavigatedByUser.current = true;
+            setViewportCursorReady(true);
+            setCursor(targetDay);
+            setView("day");
+        }
+        window.dispatchEvent(new CustomEvent(ORBIT_PLANNER_EVENT_ACTIVATE_EVENT, {
+            detail: { ...event, time: activation.targetTime }
+        }));
+        setRequestMessage("La escena se ha situado en el instante del evento.");
     };
     const selectUtcMonth = (event) => {
         const next = cursorForUtcMonth(event.target.value, cursor);
@@ -629,19 +767,29 @@ export default function PlannerPanel({ onClose }) {
         <section id="orbitPlannerPanel" className={`orbit-planner-panel${windowInteraction ? " is-resizing" : ""}`} style={panelStyle} role="dialog" aria-modal="true" aria-labelledby="orbitPlannerTitle">
             <header className="orbit-planner-header orbit-planner-drag-handle" onPointerDown={beginWindowDrag}>
                 <div className="orbit-planner-heading"><CalendarIcon /><div><span>ORBIT · PLANIFICADOR</span><h2 id="orbitPlannerTitle">Agenda de la escena</h2></div></div>
-                <div className="orbit-planner-header-actions"><span className={`orbit-planner-status is-${presentationStatus}`} aria-live="polite">{presentationStatus === "loading" ? "Actualizando" : presentationStatus === "error" ? "Con errores" : "Sincronizado"}</span><PanelCloseButton label="Cerrar planificador" onPointerDown={(event) => event.stopPropagation()} onClick={onClose} /></div>
+                <div className="orbit-planner-header-actions"><span className={`orbit-planner-status is-${presentationStatus}`} aria-live="polite" title={presentationStatus === "loading" ? (plannerState.message || "Actualizando eventos de la agenda") : presentationStatus === "error" ? "Hay errores operativos que requieren atención" : "Agenda sincronizada"}>{presentationStatus === "loading" ? "Actualizando" : presentationStatus === "error" ? "Con errores" : "Sincronizado"}</span><PanelCloseButton label="Cerrar planificador" onPointerDown={(event) => event.stopPropagation()} onClick={onClose} /></div>
             </header>
             <div className="orbit-planner-toolbar">
-                <div className="orbit-planner-navigation"><button type="button" onClick={() => shiftRange(-1)} aria-label="Periodo anterior">‹</button><button type="button" onClick={() => { cursorWasNavigatedByUser.current = true; setViewportCursorReady(true); setCursor(utcDay()); }}>Hoy</button><button type="button" onClick={() => shiftRange(1)} aria-label="Periodo siguiente">›</button><strong>{rangeTitle(view, cursor)}</strong><label className="orbit-planner-period-picker"><span>Ir a</span><input type="month" value={formatUtcMonth(cursor)} onChange={selectUtcMonth} aria-label="Ir a mes y año en UTC" title="Ir a mes y año UTC" /></label></div>
+                <div className="orbit-planner-navigation" aria-label="Navegación temporal">
+                    <button type="button" className="orbit-planner-today" title="Ir al día actual en UTC" onClick={goToToday}><CalendarIcon /><span>Hoy</span></button>
+                    <div className="orbit-planner-range-stepper">
+                        <button type="button" className="orbit-planner-icon-button" onClick={() => shiftRange(-1)} aria-label="Periodo anterior"><ChevronLeftIcon /></button>
+                        <button type="button" className="orbit-planner-icon-button" onClick={() => shiftRange(1)} aria-label="Periodo siguiente"><ChevronRightIcon /></button>
+                    </div>
+                    <label className="orbit-planner-period-picker" title="Seleccionar mes y año UTC">
+                        <span className="orbit-planner-period-value" aria-hidden="true">{monthFormatter.format(cursor)}</span>
+                        <ChevronDownIcon />
+                        <input type="month" value={formatUtcMonth(cursor)} onChange={selectUtcMonth} aria-label="Seleccionar mes y año en UTC" />
+                    </label>
+                </div>
                 <div className="orbit-planner-view-buttons" aria-label="Vista del planificador"><button type="button" className={view === "day" ? "is-active" : ""} aria-pressed={view === "day"} onClick={() => setView("day")}>Día</button><button type="button" className={view === "week" ? "is-active" : ""} aria-pressed={view === "week"} onClick={() => setView("week")}>Semana</button><button type="button" className={view === "month" ? "is-active" : ""} aria-pressed={view === "month"} onClick={() => setView("month")}>Mes</button></div>
                 <button type="button" className="orbit-planner-new-event" onClick={() => { setEditorError(""); setEditorEvent(null); }}>Nuevo evento</button>
             </div>
-            <PlannerForecastSummary plannerState={plannerState} visibleEventCount={visibleEvents.length} totalEventCount={events.length} modeMessages={modeMessages} expanded={forecastExpanded} onToggleExpanded={() => setForecastExpanded((current) => !current)} />
             {visibleErrors.length ? <div className="orbit-planner-state-error" role="alert"><strong>No se ha podido actualizar todo el planificador.</strong>{visibleErrors.map((error, index) => <span key={`${error}:${index}`}>{error}</span>)}</div> : null}
             <div className="orbit-planner-content">
                 <PlannerLayerSidebar layers={layers} hiddenLayerIds={hiddenLayerIds} onVisibilityChange={setPlannerLayerVisibility} onShowAll={showAllPlannerLayers} />
                 <main className="orbit-planner-calendar">{view === "month" ? <MonthView cursor={cursor} events={visibleEvents} onSelect={selectEvent} onOpenDay={openDay} /> : <TimeGrid view={view} cursor={cursor} events={visibleEvents} onSelect={selectEvent} />}{plannerState.status === "loading" && !events.length ? <div className="orbit-planner-empty" role="status">Cargando los eventos de Orbit…</div> : null}{plannerState.status !== "loading" && !eventsInView.length ? <div className="orbit-planner-empty">{events.length && !visibleEvents.length ? "No hay eventos visibles con los filtros actuales." : "No hay eventos en este periodo."}</div> : null}</main>
-                <EventDetails event={selected} canActivate={mode === "simulated"} onEdit={(event) => { setEditorError(""); setEditorEvent(event); }} onRemove={removeManualEvent} />
+                <EventDetails event={selected} activation={selectedActivation} onActivate={activateEvent} eventIndex={selectedEventIndex} eventCount={visibleEvents.length} onPrevious={() => selectAdjacentEvent(-1)} onNext={() => selectAdjacentEvent(1)} onEdit={(event) => { setEditorError(""); setEditorEvent(event); }} onRemove={removeManualEvent} />
             </div>
             <footer className="orbit-planner-footer">Todos los horarios se muestran en UTC.{plannerState.updatedAt ? ` Actualizado: ${formatter.format(new Date(plannerState.updatedAt))} UTC.` : ""}</footer>
             {requestMessage ? <p className="orbit-planner-request-toast" role="status" aria-live="polite">{requestMessage}</p> : null}

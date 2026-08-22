@@ -252,16 +252,21 @@ function normalizeReadiness(value) {
     const rawReadiness = record(firstValue(merged, ["readiness"])) || {};
     const rawReady = firstValue(merged, ["ready"]);
     const ready = boolean(rawReady);
-    const blockers = Array.isArray(rawReadiness.blockers)
-        ? rawReadiness.blockers.map((item) => {
+    const normalizeReadinessItems = (items) => Array.isArray(items)
+        ? items.map((item) => {
             const blocker = record(item) || {};
             return {
                 id: firstText(blocker, ["id", "key", "name", "step"]),
                 status: normalizeStepStatus(firstValue(blocker, ["status", "health", "state", "result"])),
                 message: firstText(blocker, ["message", "detail", "summary", "error", "reason"])
             };
-        }).filter((blocker) => blocker.id || blocker.message)
+        }).filter((item) => item.id || item.message)
         : [];
+    const blockers = normalizeReadinessItems(rawReadiness.blockers);
+    // A degradation is terminal and may still permit project creation.  Keep
+    // it distinct from a blocker so the start-up warning notice can explain
+    // the condition without changing the backend-owned readiness decision.
+    const degradations = normalizeReadinessItems(rawReadiness.degradations);
     return {
         // Do not infer this from `status`, terminal timestamps, or warnings.
         // The backend owns the decision that all mandatory startup work passed.
@@ -272,6 +277,7 @@ function normalizeReadiness(value) {
             ? rawReadiness.requiredSteps.map(text).filter(Boolean)
             : (Array.isArray(rawReadiness.required_steps) ? rawReadiness.required_steps.map(text).filter(Boolean) : []),
         blockers,
+        degradations,
         message: firstText(rawReadiness, ["message", "detail", "summary", "error", "reason"])
     };
 }
@@ -338,6 +344,9 @@ export function mergeStartupStatus(previous, update) {
             blockers: incomingReadiness.blockers.length
                 ? incomingReadiness.blockers
                 : before.readiness.blockers,
+            degradations: incomingReadiness.degradations.length
+                ? incomingReadiness.degradations
+                : before.readiness.degradations,
             message: incomingReadiness.message || before.readiness.message
         };
     const steps = new Map((incoming.replace ? [] : before.steps).map((step) => [step.id, step]));
@@ -400,6 +409,7 @@ export function getStartupProjectReadiness(value) {
         state: ready ? "ready" : (readiness.state || "pending"),
         message,
         blockers: Array.isArray(readiness.blockers) ? readiness.blockers : [],
+        degradations: Array.isArray(readiness.degradations) ? readiness.degradations : [],
         requiredSteps: Array.isArray(readiness.requiredSteps) ? readiness.requiredSteps : []
     });
 }

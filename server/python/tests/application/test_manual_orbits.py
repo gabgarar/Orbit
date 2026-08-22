@@ -19,10 +19,12 @@ from orbit_api.domain.requests import (
     MANUAL_ORBIT_SGP4_UNAVAILABLE_MESSAGE,
     ManualOrbitRequest,
 )
+from orbit_api.frames import FrameTransformService
 from orbit_api.orbits.forces.geopotential import GravityFieldModel
 from orbit_api.orbits.propagators.cowell import CowellPropagator
 from orbit_api.orbits.propagators.j2_j3_j4 import J2J3J4Propagator
 from orbit_api.orbits.propagators.two_body import TwoBodyPropagator
+from orbit_api.timekeeping import EarthOrientation
 from pydantic import ValidationError
 
 
@@ -864,6 +866,69 @@ def test_manual_route_uses_explicit_cowell_for_configurable_drag(
     assert response["propagationOptions"]["forceModel"] == force_model
     assert response["propagationOptions"]["forceTerms"] == expected_terms
     assert response["propagationOptions"]["numericalIntegrator"] == "rk4"
+
+
+def test_manual_route_returns_automatic_eop_window_for_earth_fixed_forces():
+    class WindowAwareEop:
+        def __init__(self):
+            self.windows = []
+
+        def at(self, moment):
+            return EarthOrientation(
+                source="IERS test automatic",
+                version="fixture",
+                quality="rapid",
+                sampled_at=moment,
+            )
+
+        def classify_window(self, start, end):
+            self.windows.append((start, end))
+            return {
+                "segments": [{"kind": "iers-finals2000a", "quality": "rapid"}],
+                "outsideIersCoverage": False,
+                "requiresLinearExtrapolation": False,
+                "usesNominalFallback": False,
+                "requiresAttention": False,
+            }
+
+    provider = WindowAwareEop()
+    transformer = FrameTransformService(provider)
+
+    def build_ephemeris(name, _propagator, start, end, step, include_velocity):
+        return {
+            "satellite": name,
+            "reference_frame": "ITRF",
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+            "step_seconds": step,
+            "count": 0,
+            "points": [],
+            "include_velocity": include_velocity,
+        }
+
+    router = create_manual_orbits_router(
+        build_ephemeris,
+        lambda value: value.astimezone(UTC),
+        frame_transformer=transformer,
+    )
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/manual-orbits")
+    response = endpoint(ManualOrbitRequest(**keplerian_payload(
+        propagator="cowell-rk4",
+        horizonHours=2,
+        propagationOptions={
+            "atmosphericDrag": True,
+            "forceModel": "two-body",
+            "numericalIntegrator": "rk4",
+            "dragCoefficient": 2.1,
+            "areaM2": 2,
+            "massKg": 120,
+        },
+    )))
+
+    assert len(provider.windows) == 1
+    assert response["earth_orientation_window"] == response["earthOrientationWindow"]
+    assert response["propagator_metadata"]["earth_orientation_window"] == response["earth_orientation_window"]
+    assert response["earth_orientation_window"]["segments"][0]["kind"] == "iers-finals2000a"
 
 
 def test_manual_route_converts_native_propagation_failure_to_a_correctable_422(manual_erp_snapshot):

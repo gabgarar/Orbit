@@ -79,6 +79,81 @@ function containsRange(container, candidate) {
     return candidate.startDate >= boundary.startDate && candidate.endDate <= boundary.endDate;
 }
 
+function intersectRanges(left, right) {
+    const first = rangeValue(left);
+    const second = rangeValue(right);
+    if (!first || !second) return null;
+    const startMs = Math.max(first.startDate.getTime(), second.startDate.getTime());
+    const endMs = Math.min(first.endDate.getTime(), second.endDate.getTime());
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+    return {
+        startDate: new Date(startMs),
+        endDate: new Date(endMs),
+        startTime: new Date(startMs).toISOString(),
+        endTime: new Date(endMs).toISOString()
+    };
+}
+
+function plannerRangeDomain({ mode, simulationRange, masterRange } = {}) {
+    if (text(mode).toLowerCase() !== "range") return null;
+    const simulation = rangeValue(simulationRange);
+    if (!simulation) return null;
+    if (!masterRange) return simulation;
+    return intersectRanges(simulation, masterRange);
+}
+
+/**
+ * Return the portion of a finite planner viewport that is safe to forecast in
+ * Simulated mode.  The visible calendar may be a whole month while an SP3's
+ * MTR is only a day; pass work must use the exact intersection instead of
+ * rejecting the entire agenda.  When there is no overlap, no range is
+ * returned: callers can rebase the calendar rather than silently calculate
+ * an unrelated period.
+ *
+ * This helper only clips an already requested interval. It never extends a
+ * source range or manufactures a start/end timestamp.
+ */
+export function clampPlannerViewRangeToSimulationDomain({ range, mode, simulationRange = null, masterRange = null } = {}) {
+    const requested = normalizePlannerViewRange(range);
+    if (!requested) {
+        return { range: null, requestedRange: null, clamped: false, reason: "El planificador necesita un intervalo UTC finito y válido." };
+    }
+    if (text(mode).toLowerCase() !== "range") {
+        return { range: requested, requestedRange: requested, clamped: false, reason: "" };
+    }
+    const domain = plannerRangeDomain({ mode, simulationRange, masterRange });
+    if (!domain) {
+        return {
+            range: null,
+            requestedRange: requested,
+            clamped: false,
+            reason: "No hay un rango simulado/MTR UTC válido para calcular pases."
+        };
+    }
+    const clipped = intersectRanges(requested, domain);
+    if (!clipped) {
+        return {
+            range: null,
+            requestedRange: requested,
+            domain,
+            clamped: false,
+            reason: "El período mostrado no intersecta el rango de simulación/MTR activo."
+        };
+    }
+    const clamped = clipped.startTime !== requested.startTime || clipped.endTime !== requested.endTime;
+    return {
+        range: {
+            ...requested,
+            ...clipped,
+            source: clamped ? "planner-view-range-clamped" : requested.source
+        },
+        requestedRange: requested,
+        domain,
+        clamped,
+        reason: ""
+    };
+}
+
 /**
  * Range mode is tied to a finite simulated/MTR domain. Static and realtime
  * have no moving planner horizon: the caller-provided visible UTC interval is

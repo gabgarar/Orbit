@@ -3,6 +3,7 @@ import {
     preloadSatelliteCatalog,
     fetchCatalogPage,
     refreshSatelliteCatalog,
+    hydrateCatalogEntries,
     setOrbitConfig,
     getSatelliteIds,
     getSatelliteTle,
@@ -93,6 +94,9 @@ import {
     GROUND_STATION_TIMELINE_EVENTS_EVENT
 } from "./js/features/groundStations/passTimelineEvents.js";
 import {
+    buildPlannerLayerEvents,
+    buildPlannerEopCoverageEvents,
+    buildPlannerProductErpCoverageEvents,
     buildPlannerPassEvents,
     buildPlannerResourceEvents,
     normalizeManualPlannerEvent,
@@ -107,6 +111,7 @@ import {
 import { buildPlannerSourceSnapshot } from "./js/features/planner/plannerRuntimeSources.js";
 import {
     assessPlannerForecastRange,
+    clampPlannerViewRangeToSimulationDomain,
     defaultPlannerViewRange,
     normalizePlannerHiddenLayerIds,
     normalizePlannerViewRange,
@@ -177,6 +182,12 @@ import {
     physicalEpochAtDesignWindowStart,
     resolveManualOrbitTimePolicy
 } from "./js/features/manualOrbit/timePolicy.js";
+import {
+    assessEarthOrientationCoverage,
+    describeEarthOrientationCoverage,
+    earthOrientationCoverageDetail,
+    normalizeEarthOrientationWindow
+} from "./js/features/timekeeping/eopCoveragePolicy.js";
 import { createManualErpUploadGate } from "./js/features/manualOrbit/erpUploadGate.js";
 import { createManualOrbitPreviewCheckpoint } from "./js/features/manualOrbit/previewCheckpoint.js";
 import {
@@ -537,6 +548,8 @@ const propagatedParametersInspectorState = {
     target: null,
     range: null,
     result: null,
+    earthOrientationPreflight: null,
+    earthOrientationProvenance: null,
     error: ""
 };
 let manualOrbitDesignSession = null;
@@ -1596,31 +1609,36 @@ function isPlannerGroundStationTimelinePairVisible(stationId, satelliteLayerId) 
         && isPlannerLayerVisible(satelliteLayerId);
 }
 
-function plannerForecastRangeCandidate() {
-    if (plannerPassForecastViewRange) return plannerPassForecastViewRange;
-    const fallback = defaultPlannerViewRange(getDisplayedSimulationDate());
-    if (simulationState.mode !== SIMULATION_MODE_RANGE || !fallback) return fallback;
-    const simulationStartMs = new Date(simulationState.startDate).getTime();
-    const simulationEndMs = new Date(simulationState.endDate).getTime();
-    if (!Number.isFinite(simulationStartMs) || !Number.isFinite(simulationEndMs) || simulationEndMs <= simulationStartMs) {
-        return fallback;
-    }
-    const durationMs = Math.min(
-        fallback.endDate.getTime() - fallback.startDate.getTime(),
-        simulationEndMs - simulationStartMs
-    );
-    const latestStartMs = simulationEndMs - durationMs;
-    const startMs = Math.max(simulationStartMs, Math.min(fallback.startDate.getTime(), latestStartMs));
-    return normalizePlannerViewRange({
-        startTime: new Date(startMs).toISOString(),
-        endTime: new Date(startMs + durationMs).toISOString(),
-        view: fallback.view
+function plannerForecastRangeConstraint() {
+    const requestedRange = plannerPassForecastViewRange || defaultPlannerViewRange(getDisplayedSimulationDate());
+    return clampPlannerViewRangeToSimulationDomain({
+        range: requestedRange,
+        mode: simulationState.mode,
+        simulationRange: simulationState.mode === SIMULATION_MODE_RANGE
+            ? { startDate: simulationState.startDate, endDate: simulationState.endDate }
+            : null,
+        masterRange: getMasterTimeRange()
     });
 }
 
+function plannerForecastRangeCandidate() {
+    return plannerForecastRangeConstraint().range;
+}
+
 function getPlannerForecastRangeAssessment() {
+    const constraint = plannerForecastRangeConstraint();
+    if (!constraint.range) {
+        return {
+            allowed: false,
+            range: null,
+            reason: constraint.reason || "El intervalo del planificador no se puede calcular.",
+            requestedRange: constraint.requestedRange || null,
+            domain: constraint.domain || null,
+            needsRebase: Boolean(constraint.requestedRange && constraint.domain)
+        };
+    }
     return assessPlannerForecastRange({
-        range: plannerForecastRangeCandidate(),
+        range: constraint.range,
         mode: simulationState.mode,
         simulationRange: simulationState.mode === SIMULATION_MODE_RANGE
             ? { startDate: simulationState.startDate, endDate: simulationState.endDate }
@@ -1642,6 +1660,12 @@ function plannerPassForecastKey(range = getPlannerForecastRangeAssessment().rang
 
 function plannerPassForecastContext(range = getPlannerForecastRangeAssessment().range, { allowed = true, reason = "" } = {}) {
     if (!range) return null;
+    const earthOrientationPreflight = plannerEarthOrientationCoverageDetail(
+        assessPlannerEarthOrientationPreflight({
+            startTime: range.startTime,
+            endTime: range.endTime
+        })
+    );
     return {
         kind: "planner",
         startTime: range.startTime,
@@ -1651,6 +1675,7 @@ function plannerPassForecastContext(range = getPlannerForecastRangeAssessment().
         mode: simulationState.mode,
         allowed: allowed === true,
         ...(reason ? { reason: String(reason) } : {}),
+        ...(earthOrientationPreflight ? { earthOrientationPreflight } : {}),
         totalPairs: plannerPassForecast.totalPairs,
         completedPairs: plannerPassForecast.completedPairs,
         skippedPairs: plannerPassForecast.skippedPairs
@@ -1740,6 +1765,10 @@ async function refreshPlannerPassForecast({ force = false } = {}) {
     }
 
     const contextKey = plannerPassForecastKey(range);
+    const earthOrientationPreflight = assessPlannerEarthOrientationPreflight({
+        startTime: range.startTime,
+        endTime: range.endTime
+    });
     const hasReusableSnapshot = plannerPassForecast.status === "ready"
         || plannerPassForecastAbortController !== null;
     if (!force && contextKey === plannerPassForecastContextKey && hasReusableSnapshot) {
@@ -1796,7 +1825,11 @@ async function refreshPlannerPassForecast({ force = false } = {}) {
     operationId = beginRuntimeSceneOperation("planner-pass-forecast", {
         title: "Calculando eventos del planificador",
         stage: "Analizando estaciones y satélites visibles",
-        message: `Calculando AOS/LOS para ${pending.length} pares visibles.`,
+        message: earthOrientationOperationMessage(
+            earthOrientationPreflight,
+            "El cálculo AOS/LOS del planificador",
+            `Calculando AOS/LOS para ${pending.length} pares visibles.`
+        ),
         progress: totalPairs ? Math.round((completedPairs / totalPairs) * 100) : null,
         cancelWork: () => {
             const ownsForecast = plannerPassForecastAbortController === controller
@@ -1937,11 +1970,43 @@ function closePlannerPassForecast() {
     clearPlannerPassForecast({ message: "El planificador se cerró; los pases pendientes se descartaron." });
 }
 
+function emitPlannerViewRangeRebase(constraint, view) {
+    const domain = constraint?.domain;
+    if (!domain?.startTime || !domain?.endTime || typeof window === "undefined") return false;
+    window.dispatchEvent(new CustomEvent("orbit:planner-view-range-rebase", {
+        detail: {
+            startTime: domain.startTime,
+            endTime: domain.endTime,
+            view: plannerText(view) || "week",
+            reason: "simulation-domain"
+        }
+    }));
+    return true;
+}
+
 function updatePlannerPassForecastViewRange(event) {
     const nextRange = normalizePlannerViewRange(plannerRecord(event?.detail));
     if (!nextRange) {
         setPlannerRuntimeError("forecast", "El planificador recibió un intervalo UTC inválido.");
         publishPlannerState();
+        return false;
+    }
+    const constraint = clampPlannerViewRangeToSimulationDomain({
+        range: nextRange,
+        mode: simulationState.mode,
+        simulationRange: simulationState.mode === SIMULATION_MODE_RANGE
+            ? { startDate: simulationState.startDate, endDate: simulationState.endDate }
+            : null,
+        masterRange: getMasterTimeRange()
+    });
+    if (!constraint.range && constraint.domain) {
+        // A calendar period fully outside a historical SP3/MTR is not a
+        // failed pass forecast. Rebase the React cursor to the authoritative
+        // domain and wait for its next exact view-range event; never issue a
+        // request for the invalid period or silently query another month.
+        plannerPassForecastViewRange = null;
+        setPlannerRuntimeError("forecast", "");
+        emitPlannerViewRangeRebase(constraint, nextRange.view);
         return false;
     }
     const previousKey = plannerViewRangeKey(plannerPassForecastViewRange);
@@ -2446,6 +2511,126 @@ function getPlannerErpDiagnosticComponent() {
     return findDiagnosticComponent(diagnostics, "erp");
 }
 
+function plannerProductErpPreflight(range) {
+    const sourceSnapshot = getPlannerSourceSnapshot();
+    if (sourceSnapshot.automaticEopEnabled) return null;
+    const startMs = toPlannerEpochMs(range?.startTime ?? range?.start);
+    const endMs = toPlannerEpochMs(range?.endTime ?? range?.end);
+    if (startMs === null || endMs === null || endMs <= startMs) return null;
+
+    // Only claim product-bound ERP for the actual finite SP3 members that
+    // can participate in this requested interval. A scene mixing TLE/manual
+    // sources keeps the automatic IERS preflight rather than borrowing the
+    // SP3 companion's provenance for another propagator.
+    const activeSatelliteLayers = (Array.isArray(sourceSnapshot.layers) ? sourceSnapshot.layers : [])
+        .filter((layer) => layer?.active === true && String(layer?.type || "").toUpperCase() === "SATELLITE");
+    if (!activeSatelliteLayers.length
+        || activeSatelliteLayers.some((layer) => String(layer?.sourceFormat || "").toUpperCase() !== "SP3")) {
+        return null;
+    }
+    const participants = (Array.isArray(sourceSnapshot.preciseRanges) ? sourceSnapshot.preciseRanges : [])
+        .filter((candidate) => Number(candidate?.startTimeMs) <= startMs && Number(candidate?.endTimeMs) >= endMs)
+        .map((candidate) => plannerText(candidate?.id))
+        .filter(Boolean);
+    if (!participants.length) return null;
+    const matchingCoverages = (Array.isArray(sourceSnapshot.productErpCoverages) ? sourceSnapshot.productErpCoverages : [])
+        .filter((coverage) => Number(coverage?.coverageStartMs) <= startMs && Number(coverage?.coverageEndMs) >= endMs);
+    if (!participants.every((sourceId) => matchingCoverages.some((coverage) => (
+        Array.isArray(coverage?.sourceIds) && coverage.sourceIds.includes(sourceId)
+    )))) {
+        return null;
+    }
+    const used = matchingCoverages.filter((coverage) => coverage.sourceIds?.some((sourceId) => participants.includes(sourceId)));
+    return {
+        sourceKind: "product-erp",
+        available: true,
+        validRange: true,
+        classification: "product-erp",
+        requiresNotice: false,
+        requiresWarning: false,
+        hasC01: false,
+        hasFinals: false,
+        hasExtrapolation: false,
+        hasNominal: false,
+        hasUnknown: false,
+        range: {
+            start: new Date(startMs).toISOString(),
+            end: new Date(endMs).toISOString()
+        },
+        segments: used.map((coverage) => ({
+            kind: "product-erp",
+            start: new Date(startMs).toISOString(),
+            end: new Date(endMs).toISOString(),
+            source: coverage.source || coverage.fileName || "ERP asociado a SP3",
+            quality: coverage.quality || "validated-product-erp"
+        })),
+        productErpCoverages: used
+    };
+}
+
+function assessPlannerEarthOrientationPreflight(range) {
+    return plannerProductErpPreflight(range) || assessAutomaticEarthOrientationPreflight(range);
+}
+
+function plannerEarthOrientationCoverageDetail(assessment) {
+    const detail = earthOrientationCoverageDetail(assessment);
+    if (!detail || assessment?.sourceKind !== "product-erp") return detail;
+    return {
+        ...detail,
+        sourceKind: "product-erp",
+        productErpIds: (assessment.productErpCoverages || []).map((coverage) => coverage.id)
+    };
+}
+
+/**
+ * Read-only EOP preflight for operations which may transform or propagate in
+ * an Earth-fixed frame. The backend remains authoritative over actual sample
+ * provenance; this only tells the operator which published source intervals
+ * the requested window crosses before browser work starts.
+ */
+function assessAutomaticEarthOrientationPreflight(range) {
+    const snapshot = plannerRecord(plannerRemoteDiagnostics);
+    if (snapshot.availability && snapshot.availability !== "available") return null;
+    const component = getPlannerErpDiagnosticComponent();
+    return component ? assessEarthOrientationCoverage(component, range) : null;
+}
+
+function earthOrientationOperationMessage(assessment, operation, fallback) {
+    if (assessment?.sourceKind === "product-erp" && assessment.available === true) {
+        const labels = [...new Set((assessment.productErpCoverages || [])
+            .map((coverage) => plannerText(coverage.fileName || coverage.name || coverage.id))
+            .filter(Boolean))];
+        const source = labels.length ? ` (${labels.join(", ")})` : "";
+        return `${operation}: toda la ventana usa el ERP validado asociado al SP3${source}.`;
+    }
+    return assessment?.requiresNotice
+        ? describeEarthOrientationCoverage(assessment, { operation })
+        : fallback;
+}
+
+/**
+ * Backend responses use this explicit name for the route actually selected
+ * during a completed propagation. Do not consume generic `earth_orientation`
+ * here: some precise-product responses use it for frame metadata rather than
+ * an EOP provenance window.
+ */
+function earthOrientationWindowFromResponse(payload) {
+    const response = plannerRecord(payload);
+    const metadata = plannerRecord(response.propagator_metadata ?? response.propagatorMetadata);
+    const candidates = [
+        response.earth_orientation_window,
+        response.earthOrientationWindow,
+        metadata.earth_orientation_window,
+        metadata.earthOrientationWindow,
+        Array.isArray(response.segments) ? response : null
+    ];
+    return candidates.find((candidate) => Array.isArray(plannerRecord(candidate).segments)) || null;
+}
+
+function actualEarthOrientationAssessment(payload) {
+    return normalizeEarthOrientationWindow(earthOrientationWindowFromResponse(payload));
+}
+
 function getPlannerLayerFacts() {
     return getCompositeLayerIds().map((layerId) => {
         const id = plannerText(layerId);
@@ -2453,6 +2638,11 @@ function getPlannerLayerFacts() {
         const sourceId = type === "SATELLITE" ? getSatelliteSourceIdFromLayerId(id) : id;
         const metadata = getCompositeLayerMeta(id);
         const range = type === "SATELLITE" ? getObjectIntrinsicTimeRange(sourceId) : null;
+        // The local TLE cache is already populated for a loaded scene layer.
+        // Its epoch is a source fact, unlike a finite coverage/expiry claim.
+        const tleEpoch = type === "SATELLITE"
+            ? parseTleEpochDate(getSatelliteTle(sourceId)?.line1)
+            : null;
         return {
             id,
             name: getLayerDisplayName(id),
@@ -2462,6 +2652,16 @@ function getPlannerLayerFacts() {
             visible: getCompositeLayerVisibility(id) === true,
             sourceFormat: plannerText(metadata?.sourceFormat ?? metadata?.source_format),
             sourceOrigin: plannerText(metadata?.sourceOrigin ?? metadata?.source_origin),
+            ...(tleEpoch ? { tleEpoch: tleEpoch.toISOString() } : {}),
+            ...(plannerText(metadata?.importedAt ?? metadata?.imported_at)
+                ? { importedAt: plannerText(metadata?.importedAt ?? metadata?.imported_at) }
+                : {}),
+            ...(plannerText(metadata?.importFileName ?? metadata?.import_file_name)
+                ? { importFileName: plannerText(metadata?.importFileName ?? metadata?.import_file_name) }
+                : {}),
+            ...(plannerText(metadata?.tleSource ?? metadata?.sourceProvider ?? metadata?.source_provider)
+                ? { sourceProvider: plannerText(metadata?.tleSource ?? metadata?.sourceProvider ?? metadata?.source_provider) }
+                : {}),
             validation: range ? "scene-intrinsic-range" : "scene-state-only",
             ...(range?.startTime ? { validityStart: range.startTime } : {}),
             ...(range?.endTime ? { validityEnd: range.endTime } : {})
@@ -2471,6 +2671,7 @@ function getPlannerLayerFacts() {
 
 function getPlannerSourceSnapshot() {
     const preciseRanges = getLoadedPreciseProductTimeRanges();
+    const preciseProducts = getActivePreciseProductEntries();
     const oemRanges = getLoadedOemEphemerisTimeRanges();
     const preciseNames = new Map(preciseRanges.map((range) => [
         range.id,
@@ -2483,6 +2684,7 @@ function getPlannerSourceSnapshot() {
     return buildPlannerSourceSnapshot({
         manualErps: getPlannerManualErpReferences(),
         erpDiagnostic: getPlannerErpDiagnosticComponent(),
+        preciseProducts,
         preciseRanges,
         preciseNames,
         oemRanges,
@@ -2608,6 +2810,15 @@ function publishPlannerState() {
         events: [
             ...buildPlannerPassEvents(passSource.events),
             ...buildPlannerResourceEvents(sourceSnapshot.resources),
+            // A verified ERP bundled with every active SP3 is the temporal
+            // source for that precise scene. In that case the automatic IERS
+            // map is intentionally not published alongside it: two sources
+            // would look like competing coverage for the same operation.
+            ...(sourceSnapshot.automaticEopEnabled
+                ? buildPlannerEopCoverageEvents(getPlannerErpDiagnosticComponent())
+                : []),
+            ...buildPlannerProductErpCoverageEvents(sourceSnapshot.productErpCoverages),
+            ...buildPlannerLayerEvents(sourceSnapshot.layers),
             ...plannerManualOnly(plannerManualEvents)
         ].filter((event) => plannerEventIsVisible(event, layers)),
         updatedAt: new Date().toISOString(),
@@ -5661,6 +5872,10 @@ async function analyzeGroundStationPasses(detail = {}) {
         });
         const analysisWindow = request.analysisWindow || fallbackWindow;
         const { startDate, endDate } = analysisWindow;
+        const earthOrientationPreflight = assessAutomaticEarthOrientationPreflight({
+            startTime: startDate.toISOString(),
+            endTime: endDate.toISOString()
+        });
         requestContext = {
             requestId,
             stationId,
@@ -5670,7 +5885,8 @@ async function analyzeGroundStationPasses(detail = {}) {
             satelliteId,
             satelliteRfSignature: satelliteRfProfileSignature(satelliteId),
             manualOrbitSignature: request.manualOrbitSignature,
-            analysisWindow
+            analysisWindow,
+            earthOrientationPreflight: earthOrientationCoverageDetail(earthOrientationPreflight)
         };
         // A finite SP3/OEM/manual source either supports the full requested
         // AOS/LOS window or it supports none of it.  Never shorten the window
@@ -5746,7 +5962,11 @@ async function analyzeGroundStationPasses(detail = {}) {
         operationId = beginRuntimeSceneOperation("ground-station-analysis", {
             title: "Calculando pases AOS/LOS",
             stage: "Propagando ventana solicitada",
-            message: "Calculando visibilidad y enlace para la estaci\u00f3n seleccionada.",
+            message: earthOrientationOperationMessage(
+                earthOrientationPreflight,
+                "El análisis AOS/LOS",
+                "Calculando visibilidad y enlace para la estación seleccionada."
+            ),
             cancelWork: (message) => {
                 if (groundStationAnalysisAbortController === abortController) {
                     groundStationAnalysisAbortController = null;
@@ -5780,9 +6000,12 @@ async function analyzeGroundStationPasses(detail = {}) {
             operationTerminal = true;
             return;
         }
+        const actualEarthOrientation = actualEarthOrientationAssessment(result);
         advanceRuntimeSceneOperation(operationId, {
             stage: "Preparando resultado",
-            message: "Procesando pases y geometr\u00eda de enlace.",
+            message: actualEarthOrientation
+                ? describeEarthOrientationCoverage(actualEarthOrientation, { operation: "El análisis AOS/LOS" })
+                : "Procesando pases y geometría de enlace.",
             progress: 85
         });
         const resolvedFrameStatus = resolveGroundPassFrameStatus(satelliteId, result);
@@ -5802,6 +6025,8 @@ async function analyzeGroundStationPasses(detail = {}) {
                     rendererReference: resolvedFrameStatus,
                     renderingAvailable: false,
                     timeScale: String(result.time_scale || "UTC"),
+                    earthOrientationPreflight: requestContext.earthOrientationPreflight || null,
+                    earthOrientationProvenance: actualEarthOrientation ? earthOrientationCoverageDetail(actualEarthOrientation) : null,
                     analysisSelection: { stationId, satelliteLayerId },
                     visibleNow: false
                 }
@@ -5839,6 +6064,8 @@ async function analyzeGroundStationPasses(detail = {}) {
                 rendererReference: resolvedFrameStatus,
                 renderingAvailable: resolvedFrameStatus.available,
                 timeScale: String(result.time_scale || "UTC"),
+                earthOrientationPreflight: requestContext.earthOrientationPreflight || null,
+                earthOrientationProvenance: actualEarthOrientation ? earthOrientationCoverageDetail(actualEarthOrientation) : null,
                 analysisWindow: {
                     startTime: result.start_time || startDate.toISOString(),
                     endTime: result.end_time || endDate.toISOString(),
@@ -5862,7 +6089,12 @@ async function analyzeGroundStationPasses(detail = {}) {
                     : false
             }
         }));
-        completeRuntimeSceneOperation(operationId, "An\u00e1lisis AOS/LOS completado.");
+        completeRuntimeSceneOperation(
+            operationId,
+            actualEarthOrientation
+                ? describeEarthOrientationCoverage(actualEarthOrientation, { operation: "Análisis AOS/LOS completado" })
+                : "Análisis AOS/LOS completado."
+        );
         operationTerminal = true;
     } catch (error) {
         if (isRuntimeSceneRequestCancellation(error, abortController)
@@ -7639,6 +7871,7 @@ function getManualOrbitTimePolicy() {
                 endTime: manualErp.coverageEnd
             }
             : null,
+        automaticEopDiagnostic: getPlannerErpDiagnosticComponent(),
         forceTerms: manualOrbitEditorState?.propagationOptions?.forceTerms || [],
         sceneWindow: settings.sceneWindow,
         finiteEphemerisRanges: settings.finiteEphemerisRanges || []
@@ -8386,12 +8619,15 @@ async function requestManualOrbitPreview() {
     }
 
     let windowRange;
+    let earthOrientationPreflight = null;
     try {
         // Preview must stay inside an already established MTR. It never
         // prompts or expands the scene; only the explicit Create action can
         // make that durable global decision.
-        assertManualOrbitTimePolicy();
+        const timePolicy = assertManualOrbitTimePolicy();
         windowRange = getManualOrbitPropagationWindow();
+        earthOrientationPreflight = timePolicy.automaticEopEffectiveAssessment
+            || timePolicy.automaticEopAssessment;
     } catch (error) {
         // A previous path may have used an earlier valid ERP or epoch. Do not
         // leave it on screen once the active TIME contract is invalid.
@@ -8409,7 +8645,11 @@ async function requestManualOrbitPreview() {
     const operationId = startManualOrbitOperation("preview", requestId, {
         title: "Previsualizando \u00f3rbita manual",
         stage: "Propagando la ventana solicitada",
-        message: "La previsualizaci\u00f3n conserva la ventana y el muestreo solicitados.",
+        message: earthOrientationOperationMessage(
+            earthOrientationPreflight,
+            "La previsualización",
+            "La previsualización conserva la ventana y el muestreo solicitados."
+        ),
         cancellable: true
     });
     manualOrbitPreviewOperationId = operationId;
@@ -8434,9 +8674,12 @@ async function requestManualOrbitPreview() {
             cancelManualOrbitOperation(operationId, "Previsualizaci\u00f3n sustituida por una solicitud m\u00e1s reciente.");
             return;
         }
+        const actualEarthOrientation = actualEarthOrientationAssessment(responsePayload);
         updateManualOrbitOperation(operationId, {
             stage: "Representando trayectoria",
-            message: "Aplicando la trayectoria calculada a la escena de dise\u00f1o."
+            message: actualEarthOrientation
+                ? describeEarthOrientationCoverage(actualEarthOrientation, { operation: "La previsualización" })
+                : "Aplicando la trayectoria calculada a la escena de diseño."
         });
         renderManualOrbitPreview(responsePayload, {
             viewer,
@@ -8454,7 +8697,12 @@ async function requestManualOrbitPreview() {
         if (manualOrbitPreviewOperationId === operationId) {
             manualOrbitPreviewOperationId = null;
         }
-        completeManualOrbitOperation(operationId, "Previsualizaci\u00f3n actualizada.");
+        completeManualOrbitOperation(
+            operationId,
+            actualEarthOrientation
+                ? describeEarthOrientationCoverage(actualEarthOrientation, { operation: "Previsualización actualizada" })
+                : "Previsualización actualizada."
+        );
         publishManualOrbitStatus(null, "");
     } catch (error) {
         if (isExpectedManualOrbitRequestCancellation(error, controller)
@@ -8632,6 +8880,7 @@ async function createManualOrbitFromEditor(payload = {}) {
     }
 
     let approvedMasterRange = null;
+    let earthOrientationPreflight = null;
     try {
         const designWindow = getManualOrbitDesignWindow();
         const masterRangeAtRequest = {
@@ -8645,9 +8894,11 @@ async function createManualOrbitFromEditor(payload = {}) {
             publishManualOrbitStatus("info", "No se creó la órbita: se mantuvo el rango temporal maestro actual.");
             return;
         }
-        assertManualOrbitTimePolicy({
+        const timePolicy = assertManualOrbitTimePolicy({
             allowApprovedMasterExpansion: approvedMasterRange.action === "expand"
         });
+        earthOrientationPreflight = timePolicy.automaticEopEffectiveAssessment
+            || timePolicy.automaticEopAssessment;
     } catch (error) {
         publishManualOrbitStatus("error", extractManualOrbitError(error));
         return;
@@ -8675,7 +8926,11 @@ async function createManualOrbitFromEditor(payload = {}) {
     const operationId = startManualOrbitOperation("create", createRequestId, {
         title: editingTargetAtRequest ? "Actualizando \u00f3rbita manual" : "Creando \u00f3rbita manual",
         stage: "Preparando propagaci\u00f3n",
-        message: `Modelo seleccionado: ${propagatorLabel}.`,
+        message: `${earthOrientationOperationMessage(
+            earthOrientationPreflight,
+            "La creación de la órbita",
+            ""
+        )} Modelo seleccionado: ${propagatorLabel}.`.trim(),
         cancellable: true
     });
     manualOrbitCreateOperationId = operationId;
@@ -8685,7 +8940,11 @@ async function createManualOrbitFromEditor(payload = {}) {
         const requestPayload = buildManualOrbitRequestPayload(windowRange);
         updateManualOrbitOperation(operationId, {
             stage: "Propagando ventana solicitada",
-            message: "Calculando la efem\u00e9ride con el intervalo y muestreo solicitados."
+            message: earthOrientationOperationMessage(
+                earthOrientationPreflight,
+                "La creación de la órbita",
+                "Calculando la efeméride con el intervalo y muestreo solicitados."
+            )
         });
         const response = await fetch("/api/manual-orbits", {
             method: "POST",
@@ -8708,6 +8967,7 @@ async function createManualOrbitFromEditor(payload = {}) {
             return;
         }
 
+        const actualEarthOrientation = actualEarthOrientationAssessment(responsePayload);
         const responseSource = normalizeManualOrbitDefinitionSource(
             responsePayload?.definition_source || responsePayload?.definitionSource,
             manualOrbitDefinitionSource
@@ -8788,18 +9048,28 @@ async function createManualOrbitFromEditor(payload = {}) {
         manualOrbitEditingTarget = null;
         const geopotentialAdjustment = manualOrbitGeopotentialAdjustmentMessage(responsePayload);
         publishManualOrbitState({ open: false });
+        const earthOrientationStatus = actualEarthOrientation?.requiresNotice
+            ? ` ${describeEarthOrientationCoverage(actualEarthOrientation, { operation: "Proveniencia temporal" })}`
+            : "";
         publishManualOrbitStatus(
-            geopotentialAdjustment ? "warning" : "success",
+            geopotentialAdjustment || actualEarthOrientation?.requiresWarning ? "warning" : "success",
             `${editingTargetAtRequest
                 ? `Orbita manual '${imported.name}' actualizada con ${getManualOrbitPropagatorLabel(manualOrbitEditorState?.propagator, manualOrbitEditorState?.propagationOptions)}.`
-                : `Orbita manual '${imported.name}' creada con ${getManualOrbitPropagatorLabel(manualOrbitEditorState?.propagator, manualOrbitEditorState?.propagationOptions)}.`}${geopotentialAdjustment ? ` ${geopotentialAdjustment}` : ""}`
+                : `Orbita manual '${imported.name}' creada con ${getManualOrbitPropagatorLabel(manualOrbitEditorState?.propagator, manualOrbitEditorState?.propagationOptions)}.`}${geopotentialAdjustment ? ` ${geopotentialAdjustment}` : ""}${earthOrientationStatus}`
         );
         if (manualOrbitCreateOperationId === operationId) {
             manualOrbitCreateOperationId = null;
         }
-        completeManualOrbitOperation(operationId, editingTargetAtRequest
-            ? "\u00d3rbita manual actualizada."
-            : "\u00d3rbita manual creada.");
+        completeManualOrbitOperation(
+            operationId,
+            actualEarthOrientation
+                ? describeEarthOrientationCoverage(actualEarthOrientation, {
+                    operation: editingTargetAtRequest ? "Órbita manual actualizada" : "Órbita manual creada"
+                })
+                : editingTargetAtRequest
+                    ? "Órbita manual actualizada."
+                    : "Órbita manual creada."
+        );
     } catch (error) {
         if (isExpectedManualOrbitRequestCancellation(error, controller)
             || createRequestId !== manualOrbitCreateRequestId) {
@@ -8994,6 +9264,8 @@ function closePropagatedParametersInspector() {
         target: null,
         range: null,
         result: null,
+        earthOrientationPreflight: null,
+        earthOrientationProvenance: null,
         error: ""
     });
 }
@@ -9472,12 +9744,19 @@ async function requestPropagatedParameters(context) {
             target,
             range: null,
             result: null,
+            earthOrientationPreflight: null,
+            earthOrientationProvenance: null,
             error: extractManualOrbitError(error, "No se pudieron preparar las efemérides.")
         });
         return;
     }
 
     propagatedParametersLastContext = context;
+    const earthOrientationPreflight = assessAutomaticEarthOrientationPreflight({
+        startTime: range.startTime,
+        endTime: range.endTime
+    });
+    const earthOrientationPreflightDetail = earthOrientationCoverageDetail(earthOrientationPreflight);
     const controller = new AbortController();
     propagatedParametersAbortController = controller;
     publishPropagatedParametersInspectorState({
@@ -9486,6 +9765,8 @@ async function requestPropagatedParameters(context) {
         target,
         range,
         result: null,
+        earthOrientationPreflight: earthOrientationPreflightDetail,
+        earthOrientationProvenance: null,
         error: ""
     });
 
@@ -9494,7 +9775,11 @@ async function requestPropagatedParameters(context) {
     operationId = beginRuntimeSceneOperation("propagated-parameters", {
         title: "Calculando par\u00e1metros propagados",
         stage: "Preparando efem\u00e9rides",
-        message: "Calculando el estado orbital para la ventana solicitada.",
+        message: earthOrientationOperationMessage(
+            earthOrientationPreflight,
+            "El cálculo de parámetros propagados",
+            "Calculando el estado orbital para la ventana solicitada."
+        ),
         cancelWork: (message) => {
             if (propagatedParametersAbortController === controller) {
                 propagatedParametersAbortController = null;
@@ -9508,6 +9793,8 @@ async function requestPropagatedParameters(context) {
                 publishPropagatedParametersInspectorState({
                     status: "idle",
                     result: null,
+                    earthOrientationPreflight: null,
+                    earthOrientationProvenance: null,
                     error: ""
                 });
             }
@@ -9524,7 +9811,11 @@ async function requestPropagatedParameters(context) {
         }
         advanceRuntimeSceneOperation(operationId, {
             stage: "Propagando ventana solicitada",
-            message: "El motor est\u00e1 calculando las efem\u00e9rides solicitadas.",
+            message: earthOrientationOperationMessage(
+                earthOrientationPreflight,
+                "El cálculo de parámetros propagados",
+                "El motor está calculando las efemérides solicitadas."
+            ),
             progress: 35
         });
         const response = await fetch("/api/orbit-parameters", {
@@ -9542,9 +9833,12 @@ async function requestPropagatedParameters(context) {
             operationTerminal = true;
             return;
         }
+        const actualEarthOrientation = actualEarthOrientationAssessment(responsePayload);
         advanceRuntimeSceneOperation(operationId, {
             stage: "Procesando elementos osculantes",
-            message: "Preparando los par\u00e1metros derivados para la inspecci\u00f3n.",
+            message: actualEarthOrientation
+                ? describeEarthOrientationCoverage(actualEarthOrientation, { operation: "El cálculo de parámetros propagados" })
+                : "Preparando los parámetros derivados para la inspección.",
             progress: 85
         });
         const resolvedRange = {
@@ -9558,12 +9852,26 @@ async function requestPropagatedParameters(context) {
             target,
             range: resolvedRange,
             result: responsePayload,
+            earthOrientationPreflight: earthOrientationPreflightDetail,
+            earthOrientationProvenance: actualEarthOrientation ? earthOrientationCoverageDetail(actualEarthOrientation) : null,
             error: ""
         });
         window.dispatchEvent(new CustomEvent("orbit:propagated-parameters-result", {
-            detail: { status: "ready", target, range: resolvedRange, result: responsePayload }
+            detail: {
+                status: "ready",
+                target,
+                range: resolvedRange,
+                result: responsePayload,
+                earthOrientationPreflight: earthOrientationPreflightDetail,
+                earthOrientationProvenance: actualEarthOrientation ? earthOrientationCoverageDetail(actualEarthOrientation) : null
+            }
         }));
-        completeRuntimeSceneOperation(operationId, "Par\u00e1metros propagados calculados.");
+        completeRuntimeSceneOperation(
+            operationId,
+            actualEarthOrientation
+                ? describeEarthOrientationCoverage(actualEarthOrientation, { operation: "Parámetros propagados calculados" })
+                : "Parámetros propagados calculados."
+        );
         operationTerminal = true;
     } catch (error) {
         if (isRuntimeSceneRequestCancellation(error, controller)
@@ -9581,6 +9889,8 @@ async function requestPropagatedParameters(context) {
             target,
             range,
             result: null,
+            earthOrientationPreflight: earthOrientationPreflightDetail,
+            earthOrientationProvenance: null,
             error: errorMessage
         });
     } finally {
@@ -10078,6 +10388,7 @@ function setupPropagatedParametersInspector() {
         getObjectTle: (id) => isCelestialBodyLayerId(id) ? null : getSatelliteTle(getSatelliteSourceIdFromLayerId(id)),
         getObjectTleAsync: (id) => isCelestialBodyLayerId(id) ? Promise.resolve(null) : getSatelliteTleAsync(getSatelliteSourceIdFromLayerId(id)),
         getCatalogEntryMeta: (id) => getCompositeLayerMeta(id),
+        onHydrateCatalogEntries: (entries) => hydrateCatalogEntries(entries),
         onRefreshCatalog: async () => {
             const refreshed = await refreshSatelliteCatalog(catalogUrl);
             // A catalogue refresh can replace a TLE while retaining the same

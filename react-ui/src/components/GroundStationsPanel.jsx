@@ -3,6 +3,7 @@ import { downloadChartPng } from "../../../front/js/runtime/chartPngExport.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
 import { openGroundStationExportMenu } from "./GroundStationExportMenu.jsx";
 import { resolvePreciseProductFrameStatus } from "../../../front/js/features/preciseProducts/frameStatus.js";
+import { describeEarthOrientationCoverageDetail } from "../../../front/js/features/timekeeping/eopCoveragePolicy.js";
 
 const initialState = { stations: [], satellites: [], activeStationId: "", activeSatelliteId: "", now: null };
 const inputClass = "min-h-8 w-full rounded-md border border-[#284465] bg-[#091323] px-2 text-[11px] font-semibold text-[#d9e6fa] outline-none focus:border-[#5d86ff]";
@@ -149,6 +150,22 @@ function resultFrameLabel(result, frameStatus = resultFrameStatus(result)) {
         ?? result?.referenceFrame ?? result?.reference_frame;
     const normalized = String(label || "").trim();
     return normalized || "Marco no declarado";
+}
+
+function earthOrientationResultNotice(result) {
+    const actual = result?.earthOrientationProvenance;
+    const preflight = result?.earthOrientationPreflight;
+    const detail = actual || preflight;
+    if (!detail || detail.requiresNotice !== true || !Array.isArray(detail.segments) || !detail.segments.length) {
+        return null;
+    }
+    return {
+        actual: Boolean(actual),
+        warning: detail.requiresWarning === true,
+        message: describeEarthOrientationCoverageDetail(detail, {
+            operation: actual ? "Proveniencia de orientación terrestre" : "Preflight de orientación terrestre"
+        })
+    };
 }
 
 function PassesTable({ passes, timeZone }) {
@@ -377,6 +394,7 @@ export default function GroundStationsPanel() {
     const stationDownlinkSnrDb = Number(result?.satelliteSnrDb);
     const satelliteProfileAvailable = result?.satelliteLinkAvailable === true;
     const passFrameStatus = resultFrameStatus(result);
+    const earthOrientationNotice = earthOrientationResultNotice(result);
 
     if (!open) return null;
     const cancelPendingAnalysis = () => window.dispatchEvent(new Event("orbit:ground-stations-analysis-cancel"));
@@ -440,6 +458,7 @@ export default function GroundStationsPanel() {
                 {passFrameStatus?.available === false && <p className="mt-1 mb-2 rounded border border-[#8b642a] bg-[rgba(101,66,21,.22)] px-2 py-1.5 text-[9px] leading-snug text-[#f0ca78]">Marco nativo: {passFrameStatus.nativeFrame || result.referenceFrame || "no declarado"}. AOS/LOS y la representación terrestre quedan bloqueados hasta disponer de la operación de realización/EOP. {passFrameStatus.reason || ""}</p>}
                 {passFrameStatus?.approximate === true && passFrameStatus?.available !== false && <p className="mt-1 mb-2 rounded border border-[#61779b] bg-[rgba(39,63,97,.28)] px-2 py-1.5 text-[9px] leading-snug text-[#bed4f5]"><strong>{passFrameStatus.displayFrame}.</strong> AOS/LOS se evalúa en el marco terrestre disponible; la comparación o conversión a ECI requiere un ERP aplicable y una ruta de realización terrestre registrada.</p>}
                 {passFrameStatus?.erpApplied === true && <p className="mt-1 mb-2 rounded border border-[#426f91] bg-[rgba(24,59,92,.22)] px-2 py-1.5 text-[9px] leading-snug text-[#c5e3ff]"><strong>ITRF (con ERP aplicado).</strong> Los parámetros de rotación terrestre del producto están activos para la conversión a ECI.</p>}
+                {earthOrientationNotice && <p className={`mt-1 mb-2 rounded border px-2 py-1.5 text-[9px] leading-snug ${earthOrientationNotice.warning ? "border-[#874252] bg-[rgba(82,28,42,.36)] text-[#ffd0d9]" : "border-[#776035] bg-[rgba(78,59,20,.3)] text-[#f5d38e]"}`} role={earthOrientationNotice.warning ? "alert" : "status"} data-testid="ground-station-eop-coverage-notice"><strong>{earthOrientationNotice.actual ? "Proveniencia usada. " : "Preflight de la ventana. "}</strong>{earthOrientationNotice.message}{earthOrientationNotice.actual ? "" : " El servicio no ha devuelto aún la procedencia de ejecución."}</p>}
                 {!result.error && result.linkContract ? <p className="mt-0 mb-2 text-[9px] leading-snug text-[#90b9a4]">Base del acceso: {result.linkContract === "actual-downlink" ? "enlace real de bajada satélite → estación" : "envolvente RF de planificación recíproca"}.</p> : null}
                 {result.analysisWindow?.startTime && !result.error ? <div className="mb-2 text-[9px] leading-snug text-[#90b9a4]">
                     <p className="m-0">Ventana de cálculo (UTC): {utc(result.analysisWindow.startTime)} → {utc(result.analysisWindow.endTime)}{result.analysisWindow.source === "simulation-range" ? " · rango de simulación" : result.analysisWindow.source === "manual-design" ? " · ventana de diseño de la órbita manual" : " · próximas 24 h"}</p>

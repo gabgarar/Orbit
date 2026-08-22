@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+    buildPlannerEopCoverageLayer,
+    buildPlannerLayerEvents,
+    buildPlannerEopCoverageEvents,
     buildPlannerPassEvents,
     buildPlannerResourceEvents,
     filterPlannerEventsByRange,
@@ -16,11 +19,13 @@ import {
     plannerEventIntersectsRange,
     plannerEventsOverlap,
     PLANNER_COLOR_TOKENS,
+    PLANNER_EOP_LAYER_ID,
     PLANNER_EVENT_KINDS,
     PLANNER_MANUAL_COLOR_TOKENS,
     PLANNER_MANUAL_EVENT_REMOVE_EVENT,
     PLANNER_MANUAL_EVENT_UPSERT_EVENT,
     PLANNER_STATE_EVENT,
+    resolvePlannerEopCoverageIntervals,
     toPlannerEpochMs
 } from "../../js/features/planner/plannerEvents.js";
 
@@ -168,6 +173,246 @@ test("resource adapter only emits explicit expiry or explicitly-mapped validity 
         ["resource:erp:erp-primary:validity-end", "erp-validity-end", "amber", "erp-primary"],
         ["resource:erp:erp-primary:expiry", "erp-expiry", "rose", "erp-primary"]
     ]);
+});
+
+test("planner exposes factual EOP source intervals under one hideable IERS layer", () => {
+    const events = buildPlannerEopCoverageEvents({
+        details: {
+            coverageTimeline: [
+                {
+                    kind: "iers-c01",
+                    start: "2026-07-01T00:00:00Z",
+                    end: "2026-07-20T00:00:00Z",
+                    source: "IERS C01",
+                    quality: "final"
+                },
+                {
+                    kind: "finals2000A",
+                    start: "2026-07-20T00:00:00Z",
+                    end: "2026-08-15T00:00:00Z",
+                    source: "IERS finals2000A",
+                    quality: "predicted"
+                },
+                {
+                    kind: "linear-extrapolation",
+                    start: "2026-08-15T00:00:00Z",
+                    end: "2026-09-14T00:00:00Z",
+                    quality: "extrapolated"
+                },
+                {
+                    kind: "nominal-fallback",
+                    start: "2026-09-14T00:00:00Z",
+                    end: null,
+                    quality: "approximate"
+                }
+            ]
+        }
+    });
+
+    assert.deepEqual(events.map((event) => [
+        event.kind,
+        event.start,
+        event.end,
+        event.metadata.quality,
+        event.colorToken,
+        event.metadata.eopVisualState,
+        event.metadata.eopColorToken,
+        event.metadata.requiresAttention,
+        event.metadata.eopRange
+    ]), [
+        ["iers-c01-coverage", "2026-07-01T00:00:00.000Z", "2026-07-20T00:00:00.000Z", "final", "emerald", "normal", "emerald", false, true],
+        ["finals2000a-coverage", "2026-07-20T00:00:00.000Z", "2026-08-15T00:00:00.000Z", "predicted", "rose", "predicted", "rose", true, true],
+        ["erp-linear-extrapolation", "2026-08-15T00:00:00.000Z", "2026-09-14T00:00:00.000Z", "extrapolated", "rose", "degraded", "rose", true, true],
+        ["erp-nominal-fallback", "2026-09-14T00:00:00.000Z", "2026-09-14T00:00:00.000Z", "approximate", "rose", "degraded", "rose", true, false]
+    ]);
+    assert.ok(events.every((event) => event.metadata.layerId === PLANNER_EOP_LAYER_ID));
+    assert.equal(events.at(-1).metadata.openEnded, true);
+    assert.match(events.at(-1).metadata.description, /No es una muestra ERP ni un dato IERS/);
+    assert.equal(events.some((event) => /expiry/.test(event.kind)), false);
+    assert.deepEqual(buildPlannerEopCoverageLayer({
+        details: {
+            coverageTimeline: [{
+                kind: "iers-c01",
+                start: "2026-07-01T00:00:00Z",
+                end: "2026-07-20T00:00:00Z"
+            }]
+        }
+    }), {
+        id: PLANNER_EOP_LAYER_ID,
+        name: "IERS ERP Time",
+        type: "SYSTEM",
+        sourceId: PLANNER_EOP_LAYER_ID,
+        active: true,
+        visible: true,
+        sourceFormat: "EOP",
+        sourceOrigin: "IERS",
+        validation: "diagnostics-coverage-timeline"
+    });
+});
+
+test("planner resolves overlapping C01/finals availability into one preferred route", () => {
+    const intervals = resolvePlannerEopCoverageIntervals({
+        coverageTimeline: [
+            {
+                kind: "iers-c01",
+                start: "2026-06-01T00:00:00Z",
+                end: "2026-07-20T00:00:00Z",
+                source: "IERS C01",
+                quality: "final"
+            },
+            {
+                kind: "iers-finals2000a",
+                start: "2026-07-01T00:00:00Z",
+                end: "2026-07-15T00:00:00Z",
+                source: "IERS finals2000A",
+                quality: "final"
+            },
+            {
+                kind: "iers-finals2000a",
+                start: "2026-07-15T00:00:00Z",
+                end: "2026-08-01T00:00:00Z",
+                source: "IERS finals2000A",
+                sourceUrl: "https://datacenter.iers.org/products/eop/rapid/standard/finals2000A.all",
+                quality: "rapid",
+                qualityLabel: "Bulletin A rapid"
+            }
+        ]
+    });
+
+    assert.deepEqual(intervals.map(({ kind, start, end, quality }) => [kind, start, end, quality]), [
+        ["iers-c01", "2026-06-01T00:00:00.000Z", "2026-07-20T00:00:00.000Z", "final"],
+        ["finals2000a", "2026-07-20T00:00:00.000Z", "2026-08-01T00:00:00.000Z", "rapid"]
+    ]);
+    const events = buildPlannerEopCoverageEvents({ coverageTimeline: intervals });
+    assert.equal(events.length, 2);
+    assert.equal(events[1].metadata.sourceUrl, "https://datacenter.iers.org/products/eop/rapid/standard/finals2000A.all");
+    assert.equal(events[1].metadata.qualityLabel, "Bulletin A rapid");
+    assert.equal(events[1].colorToken, "amber");
+    assert.equal(events[1].metadata.eopVisualState, "ok");
+    assert.equal(events[1].metadata.eopColorToken, "amber");
+    assert.equal(events[1].metadata.requiresAttention, false);
+    assert.equal(events.some((event) => /coverage-end|extrapolation-start/.test(event.kind)), false);
+});
+
+test("planner merges contiguous EOP intervals with one visual state and preserves their individual provenance", () => {
+    const events = buildPlannerEopCoverageEvents({
+        coverageTimeline: [
+            {
+                kind: "iers-c01",
+                start: "2026-06-25T00:00:00Z",
+                end: "2026-07-01T00:00:00Z",
+                quality: "final",
+                qualityLabel: "IERS C01 final"
+            },
+            {
+                kind: "iers-finals2000a",
+                start: "2026-07-01T00:00:00Z",
+                end: "2026-07-10T00:00:00Z",
+                quality: "final",
+                qualityLabel: "Bulletin B final"
+            },
+            {
+                kind: "iers-finals2000a",
+                start: "2026-07-10T00:00:00Z",
+                end: "2026-07-20T00:00:00Z",
+                quality: "rapid",
+                qualityLabel: "Bulletin A rapid"
+            },
+            {
+                kind: "iers-finals2000a",
+                start: "2026-07-20T00:00:00Z",
+                end: "2026-08-01T00:00:00Z",
+                quality: "P",
+                qualityLabel: "Bulletin A prediction"
+            },
+            {
+                kind: "linear-extrapolation",
+                start: "2026-08-01T00:00:00Z",
+                end: "2026-08-15T00:00:00Z",
+                quality: "extrapolated"
+            }
+        ]
+    });
+
+    assert.deepEqual(events.map((event) => [
+        event.start,
+        event.end,
+        event.metadata.quality,
+        event.metadata.qualityLabel,
+        event.colorToken,
+        event.metadata.eopVisualState,
+        event.metadata.eopColorToken,
+        event.metadata.requiresAttention
+    ]), [
+        ["2026-06-25T00:00:00.000Z", "2026-07-01T00:00:00.000Z", "final", "IERS C01 final", "emerald", "normal", "emerald", false],
+        ["2026-07-01T00:00:00.000Z", "2026-07-20T00:00:00.000Z", "final / rapid", "Bulletin B final · Bulletin A rapid", "amber", "ok", "amber", false],
+        ["2026-07-20T00:00:00.000Z", "2026-08-01T00:00:00.000Z", "P", "Bulletin A prediction", "rose", "predicted", "rose", true],
+        ["2026-08-01T00:00:00.000Z", "2026-08-15T00:00:00.000Z", "extrapolated", undefined, "rose", "degraded", "rose", true]
+    ]);
+    assert.equal(events.length, 4, "the green C01, red prediction and degraded red boundaries remain separate");
+    assert.equal(events[1].title, "IERS finals2000A · Calidad publicada");
+    assert.equal(events[1].metadata.eopSegmentCount, 2);
+    assert.deepEqual(events[1].metadata.eopSegments.map((segment) => [
+        segment.quality,
+        segment.qualityLabel,
+        segment.range.start,
+        segment.range.end
+    ]), [
+        ["final", "Bulletin B final", "2026-07-01T00:00:00.000Z", "2026-07-10T00:00:00.000Z"],
+        ["rapid", "Bulletin A rapid", "2026-07-10T00:00:00.000Z", "2026-07-20T00:00:00.000Z"]
+    ]);
+    assert.match(events[1].metadata.description, /2 tramos contiguos/);
+    assert.equal(events[2].end, events[3].start, "prediction and extrapolation are adjacent");
+    assert.notEqual(events[2].metadata.eopVisualState, events[3].metadata.eopVisualState, "same red colour is not enough to merge a changed state");
+});
+
+test("layer adapter emits only recorded import facts and actual TLE epochs", () => {
+    const events = buildPlannerLayerEvents([
+        {
+            id: "sat:custom",
+            sourceId: "custom",
+            name: "Custom TLE",
+            active: true,
+            sourceFormat: "TLE",
+            sourceOrigin: "CUSTOM",
+            importFileName: "operator-upload.tle",
+            importedAt: T1,
+            tleEpoch: T0,
+            validityEnd: T2
+        },
+        // `updatedAt` alone is deliberately not an import fact, and neither
+        // an arbitrary epoch nor a hidden inactive layer must leak through.
+        {
+            id: "sat:catalog",
+            name: "Catalog TLE",
+            active: true,
+            sourceFormat: "TLE",
+            updatedAt: T1
+        },
+        {
+            id: "sat:sp3",
+            name: "SP3",
+            active: true,
+            sourceFormat: "SP3",
+            tleEpoch: T0
+        },
+        {
+            id: "sat:inactive",
+            name: "Inactive",
+            active: false,
+            sourceFormat: "TLE",
+            importedAt: T0,
+            tleEpoch: T1
+        }
+    ]);
+
+    assert.deepEqual(events.map((event) => [event.id, event.kind, event.colorToken, event.metadata.layerId]), [
+        ["layer:sat:custom:tle-epoch", "tle-epoch", "blue", "sat:custom"],
+        ["layer:sat:custom:imported", "layer-imported", "cyan", "sat:custom"]
+    ]);
+    assert.match(events[0].metadata.description, /No expresa una fecha de caducidad/i);
+    assert.match(events[1].metadata.description, /operator-upload\.tle/);
+    assert.equal(events[1].metadata.importedAt, T1);
 });
 
 test("range filtering uses a half-open UTC interval and retains events spanning it", () => {

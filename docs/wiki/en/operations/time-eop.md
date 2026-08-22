@@ -8,7 +8,7 @@ runtime may refresh a generic operational cache in the background at startup;
 strict scientific routes still identify their local snapshots and every
 revision used.
 
-## Automatic IERS C01 cache
+## Automatic IERS sources: C01 and finals2000A
 
 When no reproducible `ORBIT_EOP_C04_PATH` snapshot is configured, the health
 monitor tries to load the official
@@ -19,11 +19,12 @@ product. Its mutable cache is:
 ./data/erp/EOP_C01_IAU2000_1846-now.txt
 ```
 
-The monitor validates the local copy first. If it is missing or its
-modification time is older than seven days, it downloads the file over HTTPS,
-validates it completely, and atomically replaces the cache. Startup and
-`/health` do not wait for that download: the viewer retains nominal rotation
-while the monitor works.
+The monitor validates the local copy first. If it is missing, its modification
+time is older than seven days, **or it no longer covers the instant being
+checked**, it downloads the file over HTTPS, validates it completely, and
+atomically replaces the cache. Thus a recent download that was published with
+old coverage is not presented as current EOP. Startup and `/health` do not wait
+for that download: the viewer retains nominal rotation while the monitor works.
 
 Validation requires a non-empty file, the C01 `COMB EARTH ROTATION DATA`
 header, `MJD`, `PM-X`, `PM-Y`, `UT1-TAI`, `dX`, `dY`, and `LOD` columns,
@@ -37,10 +38,10 @@ historical IERS series by design. That operational limit does not alter the
 stricter policy for an ERP attached to a product.
 
 - If IERS fails while a validated copy exists, Orbit keeps that copy and
-  publishes **Warning** with its age.
-- If there is no valid copy, it publishes **Warning** or **Error** and uses
-  only nominal ITRF rotation for visualization. It never invents ERP or
-  extrapolates coverage.
+  publishes **Warning** with its age and coverage boundary as separate facts.
+- If C01 does not cover a stage, Orbit may continue with the next automatic
+  product described below; it never presents that transition as if C01 remained
+  current.
 - The file is outside the Docker image and mounted through `./data`, so it
   survives a restart without becoming release content.
 
@@ -48,6 +49,67 @@ This cache is global operational orientation, not a product ERP replacement or
 implicit authorization for strict ECI. An explicit C04 has priority and is
 never automatically replaced. An ERP attached to an SP3 keeps its own source,
 coverage, and provenance.
+
+### Official rapid bridge and quality boundaries
+
+When C01 does not reach a requested epoch, Orbit also queries the official IERS
+Rapid Service / Prediction Centre product
+[`finals2000A.all`](https://datacenter.iers.org/products/eop/rapid/standard/finals2000A.all).
+It is downloaded only over HTTPS from the IERS Data Center, validated before
+activation, and retained as a separate operational cache. A propagation,
+transformation, or pass calculation never starts a download: only the
+startup/diagnostic monitor refreshes these caches.
+
+Its default path is `./data/erp/finals2000A.all`; a deployment can select
+another mounted path through `ORBIT_FINALS2000A_CACHE_PATH`. Like C01, these
+are mutable operational bytes outside a project and release image.
+
+`finals2000A.all` is a daily ASCII product with EOP since 1973 and the IAU
+2000A (`dX`/`dY`) representation. Its flags are part of the data: `I` denotes
+the available IERS/Bulletin A determination for that parameter and `P` a
+Bulletin A prediction. The file also contains Bulletin B columns. Orbit labels
+a complete Bulletin B tuple `final` (**LOD remains Bulletin A or optional**);
+otherwise, a Bulletin A tuple whose flags are all `I` is `rapid`, and one with
+any `P` is `predicted`. It therefore never
+calls the whole table “final” or turns a prediction into an observation. `LOD`
+is not invented when its field is blank.
+
+IERS normally publishes Bulletin A predictions for up to roughly one year, but
+Orbit uses only rows actually present and validated in the snapshot; it neither
+assumes a 365-day horizon nor turns that publication horizon into a precision
+guarantee.
+
+Automatic selection is evaluated **per epoch**, in this order, retaining the
+provenance of each interval:
+
+| Available interval | Source used | Label and guarantee |
+| --- | --- | --- |
+| The epoch is inside validated C01 coverage. | `EOP_C01_IAU2000`. | Combined C01 EOP; its end is a factual boundary of that particular cache copy. |
+| C01 does not cover the epoch and `finals2000A.all` has every usable required parameter. | `finals2000A.all`. | `final` quality (complete Bulletin B tuple; LOD Bulletin A/optional), `rapid` (Bulletin A `I`), or `predicted` (any `P`), explicitly shown. A prediction is neither an observation nor a product ERP. |
+| The epoch is after the last usable data from both automatic products, but no more than 30 days after the finals end. | Local linear extrapolation from the last two usable `finals2000A.all` samples. | **Extrapolated**: not IERS, not a valid ERP, and never enables a strict scientific route. |
+| More than 30 days after the usable finals end, or without two compatible samples. | No automatic EOP. | `UTC≈UT1 visual fallback` with `approximate` quality; a strict route rejects and no slope is fabricated. |
+
+There is no fixed calendar date for these transitions: they depend on the
+validated samples in the two caches. The linear tail is hard-limited to **30
+days** after the usable end of `finals2000A.all`. If that horizon is exceeded
+or two compatible samples are unavailable, Orbit does not manufacture a slope;
+the view degrades to nominal rotation and strict operations reject according to
+their contract.
+
+Linear extrapolation is a clearly labelled operational resource, not an
+official IERS prediction. It never replaces configured C04, an SP3-bound ERP,
+or a manual ERP; nor does it make an ECI/ITRF transformation valid when that
+route requires a reproducible snapshot. Results retain `source`, quality, and
+the interval of use, so an operator can exclude it or repeat the calculation
+with updated data.
+
+The **Diagnostics** ERP component exposes these transitions as
+`coverageTimeline`: C01/finals intervals and, when needed, a
+`linear-extrapolation` object with `start`, `end`, `startsAfter`, `quality`,
+and `maxHorizonDays: 30`; it then publishes `nominal-fallback` from that `end`
+with no finite end. `selection` repeats the operational instants
+`extrapolationStartsAt`, `extrapolationEndsAt`, and `nominalFallbackStartsAt`.
+They are facts from the validated cache, not manually configured dates.
 
 ## Temporal and frame chain
 
@@ -86,11 +148,12 @@ The manual-orbit design **TIME** tab contains two separate contracts:
 frame** only chooses how to inspect the ephemeris. They are not two clocks or
 two different dynamics.
 
-For manual Earth-bound forces, Orbit uses the same automatic IERS C01 provider
-for `geopotential` and `drag` by default. A manual ERP is not required to
-create or preview a manual orbit. The C01 cache does not change the **Design
-window** or physical epoch: it is the operational UT1–UTC, polar-motion, and
-LOD source for propagation stages.
+For manual Earth-bound forces, Orbit uses the automatic IERS C01 →
+`finals2000A.all` → labelled-linear-extrapolation chain for `geopotential` and
+`drag` by default. A manual ERP is not required to create or preview a manual
+orbit. These caches do not change the **Design window** or physical epoch: they
+provide UT1–UTC, polar motion, and LOD to propagation stages together with
+their published source and quality.
 
 Attaching a local ERP from TIME remains optional: it pins an explicit,
 reproducible snapshot for that design. The result retains the attached ERP's
@@ -115,14 +178,41 @@ would change the manual design without an explicit operator action.
 
 ### Earth-orientation provider
 
-`geopotential` and `drag` share the process-wide automatic IERS C01 cache. When
-it has a valid sample for every stage, Orbit applies its UT1–UTC, polar motion,
-and LOD. No manual ERP file is required.
+`geopotential` and `drag` share the process-wide automatic IERS chain. For each
+stage it uses C01 when a valid sample exists; otherwise it uses a compatible
+`finals2000A.all` row and makes its `final`, `rapid`, or `predicted` quality
+visible. After the actually usable end of `finals2000A.all`, only explicitly
+labelled local linear extrapolation may be used for a maximum of 30 days.
+Beyond that limit there is no automatic EOP and the visual route degrades to
+nominal rotation. No manual ERP file is required for this operational route.
 
-If C01 is unavailable or does not cover a requested stage, the manual orbit may
-be created with the warning **“No ERP data available. Geopotential and drag will
-use nominal Earth rotation.”** Its published provenance then labels the route
-as nominal; it is not presented as a precise EOP solution.
+If no compatible sample or two end points for extrapolation are available, the
+manual orbit may be created with the warning **“No ERP data available.
+Geopotential and drag will use nominal Earth rotation.”** Its published
+provenance then labels the route as nominal; it is not presented as a precise
+EOP solution.
+
+### Coverage preflight for long operations
+
+Before submitting an Earth-orientation-dependent operation, Orbit evaluates
+the **entire requested window** and its stages, not only the initial epoch. This
+includes, for example, numerical propagation with geopotential or drag and
+transformations that request EOP. The preflight publishes the subintervals that
+will use C01, `finals2000A` with `final`/`rapid`/`predicted` quality, linear
+extrapolation, or, where applicable, the `UTC≈UT1` visual fallback with
+`approximate` quality.
+
+Consequently, a window that starts inside C01 but ends outside its coverage is
+not silently classified as “valid”. Before it runs, the UI states the transition
+instant, the source used afterwards, and an elevated warning if it reaches a
+prediction or extrapolation. The operator can shorten the window, update IERS
+data, or continue knowing which interval is degraded. The warning neither
+starts a download nor changes the orbit by itself.
+
+An explicitly selected local ERP keeps its stricter contract: it must cover the
+complete window and all its stages. In that case Orbit does not silently mix in
+C01, `finals2000A`, or extrapolation to fill a gap; the operation is rejected
+with the exact coverage boundary.
 
 An optional local ERP must cover the full design window and physical epoch when
 it is selected as the reproducible override:

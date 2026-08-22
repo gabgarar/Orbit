@@ -56,6 +56,23 @@ parámetros orbitales con la razón de readiness HTTP 503 publicada. La primera
 descarga puede tardar más; un arranque posterior con caché válida normalmente
 solo valida ficheros locales y termina antes.
 
+## Aviso de la comprobación inicial de BIT al abrir Orbit
+
+Cuando el ledger terminal de la **comprobación inicial de BIT** (también llamada
+PBIT o IBIT inicial) publica uno o más avisos pero no un error bloqueante,
+Orbit muestra una tarjeta compacta y no modal al abrir la aplicación. Resume
+hasta tres motivos accionables y ofrece
+**Revisar BIT** para abrir el diagnóstico completo. No cambia `ready`,
+`projectReady` ni la decisión de creación de proyecto: un aviso degradable
+puede seguir permitiendo trabajar bajo el contrato indicado por el servicio.
+
+La tarjeta se puede cerrar con **Entendido** o su botón de cierre. Una vez
+reconocida no reaparece en cada actualización del BIT durante esa sesión de la
+aplicación; al recargar Orbit puede presentarse de nuevo el resultado de
+arranque vigente. Los fallos y bloqueos de readiness no se disfrazan como esta
+tarjeta: permanecen en la superficie de arranque y en el BIT como condición que
+requiere corrección.
+
 !!! warning "No es una certificación de misión"
 
     El panel usa sondas pequeñas y acotadas. Un estado Healthy indica que la

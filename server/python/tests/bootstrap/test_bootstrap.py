@@ -62,6 +62,26 @@ def test_application_installs_a_nonblocking_automatic_c01_provider_only_without_
     assert app.state.system_diagnostics.payload()["components"]["erp"]["automatic"] is True
 
 
+def test_application_wires_a_separate_nonblocking_finals2000a_cache(tmp_path, monkeypatch):
+    c01_cache = tmp_path / "data" / "erp" / "EOP_C01_IAU2000_1846-now.txt"
+    finals_cache = tmp_path / "data" / "erp" / "finals2000A.all"
+    monkeypatch.setenv("ORBIT_EOP_C04_PATH", "")
+    monkeypatch.setenv("ORBIT_EOP_STRICT", "")
+    monkeypatch.setenv("ORBIT_EOP_C01_CACHE_PATH", str(c01_cache))
+    monkeypatch.setenv("ORBIT_FINALS2000A_CACHE_PATH", str(finals_cache))
+
+    app = create_app()
+
+    automatic = app.state.automatic_eop_cache
+    assert automatic is not None
+    assert automatic.cache_path == c01_cache
+    assert automatic.finals_cache_path == finals_cache
+    erp = app.state.system_diagnostics.payload()["components"]["erp"]
+    assert erp["selection"]["policy"] == "c01-then-finals2000A-then-bounded-linear-tail-then-nominal"
+    assert not c01_cache.exists()
+    assert not finals_cache.exists()
+
+
 def test_application_registers_nga_gravity_cache_without_downloading_during_boot(tmp_path, monkeypatch):
     cache_root = tmp_path / "data" / "geopotential"
     monkeypatch.setenv("ORBIT_GRAVITY_CACHE_DIR", str(cache_root))

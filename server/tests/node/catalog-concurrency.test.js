@@ -77,6 +77,43 @@ test("a refresh merges remote entries with an import completed while it was down
     });
 });
 
+test("a local TLE import keeps its factual file provenance through a catalog repository reload", async () => {
+    await withTemporaryCatalog(async (catalogPath) => {
+        const serialize = { text: serializeTleCatalog, json: serializeTleCatalogJson };
+        const importedAt = "2026-08-21T12:00:00.000Z";
+        const importer = createCatalogImportService({
+            catalog: createCatalogRepository({ getCatalogPath: async () => catalogPath }),
+            serialize,
+            reloadPython: async () => true,
+            now: () => new Date(importedAt)
+        });
+        const line1 = lineForNorad(templateLine1, 42);
+        const line2 = lineForNorad(templateLine2, 42);
+
+        const result = await importer.importContent({
+            fileName: "operator-upload.tle",
+            content: `OPERATOR TLE\n${line1}\n${line2}`,
+            includeEntries: true
+        });
+        const reloaded = createCatalogRepository({ getCatalogPath: async () => catalogPath });
+        const entries = (await reloaded.get()).entries;
+
+        assert.equal(result.ok, true);
+        assert.equal(result.importedEntries[0].importedAt, importedAt);
+        assert.deepEqual(entries.map((entry) => ({
+            name: entry.name,
+            sourceOrigin: entry.sourceOrigin,
+            importFileName: entry.importFileName,
+            importedAt: entry.importedAt
+        })), [{
+            name: "OPERATOR TLE",
+            sourceOrigin: "CUSTOM",
+            importFileName: "operator-upload.tle",
+            importedAt
+        }]);
+    });
+});
+
 test("a replacement import wins over a refresh that started downloading earlier", async () => {
     await withTemporaryCatalog(async (catalogPath) => {
         const catalog = createCatalogRepository({ getCatalogPath: async () => catalogPath });

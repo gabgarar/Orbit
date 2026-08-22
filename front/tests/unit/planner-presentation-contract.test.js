@@ -5,16 +5,15 @@ import test from "node:test";
 const panel = readFileSync(new URL("../../../react-ui/src/features/planner/PlannerPanel.jsx", import.meta.url), "utf8");
 const panelCss = readFileSync(new URL("../../../react-ui/src/features/planner/PlannerPanel.css", import.meta.url), "utf8");
 
-test("planner keeps a ready forecast compact and exposes details only when state has detail", () => {
-    assert.match(panel, /const loading = plannerState\.status === "loading";/);
-    assert.match(panel, /const detailIsForced = loading \|\| modeMessages\.length > 0 \|\| plannerState\.status === "error";/);
-    assert.match(panel, /const hasDetail = Boolean\(detail\);/);
-    assert.match(panel, /const showDetail = hasDetail && \(detailIsForced \|\| expanded\);/);
-    assert.match(panel, /orbit-planner-forecast\$\{showDetail \? " is-expanded" : " is-compact"\}/);
-    assert.match(panel, /\{hasDetail \? <button type="button" className="orbit-planner-forecast-toggle" aria-expanded=\{showDetail\} aria-controls="orbitPlannerForecastDetails"/);
-    assert.match(panel, /\{showDetail \? <p id="orbitPlannerForecastDetails" className="orbit-planner-forecast-detail">/);
-    assert.match(panel, /\{progress !== null && plannerState\.status === "loading" \?/);
-    assert.match(panelCss, /\.orbit-planner-forecast-detail \{[\s\S]*grid-column: 1 \/ -1;/);
+test("planner keeps operational state compact and removes the redundant range/status strip", () => {
+    assert.doesNotMatch(panel, /PlannerForecastSummary/);
+    assert.doesNotMatch(panel, /orbit-planner-forecast/);
+    assert.doesNotMatch(panel, /PlannerEarthOrientationNotice/);
+    assert.doesNotMatch(panel, /orbit-planner-eop-notice/);
+    assert.match(panel, /className=\{`orbit-planner-status is-\$\{presentationStatus\}`\} aria-live="polite" title=/);
+    assert.match(panel, /\{visibleErrors\.length \? <div className="orbit-planner-state-error" role="alert">/);
+    assert.doesNotMatch(panelCss, /\.orbit-planner-forecast/);
+    assert.doesNotMatch(panelCss, /\.orbit-planner-eop-notice/);
 });
 
 test("planner acknowledgements expire and overlay the window instead of taking calendar height", () => {
@@ -30,4 +29,43 @@ test("planner supports a narrow floating window without relying only on viewport
     assert.match(panel, /style=\{panelStyle\}/);
     assert.match(panelCss, /\.orbit-planner-panel \{[\s\S]*position: absolute;[\s\S]*container-type: inline-size;/);
     assert.match(panelCss, /@container orbit-planner-panel \(max-width: 960px\)/);
+});
+
+test("EOP source intervals use continuous week/viewport bands rather than repeated daily event chips", () => {
+    assert.match(panel, /const eopRangeEvents = events\.filter\(isPlannerEopRangeEvent\);/);
+    assert.match(panel, /const ordinaryEvents = events\.filter\(\(event\) => !isPlannerEopRangeEvent\(event\)\);/);
+    assert.match(panel, /buildPlannerCoverageSegments\(eopRangeEvents, \{/);
+    assert.match(panel, /<EopCoverageBand event=\{segment\.event\}/);
+    assert.match(panel, /data-planner-eop-range="true"/);
+    assert.match(panelCss, /\.orbit-planner-month-eop-ranges \{[\s\S]*position: absolute;[\s\S]*pointer-events: none;/);
+    assert.match(panelCss, /\.orbit-planner-time-eop-ranges \{[\s\S]*position: sticky;/);
+    assert.match(panelCss, /\.orbit-planner-time-eop-ranges > \.orbit-planner-eop-range \{/);
+    assert.doesNotMatch(panel, /orbit-planner-time-eop-day/);
+    assert.match(panel, /"--orbit-planner-eop-start-inset": `\$\{startInset\}%`/);
+    assert.match(panel, /"--orbit-planner-eop-end-inset": `\$\{endInset\}%`/);
+    assert.doesNotMatch(panel, /clipPath:/);
+    assert.match(panelCss, /\.orbit-planner-eop-range-line \{[\s\S]*position: absolute;[\s\S]*right: var\(--orbit-planner-eop-end-inset\);[\s\S]*left: var\(--orbit-planner-eop-start-inset\);/);
+    assert.match(panelCss, /\.orbit-planner-eop-range-label \{[\s\S]*right: var\(--orbit-planner-eop-end-inset\);[\s\S]*left: var\(--orbit-planner-eop-start-inset\);/);
+});
+
+test("EOP coverage bands share the compact event box and typography in every planner view", () => {
+    assert.match(panelCss, /\.orbit-planner-panel \{[\s\S]*--orbit-planner-compact-event-height: 19px;[\s\S]*--orbit-planner-compact-event-padding: 2px 4px;/);
+    assert.match(panelCss, /\.orbit-planner-eop-range \{[\s\S]*height: var\(--orbit-planner-compact-event-height\);[\s\S]*min-height: var\(--orbit-planner-compact-event-height\);[\s\S]*box-sizing: border-box;[\s\S]*padding: var\(--orbit-planner-compact-event-padding\);/);
+    assert.match(panelCss, /\.orbit-planner-event\.is-compact \{[\s\S]*height: var\(--orbit-planner-compact-event-height\);[\s\S]*min-height: var\(--orbit-planner-compact-event-height\);[\s\S]*box-sizing: border-box;[\s\S]*padding: var\(--orbit-planner-compact-event-padding\);/);
+    assert.match(panelCss, /\.orbit-planner-eop-range-label \{[\s\S]*font-size: var\(--orbit-planner-compact-event-font-size\);[\s\S]*font-weight: var\(--orbit-planner-compact-event-font-weight\);[\s\S]*line-height: var\(--orbit-planner-compact-event-line-height\);/);
+    assert.doesNotMatch(panelCss, /\.orbit-planner-time-eop-ranges > \.orbit-planner-eop-range\.has-label \{[\s\S]*min-height:/);
+});
+
+test("EOP coverage rails use the published quality colour tokens and keep their meaning without colour alone", () => {
+    assert.match(panel, /const EOP_VISUAL_STATE_COLOR_TOKENS = Object\.freeze\(\{[\s\S]*normal: PLANNER_COLOR_TOKENS\.EMERALD,[\s\S]*ok: PLANNER_COLOR_TOKENS\.AMBER,[\s\S]*predicted: PLANNER_COLOR_TOKENS\.ROSE,[\s\S]*degraded: PLANNER_COLOR_TOKENS\.ROSE/);
+    assert.match(panel, /function eopCoverageColorToken\(event\) \{[\s\S]*metadata\.eopColorToken[\s\S]*event\?\.colorToken[\s\S]*metadata\.eopVisualState/);
+    assert.match(panel, /data-eop-tone=\{eopCoverageColorToken\(event\)\}/);
+    assert.match(panel, /data-eop-state=\{String\(plannerRecord\(event\?\.metadata\)\.eopVisualState/);
+    assert.match(panel, /function eopCoverageStateLabel\(event\)/);
+    assert.match(panel, /IERS ERP Time/);
+    for (const token of ["emerald", "amber", "rose"]) {
+        assert.match(panelCss, new RegExp(`\\.orbit-planner-eop-range\\[data-eop-tone="${token}"\\]`));
+    }
+    assert.match(panelCss, /\.orbit-planner-eop-range \{[\s\S]*background: transparent;[\s\S]*\.orbit-planner-eop-range-line \{[\s\S]*background: linear-gradient\(102deg/);
+    assert.match(panelCss, /@media \(forced-colors: active\) \{[\s\S]*\.orbit-planner-eop-range \{/);
 });

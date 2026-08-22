@@ -4,6 +4,8 @@ import test from "node:test";
 import { normalizeSystemDiagnosticsPayload } from "../../js/features/diagnostics/diagnosticsContract.js";
 import {
     continuousBitStatus,
+    initialBitWarningMessages,
+    initialBitWarningNotice,
     initialBitSummary,
     visibleBitComponents
 } from "../../js/features/diagnostics/bitPresentation.js";
@@ -116,4 +118,58 @@ test("IBIT is only marked passed after an explicit terminal ready ledger", () =>
     assert.equal(failed.status, "error");
     assert.equal(failed.result, "Falló");
     assert.equal(failed.passed, false);
+});
+
+test("completed initial-BIT warnings produce one actionable non-blocking notice", () => {
+    const diagnostics = diagnosticsFixture({
+        startup: {
+            status: "warning",
+            ready: true,
+            details: {
+                completedAt: "2026-08-16T10:01:00Z",
+                warnings: ["ERP IERS no cubre toda la operación"],
+                readiness: {
+                    state: "degraded-ready",
+                    blockers: [],
+                    degradations: [{ id: "erp", status: "warning", message: "ERP IERS no cubre toda la operación" }]
+                },
+                steps: [
+                    { id: "erp", status: "warning", message: "ERP IERS no cubre toda la operación" },
+                    { id: "complete", status: "warning", message: "Inicio terminado con aviso ERP" }
+                ]
+            }
+        }
+    });
+
+    const summary = initialBitSummary(diagnostics);
+    const notice = initialBitWarningNotice(diagnostics);
+
+    assert.equal(summary.status, "warning");
+    assert.equal(summary.passed, false);
+    assert.deepEqual(initialBitWarningMessages(summary.startup), [
+        "ERP IERS no cubre toda la operación",
+        "Inicio terminado con aviso ERP"
+    ]);
+    assert.equal(notice?.projectReady, true, "the notice must not turn a degradable warning into a startup block");
+    assert.equal(notice?.warnings.length, 2);
+    assert.match(notice?.key || "", /^initial-bit-warning:2026-08-16T10:01:00Z:/);
+});
+
+test("initial-BIT notice stays silent for a clean result and does not compete with fatal readiness", () => {
+    assert.equal(initialBitWarningNotice(diagnosticsFixture()), null);
+
+    const failed = diagnosticsFixture({
+        startup: {
+            status: "error",
+            ready: false,
+            details: {
+                completedAt: "2026-08-16T10:01:00Z",
+                warnings: ["No debe mostrarse como aviso independiente"],
+                errors: ["EGM2008 corrupto"],
+                readiness: { state: "blocked", blockers: [{ id: "gravity", message: "EGM2008 corrupto" }] },
+                steps: [{ id: "complete", status: "error", message: "EGM2008 corrupto" }]
+            }
+        }
+    });
+    assert.equal(initialBitWarningNotice(failed), null);
 });

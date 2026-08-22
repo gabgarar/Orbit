@@ -46,6 +46,42 @@ function localStatusFor(id, local) {
     return "";
 }
 
+function nonEmptyText(value) {
+    return value === undefined || value === null ? "" : String(value).trim();
+}
+
+function uniqueMessages(values) {
+    const seen = new Set();
+    return values.reduce((messages, value) => {
+        const message = nonEmptyText(value);
+        const key = message.toLocaleLowerCase();
+        if (!message || seen.has(key)) return messages;
+        seen.add(key);
+        messages.push(message);
+        return messages;
+    }, []);
+}
+
+/**
+ * Extract actionable facts from a completed initial BIT without treating a
+ * continuous-BIT warning as if it had happened during startup. The backend
+ * may publish the same text in the ledger, a warning step, and readiness
+ * degradations, so the presentation deliberately de-duplicates it.
+ */
+export function initialBitWarningMessages(startup) {
+    if (!startup || typeof startup !== "object") return [];
+    const ledgerWarnings = Array.isArray(startup.warnings) ? startup.warnings : [];
+    const degradationWarnings = Array.isArray(startup.readiness?.degradations)
+        ? startup.readiness.degradations.map((item) => item?.message)
+        : [];
+    const stepWarnings = Array.isArray(startup.steps)
+        ? startup.steps
+            .filter((step) => step?.status === "warning")
+            .map((step) => step?.message)
+        : [];
+    return uniqueMessages([...ledgerWarnings, ...degradationWarnings, ...stepWarnings]);
+}
+
 /** True only when the optional scene fact actually exists. */
 export function isBitComponentRelevant(id, { local = null } = {}) {
     if (ALWAYS_VISIBLE_COMPONENT_IDS.has(id)) return true;
@@ -122,10 +158,13 @@ export function initialBitSummary(diagnostics) {
     const terminal = Boolean(startup.completedAt)
         || Boolean(terminalStep && terminalStep.status !== "pending");
     const hasErrors = startup.errors.length > 0 || readiness.blockers.length > 0 || startup.status === "error";
+    const warnings = initialBitWarningMessages(startup);
+    const hasWarnings = warnings.length > 0 || startup.status === "warning";
     const passed = terminal
         && startup.status === "healthy"
         && readiness.ready === true
-        && !hasErrors;
+        && !hasErrors
+        && !hasWarnings;
 
     if (hasErrors) {
         return {
@@ -151,7 +190,7 @@ export function initialBitSummary(diagnostics) {
         return {
             status: "warning",
             result: "Completado con avisos",
-            message: readiness.message || startup.warnings[0] || startup.message || "El IBIT inicial terminó con una degradación publicada.",
+            message: warnings[0] || readiness.message || startup.message || "El IBIT inicial terminó con una degradación publicada.",
             startup,
             terminal: true,
             passed: false
@@ -165,4 +204,41 @@ export function initialBitSummary(diagnostics) {
         terminal: true,
         passed: true
     };
+}
+
+/**
+ * Build the one non-blocking warning notice shown after a completed PBIT /
+ * IBIT. Startup errors remain on the readiness and BIT surfaces; they do not
+ * produce a competing warning toast. A clean initial result returns null,
+ * even if a later continuous-BIT card becomes warning.
+ */
+export function initialBitWarningNotice(diagnostics) {
+    const summary = initialBitSummary(diagnostics);
+    const startup = summary.startup;
+    if (!startup || !summary.terminal) return null;
+
+    const readiness = getStartupProjectReadiness(startup);
+    const hasErrors = startup.errors.length > 0
+        || readiness.blockers.length > 0
+        || startup.status === "error";
+    if (hasErrors) return null;
+
+    const warnings = initialBitWarningMessages(startup);
+    const warningPublished = warnings.length > 0 || summary.status === "warning" || startup.status === "warning";
+    if (!warningPublished) return null;
+
+    const actionableWarnings = warnings.length
+        ? warnings
+        : uniqueMessages([summary.message || "El IBIT inicial terminó con una condición que requiere revisión."]);
+    const occurrence = startup.completedAt || startup.updatedAt || "terminal";
+    return Object.freeze({
+        key: `initial-bit-warning:${occurrence}:${actionableWarnings.join("|")}`,
+        title: "Avisos de la comprobación inicial de BIT",
+        message: readiness.ready
+            ? "Orbit está disponible, pero revisa estas condiciones antes de una operación sensible."
+            : "El inicio terminó con avisos; consulta el BIT para conocer su efecto operativo.",
+        warnings: Object.freeze(actionableWarnings),
+        projectReady: readiness.ready === true,
+        completedAt: startup.completedAt || ""
+    });
 }

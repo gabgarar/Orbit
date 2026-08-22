@@ -1079,6 +1079,7 @@ export function setupObjectSidebar({
     getObjectTleAsync,
     getCatalogEntryMeta,
     onRefreshCatalog,
+    onHydrateCatalogEntries = () => 0,
     onRegisterPreciseProductEntries = () => [],
     onApprovePreciseProductTimeDomain = async () => ({ accepted: true }),
     onAlignToPreciseProductTimeDomain = () => false,
@@ -4750,7 +4751,15 @@ export function setupObjectSidebar({
             const response = await fetch("/api/catalog/import", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ fileName: file.name, content, merge: true }),
+                body: JSON.stringify({
+                    fileName: file.name,
+                    content,
+                    merge: true,
+                    // A paginated reload can omit a newly imported name from
+                    // its first page. Ask for the just-validated entries only
+                    // when they will immediately become scene layers.
+                    ...(autoAddToView ? { includeEntries: true } : {})
+                }),
                 signal: abortController.signal
             });
             const payload = await response.json().catch(() => ({}));
@@ -4771,6 +4780,11 @@ export function setupObjectSidebar({
                 progress: 68
             });
             await onRefreshCatalog?.();
+            // Hydrate the local TLE/meta cache before adding the imported
+            // layers. Otherwise a freshly added name outside the first
+            // catalogue page would have no Planner provenance until a later
+            // object-detail request happens to fetch it.
+            onHydrateCatalogEntries(Array.isArray(payload?.importedEntries) ? payload.importedEntries : []);
             if (abortController.signal.aborted) {
                 cancelSceneOperation(operationId, "Importación de fichero cancelada.");
                 operationTerminal = true;
