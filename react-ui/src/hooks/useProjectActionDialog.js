@@ -4,6 +4,7 @@ import {
     publishStartupProjectActionBlocked,
     STARTUP_STATUS_EVENT
 } from "../../../front/js/features/diagnostics/startupStatus.js";
+import { isAuthenticatedIdentityState } from "../../../front/js/features/identity/index.js";
 
 export default function useProjectActionDialog() {
     const [mode, setMode] = useState(null);
@@ -13,6 +14,10 @@ export default function useProjectActionDialog() {
         const open = (event) => {
             const nextMode = String(event.detail || "");
             if (nextMode !== "new" && nextMode !== "open") return;
+            if (window.__orbitIdentityAccessRequired === true
+                && !isAuthenticatedIdentityState(window.__orbitIdentitySession?.identityState)) {
+                return;
+            }
             if (!getStartupProjectReadiness(window.__orbitStartupStatus).ready) {
                 publishStartupProjectActionBlocked(nextMode);
                 return;

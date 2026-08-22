@@ -223,9 +223,33 @@ recomputed when a project opens and are **not** serialised as authoritative
 data. The current temporal view is not stored as an antenna reservation, and
 the planner filter does not replace scene visibility state.
 
+### Local ICS interchange
+
+The **Import ICS** and **Export ICS** controls exchange only the project's
+`manual` events. An AOS/LOS pass, peak elevation, ERP coverage, or imported
+file notice remains a scene-derived fact: Orbit never exports it as if an
+external calendar could edit it, and it never creates one from an ICS file.
+
+Export writes a UTC RFC5545 calendar with `SUMMARY`, `DTSTART`, `DTEND`, the
+Orbit colour, and the operator note when present. Import accepts only explicit
+UTC `DTSTART`/`DTEND` intervals ending in `Z`; it neither guesses the browser
+timezone nor accepts `TZID`. The file is processed locally, bounded to 1 MiB,
+500 events, and bounded lines, with text unfolded/escaped before validation.
+Invalid entries and `STATUS:CANCELLED` entries are discarded and never delete a
+local event. Once a calendar is correctly closed, valid entries are submitted
+through the same normalized manual-event mutation used by the editor.
+
+ICS is a local import/export path, not remote synchronization. Even when a
+project retains a Google or Microsoft linkage preference, the current adapter
+announces local capabilities only and explicitly rejects `pull`/`push`: it does
+not contact external services, use tokens, or claim that a calendar was
+synchronized. A future transport needs its own authorization, conflict
+contract, and traceability.
+
 ## Current limits
 
-The planner is not yet an operational calendar: it does not export ICS,
-synchronise with external calendars, detect antenna conflicts, or create
-reservations. Those capabilities need their own availability and authorisation
-contract; current events only provide a traceable foundation for them.
+The planner is not yet an operational calendar: it does not synchronize with
+external calendars, detect antenna conflicts, or create reservations. Local
+ICS import/export does not change those limits. Those capabilities need their
+own availability and authorization contract; current events only provide a
+traceable foundation for them.

@@ -1,4 +1,10 @@
 import { expect, test } from "@playwright/test";
+import {
+    createLocalIdentityThroughUi,
+    createProjectThroughHub,
+    openWorkspaceThroughLocalIdentity,
+    waitForAuthenticatedProjectHub
+} from "./helpers/identity-workspace.js";
 
 const viewports = [
     { name: "desktop", width: 1920, height: 1080 },
@@ -63,24 +69,13 @@ async function openCatalog(page, viewport, zoom = 1) {
 }
 
 /**
- * Each Playwright test receives a clean browser context, so Orbit correctly
- * starts on its welcome screen. Enter the workspace through the user flow
- * before interacting with controls behind that modal.
+ * Each Playwright test receives a clean browser context. Enter the workspace
+ * through the mandatory identity gate and the authenticated project library
+ * before interacting with controls behind the project surface.
  */
 async function openWorkspace(page) {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-
-    const welcome = page.locator("#projectWelcome");
-    await expect(welcome).toBeVisible({ timeout: 15_000 });
-    await waitForOrbitRuntimeReady(page);
-    await welcome.getByRole("button", { name: "New project", exact: true }).click();
-
-    const actionModal = page.locator("#projectActionModal");
-    await expect(actionModal).toBeVisible();
-    await actionModal.getByLabel("Nombre del proyecto").fill(`Responsive workspace ${++workspaceSequence}`);
-    await actionModal.getByRole("button", { name: "Crear proyecto", exact: true }).click();
-    await expect(welcome).toBeHidden();
-    await expect(actionModal).toBeHidden();
+    await openWorkspaceThroughLocalIdentity(page, `Responsive workspace ${++workspaceSequence}`);
 }
 
 async function waitForOrbitRuntimeReady(page) {
@@ -1944,26 +1939,21 @@ test("La bienvenida crea un proyecto y entrega el control al visor", async ({ pa
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    const welcome = page.locator("#projectWelcome");
-    await expect(welcome).toBeVisible({ timeout: 15_000 });
+    await createLocalIdentityThroughUi(page);
     await waitForOrbitRuntimeReady(page);
-    await welcome.getByRole("button", { name: "New project", exact: true }).click();
+    await createProjectThroughHub(page, projectName);
 
-    const actionModal = page.locator("#projectActionModal");
-    await expect(actionModal).toBeVisible();
-    await actionModal.getByLabel("Nombre del proyecto").fill(projectName);
-    await actionModal.getByRole("button", { name: "Crear proyecto", exact: true }).click();
-
-    await expect(welcome).toBeHidden();
-    await expect(actionModal).toBeHidden();
+    await expect(page.locator("#projectWelcome")).toBeHidden();
+    await expect(page.locator("#projectActionModal")).toHaveCount(0);
     await expect(page.locator("[data-project-title]").first()).toHaveText(new RegExp(`^${projectName}$`, "i"));
 });
 
 test("La bienvenida queda centrada y Generate orbit abre el diseñador con sus vectores", async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(page.locator("#projectWelcome")).toBeVisible({ timeout: 15_000 });
+    await createLocalIdentityThroughUi(page);
     await waitForOrbitRuntimeReady(page);
+    await waitForAuthenticatedProjectHub(page);
 
     const welcomeCenter = await page.locator("#projectWelcome > div").last().evaluate((dialog) => {
         const rect = dialog.getBoundingClientRect();
@@ -1972,7 +1962,7 @@ test("La bienvenida queda centrada y Generate orbit abre el diseñador con sus v
     expect(Math.abs(welcomeCenter.x - (welcomeCenter.width / 2)), "Welcome dialog must be horizontally centred").toBeLessThanOrEqual(2);
     expect(Math.abs(welcomeCenter.y - (welcomeCenter.height / 2)), "Welcome dialog must be vertically centred").toBeLessThanOrEqual(2);
 
-    await openWorkspace(page);
+    await createProjectThroughHub(page, `Responsive workspace ${++workspaceSequence}`);
     await ensureLayersPanelOpen(page);
     const layerWorkspaceBaseline = await page.locator("#leftSatellitesPanel").evaluate((panel) => {
         const rect = panel.getBoundingClientRect();
@@ -2095,6 +2085,7 @@ test("El visor no carga Cesium ni pako desde proveedores externos", async ({ pag
     });
 
     await page.goto("/", { waitUntil: "domcontentloaded" });
+    await createLocalIdentityThroughUi(page);
     await waitForOrbitRuntimeReady(page);
 
     expect(blockedExternalResources, `Orbit must not request external startup resources: ${JSON.stringify(blockedExternalResources)}`).toEqual([]);
@@ -2123,6 +2114,7 @@ test("La telemetria WebSocket usa /ws del mismo origen y entrega el catalogo", a
     page.on("websocket", (socket) => websocketUrls.push(socket.url()));
 
     await page.goto("/", { waitUntil: "domcontentloaded" });
+    await createLocalIdentityThroughUi(page);
     await waitForOrbitRuntimeReady(page);
 
     const expectedUrl = await page.evaluate(() => {
@@ -2174,7 +2166,7 @@ test("La telemetria WebSocket usa /ws del mismo origen y entrega el catalogo", a
     expect(connectionState.state).toBe("catalog");
 });
 
-test("La bienvenida conserva comandos enviados antes de que el arbol de capas este listo", async ({ page }) => {
+test("La biblioteca autenticada espera a que el arbol de capas este listo antes de crear un proyecto", async ({ page }) => {
     let catalogRequestSeen = false;
     let releaseCatalog = () => {};
 
@@ -2190,6 +2182,7 @@ test("La bienvenida conserva comandos enviados antes de que el arbol de capas es
         await page.setViewportSize({ width: 1366, height: 768 });
         await page.goto("/", { waitUntil: "domcontentloaded" });
 
+        await createLocalIdentityThroughUi(page);
         const welcome = page.locator("#projectWelcome");
         await expect(welcome).toBeVisible({ timeout: 15_000 });
         await expect.poll(
@@ -2201,14 +2194,14 @@ test("La bienvenida conserva comandos enviados antes de que el arbol de capas es
             { timeout: 5_000 }
         ).toBe("loading");
 
-        await welcome.getByRole("button", { name: "New project", exact: true }).click();
-        const actionModal = page.locator("#projectActionModal");
-        await actionModal.getByLabel("Nombre del proyecto").fill("Queued workspace");
-        await actionModal.getByRole("button", { name: "Crear proyecto", exact: true }).click();
+        // The authenticated hub intentionally does not queue a project
+        // creation against a partially initialised scene. It becomes usable
+        // only after this same renderer/catalogue readiness transition.
         await expect(welcome).toBeVisible();
 
         releaseCatalog();
         await waitForOrbitRuntimeReady(page);
+        await createProjectThroughHub(page, "Queued workspace");
         await expect(welcome).toBeHidden({ timeout: 20_000 });
         await expect(page.locator("[data-project-title]").first()).toHaveText("QUEUED WORKSPACE");
     } finally {
@@ -2221,11 +2214,18 @@ test("La bienvenida explica y bloquea acciones cuando el runtime no puede cargar
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
+    await createLocalIdentityThroughUi(page);
     const welcome = page.locator("#projectWelcome");
     await expect(welcome).toBeVisible({ timeout: 15_000 });
-    await expect(welcome.getByRole("alert")).toContainText("El visor no se pudo iniciar.");
-    await expect(welcome.getByRole("button", { name: "New project", exact: true })).toBeDisabled();
-    await expect(welcome.getByRole("button", { name: "Open project", exact: true })).toBeDisabled();
-    await expect(page.locator("#projectActionModal")).toBeHidden();
+    await expect.poll(
+        () => page.evaluate(() => window.__orbitRuntimeStatus?.state || "loading"),
+        { timeout: 30_000, message: "A failed renderer must be reported after local authentication" }
+    ).toBe("failed");
+    const hub = welcome.getByTestId("authenticated-project-hub");
+    await expect(hub).toBeVisible({ timeout: 30_000 });
+    await expect(hub.getByText("El visor no se pudo iniciar.", { exact: false })).toBeVisible();
+    await expect(hub.getByRole("button", { name: "Crear proyecto", exact: true })).toBeDisabled();
+    await expect(hub.getByRole("button", { name: "Generar desde cero", exact: true })).toBeDisabled();
+    await expect(page.locator("#projectActionModal")).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__orbitPendingProjectCommands || [])).toEqual([]);
 });

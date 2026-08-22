@@ -223,6 +223,7 @@
 
 .orbit-planner-navigation button,
 .orbit-planner-view-buttons button,
+.orbit-planner-ics-button,
 .orbit-planner-new-event,
 .orbit-planner-detail-action,
 .orbit-planner-detail-remove,
@@ -234,7 +235,8 @@
 }
 
 .orbit-planner-navigation button,
-.orbit-planner-view-buttons button {
+.orbit-planner-view-buttons button,
+.orbit-planner-ics-button {
     min-height: 28px;
     border: 1px solid #365474;
     border-radius: 6px;
@@ -295,6 +297,40 @@
 .orbit-planner-view-buttons button {
     border-color: transparent;
     background: transparent;
+}
+
+.orbit-planner-ics-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 3px;
+}
+
+.orbit-planner-ics-actions > input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.orbit-planner-ics-button {
+    flex: 0 0 auto;
+    padding: 0 8px;
+    font-size: 10px;
+}
+
+.orbit-planner-ics-button:hover:not(:disabled) {
+    border-color: #638fea;
+    background: #1a3760;
+    color: #f2f7ff;
+}
+
+.orbit-planner-ics-button:disabled {
+    cursor: not-allowed;
+    opacity: .48;
 }
 
 .orbit-planner-new-event {
@@ -1510,8 +1546,12 @@
         order: 2;
     }
 
-    .orbit-planner-new-event {
+    .orbit-planner-ics-actions {
         order: 3;
+    }
+
+    .orbit-planner-new-event {
+        order: 4;
         width: 100%;
     }
 

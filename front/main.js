@@ -2928,6 +2928,34 @@ window.addEventListener(DIAGNOSTICS_STATE_EVENT, syncPlannerRemoteDiagnostics);
 window.addEventListener(DIAGNOSTICS_LOCAL_STATE_EVENT, syncPlannerLocalDiagnostics);
 window.addEventListener("orbit:manual-orbit-state", () => publishPlannerState());
 window.addEventListener("orbit:object-state-changed", () => publishPlannerState());
+
+// The authenticated React shell owns persistence, while this runtime remains
+// the single authoritative place that can serialise the live Cesium scene.
+// These two deliberately narrow events bridge that boundary without sending
+// a document to the backend or changing the portable .orbit format.
+function publishAuthenticatedProjectDocumentSnapshot(reason = "update") {
+    if (window.__orbitIdentityAccessRequired === true && !window.__orbitIdentitySession) return;
+    if (!projectLifecycle.hasOpenProject()) return;
+    try {
+        window.dispatchEvent(new CustomEvent("orbit:project-document-snapshot", {
+            detail: { reason: String(reason || "update"), document: projectLifecycle.buildDocument() }
+        }));
+    } catch {
+        // An unavailable local vault must never interfere with scene work or
+        // an explicit portable project export.
+    }
+}
+
+function markAuthenticatedProjectDocumentDirty() {
+    if (!projectLifecycle.hasOpenProject()) return;
+    window.dispatchEvent(new Event("orbit:project-document-dirty"));
+}
+
+window.addEventListener("orbit:project-document-snapshot-request", (event) => {
+    publishAuthenticatedProjectDocumentSnapshot(event?.detail?.reason || "checkpoint");
+});
+window.addEventListener("orbit:manual-orbit-state", markAuthenticatedProjectDocumentDirty);
+window.addEventListener("orbit:object-state-changed", markAuthenticatedProjectDocumentDirty);
 window.addEventListener("orbit:project-opened", () => {
     publishPlannerState();
     if (plannerPassForecastOpen) {
@@ -2936,6 +2964,20 @@ window.addEventListener("orbit:project-opened", () => {
 });
 window.addEventListener(PLANNER_MANUAL_EVENT_UPSERT_EVENT, upsertPlannerManualEvent);
 window.addEventListener(PLANNER_MANUAL_EVENT_REMOVE_EVENT, removePlannerManualEvent);
+window.addEventListener(PLANNER_MANUAL_EVENT_UPSERT_EVENT, markAuthenticatedProjectDocumentDirty);
+window.addEventListener(PLANNER_MANUAL_EVENT_REMOVE_EVENT, markAuthenticatedProjectDocumentDirty);
+window.addEventListener("orbit:identity-logout", () => {
+    // A closed session must leave neither a visible scene project nor a live
+    // file handle behind the identity gate. The encrypted records themselves
+    // stay local and are only available after the owner unlocks again.
+    try {
+        projectLifecycle.clearContents();
+        projectLifecycle.updateTitle();
+    } catch {
+        // The access gate remains closed even when a partially initialised
+        // renderer cannot clear every visual artefact.
+    }
+});
 window.addEventListener("orbit:planner-event-activate", activatePlannerEvent);
 window.addEventListener("orbit:planner-view-range", updatePlannerPassForecastViewRange);
 window.addEventListener("orbit:planner-layer-filter", updatePlannerLayerFilter);

@@ -25,12 +25,24 @@ import {
     normalizePlannerState,
     plannerIsoTimestamp
 } from "../../../../front/js/features/planner/plannerEvents.js";
+import {
+    MANUAL_PLANNER_ICS_MIME_TYPE,
+    createManualPlannerSyncAdapter,
+    getManualPlannerSyncCapabilities,
+    parseManualPlannerEventsIcs,
+    serializeManualPlannerEventsToIcs
+} from "../../../../front/js/features/planner/manualPlannerIcs.js";
 
 export {
     PLANNER_COLOR_TOKENS,
     PLANNER_EVENT_KINDS,
     layoutPlannerEventLanes,
-    normalizePlannerState
+    normalizePlannerState,
+    MANUAL_PLANNER_ICS_MIME_TYPE,
+    createManualPlannerSyncAdapter,
+    getManualPlannerSyncCapabilities,
+    parseManualPlannerEventsIcs,
+    serializeManualPlannerEventsToIcs
 };
 
 export const ORBIT_PLANNER_STATE_EVENT = PLANNER_STATE_EVENT;

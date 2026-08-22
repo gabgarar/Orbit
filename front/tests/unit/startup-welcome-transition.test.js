@@ -40,7 +40,11 @@ test("a failed startup remains centrally observable until service readiness is e
     assert.doesNotMatch(app, /StartupStatusPanel/);
     assert.match(app, /useStartupWelcomePresentation/);
     assert.match(app, /startupPresentation\.allowProjectActions/);
-    assert.match(app, /<ProjectWelcome onAction=\{startProjectAction\} runtimeStatus=\{runtimeStatus\} startup=\{startup\} startupPresentation=\{startupPresentation\} \/>/);
+    assert.match(app, /<ProjectWelcome[\s\S]*projectHub=\{projectHub\}/);
+    // Project readiness is relevant only to a non-administrative workspace;
+    // an administrator has a separate access-management surface.
+    assert.match(app, /const regularWorkspace = authenticatedIdentity/);
+    assert.match(app, /useOrbitIdentity/);
     assert.match(app, /getStartupProjectReadiness\(startup\)\.ready/);
     assert.doesNotMatch(app, /isStartupTerminal/);
 

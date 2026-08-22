@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openWorkspaceThroughLocalIdentity } from "./helpers/identity-workspace.js";
 
 test.beforeEach(async ({ page }) => {
     // The export UI is independent from texture and font delivery. Blocking
@@ -20,17 +21,7 @@ test.afterEach(async ({ page }) => {
 async function openWorkspace(page) {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/", { waitUntil: "domcontentloaded" });
-
-    const welcome = page.locator("#projectWelcome");
-    await expect(welcome).toBeVisible({ timeout: 15_000 });
-    await expect.poll(() => page.evaluate(() => window.__orbitRuntimeStatus?.state || "loading"), { timeout: 15_000 }).toBe("ready");
-    await welcome.getByRole("button", { name: "New project", exact: true }).click();
-
-    const projectDialog = page.locator("#projectActionModal");
-    await expect(projectDialog).toBeVisible();
-    await projectDialog.getByLabel("Nombre del proyecto").fill("Orbit export surface contract");
-    await projectDialog.getByRole("button", { name: "Crear proyecto", exact: true }).click();
-    await expect(projectDialog).toBeHidden();
+    await openWorkspaceThroughLocalIdentity(page, "Orbit export surface contract");
 }
 
 /**

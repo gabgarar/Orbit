@@ -82,7 +82,13 @@ test("the generated distribution retains the Moon texture when source assets are
         fs.mkdir(path.join(frontDir, "assets", "basemap"), { recursive: true }),
         fs.mkdir(path.dirname(generatedTexture), { recursive: true })
     ]);
-    await fs.writeFile(generatedTexture, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    await Promise.all([
+        fs.writeFile(generatedTexture, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+        fs.writeFile(
+            path.join(reactDistDir, "index.html"),
+            "<meta name=\"orbit-identity-gate\" content=\"required\">"
+        )
+    ]);
 
     try {
         const app = createOrbitApp(dependencies(async () => true, {
@@ -98,6 +104,63 @@ test("the generated distribution retains the Moon texture when source assets are
             assert.equal(response.status, 200);
             assert.match(response.headers.get("content-type") || "", /^image\/png\b/i);
             assert.deepEqual([...Buffer.from(await response.arrayBuffer())], [137, 80, 78, 71, 13, 10, 26, 10]);
+        });
+    } finally {
+        await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
+});
+
+test("a missing React distribution never falls back to the legacy unauthenticated frontend", async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "orbit-react-gate-fallback-"));
+    const frontDir = path.join(temporaryRoot, "front");
+    const reactDistDir = path.join(temporaryRoot, "react-dist");
+    const runtime = {
+        reactDistDir,
+        frontDir,
+        configDir: temporaryRoot,
+        docsSiteDir: path.join(temporaryRoot, "docs-site")
+    };
+    await Promise.all([
+        fs.mkdir(frontDir, { recursive: true }),
+        fs.mkdir(reactDistDir, { recursive: true })
+    ]);
+    await Promise.all([
+        fs.writeFile(path.join(frontDir, "index.html"), "<script type=\"module\" src=\"main.js\"></script>legacy Orbit"),
+        fs.writeFile(path.join(frontDir, "main.js"), "window.legacyOrbitStarted = true;")
+    ]);
+
+    try {
+        const unavailableApp = createOrbitApp(dependencies(async () => true, { runtime }));
+        await withApp(unavailableApp, async (baseUrl) => {
+            for (const requestPath of ["/", "/index.html", "/main.js", "/%69ndex.html"]) {
+                const response = await fetch(`${baseUrl}${requestPath}`);
+                assert.equal(response.status, 503, requestPath);
+                assert.equal(response.headers.get("cache-control"), "no-store");
+                const body = await response.text();
+                assert.match(body, /falta la distribución React verificada/i);
+                assert.doesNotMatch(body, /legacy Orbit|legacyOrbitStarted|<script/i);
+            }
+        });
+
+        // A stale Vite-looking distribution without the marker is still
+        // rejected: it may predate the React identity gate.
+        await fs.writeFile(path.join(reactDistDir, "index.html"), "<main>Old React bundle</main>");
+        const staleApp = createOrbitApp(dependencies(async () => true, { runtime }));
+        await withApp(staleApp, async (baseUrl) => {
+            const response = await fetch(`${baseUrl}/`);
+            assert.equal(response.status, 503);
+            assert.doesNotMatch(await response.text(), /Old React bundle/);
+        });
+
+        await fs.writeFile(
+            path.join(reactDistDir, "index.html"),
+            "<meta name=\"orbit-identity-gate\" content=\"required\"><main>React identity gate</main>"
+        );
+        const availableApp = createOrbitApp(dependencies(async () => true, { runtime }));
+        await withApp(availableApp, async (baseUrl) => {
+            const response = await fetch(`${baseUrl}/`);
+            assert.equal(response.status, 200);
+            assert.match(await response.text(), /React identity gate/);
         });
     } finally {
         await fs.rm(temporaryRoot, { recursive: true, force: true });

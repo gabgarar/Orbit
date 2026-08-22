@@ -229,6 +229,19 @@ test("manual planner events are strict UTC intervals and use the canonical mutat
     assert.match(panel, /plannerEventDescription\(event\)/);
 });
 
+test("Planner ICS controls only exchange authored manual events through the existing local mutation bridge", () => {
+    assert.match(panel, /const manualEvents = useMemo\(\(\) => events\.filter\(\(event\) => event\.kind === PLANNER_EVENT_KINDS\.MANUAL\)/);
+    assert.match(panel, /serializeManualPlannerEventsToIcs\(manualEvents/);
+    assert.match(panel, /parseManualPlannerEventsIcs\(await file\.text\(\)\)/);
+    assert.match(panel, /ORBIT_PLANNER_MANUAL_EVENT_UPSERT_EVENT, \{ detail: manualEvent \}/);
+    assert.match(panel, /aria-label="Intercambio local de eventos manuales"/);
+    assert.match(panel, /Importar ICS/);
+    assert.match(panel, /Exportar ICS/);
+    assert.match(panelCss, /\.orbit-planner-ics-actions \{/);
+    assert.match(panelCss, /\.orbit-planner-ics-button/);
+    assert.doesNotMatch(panel, /fetch\(/);
+});
+
 test("event details have bottom icon pagination across every visible filtered event", () => {
     assert.match(panel, /const selectedEventIndex = useMemo\(\(\) => visibleEvents\.findIndex/);
     assert.match(panel, /const selectAdjacentEvent = \(direction\) => \{/);

@@ -206,6 +206,22 @@ export function createProjectLifecycle(deps) {
         });
     };
 
+    // A browser-local handoff for the authenticated project library.  It is
+    // never sent to Orbit's gateway: React seals the document immediately
+    // with the unlocked per-user vault.  Keeping the snapshot at lifecycle
+    // boundaries avoids changing the portable .orbit document contract.
+    const publishProjectDocumentSnapshot = (reason) => {
+        if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
+        try {
+            window.dispatchEvent(new CustomEvent("orbit:project-document-snapshot", {
+                detail: { reason: String(reason || "update"), document: buildDocument() }
+            }));
+        } catch {
+            // File export/open remains useful even if an optional local vault
+            // cannot currently persist a snapshot.
+        }
+    };
+
     const updateTitle = () => {
         const title = getProjectName() || "My project";
         document.querySelectorAll("[data-project-title]").forEach((element) => { element.textContent = title; element.title = title; });
@@ -267,6 +283,7 @@ export function createProjectLifecycle(deps) {
                 updateTitle();
                 getObjectSidebar()?.renderList?.();
             } finally {
+                publishProjectDocumentSnapshot("created");
                 window.dispatchEvent(new Event("orbit:project-opened"));
             }
             completeOperation({ id: operationId });
@@ -288,6 +305,7 @@ export function createProjectLifecycle(deps) {
 
     const loadFile = async (file, handle = null) => {
         const operationId = beginProjectOperation("open", "Abriendo proyecto", "Leyendo archivo de proyecto");
+        let projectResetStarted = false;
         try {
         const project = await readProjectDocument(file);
         advanceProjectOperation(operationId, "Validando proyecto", 15);
@@ -300,6 +318,11 @@ export function createProjectLifecycle(deps) {
             }
         }
         advanceProjectOperation(operationId, "Restableciendo espacio de trabajo", 28);
+        // Any failure after this point can leave the renderer between two
+        // documents.  Surface that fact to the narrow project bridge so it
+        // never continues to label/save the previous encrypted record as the
+        // current scene.
+        projectResetStarted = true;
         clearContents(); setProjectFileHandle(handle);
         setProjectName(normalizeProjectName(project.name || file.name.replace(/\.json$/i, "")));
         const manualOrbits = Array.isArray(project.manualOrbits) ? project.manualOrbits : [];
@@ -386,12 +409,23 @@ export function createProjectLifecycle(deps) {
         }
         advanceProjectOperation(operationId, "Finalizando proyecto", 94);
         getObjectSidebar()?.setProjectTree?.(remapLayerTree(project.layerTree, groundStationIdMap)); updateTitle(); getObjectSidebar()?.renderList?.();
+        publishProjectDocumentSnapshot("opened");
         window.dispatchEvent(new Event("orbit:project-opened"));
         completeOperation({ id: operationId });
         return true;
         } catch (error) {
-            failOperation({ id: operationId, message: error?.message || "No se pudo abrir el proyecto." });
-            throw error;
+            let failure = error;
+            if (projectResetStarted) {
+                // Dependencies normally throw Error objects, but a malformed
+                // plugin must not bypass the integrity signal merely by
+                // throwing a primitive after the old scene was cleared.
+                if (!failure || typeof failure !== "object") {
+                    failure = new Error(String(failure || "No se pudo abrir el proyecto."));
+                }
+                failure.projectStateMayHaveChanged = true;
+            }
+            failOperation({ id: operationId, message: failure?.message || "No se pudo abrir el proyecto." });
+            throw failure;
         }
     };
 
@@ -415,6 +449,7 @@ export function createProjectLifecycle(deps) {
             const document = buildDocument();
             advanceProjectOperation(operationId, "Escribiendo archivo", 55);
             await saveProjectDocument(handle, document);
+            publishProjectDocumentSnapshot("saved");
             completeOperation({ id: operationId });
         } catch (error) {
             failOperation({ id: operationId, message: error?.message || "No se pudo guardar el proyecto." });
@@ -427,6 +462,7 @@ export function createProjectLifecycle(deps) {
             const document = buildDocument();
             advanceProjectOperation(operationId, "Generando descarga", 75);
             await downloadProjectDocument(document);
+            publishProjectDocumentSnapshot("exported");
             completeOperation({ id: operationId });
         } catch (error) {
             failOperation({ id: operationId, message: error?.message || "No se pudo exportar el proyecto." });

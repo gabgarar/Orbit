@@ -10,6 +10,8 @@ límites que afectan a la conservación de datos y a la interpretación técnica
 
 | Área | Propósito |
 | --- | --- |
+| [Identidad y proyectos vinculados](identity-projects.md) | Acceso local, bóveda cifrada por cuenta y biblioteca de proyectos; la sincronización remota sigue requiriendo un adaptador explícito. |
+| [Administración local de usuarios](local-user-administration.md) | Bootstrap local, roles por instalación, bloqueo y solicitudes de restablecimiento sin backend. |
 | [Proyectos](projects.md) | Crear, abrir, guardar y descargar documentos de proyecto locales. |
 | [Espacio de trabajo](workspace.md) | Identificar paneles, selección y acciones del entorno de trabajo. |
 | [Capas](layers.md) | Organizar capas y carpetas, y controlar su visibilidad. |
@@ -36,12 +38,14 @@ límites que afectan a la conservación de datos y a la interpretación técnica
 - Las acciones disponibles dependen del tipo de elemento. El menú contextual
   de un proyecto, carpeta, capa o estación muestra sólo operaciones aplicables.
 
-!!! warning "Alcance no disponible"
+!!! warning "Límites de la persistencia local"
 
-    Orbit no incorpora usuarios, roles, colaboración, almacenamiento remoto,
-    determinación de órbita, ingestión de medidas ni un sistema de plugins
-    instalables. No utilice la persistencia local como sustituto de un sistema
-    de control documental de misión.
+    Orbit ya incorpora cuentas locales, una bóveda cifrada y una biblioteca de
+    proyectos por usuario. No incorpora colaboración, almacenamiento remoto ni
+    sincronización de calendarios activa: una vinculación y su preferencia de
+    sincronización no realizan transferencias hasta que exista un adaptador
+    explícito. No use la persistencia local como sustituto de un sistema de
+    control documental de misión.
 
 Use el [inicio rápido](../getting-started/quick-start.md) para iniciar una
 sesión nueva.

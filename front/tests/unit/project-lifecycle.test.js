@@ -42,6 +42,103 @@ test("starting a project always emits the opened event after a cleanup failure",
     }
 });
 
+test("starting a project publishes a portable snapshot for the authenticated local vault", () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const events = new EventTarget();
+    globalThis.window = events;
+    globalThis.document = { querySelectorAll: () => [] };
+    try {
+        let projectName = null;
+        const handoffs = [];
+        const order = [];
+        events.addEventListener("orbit:project-document-snapshot", (event) => {
+            handoffs.push(event.detail);
+            order.push("snapshot");
+        });
+        events.addEventListener("orbit:project-opened", () => order.push("opened"));
+        const lifecycle = createProjectLifecycle({
+            getProjectName: () => projectName,
+            setProjectName: (value) => { projectName = value; },
+            getProjectFileHandle: () => null,
+            setProjectFileHandle: () => {},
+            getActiveSatelliteIds: () => [],
+            setAllSatelliteLayersActive: () => {},
+            setSatelliteLayerActive: () => {},
+            getGroundStationLayers: () => new Map(),
+            removeGroundStationLayer: () => {},
+            clearDuplicateLayers: () => {},
+            getLayerNameOverrides: () => new Map(),
+            clearSatelliteVisualizationConfigs: () => {},
+            getObjectSidebar: () => null,
+            getSimulationState: () => ({ mode: "realtime", startDate: new Date(), endDate: new Date() }),
+            applySimulationRange: () => {},
+            showConfirm: async () => true,
+            showAlert: () => {},
+            getAlertTitle: () => "Orbit"
+        });
+
+        assert.equal(lifecycle.startNew("Vault mission"), true);
+        assert.equal(handoffs.length, 1);
+        assert.equal(handoffs[0].reason, "created");
+        assert.equal(handoffs[0].document.name, "Vault mission");
+        assert.deepEqual(order, ["snapshot", "opened"]);
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+    }
+});
+
+test("a project load failure after reset marks the renderer state as no longer safely attributable", async () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const events = new EventTarget();
+    globalThis.window = events;
+    globalThis.document = { querySelectorAll: () => [] };
+    try {
+        let projectName = "Previous mission";
+        let opened = 0;
+        events.addEventListener("orbit:project-opened", () => { opened += 1; });
+        const lifecycle = createProjectLifecycle({
+            getProjectName: () => projectName,
+            setProjectName: (value) => { projectName = value; },
+            getProjectFileHandle: () => null,
+            setProjectFileHandle: () => {},
+            getActiveSatelliteIds: () => [],
+            setAllSatelliteLayersActive: () => {},
+            setSatelliteLayerActive: () => {},
+            getGroundStationLayers: () => new Map(),
+            removeGroundStationLayer: () => {},
+            clearDuplicateLayers: () => {},
+            getLayerNameOverrides: () => new Map(),
+            clearSatelliteVisualizationConfigs: () => {},
+            getObjectSidebar: () => null,
+            getSimulationState: () => ({
+                mode: "range",
+                startDate: new Date("2026-08-22T00:00:00.000Z"),
+                endDate: new Date("2026-08-23T00:00:00.000Z")
+            }),
+            applySimulationRange: () => {},
+            // This deliberately occurs after clearContents() in loadFile.
+            restoreSimulation: () => { throw new Error("simulation restore failed"); },
+            showConfirm: async () => true,
+            showAlert: () => {},
+            getAlertTitle: () => "Orbit"
+        });
+        const replacement = lifecycle.buildDocument();
+        replacement.name = "Replacement mission";
+        await assert.rejects(
+            () => lifecycle.loadFile({ name: "replacement.json", text: async () => JSON.stringify(replacement) }),
+            (error) => error?.projectStateMayHaveChanged === true
+        );
+        assert.equal(opened, 0);
+        assert.equal(projectName, "Replacement mission");
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+    }
+});
+
 test("project lifecycle persists and restores a static simulation frame", async () => {
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;

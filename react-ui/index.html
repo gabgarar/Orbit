@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Server-side deployment contract: only a React bundle carrying this
+         marker may become Orbit's application entry point. -->
+    <meta name="orbit-identity-gate" content="required" />
     <title>Orbit</title>
     <link rel="icon" type="image/svg+xml" href="/assets/icon/favicon.svg" />
     <script>window.CESIUM_BASE_URL = "/Cesium/";</script>

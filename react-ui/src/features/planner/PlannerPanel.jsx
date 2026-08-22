@@ -10,6 +10,7 @@ import {
     ORBIT_PLANNER_STATE_REQUEST_EVENT,
     ORBIT_PLANNER_STATE_EVENT,
     ORBIT_PLANNER_VIEW_RANGE_EVENT,
+    MANUAL_PLANNER_ICS_MIME_TYPE,
     PLANNER_COLOR_TOKENS,
     PLANNER_EVENT_COLORS,
     PLANNER_EVENT_KINDS,
@@ -21,9 +22,11 @@ import {
     layoutPlannerEventLanes,
     makeManualEventPayload,
     normalizePlannerUiState,
+    parseManualPlannerEventsIcs,
     plannerEventActivation,
     plannerEventDescription,
-    plannerViewRangePayload
+    plannerViewRangePayload,
+    serializeManualPlannerEventsToIcs
 } from "./plannerUiModel.js";
 import {
     initialPlannerWindowRect,
@@ -451,8 +454,9 @@ function ManualEventEditor({ event, onClose, onSubmit, error }) {
 
 /**
  * Full planner surface.  It renders exactly the stream supplied by the
- * runtime and emits manual mutations, so it remains usable for event sources
- * that will be added later (calendar export is intentionally out of scope).
+ * runtime and emits manual mutations. ICS import/export deliberately covers
+ * those authored mutations only; derived passes and source coverage remain
+ * runtime facts and never become editable calendar data.
  */
 export default function PlannerPanel({ onClose }) {
     const [plannerState, setPlannerState] = useState(() => normalizePlannerUiState(
@@ -470,6 +474,7 @@ export default function PlannerPanel({ onClose }) {
     const [layerVisibilityOverrides, setLayerVisibilityOverrides] = useState(() => new Map());
     const [windowRect, setWindowRect] = useState(() => initialPlannerWindowRect());
     const [windowInteraction, setWindowInteraction] = useState(null);
+    const icsImportInputRef = useRef(null);
     const lastViewRangeKey = useRef("");
     const cursorSeededFromScene = useRef(Boolean(initialPlannerCursor));
     const cursorWasNavigatedByUser = useRef(false);
@@ -580,6 +585,7 @@ export default function PlannerPanel({ onClose }) {
     }, [view, cursor, viewportCursorReady]);
 
     const events = plannerState.events;
+    const manualEvents = useMemo(() => events.filter((event) => event.kind === PLANNER_EVENT_KINDS.MANUAL), [events]);
     const layers = plannerState.layers;
     const stateHiddenLayerIds = plannerState.plannerHiddenLayerIds;
     const hiddenLayerIds = useMemo(() => {
@@ -729,6 +735,53 @@ export default function PlannerPanel({ onClose }) {
         setRequestMessage("La solicitud de eliminación se ha enviado.");
         setSelectedEvent(null);
     };
+    const exportManualEventsIcs = () => {
+        if (!manualEvents.length) {
+            setRequestMessage("No hay eventos manuales que exportar.");
+            return;
+        }
+        if (typeof Blob === "undefined" || !globalThis.URL?.createObjectURL) {
+            setRequestMessage("Este navegador no permite exportar calendarios ICS.");
+            return;
+        }
+        try {
+            const calendar = serializeManualPlannerEventsToIcs(manualEvents, { calendarName: "Orbit Planner" });
+            const blob = new Blob([calendar], { type: MANUAL_PLANNER_ICS_MIME_TYPE });
+            const url = globalThis.URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "orbit-planner-manual.ics";
+            anchor.style.display = "none";
+            document.body.append(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(() => globalThis.URL.revokeObjectURL(url), 0);
+            setRequestMessage(`Se han exportado ${manualEvents.length} eventos manuales en ICS.`);
+        } catch {
+            setRequestMessage("No se ha podido exportar el calendario ICS local.");
+        }
+    };
+    const importManualEventsIcs = async (event) => {
+        const file = event.target.files?.[0];
+        // Clear first so selecting the same corrected file later still emits a
+        // change event. The file object remains available for this handler.
+        event.target.value = "";
+        if (!file) return;
+        try {
+            const result = parseManualPlannerEventsIcs(await file.text());
+            if (!result.ok) {
+                setRequestMessage(result.errors[0] || "El calendario ICS no contiene eventos manuales válidos.");
+                return;
+            }
+            for (const manualEvent of result.events) {
+                window.dispatchEvent(new CustomEvent(ORBIT_PLANNER_MANUAL_EVENT_UPSERT_EVENT, { detail: manualEvent }));
+            }
+            const rejected = result.rejected ? ` Se descartaron ${result.rejected} entradas no válidas.` : "";
+            setRequestMessage(`Se han importado ${result.events.length} eventos manuales.${rejected}`);
+        } catch {
+            setRequestMessage("No se ha podido leer el calendario ICS seleccionado.");
+        }
+    };
 
     const beginWindowDrag = (event) => {
         if (isPlannerWindowCompactViewport() || event.button !== 0 || event.target.closest("button, input, select, label, a")) return;
@@ -783,6 +836,11 @@ export default function PlannerPanel({ onClose }) {
                     </label>
                 </div>
                 <div className="orbit-planner-view-buttons" aria-label="Vista del planificador"><button type="button" className={view === "day" ? "is-active" : ""} aria-pressed={view === "day"} onClick={() => setView("day")}>Día</button><button type="button" className={view === "week" ? "is-active" : ""} aria-pressed={view === "week"} onClick={() => setView("week")}>Semana</button><button type="button" className={view === "month" ? "is-active" : ""} aria-pressed={view === "month"} onClick={() => setView("month")}>Mes</button></div>
+                <div className="orbit-planner-ics-actions" aria-label="Intercambio local de eventos manuales">
+                    <input ref={icsImportInputRef} type="file" accept=".ics,text/calendar" onChange={importManualEventsIcs} tabIndex={-1} aria-hidden="true" />
+                    <button type="button" className="orbit-planner-ics-button" onClick={() => icsImportInputRef.current?.click()} title="Importar eventos manuales desde un calendario ICS UTC">Importar ICS</button>
+                    <button type="button" className="orbit-planner-ics-button" onClick={exportManualEventsIcs} disabled={!manualEvents.length} title="Exportar únicamente los eventos manuales de este proyecto">Exportar ICS</button>
+                </div>
                 <button type="button" className="orbit-planner-new-event" onClick={() => { setEditorError(""); setEditorEvent(null); }}>Nuevo evento</button>
             </div>
             {visibleErrors.length ? <div className="orbit-planner-state-error" role="alert"><strong>No se ha podido actualizar todo el planificador.</strong>{visibleErrors.map((error, index) => <span key={`${error}:${index}`}>{error}</span>)}</div> : null}

@@ -176,6 +176,8 @@ plugins:
                     - AOS/LOS REST API: integrations/rest-api/ground-stations.md
             - Workspace:
                 - Overview: user-guide/index.md
+                - Identity and linked projects: user-guide/identity-projects.md
+                - Local user administration: user-guide/local-user-administration.md
                 - Projects: user-guide/projects.md
                 - Workspace: user-guide/workspace.md
                 - Workspace concepts: workspace.md
@@ -401,6 +403,8 @@ nav:
           - REST API AOS/LOS: integrations/rest-api/ground-stations.md
   - Espacio de trabajo:
       - Visión general: user-guide/index.md
+      - Identidad y proyectos vinculados: user-guide/identity-projects.md
+      - Administración local de usuarios: user-guide/local-user-administration.md
       - Proyectos: user-guide/projects.md
       - Espacio de trabajo: user-guide/workspace.md
       - Conceptos de espacio de trabajo: workspace.md

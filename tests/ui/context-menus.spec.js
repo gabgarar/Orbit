@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openWorkspaceThroughLocalIdentity } from "./helpers/identity-workspace.js";
 
 test.beforeEach(async ({ page }) => {
     // These contracts exercise the React overlays rather than Cesium imagery.
@@ -19,20 +20,7 @@ test.afterEach(async ({ page }) => {
 async function openWorkspace(page, projectName = "Context menu project") {
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto("/", { waitUntil: "domcontentloaded" });
-
-    const welcome = page.locator("#projectWelcome");
-    await expect(welcome).toBeVisible({ timeout: 15_000 });
-    await expect.poll(
-        () => page.evaluate(() => window.__orbitRuntimeStatus?.state || "loading"),
-        { timeout: 15_000, message: "Orbit must be ready before opening contextual menus" }
-    ).toBe("ready");
-
-    await welcome.getByRole("button", { name: "New project", exact: true }).click();
-    const dialog = page.locator("#projectActionModal");
-    await expect(dialog).toBeVisible();
-    await dialog.getByLabel("Nombre del proyecto").fill(projectName);
-    await dialog.getByRole("button", { name: "Crear proyecto", exact: true }).click();
-    await expect(dialog).toBeHidden();
+    await openWorkspaceThroughLocalIdentity(page, projectName);
     await expect(page.locator("#leftSatellitesPanel")).toHaveClass(/open/);
 }
 

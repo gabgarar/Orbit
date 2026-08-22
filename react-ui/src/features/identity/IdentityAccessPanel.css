@@ -1,0 +1,513 @@
+.orbit-identity-access-panel {
+    position: relative;
+    width: min(444px, calc(100vw - 32px));
+    box-sizing: border-box;
+    overflow: hidden;
+    padding: 27px 45px 22px;
+    border: 1px solid rgba(104, 149, 228, .58);
+    border-radius: 17px;
+    background:
+        linear-gradient(136deg, rgba(23, 45, 84, .89) 0%, rgba(10, 26, 52, .95) 49%, rgba(5, 15, 32, .97) 100%);
+    box-shadow:
+        0 26px 78px rgba(0, 0, 0, .56),
+        inset 0 1px 0 rgba(211, 230, 255, .13),
+        inset 0 0 42px rgba(53, 108, 219, .06);
+    color: #edf4ff;
+    color-scheme: dark;
+    font-family: var(--orbit-font-sans, Inter, ui-sans-serif, system-ui, sans-serif);
+    text-align: left;
+}
+
+.orbit-identity-access-panel::before {
+    position: absolute;
+    top: -74px;
+    left: -65px;
+    width: 235px;
+    height: 126px;
+    border-radius: 50%;
+    background: radial-gradient(ellipse, rgba(96, 145, 255, .25), rgba(78, 126, 245, .06) 48%, transparent 72%);
+    content: "";
+    filter: blur(8px);
+    pointer-events: none;
+}
+
+.orbit-identity-access-panel > * {
+    position: relative;
+    z-index: 1;
+}
+
+.orbit-identity-access-panel__brand {
+    display: grid;
+    justify-items: center;
+    margin: 0 0 21px;
+    text-align: center;
+}
+
+.orbit-identity-access-panel__brand-icon {
+    width: 65px;
+    height: 56px;
+    margin-bottom: 4px;
+    background: url("/assets/icon/favicon.svg") center / 84% no-repeat;
+    filter: drop-shadow(0 0 12px rgba(93, 128, 255, .62));
+}
+
+.orbit-identity-access-panel__brand-name {
+    padding-left: .38em;
+    color: #f7f9ff;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: .38em;
+    line-height: 1;
+}
+
+.orbit-identity-access-panel__brand-tagline {
+    margin-top: 7px;
+    color: #789aff;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: .25em;
+    line-height: 1;
+}
+
+.orbit-identity-access-panel h1,
+.orbit-identity-access-panel h2 {
+    margin: 0;
+    color: #f5f8ff;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-align: center;
+}
+
+.orbit-identity-access-panel__description {
+    margin: 7px 0 0;
+    color: #aebed9;
+    font-size: 11px;
+    line-height: 1.5;
+    text-align: center;
+}
+
+.orbit-identity-access-panel__form {
+    display: grid;
+    gap: 14px;
+    margin-top: 20px;
+}
+
+.orbit-identity-access-panel__field {
+    display: grid;
+    gap: 6px;
+    color: #e4edfb;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.orbit-identity-access-panel__input-shell {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 36px;
+    box-sizing: border-box;
+    border: 1px solid #324a72;
+    border-radius: 7px;
+    background: rgba(6, 17, 38, .7);
+    color: #7792bb;
+    transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+.orbit-identity-access-panel__input-shell:focus-within {
+    border-color: #668fff;
+    background: rgba(8, 22, 47, .86);
+    box-shadow: 0 0 0 3px rgba(75, 125, 255, .15);
+}
+
+.orbit-identity-access-panel__input-shell > svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    margin-left: 10px;
+}
+
+.orbit-identity-access-panel__input {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    padding: 0 10px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: #edf4ff;
+    font: inherit;
+    font-size: 11px;
+}
+
+.orbit-identity-access-panel__input::placeholder {
+    color: #7185a5;
+    opacity: 1;
+}
+
+.orbit-identity-access-panel__input:disabled {
+    cursor: not-allowed;
+    color: #6d7d94;
+}
+
+/* Chromium otherwise paints a transient white autofill surface over the
+ * account fields. Keep browser-provided credentials legible in the dark UI. */
+.orbit-identity-access-panel__input:-webkit-autofill,
+.orbit-identity-access-panel__input:-webkit-autofill:hover,
+.orbit-identity-access-panel__input:-webkit-autofill:focus {
+    -webkit-text-fill-color: #edf4ff;
+    -webkit-box-shadow: 0 0 0 100px #08162b inset;
+    caret-color: #edf4ff;
+    box-shadow: 0 0 0 100px #08162b inset;
+    transition: background-color 99999s ease-out 0s;
+}
+
+.orbit-identity-access-panel__input-shell:has(.orbit-identity-access-panel__input:disabled) {
+    border-color: rgba(50, 74, 114, .68);
+    background: rgba(5, 14, 30, .48);
+}
+
+.orbit-identity-access-panel__input--plain {
+    padding-left: 11px;
+}
+
+.orbit-identity-access-panel__reveal-password {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    place-items: center;
+    margin-right: 1px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #7792bb;
+    cursor: pointer;
+}
+
+.orbit-identity-access-panel__reveal-password svg {
+    width: 16px;
+    height: 16px;
+}
+
+.orbit-identity-access-panel__reveal-password:hover:not(:disabled) {
+    color: #b9d4ff;
+}
+
+.orbit-identity-access-panel__reveal-password:disabled {
+    cursor: not-allowed;
+    opacity: .52;
+}
+
+.orbit-identity-access-panel__forgot-password {
+    justify-self: end;
+    margin-top: -8px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #7ea8ff;
+    cursor: pointer;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.orbit-identity-access-panel__forgot-password:hover:not(:disabled) {
+    color: #b8d0ff;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.orbit-identity-access-panel__forgot-password:disabled {
+    cursor: not-allowed;
+    opacity: .55;
+}
+
+.orbit-identity-access-panel__primary-action,
+.orbit-identity-access-panel__outline-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+}
+
+.orbit-identity-access-panel__primary-action {
+    gap: 10px;
+    width: 100%;
+    margin-top: 0;
+    border-color: #6d8cff;
+    background: linear-gradient(104deg, #5a7eff, #3839c9);
+    box-shadow: 0 9px 20px rgba(49, 70, 220, .32), inset 0 1px rgba(255, 255, 255, .19);
+    color: #fff;
+}
+
+.orbit-identity-access-panel__primary-action svg {
+    width: 17px;
+    height: 17px;
+    margin-left: 7px;
+}
+
+.orbit-identity-access-panel__primary-action:hover:not(:disabled) {
+    border-color: #a3bbff;
+    background: linear-gradient(104deg, #6d92ff, #4949dc);
+    box-shadow: 0 11px 25px rgba(60, 84, 239, .42), inset 0 1px rgba(255, 255, 255, .22);
+    transform: translateY(-1px);
+}
+
+.orbit-identity-access-panel__primary-action:disabled,
+.orbit-identity-access-panel__outline-action:disabled {
+    cursor: not-allowed;
+    opacity: .58;
+}
+
+.orbit-identity-access-panel__separator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 19px 0 13px;
+    color: #7f94b4;
+    font-size: 9px;
+    line-height: 1;
+}
+
+.orbit-identity-access-panel__separator::before,
+.orbit-identity-access-panel__separator::after {
+    height: 1px;
+    flex: 1;
+    background: #294264;
+    content: "";
+}
+
+.orbit-identity-access-panel__providers {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.orbit-identity-access-panel__provider-button {
+    display: flex;
+    min-width: 0;
+    min-height: 36px;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 0 7px;
+    border: 1px solid #3a527a;
+    border-radius: 6px;
+    background: rgba(13, 30, 57, .75);
+    color: #e8effa;
+    cursor: pointer;
+    font: inherit;
+    font-size: 9px;
+    font-weight: 600;
+    transition: border-color .16s ease, background .16s ease, transform .16s ease;
+    white-space: nowrap;
+}
+
+.orbit-identity-access-panel__provider-button:hover:not(:disabled) {
+    border-color: #7299d4;
+    background: rgba(24, 51, 91, .86);
+    transform: translateY(-1px);
+}
+
+.orbit-identity-access-panel__provider-button:disabled {
+    cursor: not-allowed;
+    opacity: .58;
+}
+
+.orbit-identity-access-panel__provider-mark {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+}
+
+.orbit-identity-access-panel__register-prompt {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 19px;
+    color: #d4deef;
+    font-size: 10px;
+    line-height: 1.25;
+    text-align: center;
+}
+
+.orbit-identity-access-panel__register-prompt button,
+.orbit-identity-access-panel__text-action {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #7fa7ff;
+    cursor: pointer;
+    font: inherit;
+    font-size: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+    text-decoration-color: rgba(127, 167, 255, .58);
+    text-underline-offset: 3px;
+}
+
+.orbit-identity-access-panel__register-prompt button:hover:not(:disabled),
+.orbit-identity-access-panel__text-action:hover:not(:disabled) {
+    color: #c3d7ff;
+}
+
+.orbit-identity-access-panel__register-prompt button:disabled {
+    cursor: not-allowed;
+    opacity: .55;
+}
+
+.orbit-identity-access-panel__privacy {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    margin: 22px 0 0;
+    color: #8497b7;
+    font-size: 9px;
+    line-height: 1.35;
+    text-align: center;
+}
+
+.orbit-identity-access-panel__privacy svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    color: #7899cb;
+}
+
+.orbit-identity-access-panel__lookup-feedback,
+.orbit-identity-access-panel__feedback {
+    margin: -4px 0 -1px;
+    padding: 8px 10px;
+    border: 1px solid #496f9f;
+    border-radius: 7px;
+    background: rgba(17, 45, 79, .76);
+    color: #d1e4ff;
+    font-size: 10px;
+    line-height: 1.4;
+}
+
+.orbit-identity-access-panel__lookup-feedback.is-missing,
+.orbit-identity-access-panel__feedback.is-error {
+    border-color: #a65a6a;
+    background: rgba(78, 25, 39, .7);
+    color: #ffd7dd;
+}
+
+.orbit-identity-access-panel__lookup-feedback.is-forgot {
+    border-color: #807047;
+    background: rgba(66, 53, 19, .58);
+    color: #ffe5a2;
+}
+
+.orbit-identity-access-panel__feedback {
+    margin: 16px 0 0;
+}
+
+.orbit-identity-access-panel__feedback strong {
+    display: block;
+    margin-bottom: 4px;
+}
+
+.orbit-identity-access-panel__feedback .orbit-identity-access-panel__text-action {
+    display: block;
+    margin-top: 7px;
+    font-size: 10px;
+}
+
+.orbit-identity-access-panel__provider-vault {
+    display: grid;
+    gap: 11px;
+    margin-top: 16px;
+    padding: 14px;
+    border: 1px solid #41658f;
+    border-radius: 9px;
+    background: rgba(8, 24, 48, .68);
+}
+
+.orbit-identity-access-panel__provider-vault h2 {
+    font-size: 15px;
+    text-align: left;
+}
+
+.orbit-identity-access-panel__provider-vault p {
+    margin: -3px 0 1px;
+    color: #b8cbe4;
+    font-size: 10px;
+    line-height: 1.45;
+}
+
+.orbit-identity-access-panel__provider-input {
+    border: 1px solid #314e76;
+    border-radius: 6px;
+    background: rgba(4, 14, 30, .58);
+}
+
+.orbit-identity-access-panel__provider-actions {
+    display: grid;
+    grid-template-columns: .88fr 1.12fr;
+    gap: 8px;
+}
+
+.orbit-identity-access-panel__outline-action {
+    width: 100%;
+    border-color: #426082;
+    background: rgba(17, 35, 61, .88);
+    color: #dbe9fb;
+}
+
+.orbit-identity-access-panel__outline-action:hover:not(:disabled) {
+    border-color: #759bd0;
+    background: rgba(25, 52, 87, .96);
+}
+
+.orbit-identity-access-panel--session .orbit-identity-access-panel__brand {
+    margin-bottom: 18px;
+}
+
+.orbit-identity-access-panel--session .orbit-identity-access-panel__primary-action,
+.orbit-identity-access-panel--session .orbit-identity-access-panel__outline-action {
+    margin-top: 15px;
+}
+
+.orbit-identity-access-panel__password-change-signout {
+    display: block;
+    margin: 15px auto -2px;
+    font-size: 10px;
+}
+
+.orbit-identity-access-panel button:focus-visible,
+.orbit-identity-access-panel input:focus-visible {
+    outline: 2px solid #9bc1ff;
+    outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+    .orbit-identity-access-panel {
+        width: min(444px, calc(100vw - 22px));
+        padding: 25px 26px 21px;
+    }
+}
+
+@media (max-width: 375px) {
+    .orbit-identity-access-panel {
+        padding-right: 20px;
+        padding-left: 20px;
+    }
+
+    .orbit-identity-access-panel__provider-button {
+        font-size: 8px;
+    }
+}

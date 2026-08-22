@@ -3,12 +3,33 @@ import {
     getStartupProjectReadiness,
     publishStartupProjectActionBlocked
 } from "../features/diagnostics/startupStatus.js";
+import { isAuthenticatedIdentityState } from "../features/identity/index.js";
 
 const BOUND_KEY = "__orbitProjectLifecycleEventsBound";
 const PENDING_COMMANDS_KEY = "__orbitPendingProjectCommands";
 
 function dispatchCommand(windowRef, command) {
     windowRef.dispatchEvent(new CustomEvent("orbit:project-command", { detail: command }));
+}
+
+// A command can be accepted by the runtime bridge but later be cancelled by
+// the user (for example, replacing an open project).  This narrow completion
+// event deliberately carries no file or project document, only the caller's
+// opaque request id and outcome, so the React library can keep its active
+// encrypted record aligned with the actual renderer state.
+function dispatchCommandCompletion(windowRef, command, { accepted, reason = null } = {}) {
+    const requestId = String(command?.requestId || "").trim();
+    if (!requestId) return;
+    const EventConstructor = windowRef.CustomEvent || globalThis.CustomEvent;
+    if (typeof EventConstructor !== "function") return;
+    windowRef.dispatchEvent(new EventConstructor("orbit:project-command-complete", {
+        detail: {
+            requestId,
+            type: String(command?.type || "").trim().toLowerCase(),
+            accepted: accepted === true,
+            ...(reason ? { reason: String(reason) } : {})
+        }
+    }));
 }
 
 export function bindProjectLifecycleEvents({
@@ -36,8 +57,19 @@ export function bindProjectLifecycleEvents({
         return false;
     };
 
+    const identityAllowsProjectAction = () => {
+        if (windowRef.__orbitIdentityAccessRequired !== true) return true;
+        return isAuthenticatedIdentityState(windowRef.__orbitIdentitySession?.identityState);
+    };
+
     const onAction = async (event) => {
         const action = String(event.detail || "");
+        if (!identityAllowsProjectAction()) {
+            if (action === "new" || action === "open" || action === "save" || action === "export") {
+                showAlert("Inicia sesión para acceder a los proyectos.", getAlertTitle());
+            }
+            return;
+        }
         if (action === "new" || action === "open") {
             if (!startupAllowsProjectAction(action)) return;
             requestDialog(action);
@@ -70,22 +102,50 @@ export function bindProjectLifecycleEvents({
 
     const onCommand = async (event) => {
         const command = event.detail || {};
+        if (!identityAllowsProjectAction()) {
+            dispatchCommandCompletion(windowRef, command, { accepted: false, reason: "identity-required" });
+            return;
+        }
         if (command.type === "new") {
-            if (!startupAllowsProjectAction("new")) return;
+            if (!startupAllowsProjectAction("new")) {
+                dispatchCommandCompletion(windowRef, command, { accepted: false, reason: "startup-not-ready" });
+                return;
+            }
             try {
-                projectLifecycle.startNew(command.name);
+                const created = projectLifecycle.startNew(command.name);
+                dispatchCommandCompletion(windowRef, command, {
+                    accepted: created !== false,
+                    reason: created === false ? "cancelled" : null
+                });
             } catch {
                 showAlert("No se pudo crear el proyecto.", getAlertTitle());
+                dispatchCommandCompletion(windowRef, command, { accepted: false, reason: "project-create-failed" });
             }
             return;
         }
-        if (command.type === "open" && isProjectFile(command.file)) {
-            if (!startupAllowsProjectAction("open")) return;
-            try {
-                await projectLifecycle.loadFile(command.file);
-            } catch {
-                showAlert("No se pudo abrir el proyecto.", getAlertTitle());
-            }
+        if (command.type !== "open") return;
+        if (!isProjectFile(command.file)) {
+            dispatchCommandCompletion(windowRef, command, { accepted: false, reason: "invalid-project-file" });
+            return;
+        }
+        if (!startupAllowsProjectAction("open")) {
+            dispatchCommandCompletion(windowRef, command, { accepted: false, reason: "startup-not-ready" });
+            return;
+        }
+        try {
+            const opened = await projectLifecycle.loadFile(command.file);
+            dispatchCommandCompletion(windowRef, command, {
+                accepted: opened !== false,
+                reason: opened === false ? "cancelled" : null
+            });
+        } catch (error) {
+            showAlert("No se pudo abrir el proyecto.", getAlertTitle());
+            dispatchCommandCompletion(windowRef, command, {
+                accepted: false,
+                reason: error?.projectStateMayHaveChanged === true
+                    ? "project-open-failed-after-reset"
+                    : "project-open-failed"
+            });
         }
     };
 

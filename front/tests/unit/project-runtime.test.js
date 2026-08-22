@@ -22,6 +22,56 @@ test("project commands fail closed until startup explicitly reports ready", () =
     }
 });
 
+test("identity gate rejects create and open requests before they can reach the project runtime", () => {
+    const previousWindow = globalThis.window;
+    const events = new EventTarget();
+    events.__orbitIdentityAccessRequired = true;
+    events.__orbitStartupStatus = { ready: true };
+    events.__orbitRuntimeReady = true;
+    globalThis.window = events;
+    try {
+        let dispatches = 0;
+        events.addEventListener("orbit:project-command", () => { dispatches += 1; });
+
+        for (const command of [
+            { type: "new", name: "Protected mission" },
+            { type: "open", file: { name: "protected.orbit" } }
+        ]) {
+            assert.deepEqual(requestProjectCommand(command), {
+                accepted: false,
+                reason: "Inicia sesión para crear, abrir o gestionar proyectos.",
+                code: "identity-required"
+            });
+        }
+        assert.equal(dispatches, 0);
+        assert.equal(events.__orbitPendingProjectCommands, undefined);
+    } finally {
+        globalThis.window = previousWindow;
+    }
+});
+
+test("an authenticated identity can issue project commands through the required access gate", () => {
+    const previousWindow = globalThis.window;
+    const events = new EventTarget();
+    events.__orbitIdentityAccessRequired = true;
+    events.__orbitIdentitySession = { identityState: "local_user", accountId: "local:operator" };
+    events.__orbitStartupStatus = { ready: true };
+    events.__orbitRuntimeReady = true;
+    globalThis.window = events;
+    try {
+        let command = null;
+        events.addEventListener("orbit:project-command", (event) => { command = event.detail; });
+
+        assert.deepEqual(requestProjectCommand({ type: "new", name: "Authenticated mission" }), {
+            accepted: true,
+            queued: false
+        });
+        assert.deepEqual(command, { type: "new", name: "Authenticated mission" });
+    } finally {
+        globalThis.window = previousWindow;
+    }
+});
+
 test("project commands queue only after startup explicitly reports ready", () => {
     const previousWindow = globalThis.window;
     const events = new EventTarget();

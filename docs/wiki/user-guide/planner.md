@@ -235,9 +235,35 @@ como si fueran datos autoritativos. La vista temporal actual no se guarda como
 una reserva de antena, y el filtro del planificador no sustituye el estado de
 visibilidad de la escena.
 
+### Intercambio ICS local
+
+Los botones **Importar ICS** y **Exportar ICS** intercambian exclusivamente los
+eventos `manual` del proyecto. Un pase AOS/LOS, un máximo de elevación, la
+cobertura ERP o un aviso de un fichero importado sigue siendo un hecho derivado
+de la escena: no se exporta como si una agenda externa pudiera editarlo ni se
+crea a partir de un ICS.
+
+La exportación genera un calendario RFC5545 UTC con `SUMMARY`, `DTSTART`,
+`DTEND`, color Orbit y, cuando existe, la nota del operador. La importación
+acepta solamente intervalos `DTSTART`/`DTEND` UTC explícitos terminados en `Z`;
+no adivina la zona horaria del navegador ni acepta `TZID`. El fichero se trata
+localmente, se limita a 1 MiB, 500 eventos y líneas acotadas, y sus textos se
+despliegan/escapan antes de validarlos. Las entradas inválidas o
+`STATUS:CANCELLED` se descartan y nunca borran un evento local. Si el calendario
+está correctamente cerrado, las entradas válidas se incorporan mediante la
+misma mutación manual normalizada que usa el editor.
+
+ICS es una vía de importación/exportación local, no una sincronización remota.
+Incluso si un proyecto conserva una preferencia de enlace Google o Microsoft,
+el adaptador actual solo anuncia capacidades locales y rechaza explícitamente
+`pull`/`push`: no contacta servicios externos, no usa tokens ni afirma que la
+agenda se haya sincronizado. Un transporte futuro requerirá su propia
+autorización, contrato de conflictos y trazabilidad.
+
 ## Límites actuales
 
-El planificador no es todavía un calendario operativo: no exporta ICS, no se
-sincroniza con calendarios externos, no detecta conflictos de antena ni crea
-reservas. Esas funciones requerirán su propio contrato de disponibilidad y
-autorización; los eventos actuales solo ofrecen una base trazable para ello.
+El planificador no es todavía un calendario operativo: no sincroniza con
+calendarios externos, no detecta conflictos de antena ni crea reservas. La
+exportación/importación ICS local no cambia esos límites. Esas funciones
+requerirán su propio contrato de disponibilidad y autorización; los eventos
+actuales solo ofrecen una base trazable para ello.

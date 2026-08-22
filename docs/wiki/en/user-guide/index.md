@@ -10,6 +10,8 @@ limits affecting data retention and technical interpretation.
 
 | Area | Purpose |
 | --- | --- |
+| [Local identity and linked projects](identity-projects.md) | Local access, an encrypted vault per account, and a project library; remote synchronization still requires an explicit adapter. |
+| [Local user administration](local-user-administration.md) | Per-installation bootstrap, roles, account lock, and reset requests without a backend. |
 | [Projects](projects.md) | Create, open, save and download local project documents. |
 | [Workspace](workspace.md) | Identify panels, selection and actions of the work environment. |
 | [Layers](layers.md) | Organize layers and folders, and control their visibility. |
@@ -36,12 +38,13 @@ limits affecting data retention and technical interpretation.
 - Available actions depend on the type of item. The context menu
   of a project, folder, layer, or station displays only applicable operations.
 
-!!! warning "Scope not available"
+!!! warning "Local-persistence limits"
 
-    Orbit does not incorporate users, roles, collaboration, remote storage,
-    orbit determination, measurement ingestion or a plugin system
-    installable. Don't use local persistence as a substitute for a system
-    mission documentary control.
+    Orbit now includes local accounts, an encrypted vault, and a per-user
+    project library. It does not include collaboration, remote storage, or
+    active calendar synchronization: linkage and a sync preference make no
+    transfer until an explicit adapter exists. Do not use local persistence as
+    a substitute for a mission document-control system.
 
 Use the [quick start](../getting-started/quick-start.md) to start a
 new session.

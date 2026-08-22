@@ -42,6 +42,15 @@ const diagnosticStatusLabel = {
     error: "con errores"
 };
 
+function accountInitials(session) {
+    const source = String(session?.displayName || session?.identifier || "ORBIT").trim();
+    const pieces = source.split(/\s+/u).filter(Boolean);
+    const initials = pieces.length > 1
+        ? `${pieces[0][0] || ""}${pieces.at(-1)?.[0] || ""}`
+        : source.slice(0, 2);
+    return (initials || "OR").toUpperCase();
+}
+
 export default function TopToolbar({
     hasNotifications,
     activeOperationCount = 0,
@@ -52,7 +61,9 @@ export default function TopToolbar({
     onTogglePlanner,
     onToggleNotifications,
     onToggleHelp,
-    onToggleDiagnostics
+    onToggleDiagnostics,
+    identitySession = null,
+    onOpenProjectHub
 }) {
     const [activeSection, setActiveSection] = useState("Satellites");
 
@@ -112,7 +123,14 @@ export default function TopToolbar({
             <button id="topBuiltInTestBtn" data-react-owned="true" className="toolbar-built-in-test-btn toolbar-vector-icon" type="button" aria-label={`Built-In Test continuo: ${diagnosticStatusLabel[diagnosticsStatus] || "pendiente"}`} title={`Built-In Test continuo: ${diagnosticStatusLabel[diagnosticsStatus] || "pendiente"}`} onClick={onToggleDiagnostics}><DiagnosticsIcon /><span className={`toolbar-diagnostics-status is-${diagnosticsStatus}`} aria-hidden="true" /></button>
             <button id="topSettingsBtn" data-react-owned="true" className={iconButtonClass} type="button" aria-label="Configuracion general" onClick={() => window.dispatchEvent(new Event("orbit:config-panel-toggle"))}><ControlPanelIcon /></button>
             <span className="toolbar-action-divider" aria-hidden="true" />
-            <button id="topUserBtn" className="toolbar-avatar" type="button" aria-label="Perfil de GG">GG</button>
+            <button
+                id="topUserBtn"
+                className="toolbar-avatar"
+                type="button"
+                aria-label={`Abrir proyectos de ${identitySession?.displayName || identitySession?.identifier || "la cuenta"}`}
+                title="Proyectos y cuenta"
+                onClick={onOpenProjectHub}
+            >{accountInitials(identitySession)}</button>
         </div>
     </header>;
 }

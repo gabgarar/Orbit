@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openWorkspaceThroughLocalIdentity } from "./helpers/identity-workspace.js";
 
 test.beforeEach(async ({ page }) => {
     await page.route("**/*", (route) => {
@@ -17,14 +18,7 @@ test.afterEach(async ({ page }) => {
 async function openWorkspace(page) {
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    const welcome = page.locator("#projectWelcome");
-    await expect(welcome).toBeVisible({ timeout: 15_000 });
-    await expect.poll(() => page.evaluate(() => window.__orbitRuntimeStatus?.state || "loading"), { timeout: 15_000 }).toBe("ready");
-    await welcome.getByRole("button", { name: "New project", exact: true }).click();
-    const dialog = page.locator("#projectActionModal");
-    await dialog.getByLabel("Nombre del proyecto").fill("Object detail tabs");
-    await dialog.getByRole("button", { name: "Crear proyecto", exact: true }).click();
-    await expect(dialog).toBeHidden();
+    await openWorkspaceThroughLocalIdentity(page, "Object detail tabs");
 }
 
 test("the selected-orbit card has separate Overview, Orbit, Telemetry, Input and Propagation tabs", async ({ page }) => {
