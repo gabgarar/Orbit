@@ -2087,8 +2087,16 @@ window.addEventListener("orbit:scene-operations-cancel", () => {
 window.addEventListener("orbit:object-state-changed", (event) => {
     const detail = event?.detail && typeof event.detail === "object" ? event.detail : {};
     const reason = String(detail.reason || "").trim().toLowerCase();
+    if (reason === "visibility") {
+        // Timeline coverage is a visual aid, like orbit paths and pass
+        // markers. Update it immediately when an operator toggles an eye,
+        // without mutating the simulation's Master Time Range.
+        refreshSimulationControlsUi();
+        return;
+    }
     if (["manual-orbit", "precise-product-hydration", "hydration", "oem-import"].includes(reason)) {
         invalidateGroundStationTimelineCache();
+        refreshSimulationControlsUi();
         return;
     }
     if (reason === "activation") {
@@ -2099,6 +2107,12 @@ window.addEventListener("orbit:object-state-changed", (event) => {
             kind: layerType === "GROUND_STATION" || isGroundStationLayerId(layerId) ? "station" : "satellite",
             allSatelliteLayers: detail.scope === "all-satellites"
         });
+    }
+    if (reason === "activation") {
+        // Membership changes may have been initiated by a local importer or
+        // restoration path. Publish the visual coverage immediately; a later
+        // MTR reconciliation, if needed, will publish its final range too.
+        refreshSimulationControlsUi();
     }
 });
 
@@ -3153,6 +3167,57 @@ function operationalTleRanges(sourceIds, now = new Date()) {
             });
         })
         .filter(Boolean);
+}
+
+/**
+ * Return the visible source intervals that can actually contribute an orbit
+ * to the current scene timeline. This is deliberately not the Master Time
+ * Range envelope: a finite SP3/OEM/manual interval and a later TLE can have
+ * a real UTC hole between them, and the timeline must leave that hole blank.
+ *
+ * TLE/OMM data is a forward model rather than a finite product. Its epoch is
+ * nevertheless a hard lower bound in Orbit, so a TLE band starts there and
+ * ends at the current simulation range. A TLE/OMM without a valid epoch
+ * contributes no visual band rather than claiming an unverified domain. The
+ * React surface clips and merges these source intervals strictly for
+ * presentation.
+ */
+function getVisibleOrbitTimelineCoverageRanges() {
+    const timelineStartMs = asTimelineEpochMilliseconds(simulationState.startDate);
+    const timelineEndMs = asTimelineEpochMilliseconds(simulationState.endDate);
+    if (!Number.isFinite(timelineStartMs) || !Number.isFinite(timelineEndMs) || timelineEndMs <= timelineStartMs) {
+        return [];
+    }
+
+    return activeSatelliteSourceIds()
+        // As with paths, links and pass markers, hiding a source removes only
+        // its visual contribution. It never changes the Master Time Range.
+        .filter((sourceId) => isSatelliteVisible(sourceId))
+        .flatMap((sourceId) => {
+            const finiteRange = getObjectIntrinsicTimeRange(sourceId);
+            if (finiteRange) {
+                return [{
+                    sourceId,
+                    kind: "finite",
+                    startTimeMs: finiteRange.startTimeMs,
+                    endTimeMs: finiteRange.endTimeMs
+                }];
+            }
+            if (!isTleOperationalSource(sourceId)) {
+                return [];
+            }
+
+            const epochMs = operationalTleEpoch(sourceId)?.getTime?.();
+            if (!Number.isFinite(epochMs)) {
+                return [];
+            }
+            return [{
+                sourceId,
+                kind: "tle",
+                startTimeMs: Math.max(timelineStartMs, epochMs),
+                endTimeMs: timelineEndMs
+            }];
+        });
 }
 
 /**
@@ -5189,6 +5254,7 @@ function setupTopSearchAutocomplete() {
 
 function updateSimulationTimelineUi(finiteDomain = getFiniteEphemerisDomainState()) {
     const masterTimeRange = masterTimeRangeDetail();
+    const orbitCoverageSegments = getVisibleOrbitTimelineCoverageRanges();
     // React owns the visible controls and receives a complete state snapshot.
     window.dispatchEvent(new CustomEvent("orbit:simulation-state", {
         detail: {
@@ -5203,6 +5269,10 @@ function updateSimulationTimelineUi(finiteDomain = getFiniteEphemerisDomainState
             finiteEphemerisSources: finiteDomain.finiteSources,
             masterTimeRange,
             masterTimeRangeActive: Boolean(masterTimeRange),
+            // Independent raw source ranges, never the aggregate MTR
+            // envelope. React clips and merges these into a small gradient
+            // band while preserving real source gaps.
+            orbitCoverageSegments,
             currentDate: getDisplayedSimulationDate().toISOString(),
             startDate: simulationState.startDate.toISOString(),
             endDate: simulationState.endDate.toISOString(),

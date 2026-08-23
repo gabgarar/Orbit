@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CalendarIcon, ChevronDownIcon } from "../../components/icons.jsx";
 import PassTimelineMarkers from "./PassTimelineMarkers.jsx";
 import { GROUND_STATION_TIMELINE_EVENTS_EVENT } from "../../../../front/js/features/groundStations/passTimelineEvents.js";
@@ -12,8 +12,9 @@ import {
     legacyGroundStationPassesToTimelineEvents,
     normalizeGroundStationTimelineEvents
 } from "../../../../front/js/features/groundStations/passTimelinePresentation.js";
+import { buildTimelineOrbitCoverageSegments } from "../../../../front/js/runtime/simulation/timelineOrbitCoverage.js";
 
-const initialSimulation = { mode: "realtime", isPlaying: true, speed: 1, timelineStep: 0, timelineSteps: 1000, currentDate: new Date().toISOString(), startDate: new Date().toISOString(), endDate: new Date().toISOString() };
+const initialSimulation = { mode: "realtime", isPlaying: true, speed: 1, timelineStep: 0, timelineSteps: 1000, currentDate: new Date().toISOString(), startDate: new Date().toISOString(), endDate: new Date().toISOString(), orbitCoverageSegments: [] };
 // ``datetime-local`` deliberately carries no offset. Treat its displayed
 // value as UTC so the editor, timeline, AOS/LOS table and chart all describe
 // the same instant, regardless of the operator's browser timezone.
@@ -228,6 +229,11 @@ export default function TimeControlBar() {
         && (timelineEventState.source !== "legacy" || analysisRangeMatchesTimeline)
         ? timelineEventState.events
         : [];
+    const orbitCoverageSegments = useMemo(() => buildTimelineOrbitCoverageSegments({
+        startDate: simulation.startDate,
+        endDate: simulation.endDate,
+        ranges: simulation.orbitCoverageSegments
+    }), [simulation.startDate, simulation.endDate, simulation.orbitCoverageSegments]);
     const progress = Math.max(0, Math.min(100, (currentTimelineStep / timelineSteps) * 100));
     const markerPositionClass = progress <= 3
         ? "is-start translate-x-0 after:left-[6px]"
@@ -299,6 +305,16 @@ export default function TimeControlBar() {
                     >
                         {timelineTimeLabel(simulation.currentDate)} UTC
                     </output>
+                    <div
+                        className="pointer-events-none absolute top-[17px] right-0 left-0 z-[1] h-[9px] overflow-hidden rounded-[6px]"
+                        aria-hidden="true"
+                    >
+                        {orbitCoverageSegments.map((segment) => <span
+                            key={`${segment.startTimeMs}:${segment.endTimeMs}`}
+                            className="absolute top-0 h-full rounded-[inherit] bg-[linear-gradient(90deg,rgba(72,176,255,.08),rgba(99,217,255,.52)_18%,rgba(99,217,255,.52)_82%,rgba(72,176,255,.08))] shadow-[0_0_9px_rgba(76,190,255,.28)]"
+                            style={{ left: `${segment.startPercent}%`, width: `${segment.widthPercent}%` }}
+                        />)}
+                    </div>
                     <input
                         className="absolute top-[20px] left-0 z-[3] h-3 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-[4px] [&::-webkit-slider-runnable-track]:bg-[linear-gradient(to_right,#4779ff_0_var(--timeline-progress),#253a57_var(--timeline-progress)_100%)] [&::-webkit-slider-runnable-track]:shadow-[inset_0_0_0_1px_rgba(113,141,181,.18)] [&::-webkit-slider-thumb]:mt-[-5px] [&::-webkit-slider-thumb]:size-[13px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[#6f98ff] [&::-webkit-slider-thumb]:bg-[#2860ed] [&::-webkit-slider-thumb]:shadow-[0_0_0_3px_rgba(54,99,239,.2)] [&::-moz-range-track]:h-[3px] [&::-moz-range-track]:rounded-[4px] [&::-moz-range-track]:bg-[#253a57] [&::-moz-range-track]:shadow-[inset_0_0_0_1px_rgba(113,141,181,.18)] [&::-moz-range-progress]:h-[3px] [&::-moz-range-progress]:rounded-[4px] [&::-moz-range-progress]:bg-[#4779ff] [&::-moz-range-thumb]:size-[10px] [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-[#6f98ff] [&::-moz-range-thumb]:bg-[#2860ed] [&::-moz-range-thumb]:shadow-[0_0_0_3px_rgba(54,99,239,.2)]"
                         aria-label="Linea temporal de simulacion"

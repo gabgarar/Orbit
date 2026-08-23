@@ -87,6 +87,16 @@ test("activating TLE and finite layers recomputes their combined active envelope
     assert.match(activation, /activateAllSatelliteLayersWithMasterTimeRange[\s\S]*reconcileActiveSatelliteTimeDomainAfterLayerChange\(/);
 });
 
+test("the simulation state publishes visible source coverage without turning gaps into a Master Time Range envelope", () => {
+    assert.match(mainSource, /function getVisibleOrbitTimelineCoverageRanges\(\)/);
+    assert.match(mainSource, /\.filter\(\(sourceId\) => isSatelliteVisible\(sourceId\)\)/);
+    assert.match(mainSource, /const finiteRange = getObjectIntrinsicTimeRange\(sourceId\)/);
+    assert.match(mainSource, /kind:\s*"tle"/);
+    assert.match(mainSource, /if \(!Number\.isFinite\(epochMs\)\)\s*\{\s*return \[\];/);
+    assert.match(mainSource, /orbitCoverageSegments,\s*\n\s*currentDate:/);
+    assert.match(mainSource, /reason === "visibility"[\s\S]*?refreshSimulationControlsUi\(\)/);
+});
+
 test("an OEM file is routed to the native finite importer before catalogue/TLE parsing", () => {
     assert.match(sidebarSource, /export function isNativeOemEphemerisFileName\(fileName\)/);
     const nativeOemGuard = sidebarSource.indexOf("if (isNativeOemEphemerisFileName(file.name))");

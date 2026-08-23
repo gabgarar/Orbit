@@ -44,3 +44,11 @@ test("simulation timeline keeps native scrubbing and adds wheel and rail-drag na
     assert.match(timeControlBarSource, /onPointerMove=\{moveTimelinePointerNavigation\}/);
     assert.match(timeControlBarSource, /onChange=\{\(event\) => seekTimelineStep\(Number\(event\.target\.value\)\)\}/);
 });
+
+test("simulation timeline paints only published orbital coverage intervals below interactive controls", () => {
+    assert.match(timeControlBarSource, /buildTimelineOrbitCoverageSegments/);
+    assert.match(timeControlBarSource, /ranges:\s*simulation\.orbitCoverageSegments/);
+    assert.match(timeControlBarSource, /orbitCoverageSegments\.map\(\(segment\)/);
+    assert.match(timeControlBarSource, /pointer-events-none absolute top-\[17px\]/);
+    assert.match(timeControlBarSource, /rgba\(99,217,255,\.52\)/);
+});
