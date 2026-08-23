@@ -355,6 +355,17 @@ test("overlapping AOS/LOS/maximum-style instants receive separate timed-event la
     assert.match(panel, /width: `calc\(\$\{laneWidth\}% - 8px\)`/);
 });
 
+test("day and week time grids allocate lanes independently inside each calendar column", () => {
+    // Week view must not make a Monday collision narrow an unrelated Tuesday
+    // event. Both views share the per-day grid and therefore call the lane
+    // layout inside the day map rather than once for the complete week.
+    assert.match(panel, /const TIMED_EVENT_MIN_DURATION_MS = 30 \* 60 \* 1000;/);
+    assert.match(panel, /const endTime = Math\.min\(end, Math\.max\(rawEnd, startTime \+ TIMED_EVENT_MIN_DURATION_MS\)\);/);
+    assert.match(panel, /const timedEvents = ordinaryEvents\.filter\(\(event\) => !event\.allDay\);/);
+    assert.match(panel, /\{days\.map\(\(day\) => \{[\s\S]*?const timedLayouts = layoutPlannerEventLanes\(eventsForDay\(timedEvents, day\), \{[\s\S]*?minimumDurationMs: TIMED_EVENT_MIN_DURATION_MS,[\s\S]*?range: visibleDay[\s\S]*?\}\);[\s\S]*?className="orbit-planner-time-day"/);
+    assert.match(panel, /<TimedEvent layout=\{layout\} day=\{day\} key=\{`\$\{layout\.event\.id\}:\$\{day\.toISOString\(\)\}`\}/);
+});
+
 test("planner is a fresh, bounded floating workspace with compact operational chrome", () => {
     assert.match(panel, /from "\.\/plannerWindowLayout\.js"/);
     assert.match(panel, /const PLANNER_RESIZE_DIRECTIONS = \["n", "s", "e", "w", "ne", "nw", "se", "sw"\]/);

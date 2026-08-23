@@ -56,6 +56,19 @@ test("EOP coverage bands share the compact event box and typography in every pla
     assert.doesNotMatch(panelCss, /\.orbit-planner-time-eop-ranges > \.orbit-planner-eop-range\.has-label \{[\s\S]*min-height:/);
 });
 
+test("month cells retain every event in an internal scroll viewport and date badges fit two digits", () => {
+    assert.match(panel, /className="orbit-planner-month-events"/);
+    assert.match(panel, /aria-label=\{`Eventos del \$\{dayFormatter\.format\(day\)\}/);
+    assert.match(panel, /tabIndex=\{dayEvents\.length \? 0 : -1\}/);
+    assert.match(panel, /\{dayEvents\.map\(\(event\) => <EventButton event=\{event\}/);
+    assert.doesNotMatch(panel, /dayEvents\.slice\(0, 3\)/);
+    assert.doesNotMatch(panel, /orbit-planner-more-events/);
+    assert.match(panelCss, /\.orbit-planner-month-day \{[\s\S]*display: flex;[\s\S]*min-height: 0;[\s\S]*flex-direction: column;/);
+    assert.match(panelCss, /\.orbit-planner-month-events \{[\s\S]*min-height: 0;[\s\S]*flex: 1 1 auto;[\s\S]*overflow-y: auto;[\s\S]*overscroll-behavior: contain;/);
+    assert.match(panelCss, /\.orbit-planner-month-events::\-webkit-scrollbar \{[\s\S]*width: 5px;/);
+    assert.match(panelCss, /\.orbit-planner-day-number \{[\s\S]*width: 26px;[\s\S]*height: 26px;[\s\S]*min-width: 26px;[\s\S]*min-height: 26px;[\s\S]*box-sizing: border-box;[\s\S]*padding: 0;[\s\S]*line-height: 1;/);
+});
+
 test("EOP coverage rails use the published quality colour tokens and keep their meaning without colour alone", () => {
     assert.match(panel, /const EOP_VISUAL_STATE_COLOR_TOKENS = Object\.freeze\(\{[\s\S]*normal: PLANNER_COLOR_TOKENS\.EMERALD,[\s\S]*ok: PLANNER_COLOR_TOKENS\.AMBER,[\s\S]*predicted: PLANNER_COLOR_TOKENS\.ROSE,[\s\S]*degraded: PLANNER_COLOR_TOKENS\.ROSE/);
     assert.match(panel, /function eopCoverageColorToken\(event\) \{[\s\S]*metadata\.eopColorToken[\s\S]*event\?\.colorToken[\s\S]*metadata\.eopVisualState/);

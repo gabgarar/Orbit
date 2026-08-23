@@ -46,6 +46,10 @@ import "./PlannerPanel.css";
 
 const WEEKDAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const HOUR_HEIGHT = 52;
+// Point facts such as AOS, maximum elevation and LOS still need a readable
+// card. The collision layout receives this same footprint so close facts use
+// parallel columns instead of painting one card on top of another.
+const TIMED_EVENT_MIN_DURATION_MS = 30 * 60 * 1000;
 export const PLANNER_REQUEST_MESSAGE_TIMEOUT_MS = 4_500;
 const ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT = "orbit:planner-view-range-rebase";
 const PLANNER_RESIZE_DIRECTIONS = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
@@ -324,9 +328,12 @@ function MonthView({ cursor, events, onSelect, onOpenDay }) {
                 const inCurrentMonth = day.getUTCMonth() === cursor.getUTCMonth();
                 return <article className={`orbit-planner-month-day${inCurrentMonth ? "" : " is-outside"}${sameUtcDay(day, today) ? " is-today" : ""}${hasEopCoverage ? " has-eop-coverage" : ""}`} key={day.toISOString()}>
                     <button type="button" className="orbit-planner-day-number" onClick={() => onOpenDay(day)} aria-label={`Ver el día ${dayFormatter.format(day)}`}>{day.getUTCDate()}</button>
-                    <div className="orbit-planner-month-events">
-                        {dayEvents.slice(0, 3).map((event) => <EventButton event={event} key={`${event.id}:${day.toISOString()}`} compact onSelect={onSelect} />)}
-                        {dayEvents.length > 3 ? <button type="button" className="orbit-planner-more-events" onClick={() => onOpenDay(day)}>+{dayEvents.length - 3} más</button> : null}
+                    <div
+                        className="orbit-planner-month-events"
+                        aria-label={`Eventos del ${dayFormatter.format(day)}${dayEvents.length ? ". Desplázate para verlos todos." : ""}`}
+                        tabIndex={dayEvents.length ? 0 : -1}
+                    >
+                        {dayEvents.map((event) => <EventButton event={event} key={`${event.id}:${day.toISOString()}`} compact onSelect={onSelect} />)}
                     </div>
                 </article>;
             })}
@@ -338,17 +345,18 @@ function MonthView({ cursor, events, onSelect, onOpenDay }) {
 }
 
 function TimedEvent({ layout, day, onSelect }) {
-    const { event, lane = 0, laneCount = 1 } = layout;
+    const { event, lane = 0, laneCount = 1, layoutStartMs, layoutEndMs } = layout;
     const { start, end } = dayRange(day);
-    const startTime = Math.max(start, Date.parse(event.start));
-    const rawEnd = Date.parse(event.end || event.start);
-    const endTime = Math.min(end, Math.max(rawEnd, startTime + 30 * 60 * 1000));
+    const startTime = Math.max(start, Number.isFinite(layoutStartMs) ? layoutStartMs : Date.parse(event.start));
+    const rawEnd = Number.isFinite(layoutEndMs) ? layoutEndMs : Date.parse(event.end || event.start);
+    const endTime = Math.min(end, Math.max(rawEnd, startTime + TIMED_EVENT_MIN_DURATION_MS));
     const minutes = (startTime - start) / 60_000;
     const duration = Math.max(24, ((endTime - startTime) / 60_000) * (HOUR_HEIGHT / 60));
     const laneWidth = 100 / Math.max(1, laneCount);
     return <button
         type="button"
         className="orbit-planner-timed-event"
+        data-lane-count={laneCount}
         style={{
             ...eventColorStyle(event),
             top: `${minutes * (HOUR_HEIGHT / 60)}px`,
@@ -370,6 +378,8 @@ function TimeGrid({ view, cursor, events, onSelect }) {
     const today = utcDay();
     const eopRangeEvents = events.filter(isPlannerEopRangeEvent);
     const ordinaryEvents = events.filter((event) => !isPlannerEopRangeEvent(event));
+    const timedEvents = ordinaryEvents.filter((event) => !event.allDay);
+    const allDayEvents = ordinaryEvents.filter((event) => event.allDay);
     const eopRangeSegments = buildPlannerCoverageSegments(eopRangeEvents, {
         start: start.toISOString(),
         end: end.toISOString(),
@@ -388,11 +398,15 @@ function TimeGrid({ view, cursor, events, onSelect }) {
             <div className="orbit-planner-hours" style={{ gridTemplateColumns: `52px repeat(${days.length}, minmax(0, 1fr))` }}>
                 <div className="orbit-planner-hour-labels" aria-hidden="true">{Array.from({ length: 24 }, (_, hour) => <span key={hour}>{String(hour).padStart(2, "0")}:00</span>)}</div>
                 {days.map((day) => {
-                    const timedLayouts = layoutPlannerEventLanes(eventsForDay(ordinaryEvents.filter((event) => !event.allDay), day));
+                    const visibleDay = dayRange(day);
+                    const timedLayouts = layoutPlannerEventLanes(eventsForDay(timedEvents, day), {
+                        minimumDurationMs: TIMED_EVENT_MIN_DURATION_MS,
+                        range: visibleDay
+                    });
                     return <div className="orbit-planner-time-day" key={day.toISOString()}>
                     {Array.from({ length: 24 }, (_, hour) => <div className="orbit-planner-hour-line" key={hour} />)}
                     {timedLayouts.map((layout) => <TimedEvent layout={layout} day={day} key={`${layout.event.id}:${day.toISOString()}`} onSelect={onSelect} />)}
-                    {eventsForDay(ordinaryEvents.filter((event) => event.allDay), day).map((event) => <EventButton event={event} key={`${event.id}:all-day:${day.toISOString()}`} compact onSelect={onSelect} />)}
+                    {eventsForDay(allDayEvents, day).map((event) => <EventButton event={event} key={`${event.id}:all-day:${day.toISOString()}`} compact onSelect={onSelect} />)}
                 </div>;
                 })}
             </div>

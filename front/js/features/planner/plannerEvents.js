@@ -1073,11 +1073,11 @@ export function plannerEventsOverlap(left, right) {
 }
 
 /** Group events by transitive overlap, preserving chronological order. */
-export function getPlannerOverlapGroups(events) {
+function getPlannerOverlapGroupsWithComparator(events, overlaps) {
     const groups = [];
     for (const event of normalizePlannerEvents(events)) {
         const active = groups.at(-1);
-        if (active && active.some((candidate) => plannerEventsOverlap(candidate, event))) {
+        if (active && active.some((candidate) => overlaps(candidate, event))) {
             active.push(event);
         } else {
             groups.push([event]);
@@ -1086,7 +1086,50 @@ export function getPlannerOverlapGroups(events) {
     return groups;
 }
 
-function layoutOverlapGroup(group, groupIndex) {
+export function getPlannerOverlapGroups(events) {
+    return getPlannerOverlapGroupsWithComparator(events, plannerEventsOverlap);
+}
+
+function normalizeLaneLayoutOptions(options = {}) {
+    const source = options && typeof options === "object" ? options : {};
+    const requestedMinimum = Number(source.minimumDurationMs);
+    const minimumDurationMs = Number.isFinite(requestedMinimum) && requestedMinimum > 0
+        ? requestedMinimum
+        : 0;
+    const range = source.range ? normalizePlannerRange(source.range) : null;
+    return { minimumDurationMs, range };
+}
+
+/**
+ * Returns the interval occupied by a timed card, rather than the factual
+ * interval alone. Point facts deliberately receive the same minimum duration
+ * as their rendered card so nearby AOS/maximum/LOS labels do not paint over
+ * one another in the Day or Week view. A viewport range clips that footprint
+ * at the day boundary without changing the event's published timestamps.
+ */
+function plannerLaneInterval(event, { minimumDurationMs, range }) {
+    const startMs = range ? Math.max(event.startMs, range.startMs) : event.startMs;
+    const naturalEndMs = range ? Math.min(event.endMs, range.endMs) : event.endMs;
+    const visualEndMs = Math.max(naturalEndMs, startMs + minimumDurationMs);
+    return {
+        startMs,
+        endMs: range ? Math.min(range.endMs, visualEndMs) : visualEndMs
+    };
+}
+
+function plannerLaneEventsOverlap(left, right, options) {
+    if (!options.minimumDurationMs && !options.range) return plannerEventsOverlap(left, right);
+    const first = plannerLaneInterval(left, options);
+    const second = plannerLaneInterval(right, options);
+    if (first.endMs <= first.startMs && second.endMs <= second.startMs) return first.startMs === second.startMs;
+    if (first.endMs <= first.startMs) return first.startMs >= second.startMs && first.startMs < second.endMs;
+    if (second.endMs <= second.startMs) return second.startMs >= first.startMs && second.startMs < first.endMs;
+    // The visual cards use half-open intervals. Cards touching exactly at an
+    // edge may reuse a column; only pixels that really overlap need a lane.
+    return first.startMs < second.endMs && second.startMs < first.endMs;
+}
+
+function layoutOverlapGroup(group, groupIndex, overlaps, options) {
     const lanes = [];
     const assigned = [];
     const ordered = [...group].sort((left, right) => (
@@ -1095,7 +1138,7 @@ function layoutOverlapGroup(group, groupIndex) {
         || left.id.localeCompare(right.id)
     ));
     for (const event of ordered) {
-        let lane = lanes.findIndex((laneEvents) => laneEvents.every((candidate) => !plannerEventsOverlap(candidate, event)));
+        let lane = lanes.findIndex((laneEvents) => laneEvents.every((candidate) => !overlaps(candidate, event)));
         if (lane < 0) {
             lane = lanes.length;
             lanes.push([]);
@@ -1103,17 +1146,29 @@ function layoutOverlapGroup(group, groupIndex) {
         lanes[lane].push(event);
         assigned.push({ event, lane, overlapGroup: groupIndex });
     }
-    return assigned.map((entry) => ({ ...entry, laneCount: lanes.length }));
+    return assigned.map((entry) => ({
+        ...entry,
+        laneCount: lanes.length,
+        layoutStartMs: plannerLaneInterval(entry.event, options).startMs,
+        layoutEndMs: plannerLaneInterval(entry.event, options).endMs
+    }));
 }
 
 /**
  * Return a stable lane/column assignment for overlapping timed events. The
  * widest concurrent group gets a common `laneCount`, which gives a renderer
- * safe, non-overlapping columns without embedding any CSS assumptions.
+ * safe, non-overlapping columns without embedding any CSS assumptions. A
+ * caller may provide the card's `minimumDurationMs` and a viewport `range`;
+ * those affect only visual collision lanes, never the factual event times.
  */
-export function layoutPlannerEventLanes(events) {
-    return getPlannerOverlapGroups(events)
-        .flatMap((group, index) => layoutOverlapGroup(group, index))
+export function layoutPlannerEventLanes(events, options = {}) {
+    const layoutOptions = normalizeLaneLayoutOptions(options);
+    const visibleEvents = layoutOptions.range
+        ? normalizePlannerEvents(events).filter((event) => plannerEventIntersectsRange(event, layoutOptions.range))
+        : normalizePlannerEvents(events);
+    const overlaps = (left, right) => plannerLaneEventsOverlap(left, right, layoutOptions);
+    return getPlannerOverlapGroupsWithComparator(visibleEvents, overlaps)
+        .flatMap((group, index) => layoutOverlapGroup(group, index, overlaps, layoutOptions))
         .sort((left, right) => comparePlannerEvents(left.event, right.event));
 }
 

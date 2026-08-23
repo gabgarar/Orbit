@@ -609,7 +609,10 @@
 }
 
 .orbit-planner-month-day {
+    display: flex;
     min-width: 0;
+    min-height: 0;
+    flex-direction: column;
     overflow: hidden;
     border-right: 1px solid #203d59;
     border-bottom: 1px solid #203d59;
@@ -630,16 +633,22 @@
 
 .orbit-planner-day-number {
     display: grid;
-    width: 21px;
-    height: 21px;
+    width: 26px;
+    height: 26px;
+    min-width: 26px;
+    min-height: 26px;
     margin-bottom: 3px;
+    box-sizing: border-box;
     place-items: center;
     border: 0;
     border-radius: 999px;
     background: transparent;
+    padding: 0;
     color: #b9cce7;
     font-size: 11px;
     font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
 }
 
 .orbit-planner-month-day.is-today .orbit-planner-day-number {
@@ -653,8 +662,34 @@
 }
 
 .orbit-planner-month-events {
-    display: grid;
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
     gap: 3px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: rgba(126, 164, 228, .54) transparent;
+    scrollbar-width: thin;
+}
+
+.orbit-planner-month-events::-webkit-scrollbar {
+    width: 5px;
+}
+
+.orbit-planner-month-events::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(126, 164, 228, .54);
+}
+
+.orbit-planner-month-events::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.orbit-planner-month-events:focus-visible {
+    outline: 1px solid rgba(135, 171, 242, .8);
+    outline-offset: -1px;
 }
 
 /* EOP is a source-coverage interval, not a daily countdown. The overlay uses

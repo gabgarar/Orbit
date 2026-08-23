@@ -444,6 +444,51 @@ test("overlap helpers distinguish adjacent events while packing real conflicts i
     ]);
 });
 
+test("nearby pass instants reserve the visual lanes used by day and week cards", () => {
+    // Timed cards intentionally render point facts with a 30-minute minimum
+    // height so they remain readable. The lane assignment must use that same
+    // visual interval: AOS, maximum elevation and LOS can be minutes apart
+    // while their cards still overlap on the time grid.
+    const aos = normalizePlannerEvent({ id: "pass-aos", kind: "pass-aos", time: "2026-08-23T14:20:00Z" });
+    const maximum = normalizePlannerEvent({ id: "pass-maximum", kind: "pass-maximum", time: "2026-08-23T14:25:00Z" });
+    const los = normalizePlannerEvent({ id: "pass-los", kind: "pass-los", time: "2026-08-23T14:30:00Z" });
+    const following = normalizePlannerEvent({ id: "following-pass", kind: "pass-aos", time: "2026-08-23T15:00:00Z" });
+
+    const layout = layoutPlannerEventLanes([following, los, maximum, aos], {
+        minimumDurationMs: 30 * 60 * 1000
+    });
+    assert.deepEqual(layout.map(({ event, lane, laneCount, overlapGroup }) => [event.id, lane, laneCount, overlapGroup]), [
+        ["pass-aos", 0, 3, 0],
+        ["pass-maximum", 1, 3, 0],
+        ["pass-los", 2, 3, 0],
+        ["following-pass", 0, 1, 1]
+    ]);
+
+    // The next point begins precisely when the LOS card's minimum visual
+    // interval ends, so columns may be reused without making them touch.
+    assert.deepEqual(layoutPlannerEventLanes([aos, maximum]).map(({ event, lane, laneCount }) => [event.id, lane, laneCount]), [
+        ["pass-aos", 0, 1],
+        ["pass-maximum", 0, 1]
+    ], "the semantic/default layout remains available to non-visual consumers");
+});
+
+test("visual lanes clip a crossing event before applying the minimum card footprint", () => {
+    const crossingMidnight = manual("crossing-midnight", "2026-08-22T23:50:00Z", "2026-08-23T00:05:00Z");
+    const nextPoint = normalizePlannerEvent({ id: "next-point", kind: "pass-maximum", time: "2026-08-23T00:20:00Z" });
+    const range = { start: "2026-08-23T00:00:00Z", end: "2026-08-24T00:00:00Z" };
+    const layout = layoutPlannerEventLanes([crossingMidnight, nextPoint], {
+        minimumDurationMs: 30 * 60 * 1000,
+        range
+    });
+
+    assert.deepEqual(layout.map(({ event, lane, laneCount }) => [event.id, lane, laneCount]), [
+        ["crossing-midnight", 0, 2],
+        ["next-point", 1, 2]
+    ]);
+    assert.equal(new Date(layout[0].layoutStartMs).toISOString(), "2026-08-23T00:00:00.000Z");
+    assert.equal(new Date(layout[0].layoutEndMs).toISOString(), "2026-08-23T00:30:00.000Z");
+});
+
 test("day, week and month helpers use UTC boundaries across a local DST transition", () => {
     const event = normalizePlannerEvent({
         id: "dst-pass",
