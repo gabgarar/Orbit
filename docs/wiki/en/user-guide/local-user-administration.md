@@ -10,10 +10,11 @@ Microsoft accounts outside this device.
 !!! warning "This is not a remote administration console"
 
     There is no Orbit master account, support credential, default password, or
-    email-based recovery mechanism. Clearing browser data, losing every local
-    administrator password, or moving a project to another device cannot be
-    resolved by a backend: recovery depends on a copy or export explicitly kept
-    by the operator.
+    email-based recovery mechanism. The administrative reset described below
+    exists only in the same installation and only for accounts that have
+    enrolled their local recovery key. Clearing browser data, moving a project
+    to another device, or losing all local administration cannot be resolved by
+    a backend.
 
 ## Scope and least-knowledge rule
 
@@ -85,45 +86,93 @@ library, or offer orbit controls. The directory lets an administrator:
 
 - search by display name or email/identity;
 - inspect Local, Google or Microsoft provider, last sign-in, lock state, and
-  pending requests;
+  pending requests, plus current failures and the failures preceding the last
+  successful sign-in;
 - lock or unlock, add a private operator note, and delete an account with
   confirmation;
 - require that a person changes their password on the next sign-in; and
+- set a compatible user's new local password without viewing, copying, or
+  exporting the current password; and
 - configure the number of failed local attempts before an account is locked.
 
 Notes, roles, attempt counters, and requests are not stored in the public
 account index. They are part of this installation's encrypted administrative
 directory.
 
+`Current attempts` is the streak of failed local attempts since the last
+successful sign-in. `Failures before last success` preserves that streak just
+before the latest successful sign-in reset it. A direct reset clears the
+current streak and unlocks the account; it does not erase the historic value
+for the latest successful sign-in.
+
 !!! note "Existing accounts"
 
     A local account created before administration is enabled joins the
-    directory after its next successful sign-in. Orbit does not decrypt other
-    vaults just to reconstruct a list of emails, names, or projects; that
-    boundary preserves the confidentiality of the earlier storage.
+    directory and enrols its local recovery key after its next successful
+    sign-in. Until then, a direct reset fails closed without changing data; use
+    the forced change on the next valid sign-in. Orbit does not decrypt other
+    vaults just to reconstruct a list of emails, names, or projects.
 
-## Requested reset
+## Password request and reset
 
-Orbit never knows or reconstructs a local password. A reset is therefore a
-**pending local request**, not an email link or an administrative password
-replacement.
+Orbit never knows or reconstructs a local password. There are two separate
+local routes, with no email or backend:
 
-1. The operator requests a reset on the same installation.
-2. Orbit records a minimal local request until an administrator marks it as
-   handled. It never stores a new password or authentication data in
-   plaintext.
-3. An authenticated administrator may mark it handled or require a password
-   change in that installation. The latter only marks a change for the next
-   successful sign-in; it cannot decrypt another person's vault or choose
-   their password.
-4. On the next sign-in with the current password, Orbit asks for a new password
-   and re-encrypts the vault with it. Marking the request handled without
-   forcing a change modifies neither the vault nor its projects.
+1. **Identified request.** Selecting “Forgot your password?” explicitly asks
+   for an email or identifier. If it matches a local account, Orbit records a
+   minimal request for the administration panel. It returns the same generic
+   response for an absent, malformed, or existing account, so the action cannot
+   enumerate users. An administrator may mark the request handled or require a
+   change at the next valid sign-in.
+2. **Direct reset.** An authenticated administrator can set a new password for
+   another local account that has enrolled recovery. This route cannot change
+   the administrator's own password. Orbit clears the pending request, lock,
+   and current failure streak, and the account holder uses the new password at
+   the next sign-in.
 
-An account that does not know its password cannot cryptographically recover its
-vault through an administrator. The request can force a change for a password
-the operator can still prove; it does not replace that flow. If no local
-administrator remains able to approve it, Orbit cannot bypass that condition.
+To preserve data, the installation keeps an unextractable AES `CryptoKey` for
+each enrolled account in IndexedDB; the encrypted directory holds only an
+opaque reference which is not exposed to the UI or exports. During a reset,
+Orbit uses that key internally to re-encrypt the account vault, projects in all
+of its partitions — including active or removed Google/Microsoft identities
+that retain projects — and provider token envelopes. The interface receives
+neither the prior password, the key,
+nor project content, and no administrative API returns them.
+
+Unlinking a provider removes its token and active link, but does not
+automatically erase its local projects. Orbit privately stores the opaque
+partition identifier in encrypted account data so a later password change can
+re-encrypt it; relinking the same identity keeps those projects available. To
+erase that data, delete the projects explicitly or zeroize the installation.
+
+Changes are staged with encrypted-envelope rollback if the operation cannot be
+confirmed. Before replacing projects, Orbit records an encrypted local journal.
+If the browser stops before the new vault is written, the next sign-in or
+administrative reset restores the earlier envelopes; if the candidate vault was
+written but the directory commit was not, it finishes that commit. If rollback
+of any project cannot be proven complete, Orbit retains the journal and
+candidate key rather than declaring a mixed state safe: the next authenticated
+access cryptographically distinguishes the old and candidate vaults, then
+restores or finalizes the migration before exposing projects.
+
+On confirmation, credential generation invalidates previously issued sessions
+and vault capabilities for the target account. An earlier session cannot keep
+updating the profile, opening projects, re-entering Google/Microsoft, or
+reading, storing, or removing its token envelopes: its next protected operation
+returns `ACCOUNT_PASSWORD_RESET`. Likewise, a forced-change marker returns
+`PASSWORD_CHANGE_REQUIRED` for every workspace operation until
+`changeLocalPassword` completes; that session cannot modify data in the
+meantime. Orbit does not change a Google or Microsoft password, recover data on
+another device, or send email.
+
+!!! warning "Local recovery authority"
+
+    The unextractable key prevents Orbit from copying out a password or key,
+    but an administrator of the same installation has local authority to
+    recover and re-encrypt enrolled accounts. This is not password-only
+    end-to-end confidentiality against privileged same-origin code or the local
+    browser profile. Zeroize removes these recovery keys too. If no local
+    administrator remains able to operate, Orbit cannot bypass that condition.
 
 ## Operational limits
 
@@ -132,7 +181,8 @@ administrator remains able to approve it, Orbit cannot bypass that condition.
 - Encryption protects persisted data from a passive storage copy, not from
   malicious code running in the same origin while a session is open. A desktop
   container and operating-system credential store are needed for that stronger
-  boundary.
+  boundary. Local administrative recovery extends that authority to the
+  installation administrator for enrolled accounts.
 - There is no central audit log, user telemetry, or email notification. Any
   available operational history is local and subject to the same installation
   encryption and deletion policy.
@@ -153,7 +203,18 @@ Identity and administration tests must at least prove that:
   project, and later access returns `ACCOUNT_LOCKED` after password
   verification;
 - a reset request contains no password and changes no credentials on its own;
-- handling a request can only force a change after a valid sign-in; it does not
-  let an administrator decrypt or re-password another vault; and
+- direct reset rejects the old password, accepts the new one, migrates the
+  vault, local/linked projects, and provider envelopes, and rolls its changes
+  back on failure;
+- a legacy account without a recovery key fails closed until a successful
+  sign-in; recovery references and credential generations never reach the UI
+  or exports;
+- existing sessions and a concurrent tab cannot overwrite a confirmed rotation
+  or access projects, linked identities, or tokens, and both attempt-streak
+  values preserve their semantics; and
+- an interruption before or after the candidate vault is persisted restores
+  prior projects or deterministically completes the rotation. An uncertain
+  project rollback retains the journal until that recovery without exposing the
+  journal or keys to the UI; and
 - no administration route performs `fetch`, records telemetry, or sends email,
   tokens, or events to an Orbit backend.

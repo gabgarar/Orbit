@@ -4,6 +4,7 @@ import path from "node:path";
 import { sanitizeSystemConfigPayload } from "./config/payload.js";
 import { registerCatalogRoutes } from "./routes/catalog.js";
 import { registerCatalogExportRoutes } from "./routes/catalog-exports.js";
+import { registerClientStateGenerationRoute } from "./routes/client-state-generation.js";
 import { registerApiErrorHandler } from "./routes/errors.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import {
@@ -122,6 +123,7 @@ export function createOrbitApp({ runtime, config, catalog, importer, refresher, 
         refreshCatalog: refresher.refresh
     });
     registerCatalogExportRoutes(app, { catalog });
+    registerClientStateGenerationRoute(app, { dataDir: runtime.dataDir });
     registerPythonProxyRoutes(app, pythonClient, {
         numericalOrbitTimeoutMs: runtime.numericalOrbitProxyTimeoutMs
     });

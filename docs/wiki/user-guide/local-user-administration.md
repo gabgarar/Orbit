@@ -10,11 +10,11 @@ concede acceso a cuentas de Google o Microsoft fuera del dispositivo.
 !!! warning "No es una consola de administración remota"
 
     No hay cuenta maestra de Orbit, credencial de soporte, contraseña por
-    defecto ni mecanismo de recuperación por correo. Borrar los datos del
-    navegador, perder la contraseña de todas las personas administradoras o
-    mover el proyecto a otro dispositivo no puede resolverse desde un backend:
-    la recuperación depende de una copia o exportación que la persona haya
-    conservado explícitamente.
+    defecto ni mecanismo de recuperación por correo. El restablecimiento
+    administrativo descrito más abajo existe solamente en la misma instalación
+    y para cuentas que ya hayan inscrito su clave local de recuperación. Borrar
+    los datos del navegador, mover el proyecto a otro dispositivo o perder toda
+    la administración local no puede resolverse desde un backend.
 
 ## Alcance y principio de mínimo conocimiento
 
@@ -89,47 +89,99 @@ proyectos y no ofrece controles de órbitas. El directorio permite:
 
 - buscar por nombre mostrado o correo/identidad;
 - consultar proveedor local, Google o Microsoft, último inicio de sesión,
-  estado de bloqueo y solicitudes pendientes;
+  estado de bloqueo, solicitudes pendientes y los intentos fallidos actuales
+  y previos al último acceso correcto;
 - bloquear o desbloquear, añadir una nota privada de operador y eliminar una
   cuenta con confirmación;
 - marcar que una persona debe cambiar su contraseña en su próximo acceso;
+- establecer una contraseña local nueva para otra cuenta compatible sin ver,
+  copiar ni exportar su contraseña actual;
 - ajustar el número de intentos locales fallidos antes de bloquear una cuenta.
 
 Las notas, el rol, el contador de intentos y la solicitud no se guardan en el
 índice público de cuentas: forman parte del directorio administrativo cifrado
 de esta instalación.
 
+`Intentos actuales` es la racha de fallos locales desde el último acceso
+correcto. `Fallos antes del último éxito` conserva esa racha justo antes de que
+el último acceso correcto la reiniciase. Un restablecimiento directo limpia la
+racha actual y desbloquea la cuenta; no borra el dato histórico del último
+acceso correcto.
+
 !!! note "Cuentas anteriores"
 
     Una cuenta local creada antes de habilitar esta administración se incorpora
-    al directorio después de su siguiente inicio de sesión correcto. Orbit no
-    descifra bóvedas ajenas para reconstruir una lista de correos, nombres o
-    proyectos; esa limitación preserva la confidencialidad del almacenamiento
-    previo.
+    al directorio y enrola su clave de recuperación local después de su
+    siguiente inicio de sesión correcto. Hasta entonces, un restablecimiento
+    directo falla cerrado sin cambiar datos; use el cambio obligatorio en el
+    siguiente acceso válido. Orbit no descifra bóvedas ajenas para reconstruir
+    una lista de correos, nombres o proyectos.
 
-## Restablecimiento solicitado
+## Solicitud y restablecimiento de contraseña
 
-Orbit no conoce ni puede reconstruir una contraseña local. Por ello un
-restablecimiento es una **solicitud local pendiente**, no un enlace de correo ni
-una sustitución administrativa de contraseña.
+Orbit no conoce ni reconstruye una contraseña local. Hay dos rutas locales,
+separadas y sin correo ni backend:
 
-1. La persona solicita el restablecimiento desde la misma instalación.
-2. Orbit registra una solicitud mínima y local hasta que una persona
-   administradora la marque como atendida. No guarda una contraseña nueva ni
-   datos de autenticación en texto claro.
-3. Una persona administradora autenticada puede marcarla atendida o activar
-   el cambio de contraseña obligatorio en esa instalación. Esta última acción
-   solo marca el cambio para el siguiente acceso correcto; no puede descifrar
-   la bóveda ajena ni elegir una contraseña por la persona titular.
-4. Al siguiente inicio de sesión con la contraseña actual, Orbit solicita una
-   contraseña nueva y vuelve a cifrar la bóveda con ella. Marcar la solicitud
-   como atendida sin forzar el cambio no modifica la bóveda ni los proyectos.
+1. **Solicitud identificada.** Al pulsar «¿Has olvidado tu contraseña?», Orbit
+   pide explícitamente el correo o identificador. Si coincide con una cuenta
+   local, registra una solicitud mínima para el panel administrativo. La misma
+   respuesta genérica se devuelve para una cuenta ausente, malformada o
+   existente, de modo que la acción no enumera usuarios. La persona
+   administradora puede marcar la solicitud como atendida o forzar un cambio
+   en el próximo inicio válido.
+2. **Restablecimiento directo.** Una persona administradora autenticada puede
+   fijar una contraseña nueva para otra cuenta local que tenga recuperación
+   inscrita. No puede usar esta ruta para cambiar su propia contraseña. Orbit
+   limpia la solicitud pendiente, el bloqueo y la racha actual de fallos, y la
+   persona titular debe usar la contraseña nueva al volver a iniciar sesión.
 
-Una cuenta que no conoce su contraseña no puede recuperar criptográficamente
-la bóveda mediante un administrador. La solicitud sirve para forzar el cambio
-de una contraseña que la persona aún puede demostrar; no reemplaza ese flujo.
-Si no queda ningún administrador local capaz de aprobarla, Orbit no puede
-saltar esa condición.
+Para preservar los datos, la instalación mantiene para cada cuenta inscrita una
+`CryptoKey` AES no exportable en IndexedDB; el directorio cifrado conserva solo
+una referencia opaca que no se publica al panel ni se exporta. Durante el
+restablecimiento, Orbit usa esa clave internamente para volver a cifrar la
+bóveda de la cuenta, los proyectos de todas sus particiones —incluidas las
+identidades Google/Microsoft activas o desvinculadas que conservan proyectos—
+y los envoltorios de tokens del
+proveedor. La interfaz no recibe la contraseña previa, la clave ni el contenido
+de los proyectos, y ninguna API administrativa los devuelve.
+
+Desvincular un proveedor retira su token y su enlace activo, pero no borra sus
+proyectos locales automáticamente. Orbit conserva de forma privada y cifrada
+el identificador opaco de esa partición para volver a cifrarla en un cambio de
+contraseña posterior; si se vincula de nuevo la misma identidad, sus proyectos
+continúan disponibles. Para eliminar esos datos hay que borrar los proyectos de
+forma explícita o zeroizar la instalación.
+
+Los cambios se preparan con reversión de los sobres cifrados si no se puede
+confirmar la operación. Antes de reemplazar proyectos se guarda un diario local
+cifrado. Si el navegador se interrumpe antes de escribir la bóveda nueva, el
+siguiente inicio o restablecimiento administrativo recupera los sobres
+anteriores; si ya se escribió la bóveda candidata pero no el cierre del
+directorio, termina ese cierre. Si la reversión de algún proyecto no puede
+demostrarse completa, Orbit conserva el diario y la clave candidata en vez de
+declarar seguro un estado mixto: el siguiente acceso autenticado decide de
+forma criptográfica entre bóveda antigua y candidata y restaura o finaliza la
+migración antes de exponer los proyectos.
+
+Al confirmar, la generación de credenciales invalida las sesiones y capacidades
+de bóveda ya emitidas para la cuenta objetivo. Una sesión anterior no puede
+seguir actualizando el perfil, abrir proyectos, reentrar en Google/Microsoft ni
+leer, guardar o retirar sus sobres de token: su siguiente operación protegida
+devuelve `ACCOUNT_PASSWORD_RESET`. De manera equivalente, una marca de cambio
+obligatorio devuelve `PASSWORD_CHANGE_REQUIRED` para cualquier operación del
+espacio de trabajo hasta completar `changeLocalPassword`; no se permite usar esa
+sesión para modificar datos mientras tanto. Orbit no cambia la contraseña de
+Google o Microsoft, no recupera nada de otro dispositivo y no envía correo.
+
+!!! warning "Autoridad local de recuperación"
+
+    La clave no exportable evita que la contraseña o la clave se copie desde
+    Orbit, pero una persona administradora de la misma instalación tiene la
+    autoridad local para recuperar y volver a cifrar cuentas inscritas. No es
+    confidencialidad de extremo a extremo exclusiva de la contraseña frente a
+    código privilegiado del mismo origen o al perfil local del navegador.
+    Zeroize elimina también estas claves de recuperación. Si no queda ningún
+    administrador local capaz de operar, Orbit no puede saltar esa condición.
 
 ## Límites operativos
 
@@ -137,8 +189,10 @@ saltar esa condición.
   el origen local de Orbit. No se sincronizan entre instalaciones.
 - El cifrado protege almacenamiento persistido frente a una copia pasiva, pero
   no frente a código malicioso que ejecute en el mismo origen mientras una
-  sesión está abierta. Para elevar esa garantía se necesita un contenedor de
-  escritorio y un almacén de credenciales del sistema operativo.
+  sesión está abierta. La recuperación administrativa local amplía esa
+  autoridad al administrador de la instalación para cuentas inscritas. Para
+  elevar esa garantía se necesita un contenedor de escritorio y un almacén de
+  credenciales del sistema operativo.
 - No hay auditoría central, telemetría de usuarios ni notificaciones por correo.
   Cualquier historial operativo disponible es local y queda sujeto a la misma
   política de cifrado y borrado de la instalación.
@@ -160,8 +214,19 @@ Las pruebas de identidad y administración deben verificar como mínimo:
   el acceso posterior devuelve `ACCOUNT_LOCKED` después de verificar la
   contraseña;
 - una solicitud de restablecimiento no contiene contraseñas ni cambia
-  credenciales por sí sola;
-- atender una solicitud solo puede forzar el cambio tras un inicio de sesión válido;
-  no permite a un administrador descifrar ni recontraseñar otra bóveda;
+  credenciales por sí sola y no sirve para enumerar identidades;
+- el restablecimiento directo rechaza la contraseña previa, acepta la nueva,
+  migra bóveda, proyectos locales/vinculados y sobres de proveedor, y revierte
+  sus cambios si falla;
+- una cuenta anterior sin clave de recuperación falla cerrado hasta un inicio
+  de sesión correcto; referencias de recuperación y generaciones de
+  credenciales no llegan a la interfaz ni a exportaciones;
+- sesiones existentes y una pestaña concurrente no pueden sobrescribir una
+  rotación confirmada ni acceder a proyectos, identidades vinculadas o tokens;
+  ambas rachas de intentos conservan su semántica;
+- una interrupción antes o después de persistir la bóveda candidata restaura
+  los proyectos anteriores o termina la rotación de forma determinista. Una
+  reversión de proyecto incierta mantiene el diario hasta esa recuperación, sin
+  exponerlo ni exponer claves a la interfaz; y
 - ninguna ruta administrativa realiza `fetch`, registra telemetría o envía
   correos, tokens o eventos a un backend de Orbit.

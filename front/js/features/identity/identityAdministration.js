@@ -23,11 +23,21 @@ export const ADMIN_LOGIN_POLICY_DEFAULTS = Object.freeze({
 
 const ADMIN_REGISTRY_KEY_DATABASE = "orbit.identity.admin-registry-keys.v1";
 const ADMIN_REGISTRY_KEY_OBJECT_STORE = "keys";
+// Password-reset recovery keys deliberately live in a separate IndexedDB
+// database.  They are non-extractable Web Crypto keys, and their opaque ids
+// are kept only inside the encrypted administrative directory.  Keeping them
+// separate from the registry key avoids turning the directory-key API into a
+// general key store.
+const ADMIN_RECOVERY_KEY_DATABASE = "orbit.identity.admin-recovery-keys.v1";
+const ADMIN_RECOVERY_KEY_OBJECT_STORE = "keys";
 const ADMIN_REGISTRY_KEY_ID_BYTES = 16;
 const AES_GCM_IV_BYTES = 12;
 const MAX_ADMIN_NOTE_LENGTH = 4_000;
 const MAX_IDENTIFIER_LENGTH = 320;
 const MAX_DISPLAY_NAME_LENGTH = 120;
+const MAX_PASSWORD_REPLACEMENT_BACKUPS = 20_000;
+const MAX_PASSWORD_REPLACEMENT_STORAGE_KEY_LENGTH = 2_048;
+const MAX_PASSWORD_REPLACEMENT_PURPOSE_LENGTH = 120;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -112,6 +122,74 @@ function normalizedAccountId(value) {
     return accountId;
 }
 
+function optionalAdministrativeKeyReference(value) {
+    const keyId = text(value);
+    if (keyId && !/^[A-Za-z0-9_-]{16,}$/u.test(keyId)) {
+        fail("ADMIN_REGISTRY_FORMAT_INVALID", "El registro administrativo contiene una referencia de clave no válida.");
+    }
+    return keyId;
+}
+
+/**
+ * The replacement journal is deliberately private administrative metadata.
+ * It contains no key material and is encrypted together with the registry;
+ * its backup payloads live separately, encrypted with the candidate account
+ * key.  This lets a later login restore a project partition after an
+ * interrupted re-key without publishing raw project envelopes in the
+ * registry itself.
+ */
+function normalizePasswordReplacementJournal(value) {
+    if (value === undefined || value === null || value === "") return null;
+    const source = assertExactKeys(value, [
+        "id",
+        "previousCredentialGeneration",
+        "oldRecoveryKeyId",
+        "replacementRecoveryKeyId",
+        "startedAt",
+        "backups"
+    ]);
+    const id = text(source.id);
+    const previousCredentialGeneration = Number(source.previousCredentialGeneration);
+    if (!/^[A-Za-z0-9_-]{16,}$/u.test(id)
+        || !Number.isInteger(previousCredentialGeneration)
+        || previousCredentialGeneration < 1
+        || previousCredentialGeneration > 1_000_000
+        || !Array.isArray(source.backups)
+        || source.backups.length > MAX_PASSWORD_REPLACEMENT_BACKUPS) {
+        fail("ADMIN_REGISTRY_FORMAT_INVALID", "El diario de actualización de contraseña local no es válido.");
+    }
+    const backupKeys = new Set();
+    const storageKeys = new Set();
+    const backups = source.backups.map((candidate) => {
+        const backup = assertExactKeys(candidate, ["storageKey", "backupKey", "purpose"]);
+        const storageKey = text(backup.storageKey);
+        const backupKey = text(backup.backupKey);
+        const purpose = text(backup.purpose);
+        if (!storageKey
+            || storageKey.length > MAX_PASSWORD_REPLACEMENT_STORAGE_KEY_LENGTH
+            || !backupKey
+            || backupKey.length > MAX_PASSWORD_REPLACEMENT_STORAGE_KEY_LENGTH
+            || !purpose
+            || purpose.length > MAX_PASSWORD_REPLACEMENT_PURPOSE_LENGTH
+            || !/^[A-Za-z0-9._:-]+$/u.test(purpose)
+            || backupKeys.has(backupKey)
+            || storageKeys.has(storageKey)) {
+            fail("ADMIN_REGISTRY_FORMAT_INVALID", "El diario de actualización de contraseña local no es válido.");
+        }
+        backupKeys.add(backupKey);
+        storageKeys.add(storageKey);
+        return { storageKey, backupKey, purpose };
+    });
+    return {
+        id,
+        previousCredentialGeneration,
+        oldRecoveryKeyId: optionalAdministrativeKeyReference(source.oldRecoveryKeyId),
+        replacementRecoveryKeyId: optionalAdministrativeKeyReference(source.replacementRecoveryKeyId),
+        startedAt: normalizedTimestamp(source.startedAt),
+        backups
+    };
+}
+
 export function normalizeLocalIdentityRole(value, fallback = LOCAL_IDENTITY_ROLES.USER) {
     const role = text(value).toLowerCase();
     if (!role) return fallback;
@@ -147,17 +225,44 @@ export function createAdministrativeUserRecord({
     lastLoginProvider = "local",
     blocked = false,
     failedLoginAttempts = 0,
+    failedLoginAttemptsAtLastSuccess = 0,
     lockedUntil = "",
     notes = "",
     passwordChangeRequired = false,
-    passwordResetRequestedAt = ""
+    passwordResetRequestedAt = "",
+    passwordRecoveryKeyId = "",
+    credentialGeneration = 1,
+    // Internal transition marker.  It is intentionally omitted from the
+    // public administrative projection so another tab cannot start a
+    // password rotation while the account vault/project envelopes are being
+    // re-keyed.
+    passwordReplacementPending = false,
+    passwordReplacementJournal = null
 } = {}) {
     const canonicalIdentifier = normalizedIdentifier(identifier);
     const created = normalizedTimestamp(createdAt);
     const updated = normalizedTimestamp(updatedAt || created);
     const failedAttempts = Number(failedLoginAttempts);
+    const failedAttemptsAtLastSuccess = Number(failedLoginAttemptsAtLastSuccess);
+    const recoveryKeyId = optionalAdministrativeKeyReference(passwordRecoveryKeyId);
+    const normalizedCredentialGeneration = Number(credentialGeneration);
     const normalizedNotes = String(notes || "");
-    if (!Number.isInteger(failedAttempts) || failedAttempts < 0 || failedAttempts > 1_000 || normalizedNotes.length > MAX_ADMIN_NOTE_LENGTH || typeof blocked !== "boolean" || typeof passwordChangeRequired !== "boolean") {
+    const replacementJournal = normalizePasswordReplacementJournal(passwordReplacementJournal);
+    if (!Number.isInteger(failedAttempts)
+        || failedAttempts < 0
+        || failedAttempts > 1_000
+        || !Number.isInteger(failedAttemptsAtLastSuccess)
+        || failedAttemptsAtLastSuccess < 0
+        || failedAttemptsAtLastSuccess > 1_000
+        || !Number.isInteger(normalizedCredentialGeneration)
+        || normalizedCredentialGeneration < 1
+        || normalizedCredentialGeneration > 1_000_000
+        || normalizedNotes.length > MAX_ADMIN_NOTE_LENGTH
+        || typeof blocked !== "boolean"
+        || typeof passwordChangeRequired !== "boolean"
+        || typeof passwordReplacementPending !== "boolean"
+        || (passwordReplacementPending === true && !replacementJournal)
+        || (passwordReplacementPending !== true && replacementJournal !== null)) {
         fail("ADMIN_REGISTRY_FORMAT_INVALID", "El registro administrativo contiene una política de usuario no válida.");
     }
     return {
@@ -172,10 +277,15 @@ export function createAdministrativeUserRecord({
         lastLoginProvider: normalizeAdministrativeProvider(lastLoginProvider),
         blocked,
         failedLoginAttempts: failedAttempts,
+        failedLoginAttemptsAtLastSuccess: failedAttemptsAtLastSuccess,
         lockedUntil: normalizedTimestamp(lockedUntil, { optional: true }),
         notes: normalizedNotes,
         passwordChangeRequired,
-        passwordResetRequestedAt: normalizedTimestamp(passwordResetRequestedAt, { optional: true })
+        passwordResetRequestedAt: normalizedTimestamp(passwordResetRequestedAt, { optional: true }),
+        passwordRecoveryKeyId: recoveryKeyId,
+        credentialGeneration: normalizedCredentialGeneration,
+        passwordReplacementPending,
+        passwordReplacementJournal: replacementJournal
     };
 }
 
@@ -214,7 +324,17 @@ export function validateAdministrativeRegistry(value) {
 
 export function publicAdministrativeUser(record) {
     const user = createAdministrativeUserRecord(record);
-    return frozenClone(user);
+    // The recovery-key reference is deliberately admin-core-only.  A caller
+    // can see reset/lock state, but can never obtain the handle which lets the
+    // authenticated service retrieve a non-extractable recovery key.
+    const {
+        passwordRecoveryKeyId,
+        credentialGeneration,
+        passwordReplacementPending,
+        passwordReplacementJournal,
+        ...publicUser
+    } = user;
+    return frozenClone(publicUser);
 }
 
 function adminRegistryKeyId(cryptoRef) {
@@ -326,6 +446,22 @@ function keyStoreFailure() {
     fail("ADMIN_REGISTRY_KEY_STORAGE_FAILED", "No se ha podido acceder a la clave administrativa local.");
 }
 
+function recoveryKeyStoreUnavailable() {
+    fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No está disponible la recuperación local de contraseñas administrativas.");
+}
+
+function recoveryKeyStoreFailure() {
+    fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No se ha podido acceder a la clave local de recuperación de contraseña.");
+}
+
+function administrativeRecoveryKeyRecord(id, key) {
+    const keyId = text(id);
+    if (!/^[A-Za-z0-9_-]{16,}$/u.test(keyId)) {
+        fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La referencia de recuperación de contraseña no es válida.");
+    }
+    return Object.freeze({ id: keyId, key: validateAdministrativeRegistryKey(key) });
+}
+
 function requestResult(request) {
     return new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
@@ -360,6 +496,27 @@ async function openAdministrativeKeyDatabase(indexedDb) {
         return await requestResult(request);
     } catch {
         keyStoreFailure();
+    }
+}
+
+async function openAdministrativeRecoveryKeyDatabase(indexedDb) {
+    if (!indexedDb || typeof indexedDb.open !== "function") recoveryKeyStoreUnavailable();
+    let request;
+    try {
+        request = indexedDb.open(ADMIN_RECOVERY_KEY_DATABASE, 1);
+    } catch {
+        recoveryKeyStoreFailure();
+    }
+    request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(ADMIN_RECOVERY_KEY_OBJECT_STORE)) {
+            database.createObjectStore(ADMIN_RECOVERY_KEY_OBJECT_STORE);
+        }
+    };
+    try {
+        return await requestResult(request);
+    } catch {
+        recoveryKeyStoreFailure();
     }
 }
 
@@ -418,6 +575,88 @@ export function createInMemoryIdentityAdminRegistryKeyStore({ crypto = globalThi
         async get(id) {
             const key = keys.get(text(id));
             return key ? administrativeRegistryKeyRecord(id, key) : null;
+        }
+    });
+}
+
+/**
+ * Persists an already-created, non-extractable account AES-GCM key for a
+ * local administrator-approved password replacement.  It never exports key
+ * material; callers receive only an opaque id and can later ask for the
+ * CryptoKey through this narrowly scoped store.
+ */
+export function createIndexedDbIdentityAdministrativeRecoveryKeyStore({
+    indexedDb = globalThis.indexedDB,
+    crypto = globalThis.crypto
+} = {}) {
+    return Object.freeze({
+        async put(key) {
+            const record = administrativeRecoveryKeyRecord(adminRegistryKeyId(crypto), key);
+            const database = await openAdministrativeRecoveryKeyDatabase(indexedDb);
+            try {
+                const transaction = database.transaction(ADMIN_RECOVERY_KEY_OBJECT_STORE, "readwrite");
+                const completed = transactionCompleted(transaction);
+                transaction.objectStore(ADMIN_RECOVERY_KEY_OBJECT_STORE).add(record.key, record.id);
+                await completed;
+            } catch {
+                recoveryKeyStoreFailure();
+            } finally {
+                database.close?.();
+            }
+            return record;
+        },
+
+        async get(id) {
+            const keyId = text(id);
+            if (!/^[A-Za-z0-9_-]{16,}$/u.test(keyId)) return null;
+            const database = await openAdministrativeRecoveryKeyDatabase(indexedDb);
+            try {
+                const transaction = database.transaction(ADMIN_RECOVERY_KEY_OBJECT_STORE, "readonly");
+                const completed = transactionCompleted(transaction);
+                const key = await requestResult(transaction.objectStore(ADMIN_RECOVERY_KEY_OBJECT_STORE).get(keyId));
+                await completed;
+                return key ? administrativeRecoveryKeyRecord(keyId, key) : null;
+            } catch {
+                recoveryKeyStoreFailure();
+            } finally {
+                database.close?.();
+            }
+        },
+
+        async remove(id) {
+            const keyId = text(id);
+            if (!/^[A-Za-z0-9_-]{16,}$/u.test(keyId)) return false;
+            const database = await openAdministrativeRecoveryKeyDatabase(indexedDb);
+            try {
+                const transaction = database.transaction(ADMIN_RECOVERY_KEY_OBJECT_STORE, "readwrite");
+                const completed = transactionCompleted(transaction);
+                transaction.objectStore(ADMIN_RECOVERY_KEY_OBJECT_STORE).delete(keyId);
+                await completed;
+                return true;
+            } catch {
+                recoveryKeyStoreFailure();
+            } finally {
+                database.close?.();
+            }
+        }
+    });
+}
+
+/** Test/host helper for the administrative recovery-key lifecycle. */
+export function createInMemoryIdentityAdministrativeRecoveryKeyStore({ crypto = globalThis.crypto } = {}) {
+    const keys = new Map();
+    return Object.freeze({
+        async put(key) {
+            const record = administrativeRecoveryKeyRecord(adminRegistryKeyId(crypto), key);
+            keys.set(record.id, record.key);
+            return record;
+        },
+        async get(id) {
+            const key = keys.get(text(id));
+            return key ? administrativeRecoveryKeyRecord(text(id), key) : null;
+        },
+        async remove(id) {
+            return keys.delete(text(id));
         }
     });
 }

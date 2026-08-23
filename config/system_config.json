@@ -1,7 +1,7 @@
 {
   "system": {
     "orbit": {
-      "propagation_hours": 24,
+      "propagation_hours": 5,
       "future_show": true,
       "ground_track_show": false,
       "future_line_width": 2.5,

@@ -52,6 +52,14 @@ function copyLocalRuntimeAssets() {
 
 export default defineConfig({
     plugins: [react(), tailwindcss(), copyLocalRuntimeAssets()],
+    // The pre-mount client-state reset check is same-origin in production.
+    // Keep that contract when using Vite locally as well, otherwise a normal
+    // `npm run dev` session would fail closed before React can mount.
+    server: {
+        proxy: {
+            "/api": "http://127.0.0.1:8100"
+        }
+    },
     // The vendor script runs before both `vite` and `vite build`. Exposing the
     // same directory here keeps /Cesium and /vendor available in development,
     // while the plugin above verifies and copies them into the final bundle.

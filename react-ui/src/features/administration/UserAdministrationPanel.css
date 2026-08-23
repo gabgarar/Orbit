@@ -224,10 +224,10 @@
 .orbit-admin-directory__list {
     display: grid;
     align-content: start;
-    gap: 5px;
+    gap: 9px;
     min-height: 0;
     overflow: auto;
-    padding-right: 2px;
+    padding: 2px 5px 10px 2px;
 }
 
 .orbit-admin-directory__empty {
@@ -240,28 +240,30 @@
 .orbit-admin-user-row {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 9px;
+    align-items: start;
+    gap: 11px;
     width: 100%;
-    padding: 10px 9px;
-    border: 1px solid transparent;
-    border-radius: 10px;
-    background: transparent;
+    min-height: 100px;
+    padding: 13px 11px;
+    border: 1px solid rgba(58, 91, 128, .45);
+    border-radius: 12px;
+    background: linear-gradient(132deg, rgba(14, 34, 59, .64), rgba(8, 23, 42, .4));
     color: #c2d3eb;
     cursor: pointer;
     text-align: left;
-    transition: border-color 140ms ease, background 140ms ease;
+    transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
 }
 
 .orbit-admin-user-row:hover {
-    border-color: #315479;
-    background: rgba(26, 57, 98, .5);
+    border-color: #4d77aa;
+    background: linear-gradient(132deg, rgba(28, 61, 104, .72), rgba(12, 31, 57, .62));
+    transform: translateY(-1px);
 }
 
 .orbit-admin-user-row.is-selected {
-    border-color: #517fbd;
-    background: linear-gradient(100deg, rgba(47, 92, 157, .58), rgba(20, 49, 88, .74));
-    box-shadow: inset 3px 0 #7ca9ff;
+    border-color: #638fce;
+    background: linear-gradient(112deg, rgba(47, 92, 157, .72), rgba(19, 47, 84, .88));
+    box-shadow: inset 3px 0 #8bb5ff, 0 8px 20px rgba(0, 0, 0, .14);
 }
 
 .orbit-admin-avatar {
@@ -286,7 +288,7 @@
 .orbit-admin-user-row__main {
     display: grid;
     min-width: 0;
-    gap: 2px;
+    gap: 3px;
 }
 
 .orbit-admin-user-row__main strong,
@@ -298,30 +300,77 @@
 
 .orbit-admin-user-row__main strong {
     color: #e9f2ff;
-    font-size: 12px;
+    font-size: 12.5px;
+    letter-spacing: .005em;
 }
 
 .orbit-admin-user-row__main > span {
     color: #9cb6d8;
-    font-size: 10px;
+    font-size: 10.5px;
 }
 
 .orbit-admin-user-row__main small {
     display: flex;
     align-items: center;
-    gap: 3px;
-    overflow: hidden;
+    gap: 6px;
+    min-width: 0;
     color: #708aaa;
-    font-size: 9px;
+    font-size: 9.5px;
     font-weight: 500;
     letter-spacing: 0;
+}
+
+.orbit-admin-user-row__main small > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.orbit-admin-user-row__flags {
+.orbit-admin-user-row__attempts {
     display: grid;
-    justify-items: end;
-    gap: 3px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 5px;
+}
+
+.orbit-admin-user-row__attempts > span {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+    padding: 5px 6px;
+    border: 1px solid rgba(73, 108, 149, .58);
+    border-radius: 7px;
+    background: rgba(4, 15, 30, .3);
+}
+
+.orbit-admin-user-row__attempts em,
+.orbit-admin-user-row__attempts b {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.orbit-admin-user-row__attempts em {
+    color: #7e9fc5;
+    font-size: 8px;
+    font-style: normal;
+    font-weight: 700;
+    letter-spacing: .025em;
+}
+
+.orbit-admin-user-row__attempts b {
+    color: #d5e6ff;
+    font-size: 9px;
+    font-weight: 800;
+}
+
+.orbit-admin-user-row__flags {
+    display: flex;
+    flex-direction: column;
+    align-items: end;
+    justify-content: center;
+    align-self: stretch;
+    gap: 5px;
 }
 
 .orbit-admin-user-row__flags > svg {
@@ -621,6 +670,154 @@
     height: 15px;
 }
 
+.orbit-admin-password-form {
+    display: grid;
+    gap: 12px;
+}
+
+.orbit-admin-password-form > p,
+.orbit-admin-password-form__external,
+.orbit-admin-password-form__hint {
+    max-width: 620px;
+    margin: 0;
+    color: #9fb6d5;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.orbit-admin-password-form__fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 11px;
+}
+
+.orbit-admin-password-form label {
+    display: grid;
+    gap: 6px;
+    color: #bdd1eb;
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.orbit-admin-password-input {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    height: 39px;
+    border: 1px solid #355a82;
+    border-radius: 8px;
+    background: #081a2e;
+    color: #90b4e8;
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.orbit-admin-password-input:focus-within {
+    border-color: #75aaff;
+    box-shadow: 0 0 0 3px rgba(62, 127, 232, .16);
+}
+
+.orbit-admin-password-input > svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    margin-left: 10px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.7;
+}
+
+.orbit-admin-password-input input {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    padding: 0 9px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: #e8f1ff;
+    font: 700 12px / 1 inherit;
+}
+
+.orbit-admin-password-input input::placeholder {
+    color: #7894b6;
+    font-weight: 500;
+}
+
+.orbit-admin-password-input input:-webkit-autofill,
+.orbit-admin-password-input input:-webkit-autofill:hover,
+.orbit-admin-password-input input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 1000px #081a2e inset;
+    -webkit-text-fill-color: #e8f1ff;
+    caret-color: #e8f1ff;
+}
+
+.orbit-admin-password-input button {
+    display: grid;
+    width: 38px;
+    height: 100%;
+    flex: 0 0 auto;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-left: 1px solid rgba(67, 97, 137, .72);
+    border-radius: 0 8px 8px 0;
+    background: transparent;
+    color: #8eb4ea;
+    cursor: pointer;
+}
+
+.orbit-admin-password-input button:hover:not(:disabled) {
+    background: rgba(76, 126, 201, .16);
+    color: #d5e7ff;
+}
+
+.orbit-admin-password-input button:focus-visible {
+    outline: 2px solid #88b7ff;
+    outline-offset: -3px;
+}
+
+.orbit-admin-password-input button:disabled {
+    cursor: not-allowed;
+    opacity: .45;
+}
+
+.orbit-admin-password-input button svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.7;
+}
+
+.orbit-admin-password-form__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.orbit-admin-password-form__footer > span {
+    color: #7896ba;
+    font-size: 10px;
+}
+
+.orbit-admin-password-form__external {
+    padding: 10px 11px;
+    border: 1px solid #375878;
+    border-radius: 9px;
+    background: rgba(12, 34, 57, .7);
+}
+
+.orbit-admin-password-form__hint {
+    margin-top: 9px;
+    color: #e4c988;
+}
+
 .orbit-admin-detail textarea {
     display: block;
     box-sizing: border-box;
@@ -901,6 +1098,10 @@
     }
 
     .orbit-admin-detail__facts {
+        grid-template-columns: 1fr;
+    }
+
+    .orbit-admin-password-form__fields {
         grid-template-columns: 1fr;
     }
 

@@ -149,9 +149,15 @@ test("identity access panel matches the compact Orbit sign-in surface and keeps 
     assert.match(panelCss, /orbit-identity-access-panel/);
 });
 
+test("identity fields expose one rounded keyboard focus indicator without an inner input outline", () => {
+    assert.match(panelCss, /orbit-identity-access-panel__input-shell:has\(\.orbit-identity-access-panel__input:focus-visible\)/);
+    assert.match(panelCss, /orbit-identity-access-panel button:focus-visible/);
+    assert.doesNotMatch(panelCss, /orbit-identity-access-panel input:focus-visible/);
+});
+
 test("email-first access shows the password in the visual form but keeps it disabled behind a selector-only lookup", () => {
     assert.match(panelSource, /const \[screen, setScreen\] = useState\("sign-in"\)/);
-    assert.match(panelSource, /identity\.checkLocalAccountAvailability\?\.\(\{ identifier \}\)/);
+    assert.match(panelSource, /currentIdentity\?\.checkLocalAccountAvailability\?\.\(\{ identifier \}\)/);
     assert.match(panelSource, /result\.exists === true/);
     assert.match(panelSource, /setPasswordAllowed\(true\)/);
     assert.match(panelSource, /setPasswordAllowed\(false\)/);
@@ -169,11 +175,46 @@ test("email-first access shows the password in the visual form but keeps it disa
     assert.doesNotMatch(panelSource, /getAccount\(|getProfile\(|getUnlockedVault\(/, "an email-first panel must not read account data or unlock a vault to decide its next step");
 });
 
+test("email-first access schedules its selector lookup after a completed identifier without requiring Enter", () => {
+    // A short deferred probe unlocks the password naturally once typing has
+    // settled.  The cancellation is important: an old email must never run a
+    // late probe after the operator has already typed a different one.
+    assert.match(panelSource, /useEffect\(\(\) => \{[\s\S]{0,2500}fields\.identifier[\s\S]{0,2500}setTimeout\([\s\S]{0,600}checkIdentifier\([\s\S]{0,1200}clearTimeout\(/);
+    assert.match(panelSource, /identifierRef\.current !== identifier/);
+    assert.match(panelSource, /currentIdentity\?\.checkLocalAccountAvailability\?\.\(\{ identifier \}\)/);
+    assert.doesNotMatch(panelSource, /getAccount\(|getProfile\(|getUnlockedVault\(/, "automatic selector lookup must remain vault- and profile-free");
+});
+
+test("email-first lookup survives unrelated parent renders while its debounce is pending", () => {
+    // App continues to receive startup/BIT updates behind the access gate. The
+    // identity facade is deliberately recreated by its hook on those renders,
+    // so the selector timer must use the latest facade through a ref rather
+    // than make the whole effect depend on that object.
+    assert.match(panelSource, /const identityRef = useRef\(identity\);/);
+    assert.match(panelSource, /identityRef\.current = identity;/);
+    assert.match(panelSource, /const checkIdentifier = useCallback\([\s\S]*?identityRef\.current[\s\S]*?\}, \[\]\);/);
+
+    const timerOffset = panelSource.indexOf("const timer = globalThis.setTimeout");
+    assert.ok(timerOffset >= 0, "the identifier lookup must keep its deferred timer");
+    const dependenciesStart = panelSource.indexOf("}, [", timerOffset);
+    const dependenciesEnd = panelSource.indexOf("]);", dependenciesStart);
+    assert.ok(dependenciesStart >= 0 && dependenciesEnd >= dependenciesStart, "the deferred lookup must declare stable dependencies");
+    const dependencies = panelSource.slice(dependenciesStart, dependenciesEnd + 3);
+    assert.match(dependencies, /hasIdentity/);
+    assert.doesNotMatch(dependencies, /\bidentity\b/, "a rebuilt identity facade must not cancel a pending selector lookup");
+});
+
 test("the reserved administrator bootstrap and recovery request retain their explicit, non-enumerating access contracts", () => {
     assert.equal(ADMIN_BOOTSTRAP_IDENTIFIER, "admin@orbit.com");
     assert.match(panelSource, /isReservedAdministratorIdentifier\(fields\.identifier\)\s*\? await identity\.bootstrapAdminAccount\?\.\(fields\)/);
-    assert.match(panelSource, /identity\.requestLocalPasswordReset\?\.\(\{ identifier: fields\.identifier \}\)/);
+    assert.match(panelSource, /const \[passwordResetOpen, setPasswordResetOpen\] = useState\(false\)/);
+    assert.match(panelSource, /setPasswordResetIdentifier\(""\);\s*setPasswordResetOpen\(true\)/);
+    assert.match(panelSource, /role="dialog" aria-modal="true"/);
+    assert.match(panelSource, /Correo electrónico o usuario/);
+    assert.match(panelSource, /Orbit mostrará la misma confirmación aunque no exista una cuenta asociada\./);
+    assert.match(panelSource, /identity\.requestLocalPasswordReset\?\.\(\{ identifier: passwordResetIdentifier \}\)/);
     assert.match(panelSource, /Se ha solicitado al administrador un cambio de contrase\u00f1a\./);
+    assert.match(panelCss, /orbit-identity-access-panel__recovery-dialog/);
 });
 
 test("a forced password change remains a hard identity gate before any workspace can mount", () => {
@@ -283,6 +324,8 @@ test("companion event is custom, payload-safe and never requires an Orbit backen
         else globalThis.CustomEvent = originalCustomEvent;
     }
     assert.match(identityErrorMessage({ code: "EXTERNAL_PROVIDER_OFFLINE" }), /sin conexión/i);
+    assert.match(identityErrorMessage({ code: "ADMIN_PASSWORD_RECOVERY_UNAVAILABLE" }), /no se ha cambiado nada/i);
+    assert.match(identityErrorMessage({ code: "ACCOUNT_PASSWORD_RESET" }), /contraseña nueva/i);
 });
 
 test("trusted companion receives a transaction-scoped service and must complete the requested provider session", async () => {

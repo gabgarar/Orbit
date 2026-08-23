@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { SearchIcon, TrashIcon } from "../../components/icons.jsx";
+import { LOCAL_IDENTITY_MIN_PASSWORD_LENGTH } from "../identity/identityPresentation.js";
 import {
     filterAdministrationUsers,
     formatLastLogin,
@@ -23,6 +24,10 @@ function UserIcon() {
 
 function LockIcon() {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7.5a4 4 0 0 1 8 0V10" /></svg>;
+}
+
+function EyeIcon({ open = false }) {
+    return <svg viewBox="0 0 24 24" aria-hidden="true">{open ? <><path d="M2.7 12s3.25-5.3 9.3-5.3 9.3 5.3 9.3 5.3-3.25 5.3-9.3 5.3S2.7 12 2.7 12Z" /><circle cx="12" cy="12" r="2.2" /></> : <><path d="M3 3 21 21" /><path d="M10 6.9A10.1 10.1 0 0 1 12 6.7c6.05 0 9.3 5.3 9.3 5.3a16.4 16.4 0 0 1-3.08 3.53M6.15 6.15A16.5 16.5 0 0 0 2.7 12s3.25 5.3 9.3 5.3c.9 0 1.73-.12 2.5-.33" /><path d="M9.7 9.7a3.25 3.25 0 0 0 4.6 4.6" /></>}</svg>;
 }
 
 function WarningIcon() {
@@ -58,6 +63,16 @@ function panelError(error) {
     return message || "No se ha podido completar la operación de administración.";
 }
 
+function attemptLabel(value, { singular = "intento", plural = "intentos" } = {}) {
+    const numeric = Number(value) || 0;
+    return `${numeric} ${numeric === 1 ? singular : plural}`;
+}
+
+function failuresBeforeLastSuccessLabel(user) {
+    if (!user?.lastLoginAt) return "Sin inicio correcto";
+    return attemptLabel(user.failedLoginAttemptsAtLastSuccess, { singular: "fallo", plural: "fallos" });
+}
+
 /**
  * Separate workspace for users authorized by the administration hook.
  *
@@ -71,6 +86,9 @@ export default function UserAdministrationPanel({ session, administration, onSig
     const [selectedId, setSelectedId] = useState("");
     const [noteDraft, setNoteDraft] = useState("");
     const [maxAttemptsDraft, setMaxAttemptsDraft] = useState("5");
+    const [passwordDraft, setPasswordDraft] = useState("");
+    const [passwordConfirmation, setPasswordConfirmation] = useState("");
+    const [showPasswordDraft, setShowPasswordDraft] = useState(false);
     const [pendingAction, setPendingAction] = useState("");
     const [actionError, setActionError] = useState("");
     const [notice, setNotice] = useState("");
@@ -93,6 +111,10 @@ export default function UserAdministrationPanel({ session, administration, onSig
 
     useEffect(() => {
         setNoteDraft(selectedUser?.note || "");
+        // Never carry a password draft from one selected account to another.
+        setPasswordDraft("");
+        setPasswordConfirmation("");
+        setShowPasswordDraft(false);
         setDeleteArmed(false);
     }, [selectedUser?.id, selectedUser?.note]);
 
@@ -138,6 +160,29 @@ export default function UserAdministrationPanel({ session, administration, onSig
         void run("password-change", () => admin.setPasswordChangeRequired(selectedUser.id, required), required ? "Se solicitará cambio de contraseña en el próximo acceso." : "Solicitud de cambio de contraseña cancelada.");
     };
 
+    const resetUserPassword = () => {
+        if (!selectedUser || typeof admin.resetUserPassword !== "function") return;
+        if (passwordDraft.length < LOCAL_IDENTITY_MIN_PASSWORD_LENGTH) {
+            setActionError(`La contraseña debe tener al menos ${LOCAL_IDENTITY_MIN_PASSWORD_LENGTH} caracteres.`);
+            return;
+        }
+        if (passwordDraft !== passwordConfirmation) {
+            setActionError("Las contraseñas nuevas no coinciden.");
+            return;
+        }
+        // Copy only into this short-lived closure. Clear both controlled
+        // fields before the asynchronous administrative call starts.
+        const newPassword = passwordDraft;
+        setPasswordDraft("");
+        setPasswordConfirmation("");
+        setShowPasswordDraft(false);
+        void run(
+            "set-password",
+            () => admin.resetUserPassword(selectedUser.id, newPassword),
+            "Contraseña local actualizada. El usuario deberá iniciar sesión con la nueva contraseña."
+        );
+    };
+
     const clearPasswordRequest = () => {
         if (!selectedUser || typeof admin.clearPasswordResetRequest !== "function") return;
         void run("clear-password-request", () => admin.clearPasswordResetRequest(selectedUser.id), "Solicitud de cambio marcada como atendida.");
@@ -172,6 +217,10 @@ export default function UserAdministrationPanel({ session, administration, onSig
     const selectedIsCurrentAdministrator = Boolean(selectedUser && currentAdministratorId && selectedUser.id === currentAdministratorId);
     const canUpdateUser = typeof admin.updateUser === "function" && !selectedIsCurrentAdministrator;
     const canDeleteUser = typeof admin.deleteUser === "function" && !selectedIsCurrentAdministrator;
+    const selectedUserHasLocalPassword = Boolean(selectedUser);
+    const canSetUserPassword = selectedUserHasLocalPassword
+        && typeof admin.resetUserPassword === "function"
+        && !selectedIsCurrentAdministrator;
 
     return <main className="orbit-admin-workspace" data-testid="user-administration-panel" aria-labelledby="orbitAdminTitle">
         <header className="orbit-admin-workspace__topbar">
@@ -200,7 +249,15 @@ export default function UserAdministrationPanel({ session, administration, onSig
                 <div className="orbit-admin-directory__list" role="listbox" aria-label="Usuarios de Orbit">
                     {visibleUsers.map((user) => <button className={`orbit-admin-user-row${user.id === selectedUser?.id ? " is-selected" : ""}`} type="button" role="option" aria-selected={user.id === selectedUser?.id} key={user.id} onClick={() => setSelectedId(user.id)}>
                         <UserAvatar user={user} />
-                        <span className="orbit-admin-user-row__main"><strong>{user.displayName}</strong><span>{user.identifier || "Sin correo registrado"}</span><small><ProviderBadge provider={user.provider} /> · Último acceso: {formatLastLogin(user.lastLoginAt)}</small></span>
+                        <span className="orbit-admin-user-row__main">
+                            <strong>{user.displayName}</strong>
+                            <span>{user.identifier || "Sin correo registrado"}</span>
+                            <small><ProviderBadge provider={user.provider} /><span>Último acceso: {formatLastLogin(user.lastLoginAt)}</span></small>
+                            <span className="orbit-admin-user-row__attempts" aria-label={`Intentos actuales: ${attemptLabel(user.failedLoginAttempts)}. Fallos antes del último inicio correcto: ${failuresBeforeLastSuccessLabel(user)}.`}>
+                                <span><em>Actual</em><b>{attemptLabel(user.failedLoginAttempts)}</b></span>
+                                <span><em>Antes del éxito</em><b>{failuresBeforeLastSuccessLabel(user)}</b></span>
+                            </span>
+                        </span>
                         <span className="orbit-admin-user-row__flags">{user.blocked && <StatusBadge tone="blocked">Bloqueado</StatusBadge>}{user.passwordChangeRequired && <StatusBadge tone="warning">Forzado</StatusBadge>}{user.passwordResetRequested && <StatusBadge tone="warning">Solicitud</StatusBadge>}<ArrowIcon /></span>
                     </button>)}
                 </div>
@@ -219,6 +276,8 @@ export default function UserAdministrationPanel({ session, administration, onSig
                         <div><dt>Último inicio de sesión</dt><dd>{formatLastLogin(selectedUser.lastLoginAt)}</dd></div>
                         <div><dt>Tipo de cuenta</dt><dd>{providerLabel(selectedUser.provider)}</dd></div>
                         <div><dt>Estado</dt><dd>{selectedUser.blocked ? <StatusBadge tone="blocked">Bloqueado</StatusBadge> : <StatusBadge tone="healthy">Activo</StatusBadge>}</dd></div>
+                        <div><dt>Intentos actuales</dt><dd>{attemptLabel(selectedUser.failedLoginAttempts)}</dd></div>
+                        <div><dt>Fallos antes del último éxito</dt><dd>{failuresBeforeLastSuccessLabel(selectedUser)}</dd></div>
                     </dl>
 
                     {selectedUser.passwordResetRequested && <section className="orbit-admin-password-warning" role="status"><WarningIcon /><div><strong>Solicitud de cambio de contraseña</strong><span>El usuario ha solicitado asistencia para cambiar su contraseña local.</span></div>{typeof admin.clearPasswordResetRequest === "function" && <ActionButton tone="outline" disabled={busy} onClick={clearPasswordRequest}>Marcar atendida</ActionButton>}</section>}
@@ -230,6 +289,31 @@ export default function UserAdministrationPanel({ session, administration, onSig
                             <ActionButton tone="outline" disabled={busy || !canUpdateUser || typeof admin.setPasswordChangeRequired !== "function"} title={!canUpdateUser ? "La acción no está disponible para esta cuenta." : ""} onClick={() => updatePasswordChange(!selectedUser.passwordChangeRequired)}>{selectedUser.passwordChangeRequired ? "Cancelar cambio obligatorio" : "Forzar cambio en próximo inicio"}</ActionButton>
                         </div>
                         {selectedUser.passwordChangeRequired && <p className="orbit-admin-force-note" role="status"><LockIcon />Cambio obligatorio activo: el servicio debe pedir una contraseña nueva en el próximo inicio de sesión.</p>}
+                    </section>
+
+                    <section className="orbit-admin-detail__section" aria-labelledby="orbitAdminPasswordTitle">
+                        <div className="orbit-admin-detail__section-heading"><div><small>CONTRASEÑA LOCAL DE ORBIT</small><h3 id="orbitAdminPasswordTitle">Establecer una contraseña nueva</h3></div></div>
+                        <form className="orbit-admin-password-form" onSubmit={(event) => { event.preventDefault(); resetUserPassword(); }}>
+                            <p>Establece la contraseña local de Orbit para ayudar a esta cuenta. La contraseña no se almacena ni se vuelve a mostrar en el panel. Cuando la recuperación administrativa esté disponible, Orbit conserva la bóveda y sus proyectos; las cuentas heredadas pueden requerir primero el cambio en su próximo inicio.</p>
+                            {selectedUser.provider !== USER_PROVIDER.LOCAL && <p className="orbit-admin-password-form__external">No modifica la contraseña de {providerLabel(selectedUser.provider)}; solo actualiza el protector local de Orbit.</p>}
+                            <div className="orbit-admin-password-form__fields">
+                                <label>Nueva contraseña
+                                    <span className="orbit-admin-password-input">
+                                        <LockIcon />
+                                        <input type={showPasswordDraft ? "text" : "password"} minLength={LOCAL_IDENTITY_MIN_PASSWORD_LENGTH} autoComplete="new-password" required value={passwordDraft} disabled={busy || !canSetUserPassword} placeholder="Password" onChange={(event) => setPasswordDraft(event.target.value)} />
+                                        <button type="button" disabled={busy || !canSetUserPassword} aria-label={showPasswordDraft ? "Ocultar contraseña nueva" : "Mostrar contraseña nueva"} onClick={() => setShowPasswordDraft((visible) => !visible)}><EyeIcon open={showPasswordDraft} /></button>
+                                    </span>
+                                </label>
+                                <label>Confirmar contraseña
+                                    <span className="orbit-admin-password-input">
+                                        <LockIcon />
+                                        <input type={showPasswordDraft ? "text" : "password"} minLength={LOCAL_IDENTITY_MIN_PASSWORD_LENGTH} autoComplete="new-password" required value={passwordConfirmation} disabled={busy || !canSetUserPassword} placeholder="Repite la contraseña" onChange={(event) => setPasswordConfirmation(event.target.value)} />
+                                    </span>
+                                </label>
+                            </div>
+                            <div className="orbit-admin-password-form__footer"><span>Mínimo {LOCAL_IDENTITY_MIN_PASSWORD_LENGTH} caracteres.</span><ActionButton tone="primary" type="submit" disabled={busy || !canSetUserPassword} title={!canSetUserPassword ? "La acción no está disponible para esta cuenta." : ""}>Actualizar contraseña</ActionButton></div>
+                        </form>
+                        {selectedIsCurrentAdministrator && <p className="orbit-admin-password-form__hint">Para cambiar tu propia contraseña, cierra esta sesión y utiliza el flujo de cambio de contraseña de Orbit.</p>}
                     </section>
 
                     <section className="orbit-admin-detail__section" aria-labelledby="orbitAdminNotesTitle">

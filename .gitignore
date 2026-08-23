@@ -33,6 +33,7 @@ build/
 site/
 data/geopotential/
 data/test-real-data/
+/data/.orbit-client-state-generation.json
 /.venv/
 /.venv-docs/
 server/ui-artifacts/

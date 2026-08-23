@@ -19,6 +19,9 @@ export function getRuntimeSettings({ serverDir, environment = process.env } = {}
             environment.ORBIT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS
         ),
         configDir: path.join(serverDir, "../config"),
+        // Runtime-only caches and the server-managed browser-state generation
+        // marker live alongside the bind-mounted operational data.
+        dataDir: path.join(serverDir, "../data"),
         frontDir: path.join(serverDir, "../front"),
         reactDistDir: path.join(serverDir, "../front/dist"),
         // MkDocs is built into the image separately from the React bundle.

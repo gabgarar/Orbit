@@ -10,6 +10,7 @@ import { ORBIT_IDENTITY_SESSION_CHANGED_EVENT } from "./identityEvents.js";
 import {
     ADMIN_BOOTSTRAP_IDENTIFIER,
     createAdministrativeUserRecord,
+    createIndexedDbIdentityAdministrativeRecoveryKeyStore,
     createIndexedDbIdentityAdminRegistryKeyStore,
     createLocalAdministrativeRegistryStore,
     LOCAL_IDENTITY_ROLES,
@@ -19,6 +20,7 @@ import {
     publicAdministrativeUser
 } from "./identityAdministration.js";
 import { identityStateForProvider, IDENTITY_STATES } from "./identityStates.js";
+import { createUserProjectLibrary, restoreUserProjectLibraryStorageSnapshots } from "../projects/userProjectLibrary.js";
 import {
     base64UrlEncode,
     createIndexedDbIdentitySelectorKeyStore,
@@ -47,6 +49,9 @@ export { ADMIN_BOOTSTRAP_IDENTIFIER, LOCAL_IDENTITY_ROLES } from "./identityAdmi
 const MIN_PASSWORD_LENGTH = 12;
 const MAX_IDENTIFIER_LENGTH = 320;
 const MAX_DISPLAY_NAME_LENGTH = 120;
+const MAX_PROJECT_OWNER_ID_LENGTH = 320;
+const MAX_PROJECT_OWNER_HISTORY = 64;
+const PASSWORD_REPLACEMENT_BACKUP_NAMESPACE = "orbit.identity.password-rekey.v1";
 const ALLOWED_TOKEN_FIELDS = new Set([
     "accessToken",
     "refreshToken",
@@ -57,6 +62,7 @@ const ALLOWED_TOKEN_FIELDS = new Set([
     "issuedAt"
 ]);
 const identityVaultMutationQueues = new Map();
+const passwordReplacementInProcessLocks = new Set();
 const PROVIDER_TOKEN_ENVELOPE_KEYS = Object.freeze([
     "schema",
     "version",
@@ -204,8 +210,58 @@ function createAccountData({ accountId, identifier, displayName, createdAt }) {
             updatedAt: createdAt
         },
         providerTokenEnvelopes: {},
-        externalIdentities: {}
+        externalIdentities: {},
+        // Private, encrypted migration metadata. It intentionally never
+        // appears in public account/profile/session projections: a removed
+        // provider can still own project envelopes that must be re-keyed if
+        // the local password changes later.
+        projectOwnerHistory: []
     };
+}
+
+function projectOwnerIdForExternalIdentity(providerInput, subjectInput) {
+    const provider = text(providerInput).toLowerCase();
+    const subject = text(subjectInput);
+    const ownerId = `${provider}:${subject}`;
+    if (!SUPPORTED_TOKEN_PROVIDERS.includes(provider)
+        || !subject
+        || ownerId.length > MAX_PROJECT_OWNER_ID_LENGTH
+        || /[\s\u0000]/u.test(ownerId)) return "";
+    return ownerId;
+}
+
+function normalizedHistoricalProjectOwnerId(value) {
+    const ownerId = text(value);
+    const separator = ownerId.indexOf(":");
+    if (separator <= 0) {
+        fail("ACCOUNT_DATA_INVALID", "El historial de particiones de proyectos no es válido.");
+    }
+    const expected = projectOwnerIdForExternalIdentity(ownerId.slice(0, separator), ownerId.slice(separator + 1));
+    if (!expected || expected !== ownerId) {
+        fail("ACCOUNT_DATA_INVALID", "El historial de particiones de proyectos no es válido.");
+    }
+    return expected;
+}
+
+function normalizedProjectOwnerHistory(value, externalIdentities = {}) {
+    const source = value === undefined ? [] : value;
+    if (!Array.isArray(source) || source.length > MAX_PROJECT_OWNER_HISTORY) {
+        fail("ACCOUNT_DATA_INVALID", "El historial de particiones de proyectos no es válido.");
+    }
+    const owners = new Set();
+    for (const candidate of source) owners.add(normalizedHistoricalProjectOwnerId(candidate));
+    for (const [provider, identity] of Object.entries(externalIdentities || {})) {
+        const external = record(identity);
+        const ownerId = external ? projectOwnerIdForExternalIdentity(provider, external.subject) : "";
+        // The active identity was already validated by validateAccountData.
+        // An exceptionally long provider subject cannot have created a
+        // project partition compatible with the project-library grammar.
+        if (ownerId) owners.add(ownerId);
+    }
+    if (owners.size > MAX_PROJECT_OWNER_HISTORY) {
+        fail("ACCOUNT_DATA_INVALID", "El historial de particiones de proyectos no es válido.");
+    }
+    return [...owners];
 }
 
 function validateAccountData(value, { accountId, identifier } = {}) {
@@ -230,7 +286,13 @@ function validateAccountData(value, { accountId, identifier } = {}) {
             fail("ACCOUNT_DATA_INVALID", "La identidad externa cifrada no es válida.");
         }
     }
-    return source;
+    // v1 vaults created before this field remain valid. The normalized
+    // in-memory form carries active owners forward, and the next protected
+    // vault write persists the history without exposing it publicly.
+    return {
+        ...source,
+        projectOwnerHistory: normalizedProjectOwnerHistory(source.projectOwnerHistory, externalIdentities)
+    };
 }
 
 function publicAccount(data) {
@@ -369,6 +431,7 @@ export function createLocalIdentityService({
     selectorKeyStore,
     adminRegistryStore,
     adminRegistryKeyStore,
+    adminRecoveryKeyStore,
     adminRegistryStorageKey,
     crypto = globalThis.crypto,
     now = () => new Date(),
@@ -386,6 +449,13 @@ export function createLocalIdentityService({
             keyStore: adminRegistryKeyStore || createIndexedDbIdentityAdminRegistryKeyStore({ crypto }),
             crypto
         })
+        : null);
+    // A production browser receives a persistent, non-extractable recovery
+    // store.  Hosts injecting an administrative registry/key store must opt
+    // in explicitly, which keeps older/test hosts fail-closed rather than
+    // silently creating an unprotected fallback.
+    const localAdministrativeRecoveryKeyStore = adminRecoveryKeyStore || (!adminRegistryStore && !adminRegistryKeyStore && rawStorage
+        ? createIndexedDbIdentityAdministrativeRecoveryKeyStore({ crypto })
         : null);
     const identityVaultLockName = `orbit.identity.vault-write:${text(vaultAdapter.storageKey) || "default"}`;
     const administrationLockName = `orbit.identity.admin-registry-write:${text(localAdministrationStore?.storageKey) || "unavailable"}`;
@@ -415,7 +485,10 @@ export function createLocalIdentityService({
     function administrativeSecurity(recordForAccount = null) {
         return {
             role: normalizeLocalIdentityRole(recordForAccount?.role, LOCAL_IDENTITY_ROLES.USER),
-            passwordChangeRequired: recordForAccount?.passwordChangeRequired === true
+            passwordChangeRequired: recordForAccount?.passwordChangeRequired === true,
+            credentialGeneration: Number.isInteger(recordForAccount?.credentialGeneration)
+                ? recordForAccount.credentialGeneration
+                : 1
         };
     }
 
@@ -516,6 +589,9 @@ export function createLocalIdentityService({
                 passwordChangeRequired,
                 recordLogin
             });
+            if (user.passwordReplacementPending === true) {
+                fail("ACCOUNT_PASSWORD_CHANGE_IN_PROGRESS", "La contraseña de esta cuenta se está actualizando localmente. Inténtalo de nuevo en unos instantes.");
+            }
             if (activeLockRecord(user, instant)) {
                 fail("ACCOUNT_LOCKED", "Esta cuenta local está bloqueada.");
             }
@@ -526,6 +602,9 @@ export function createLocalIdentityService({
                 provider: normalizedProviderName,
                 lastLoginProvider: recordLogin ? normalizedProviderName : user.lastLoginProvider,
                 lastLoginAt: recordLogin ? instant : user.lastLoginAt,
+                failedLoginAttemptsAtLastSuccess: recordLogin
+                    ? user.failedLoginAttempts
+                    : user.failedLoginAttemptsAtLastSuccess,
                 failedLoginAttempts: 0,
                 lockedUntil: "",
                 updatedAt: instant
@@ -553,6 +632,10 @@ export function createLocalIdentityService({
                 createdAt: instant,
                 updatedAt: instant
             });
+            // A password replacement already owns this account's recovery
+            // reference and credential generation. Do not let incorrect
+            // attempts mutate (or lock) that transitional record.
+            if (user.passwordReplacementPending === true) return false;
             const attempts = user.failedLoginAttempts + 1;
             const becomesBlocked = attempts >= registry.policy.maxFailedAttempts;
             const next = {
@@ -572,6 +655,753 @@ export function createLocalIdentityService({
         return result === true;
     }
 
+    function recoveryKeyStore() {
+        const store = localAdministrativeRecoveryKeyStore;
+        if (!store
+            || typeof store.put !== "function"
+            || typeof store.get !== "function"
+            || typeof store.remove !== "function") {
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No está disponible la recuperación local de contraseñas administrativas.");
+        }
+        return store;
+    }
+
+    async function bestEffortRemoveAdministrativeRecoveryKey(id) {
+        if (!id || !localAdministrativeRecoveryKeyStore || typeof localAdministrativeRecoveryKeyStore.remove !== "function") return false;
+        try {
+            return await localAdministrativeRecoveryKeyStore.remove(id);
+        } catch {
+            // An orphaned non-extractable key is unusable without its opaque
+            // reference in the encrypted directory.  Do not turn a completed
+            // account operation into a false failure merely because cleanup
+            // was interrupted.
+            return false;
+        }
+    }
+
+    /**
+     * Attach (or rotate) the opaque recovery-key reference in the encrypted
+     * administrative directory.  A normal local login remains usable when a
+     * legacy/browser host has no recovery store; direct administrative reset
+     * is the operation that fails closed in that case.
+     */
+    async function storeAdministrativeRecoveryKey({ accountId, key, replace = false, required = false } = {}) {
+        let recovery;
+        try {
+            recovery = await recoveryKeyStore().put(key);
+        } catch (error) {
+            if (required) throw error;
+            return null;
+        }
+        try {
+            const result = await mutateAdministrativeRegistry((registry) => {
+                const target = requireAdministrativeTarget(registry, accountId);
+                if (target.passwordRecoveryKeyId && replace !== true) {
+                    return { attached: false, previousKeyId: "", security: administrativeSecurity(target) };
+                }
+                const next = createAdministrativeUserRecord({
+                    ...target,
+                    passwordRecoveryKeyId: recovery.id,
+                    updatedAt: timestamp(now)
+                });
+                registry.users = registry.users.map((candidate) => candidate.accountId === target.accountId ? next : candidate);
+                return {
+                    attached: true,
+                    previousKeyId: target.passwordRecoveryKeyId,
+                    security: administrativeSecurity(next)
+                };
+            }, { required });
+            if (!result) {
+                await bestEffortRemoveAdministrativeRecoveryKey(recovery.id);
+                return null;
+            }
+            if (!result.attached) {
+                await bestEffortRemoveAdministrativeRecoveryKey(recovery.id);
+                return result.security;
+            }
+            if (result.previousKeyId && result.previousKeyId !== recovery.id) {
+                await bestEffortRemoveAdministrativeRecoveryKey(result.previousKeyId);
+            }
+            return result.security;
+        } catch (error) {
+            await bestEffortRemoveAdministrativeRecoveryKey(recovery.id);
+            if (required) throw error;
+            return null;
+        }
+    }
+
+    async function administrativeRecoveryKeyByReference(referenceInput) {
+        const reference = text(referenceInput);
+        if (!reference) {
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "Esta cuenta todavía no tiene una clave de recuperación administrativa compatible.");
+        }
+        let recovery;
+        try {
+            recovery = await recoveryKeyStore().get(reference);
+        } catch (error) {
+            if (error?.code) throw error;
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No se ha podido acceder a la clave de recuperación administrativa.");
+        }
+        if (!recovery || recovery.id !== reference || !recovery.key) {
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No se encuentra la clave de recuperación administrativa de esta cuenta.");
+        }
+        return recovery;
+    }
+
+    async function administrativeRecoveryKeyFor(recordForAccount) {
+        return administrativeRecoveryKeyByReference(recordForAccount?.passwordRecoveryKeyId);
+    }
+
+    function passwordReplacementLockName(accountId) {
+        return `orbit.identity.password-replacement:${text(vaultAdapter.storageKey) || "default"}:${text(accountId)}`;
+    }
+
+    async function withPasswordReplacementLock(accountId, operation) {
+        const lockName = passwordReplacementLockName(accountId);
+        const guarded = async () => {
+            passwordReplacementInProcessLocks.add(lockName);
+            try {
+                return await operation();
+            } finally {
+                passwordReplacementInProcessLocks.delete(lockName);
+            }
+        };
+        const locks = globalThis.navigator?.locks;
+        if (locks && typeof locks.request === "function") {
+            return locks.request(lockName, { mode: "exclusive" }, guarded);
+        }
+        return runWithInProcessIdentityVaultLock(lockName, guarded);
+    }
+
+    async function tryWithPasswordReplacementLock(accountId, operation) {
+        const lockName = passwordReplacementLockName(accountId);
+        const guarded = async () => {
+            passwordReplacementInProcessLocks.add(lockName);
+            try {
+                return { acquired: true, result: await operation() };
+            } finally {
+                passwordReplacementInProcessLocks.delete(lockName);
+            }
+        };
+        const locks = globalThis.navigator?.locks;
+        if (locks && typeof locks.request === "function") {
+            return locks.request(lockName, { mode: "exclusive", ifAvailable: true }, async (lock) => {
+                if (!lock) return { acquired: false, result: null };
+                return guarded();
+            });
+        }
+        if (passwordReplacementInProcessLocks.has(lockName)) {
+            return { acquired: false, result: null };
+        }
+        return guarded();
+    }
+
+    function passwordReplacementJournalId() {
+        if (!crypto || typeof crypto.getRandomValues !== "function") {
+            fail("WEB_CRYPTO_UNAVAILABLE", "Este navegador no dispone de aleatoriedad criptográfica para actualizar la contraseña local.");
+        }
+        const bytes = new Uint8Array(18);
+        crypto.getRandomValues(bytes);
+        return base64UrlEncode(bytes);
+    }
+
+    function createPasswordReplacementJournal(recordForAccount) {
+        return {
+            id: passwordReplacementJournalId(),
+            previousCredentialGeneration: recordForAccount.credentialGeneration,
+            oldRecoveryKeyId: text(recordForAccount.passwordRecoveryKeyId),
+            replacementRecoveryKeyId: "",
+            startedAt: timestamp(now),
+            backups: []
+        };
+    }
+
+    function passwordReplacementBackupKey(journalId, position) {
+        return `${PASSWORD_REPLACEMENT_BACKUP_NAMESPACE}:${journalId}:${position}`;
+    }
+
+    function passwordReplacementBackupPurpose(journalId, position) {
+        return `orbit-password-rekey:${journalId}:${position}`;
+    }
+
+    function passwordReplacementStorage() {
+        if (!rawStorage
+            || typeof rawStorage.getItem !== "function"
+            || typeof rawStorage.setItem !== "function"
+            || typeof rawStorage.removeItem !== "function") {
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No hay almacenamiento local disponible para recuperar una actualización de contraseña interrumpida.");
+        }
+        return rawStorage;
+    }
+
+    function passwordReplacementStorageRead(key) {
+        try {
+            return passwordReplacementStorage().getItem(key);
+        } catch {
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No se ha podido leer el diario local de actualización de contraseña.");
+        }
+    }
+
+    function passwordReplacementStorageWrite(key, value) {
+        try {
+            passwordReplacementStorage().setItem(key, value);
+        } catch {
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No se ha podido guardar el diario local de actualización de contraseña.");
+        }
+    }
+
+    function passwordReplacementStorageRemove(key) {
+        try {
+            passwordReplacementStorage().removeItem(key);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    async function updatePasswordReplacementJournal({
+        accountId,
+        credentialGeneration,
+        journalId,
+        oldRecoveryKeyId,
+        replacementRecoveryKeyId,
+        backups = null
+    } = {}) {
+        return mutateAdministrativeRegistry((registry) => {
+            const current = requireAdministrativeTarget(registry, accountId);
+            const journal = current.passwordReplacementJournal;
+            if (current.passwordReplacementPending !== true
+                || current.credentialGeneration !== credentialGeneration
+                || !journal
+                || journal.id !== journalId) {
+                fail("ACCOUNT_PASSWORD_RESET", "La cuenta cambió durante la actualización de contraseña.");
+            }
+            const nextJournal = {
+                ...journal,
+                ...(oldRecoveryKeyId === undefined ? {} : { oldRecoveryKeyId: text(oldRecoveryKeyId) }),
+                ...(replacementRecoveryKeyId === undefined ? {} : { replacementRecoveryKeyId: text(replacementRecoveryKeyId) }),
+                ...(backups === null ? {} : { backups: [...journal.backups, ...backups] })
+            };
+            const next = createAdministrativeUserRecord({
+                ...current,
+                passwordReplacementJournal: nextJournal,
+                updatedAt: timestamp(now)
+            });
+            registry.users = registry.users.map((candidate) => candidate.accountId === current.accountId ? next : candidate);
+            return next;
+        }, { required: true });
+    }
+
+    async function persistPasswordReplacementBackups({ accountId, credentialGeneration, journal, candidateKey, snapshots } = {}) {
+        if (!Array.isArray(snapshots) || snapshots.length === 0) return journal;
+        const start = journal.backups.length;
+        const backups = [];
+        try {
+            for (let offset = 0; offset < snapshots.length; offset += 1) {
+                const snapshot = snapshots[offset];
+                const storageKey = text(snapshot?.key);
+                if (!storageKey) fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "El diario de proyectos cifrados no contiene una clave de almacenamiento válida.");
+                const position = start + offset;
+                const backupKey = passwordReplacementBackupKey(journal.id, position);
+                const purpose = passwordReplacementBackupPurpose(journal.id, position);
+                const present = snapshot.previous !== null && snapshot.previous !== undefined && snapshot.previous !== "";
+                const envelope = await sealAccountJson({
+                    accountId,
+                    purpose,
+                    key: candidateKey,
+                    value: { present, value: present ? String(snapshot.previous) : "" }
+                }, crypto);
+                passwordReplacementStorageWrite(backupKey, JSON.stringify(envelope));
+                backups.push({ storageKey, backupKey, purpose });
+            }
+            const updated = await updatePasswordReplacementJournal({
+                accountId,
+                credentialGeneration,
+                journalId: journal.id,
+                backups
+            });
+            return updated.passwordReplacementJournal;
+        } catch (error) {
+            for (const backup of backups) passwordReplacementStorageRemove(backup.backupKey);
+            throw error;
+        }
+    }
+
+    async function restorePasswordReplacementBackups({ accountId, journal, candidateKey } = {}) {
+        const snapshots = [];
+        for (const backup of [...(journal?.backups || [])].reverse()) {
+            const raw = passwordReplacementStorageRead(backup.backupKey);
+            if (raw === null || raw === undefined || raw === "") {
+                fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "Falta una copia de recuperación de proyectos para una actualización de contraseña interrumpida.");
+            }
+            let envelope;
+            try {
+                envelope = JSON.parse(String(raw));
+            } catch {
+                fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La copia de recuperación de proyectos no tiene un formato válido.");
+            }
+            let snapshot;
+            try {
+                snapshot = await openAccountJson({ accountId, purpose: backup.purpose, key: candidateKey, envelope }, crypto);
+            } catch (error) {
+                if (error?.code === "WEB_CRYPTO_UNAVAILABLE") throw error;
+                fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No se ha podido descifrar una copia de recuperación de proyectos.");
+            }
+            if (!snapshot
+                || typeof snapshot !== "object"
+                || Array.isArray(snapshot)
+                || typeof snapshot.present !== "boolean"
+                || typeof snapshot.value !== "string") {
+                fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La copia de recuperación de proyectos no tiene un formato válido.");
+            }
+            snapshots.push({ storageKey: backup.storageKey, present: snapshot.present, value: snapshot.value });
+        }
+        try {
+            await restoreUserProjectLibraryStorageSnapshots(passwordReplacementStorage(), snapshots);
+        } catch (error) {
+            if (error?.code === "WEB_CRYPTO_UNAVAILABLE") throw error;
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No se han podido restaurar los proyectos de una actualización de contraseña interrumpida.");
+        }
+    }
+
+    function discardPasswordReplacementBackups(journal) {
+        for (const backup of journal?.backups || []) passwordReplacementStorageRemove(backup.backupKey);
+    }
+
+    /**
+     * Carries a private, non-enumerable signal from the identity-vault commit
+     * back through the project migration.  It is used only when a candidate
+     * vault write reached storage but its compensating write failed: rolling
+     * the project envelopes back in that state would strand them under the
+     * old key while crash recovery correctly finalizes the candidate vault.
+     */
+    function preservePasswordReplacementProjectMigration(error) {
+        const source = error && typeof error === "object"
+            ? error
+            : new Error("La actualización de contraseña no pudo confirmar su estado.", { cause: error });
+        try {
+            Object.defineProperty(source, "preserveProjectMigration", {
+                value: true,
+                configurable: true
+            });
+            return source;
+        } catch {
+            const replacement = new Error(source?.message || "La actualización de contraseña no pudo confirmar su estado.", { cause: source });
+            if (source?.code) replacement.code = source.code;
+            Object.defineProperty(replacement, "preserveProjectMigration", {
+                value: true,
+                configurable: true
+            });
+            return replacement;
+        }
+    }
+
+    /**
+     * Distinct from a candidate account-vault commit: a project rollback may
+     * be uncertain while the old account vault is still durable. In that
+     * case the encrypted journal must remain pending so the next login can
+     * restore its exact old envelopes before clearing the rotation.
+     */
+    function requirePasswordReplacementProjectRecovery(error) {
+        const source = error && typeof error === "object"
+            ? error
+            : new Error("La actualización de contraseña no pudo restaurar todos los proyectos.", { cause: error });
+        try {
+            Object.defineProperty(source, "passwordReplacementRecoveryRequired", {
+                value: true,
+                configurable: true
+            });
+            return source;
+        } catch {
+            const replacement = new Error(source?.message || "La actualización de contraseña no pudo restaurar todos los proyectos.", { cause: source });
+            if (source?.code) replacement.code = source.code;
+            Object.defineProperty(replacement, "passwordReplacementRecoveryRequired", {
+                value: true,
+                configurable: true
+            });
+            return replacement;
+        }
+    }
+
+    async function openPasswordReplacementVault(entry, key, identifier) {
+        if (!entry || !key) return null;
+        try {
+            return validateAccountData(await openAccountVaultData({ vault: entry.vault, key }, crypto), {
+                accountId: entry.id,
+                identifier
+            });
+        } catch (error) {
+            if (error?.code === "WEB_CRYPTO_UNAVAILABLE") throw error;
+            return null;
+        }
+    }
+
+    async function recoverInterruptedPasswordReplacement(accountId) {
+        const pending = await mutateAdministrativeRegistry((registry) => {
+            const user = administrativeRecordForAccount(registry, accountId);
+            return user?.passwordReplacementPending === true ? user : null;
+        }, { required: false });
+        if (!pending) return "none";
+        const journal = pending.passwordReplacementJournal;
+        if (!journal) {
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La actualización de contraseña interrumpida no tiene un diario de recuperación válido.");
+        }
+        const index = vaultAdapter.read();
+        const entry = index?.entries?.find((candidate) => candidate.id === accountId) || null;
+        if (!entry) {
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No se encuentra la cuenta de una actualización de contraseña interrumpida.");
+        }
+        let oldRecovery = null;
+        let replacementRecovery = null;
+        if (journal.oldRecoveryKeyId) {
+            oldRecovery = await administrativeRecoveryKeyByReference(journal.oldRecoveryKeyId);
+        }
+        if (journal.replacementRecoveryKeyId) {
+            replacementRecovery = await administrativeRecoveryKeyByReference(journal.replacementRecoveryKeyId);
+        }
+        const candidateData = replacementRecovery
+            ? await openPasswordReplacementVault(entry, replacementRecovery.key, pending.identifier)
+            : null;
+        if (candidateData) {
+            const finalized = await mutateAdministrativeRegistry((registry) => {
+                const current = requireAdministrativeTarget(registry, accountId);
+                if (current.passwordReplacementPending !== true
+                    || current.credentialGeneration !== pending.credentialGeneration
+                    || current.passwordReplacementJournal?.id !== journal.id
+                    || current.passwordReplacementJournal?.replacementRecoveryKeyId !== replacementRecovery.id) {
+                    fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La actualización de contraseña interrumpida cambió antes de poder finalizarse.");
+                }
+                const next = createAdministrativeUserRecord({
+                    ...current,
+                    passwordRecoveryKeyId: replacementRecovery.id,
+                    credentialGeneration: current.credentialGeneration + 1,
+                    passwordReplacementPending: false,
+                    passwordReplacementJournal: null,
+                    blocked: false,
+                    failedLoginAttempts: 0,
+                    lockedUntil: "",
+                    passwordChangeRequired: false,
+                    passwordResetRequestedAt: "",
+                    updatedAt: timestamp(now)
+                });
+                registry.users = registry.users.map((candidate) => candidate.accountId === current.accountId ? next : candidate);
+                return next;
+            }, { required: true });
+            // A live session for this account still owns the former vault
+            // key. Do this before any subsequent await so it cannot adopt the
+            // finalized directory generation and write that former vault.
+            revokeActiveForRecoveredPasswordReplacement(accountId);
+            discardPasswordReplacementBackups(journal);
+            if (oldRecovery?.id && oldRecovery.id !== replacementRecovery.id) {
+                await bestEffortRemoveAdministrativeRecoveryKey(oldRecovery.id);
+            }
+            return finalized ? "finalized" : "none";
+        }
+        const oldData = oldRecovery
+            ? await openPasswordReplacementVault(entry, oldRecovery.key, pending.identifier)
+            : null;
+        if (!oldData && (journal.replacementRecoveryKeyId || journal.backups.length)) {
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No se puede determinar de forma segura el estado de una actualización de contraseña interrumpida.");
+        }
+        if (journal.backups.length) {
+            if (!replacementRecovery) {
+                fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "Falta la clave candidata para recuperar proyectos de una actualización interrumpida.");
+            }
+            await restorePasswordReplacementBackups({ accountId, journal, candidateKey: replacementRecovery.key });
+        }
+        const rolledBack = await mutateAdministrativeRegistry((registry) => {
+            const current = requireAdministrativeTarget(registry, accountId);
+            if (current.passwordReplacementPending !== true
+                || current.credentialGeneration !== pending.credentialGeneration
+                || current.passwordReplacementJournal?.id !== journal.id) {
+                fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La actualización de contraseña interrumpida cambió antes de poder revertirse.");
+            }
+            const next = createAdministrativeUserRecord({
+                ...current,
+                passwordRecoveryKeyId: journal.oldRecoveryKeyId,
+                credentialGeneration: journal.previousCredentialGeneration,
+                passwordReplacementPending: false,
+                passwordReplacementJournal: null,
+                updatedAt: timestamp(now)
+            });
+            registry.users = registry.users.map((candidate) => candidate.accountId === current.accountId ? next : candidate);
+            return next;
+        }, { required: true });
+        // Restoring project envelopes is also an out-of-band vault change;
+        // force the old session through a fresh login before it can write.
+        revokeActiveForRecoveredPasswordReplacement(accountId);
+        discardPasswordReplacementBackups(journal);
+        if (replacementRecovery?.id && replacementRecovery.id !== journal.oldRecoveryKeyId) {
+            await bestEffortRemoveAdministrativeRecoveryKey(replacementRecovery.id);
+        }
+        return rolledBack ? "rolled-back" : "none";
+    }
+
+    async function recoverPasswordReplacementIfAvailable(accountId) {
+        const attempt = await tryWithPasswordReplacementLock(accountId, () => recoverInterruptedPasswordReplacement(accountId));
+        return attempt.acquired ? attempt.result : "in-progress";
+    }
+
+    function revokeActiveForCredentialChange(state, generation) {
+        if (active === state && sessionGeneration === generation) {
+            active = null;
+            sessionGeneration += 1;
+            publishSession();
+        }
+    }
+
+    /**
+     * A recovered password rotation has replaced or restored the encrypted
+     * account vault behind the back of any already-open tab. Even a rollback
+     * is terminal for that in-memory session: keeping it alive would let
+     * stale data/key material race a later vault write.
+     */
+    function revokeActiveForRecoveredPasswordReplacement(accountId) {
+        if (!active || active.entryId !== accountId) return false;
+        active = null;
+        sessionGeneration += 1;
+        publishSession();
+        return true;
+    }
+
+    async function revalidateAdministrativeSecurity(state, generation) {
+        let security = null;
+        try {
+            security = await mutateAdministrativeRegistry((registry) => {
+                const user = administrativeRecordForAccount(registry, state.entryId);
+                if (!user) {
+                    fail("ACCOUNT_DELETED", "This local account is no longer present in the administrative directory.");
+                }
+                if (activeLockRecord(user, timestamp(now))) {
+                    fail("ACCOUNT_LOCKED", "This local account is blocked.");
+                }
+                if (user.passwordReplacementPending === true) {
+                    fail("ACCOUNT_PASSWORD_CHANGE_IN_PROGRESS", "La contraseña de esta cuenta se está actualizando localmente.");
+                }
+                return administrativeSecurity(user);
+            }, { required: false });
+        } catch (error) {
+            if (["ACCOUNT_LOCKED", "ACCOUNT_DELETED", "ACCOUNT_PASSWORD_CHANGE_IN_PROGRESS"].includes(error?.code)) {
+                revokeActiveForCredentialChange(state, generation);
+            }
+            throw error;
+        }
+        if (security && security.credentialGeneration !== state.security?.credentialGeneration) {
+            revokeActiveForCredentialChange(state, generation);
+            fail("ACCOUNT_PASSWORD_RESET", "La contraseña de esta cuenta ha sido restablecida por la administración local.");
+        }
+        return security;
+    }
+
+    /**
+     * Administrative credential generations stop normal stale sessions after
+     * a reset. This cryptographic check closes the complementary case where a
+     * stale session has somehow observed a newer directory generation but
+     * still holds the previous AES key. It is always invoked while the
+     * identity-vault mutation lock is held, immediately before a sensitive
+     * read or write proceeds.
+     */
+    async function verifyPersistedActiveVaultKey(state, generation, index, entryIndex) {
+        const entry = index?.entries?.[entryIndex];
+        if (!entry) fail("VAULT_NOT_FOUND", "No se ha encontrado la bóveda de la cuenta local.");
+        try {
+            const data = validateAccountData(await openAccountVaultData({ vault: entry.vault, key: state.key }, crypto), {
+                accountId: state.entryId,
+                identifier: state.data.account.identifier
+            });
+            assertActiveState(state, generation);
+            return data;
+        } catch (error) {
+            if (error?.code === "VAULT_DECRYPT_FAILED") {
+                revokeActiveForCredentialChange(state, generation);
+                fail("ACCOUNT_PASSWORD_RESET", "La contraseña de esta cuenta ha sido restablecida por la administración local.");
+            }
+            throw error;
+        }
+    }
+
+    async function revalidateWorkspaceAccessLocked(state, generation, operation = null, { allowPasswordChangeRequired = false } = {}) {
+        assertActiveState(state, generation);
+        const currentIndex = vaultAdapter.read();
+        if (!currentIndex?.entries?.some((entry) => entry.id === state.entryId)) {
+            if (active === state && sessionGeneration === generation) {
+                active = null;
+                sessionGeneration += 1;
+                publishSession();
+            }
+            fail("ACCOUNT_DELETED", "This local account was deleted by an administrator.");
+        }
+        const security = await revalidateAdministrativeSecurity(state, generation);
+        assertActiveState(state, generation);
+        if (security) state.security = security;
+        const entryIndex = currentIndex.entries.findIndex((entry) => entry.id === state.entryId);
+        await verifyPersistedActiveVaultKey(state, generation, currentIndex, entryIndex);
+        if (allowPasswordChangeRequired !== true && state.security?.passwordChangeRequired === true) {
+            fail("PASSWORD_CHANGE_REQUIRED", "Debes cambiar la contraseña local antes de abrir proyectos o módulos.");
+        }
+        if (typeof operation !== "function") return state;
+        const result = await operation(state);
+        assertActiveState(state, generation);
+        return result;
+    }
+
+    function keyBackedVault(accountId, key) {
+        const normalizedAccountId = text(accountId);
+        if (!normalizedAccountId || !key) {
+            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "No se puede preparar la migración de cifrado de esta cuenta.");
+        }
+        return Object.freeze({
+            accountId: normalizedAccountId,
+            seal(value, { purpose } = {}) {
+                return sealAccountJson({ accountId: normalizedAccountId, purpose, key, value }, crypto);
+            },
+            open(envelope, { purpose } = {}) {
+                return openAccountJson({ accountId: normalizedAccountId, purpose, key, envelope }, crypto);
+            }
+        });
+    }
+
+    function projectLibraryForKey(accountId, key, { ownerId = accountId } = {}) {
+        const vault = keyBackedVault(accountId, key);
+        return createUserProjectLibrary({
+            session: { accountId: ownerId, storageScope: accountId, vault },
+            storage: rawStorage
+        });
+    }
+
+    function projectOwnerIdsForAccount(accountId, data) {
+        const owners = new Set([text(accountId)]);
+        // Current links cover new accounts; encrypted history covers a
+        // provider partition whose token/identity was deliberately removed
+        // but whose local projects were retained for a future re-link.
+        for (const ownerId of data?.projectOwnerHistory || []) {
+            try {
+                owners.add(normalizedHistoricalProjectOwnerId(ownerId));
+            } catch {
+                // validateAccountData rejects persisted malformed history.
+                // Keep this defensive path non-expansive for callers that
+                // only provide a partial transient account shape.
+            }
+        }
+        for (const [provider, identity] of Object.entries(data?.externalIdentities || {})) {
+            const ownerId = record(identity)
+                ? projectOwnerIdForExternalIdentity(provider, identity.subject)
+                : "";
+            if (ownerId) owners.add(ownerId);
+        }
+        return [...owners];
+    }
+
+    /**
+     * Rekey the local and every linked-provider project partition.  We retain
+     * reversible snapshots until `commit` succeeds, so a vault/registry
+     * conflict restores all project envelopes under the old key.
+     *
+     * The account-vault commit runs while the final project-partition lock is
+     * still owned.  Earlier partitions are already protected by the staged
+     * credential generation: a normal writer which passed revalidation before
+     * staging still owns its partition lock and is migrated after it drains;
+     * a writer which begins after staging is rejected before it can emit an
+     * old-key envelope.  This keeps the normal project -> identity lock order
+     * and avoids an identity -> project inversion.
+     */
+    async function rekeyAccountProjectLibraries({ accountId, data, oldKey, newKey, commit, journal = null } = {}) {
+        const nextVault = keyBackedVault(accountId, newKey);
+        const migrations = [];
+        const ownerIds = projectOwnerIdsForAccount(accountId, data);
+        try {
+            for (let index = 0; index < ownerIds.length; index += 1) {
+                const ownerId = ownerIds[index];
+                const library = projectLibraryForKey(accountId, oldKey, { ownerId });
+                migrations.push(await library.rekeyEncryption(nextVault, {
+                    retainRollback: true,
+                    preserveCommitFailure: true,
+                    beforeWrite: journal
+                        ? (snapshots) => journal.capture(snapshots)
+                        : undefined,
+                    // Keep the final identity switch inside a project lock.
+                    // See the ordering note above; an empty owner partition
+                    // still invokes this callback under its lock.
+                    commit: index === ownerIds.length - 1 && typeof commit === "function"
+                        ? commit
+                        : undefined
+                }));
+            }
+            const result = migrations.at(-1)?.result;
+            return Object.freeze({
+                migratedProjects: migrations.reduce((total, migration) => total + migration.migratedProjects, 0),
+                result
+            });
+        } catch (error) {
+            // A failed identity-vault compensation left the candidate vault
+            // durable. The migration journal must finalize it on the next
+            // login/reset retry, so keep every candidate-key project
+            // envelope rather than restoring a mixed old-key state.
+            if (error?.preserveProjectMigration === true || error?.passwordReplacementRecoveryRequired === true) throw error;
+            let rollbackUncertain = false;
+            for (const migration of [...migrations].reverse()) {
+                try {
+                    await migration.rollback?.();
+                } catch {
+                    // The prior partition can now contain a candidate-key
+                    // envelope. Leave identity's encrypted journal pending
+                    // rather than claiming the rollback completed.
+                    rollbackUncertain = true;
+                }
+            }
+            if (rollbackUncertain) throw requirePasswordReplacementProjectRecovery(error);
+            throw error;
+        }
+    }
+
+    async function rekeyProviderTokenEnvelopes(data, { oldKey, newKey } = {}) {
+        const validData = validateAccountData(data, {
+            accountId: data?.account?.id,
+            identifier: data?.account?.identifier
+        });
+        const providerTokenEnvelopes = {};
+        for (const [provider, envelope] of Object.entries(validData.providerTokenEnvelopes)) {
+            const tokens = await openProviderTokenEnvelope({
+                accountId: validData.account.id,
+                provider,
+                key: oldKey,
+                envelope
+            }, crypto);
+            providerTokenEnvelopes[provider] = await createProviderTokenEnvelope({
+                accountId: validData.account.id,
+                provider,
+                key: newKey,
+                tokens,
+                createdAt: envelope.createdAt,
+                expiresAt: envelope.expiresAt
+            }, crypto);
+        }
+        return validateAccountData({ ...validData, providerTokenEnvelopes }, {
+            accountId: validData.account.id,
+            identifier: validData.account.identifier
+        });
+    }
+
+    async function createPasswordReplacement({ vault, data, oldKey, password }) {
+        const initial = await createEncryptedAccountVault({
+            accountId: data.account.id,
+            identifierHash: vault.identifierHash,
+            password,
+            data,
+            pbkdf2Iterations: vault.kdf.iterations
+        }, crypto);
+        const rekeyedData = await rekeyProviderTokenEnvelopes(data, {
+            oldKey,
+            newKey: initial.key
+        });
+        const rekeyedVault = await encryptAccountVaultData({
+            vault: initial.vault,
+            key: initial.key,
+            data: rekeyedData
+        }, crypto);
+        return { vault: rekeyedVault, key: initial.key, data: rekeyedData };
+    }
+
     function activate({ entry, vault, key, data, authenticatedAt, externalIdentity = null, security = null }) {
         const validData = validateAccountData(data, {
             accountId: vault.accountId,
@@ -586,7 +1416,10 @@ export function createLocalIdentityService({
             externalIdentity,
             security: {
                 role: normalizeLocalIdentityRole(security?.role, LOCAL_IDENTITY_ROLES.USER),
-                passwordChangeRequired: security?.passwordChangeRequired === true
+                passwordChangeRequired: security?.passwordChangeRequired === true,
+                credentialGeneration: Number.isInteger(security?.credentialGeneration)
+                    ? security.credentialGeneration
+                    : 1
             }
         };
         sessionGeneration += 1;
@@ -614,48 +1447,7 @@ export function createLocalIdentityService({
      * change keeps it alive only for changeLocalPassword().
      */
     async function revalidateWorkspaceAccess(state = requireActive(), generation = sessionGeneration, operation = null) {
-        return mutateIdentityVault(async () => {
-        assertActiveState(state, generation);
-        const currentIndex = vaultAdapter.read();
-        if (!currentIndex?.entries?.some((entry) => entry.id === state.entryId)) {
-            if (active === state && sessionGeneration === generation) {
-                active = null;
-                sessionGeneration += 1;
-                publishSession();
-            }
-            fail("ACCOUNT_DELETED", "This local account was deleted by an administrator.");
-        }
-        let security = null;
-        try {
-            security = await mutateAdministrativeRegistry((registry) => {
-                const user = administrativeRecordForAccount(registry, state.entryId);
-                if (!user) {
-                    fail("ACCOUNT_DELETED", "This local account is no longer present in the administrative directory.");
-                }
-                if (activeLockRecord(user, timestamp(now))) {
-                    fail("ACCOUNT_LOCKED", "This local account is blocked.");
-                }
-                return administrativeSecurity(user);
-            }, { required: false });
-        } catch (error) {
-            if (["ACCOUNT_LOCKED", "ACCOUNT_DELETED"].includes(error?.code)
-                && active === state && sessionGeneration === generation) {
-                active = null;
-                sessionGeneration += 1;
-                publishSession();
-            }
-            throw error;
-        }
-        assertActiveState(state, generation);
-        if (security) state.security = security;
-        if (state.security?.passwordChangeRequired === true) {
-            fail("PASSWORD_CHANGE_REQUIRED", "Debes cambiar la contraseña local antes de abrir proyectos o módulos.");
-        }
-        if (typeof operation !== "function") return state;
-        const result = await operation(state);
-        assertActiveState(state, generation);
-        return result;
-        });
+        return mutateIdentityVault(() => revalidateWorkspaceAccessLocked(state, generation, operation));
     }
 
     function assertActiveState(state, generation) {
@@ -867,6 +1659,10 @@ export function createLocalIdentityService({
     async function persistActive(expectedState = requireActive(), generation = sessionGeneration) {
         return mutateIdentityVault(async () => {
             const state = assertActiveState(expectedState, generation);
+            // This is both the administrative generation check and the
+            // cryptographic check against the vault that is on disk. It also
+            // makes a forced password change a hard gate for all mutations.
+            await revalidateWorkspaceAccessLocked(state, generation);
             const index = vaultAdapter.read();
             if (!index) fail("VAULT_NOT_FOUND", "No se ha encontrado la bóveda de la cuenta local.");
             const entryIndex = index.entries.findIndex((entry) => entry.id === state.entryId);
@@ -882,6 +1678,27 @@ export function createLocalIdentityService({
             const saved = vaultAdapter.write({ ...index, updatedAt: timestamp(now), entries });
             state.vault = saved.entries[entryIndex].vault;
         });
+    }
+
+    /** Persist a prepared account-data update while the caller already owns the identity lock. */
+    async function persistActiveDataLocked(state, generation, nextData) {
+        const fresh = await readFreshActiveAccountData(state, generation);
+        const normalizedData = validateAccountData(nextData, {
+            accountId: state.entryId,
+            identifier: state.data.account.identifier
+        });
+        const encryptedVault = await encryptAccountVaultData({
+            vault: fresh.vault,
+            key: state.key,
+            data: normalizedData
+        }, crypto);
+        assertActiveState(state, generation);
+        const entries = [...fresh.index.entries];
+        entries[fresh.entryIndex] = { ...entries[fresh.entryIndex], vault: encryptedVault };
+        const saved = vaultAdapter.write({ ...fresh.index, updatedAt: timestamp(now), entries });
+        state.data = normalizedData;
+        state.vault = saved.entries[fresh.entryIndex].vault;
+        return state;
     }
 
     /**
@@ -1004,6 +1821,11 @@ export function createLocalIdentityService({
                     recordLogin: activateCreatedAccount === true,
                     required: administrationRequired
                 });
+                const recoverySecurity = await storeAdministrativeRecoveryKey({
+                    accountId,
+                    key: encrypted.key
+                });
+                if (recoverySecurity) security = recoverySecurity;
             } catch (error) {
                 // Bootstrap/admin creation has no safe degraded mode. Remove
                 // the just-created vault entry before releasing the shared
@@ -1034,6 +1856,11 @@ export function createLocalIdentityService({
 
     async function requireAdministrativeAccess() {
         const state = requireWorkspaceAccess();
+        const generation = sessionGeneration;
+        // Administration is itself a sensitive workspace operation. Verify
+        // the vault currently stored on disk before trusting the in-memory
+        // role/generation to modify another local account.
+        await revalidateWorkspaceAccess(state, generation);
         if (state.security?.role !== LOCAL_IDENTITY_ROLES.ADMIN) {
             fail("ADMIN_ACCESS_REQUIRED", "Solo una cuenta administradora puede gestionar usuarios locales.");
         }
@@ -1041,6 +1868,10 @@ export function createLocalIdentityService({
             const current = administrativeRecordForAccount(registry, state.entryId);
             if (!current || current.role !== LOCAL_IDENTITY_ROLES.ADMIN || activeLockRecord(current, timestamp(now))) {
                 fail("ADMIN_ACCESS_REQUIRED", "La cuenta administradora ya no tiene acceso a la gestión local.");
+            }
+            if (current.credentialGeneration !== state.security?.credentialGeneration) {
+                revokeActiveForCredentialChange(state, generation);
+                fail("ACCOUNT_PASSWORD_RESET", "La contraseña de esta cuenta ha sido restablecida por la administración local.");
             }
             return current;
         }, { required: true });
@@ -1221,6 +2052,283 @@ export function createLocalIdentityService({
         },
 
         /**
+         * Replaces another local account's password without reading or
+         * returning the old password.  The per-installation recovery key is
+         * non-extractable and lets this operation migrate the account vault,
+         * provider envelopes and user-project envelopes to the new key.  A
+         * pre-recovery legacy account fails closed rather than losing data.
+         */
+        async resetAdministrativeUserPassword({ accountId, newPassword } = {}) {
+            const { state } = await requireAdministrativeAccess();
+            const requesterGeneration = sessionGeneration;
+            const nextPassword = validatedPassword(newPassword);
+            const targetId = text(accountId);
+            if (!targetId) fail("ADMIN_USER_NOT_FOUND", "No se ha encontrado el usuario local solicitado.");
+            if (targetId === state.entryId) {
+                fail("ADMIN_SELF_UPDATE_FORBIDDEN", "Usa el cambio de contraseña de tu propia sesión para actualizar la cuenta administradora.");
+            }
+            return withPasswordReplacementLock(targetId, async () => {
+            // If a previous administrator/browser died mid-rotation, repair
+            // it while we exclusively own this account's rotation lock, then
+            // continue with the newly requested reset instead of stranding a
+            // user who no longer knows which password reached disk.
+            await recoverInterruptedPasswordReplacement(targetId);
+            const snapshotIndex = vaultAdapter.read();
+            const snapshotEntryIndex = snapshotIndex?.entries?.findIndex((entry) => entry.id === targetId) ?? -1;
+            if (snapshotEntryIndex < 0) fail("ADMIN_USER_NOT_FOUND", "No se ha encontrado la cuenta local solicitada.");
+            const snapshotEntry = snapshotIndex.entries[snapshotEntryIndex];
+            // Stage a new credential generation before taking the project
+            // locks. Existing sessions/capabilities then fail their next
+            // identity revalidation, while an in-flight project write drains
+            // before this migration acquires that partition's lock.
+            const staged = await mutateAdministrativeRegistry((registry) => {
+                const requester = requireAdministrativeTarget(registry, state.entryId);
+                if (requester.role !== LOCAL_IDENTITY_ROLES.ADMIN
+                    || activeLockRecord(requester, timestamp(now))
+                    || requester.credentialGeneration !== state.security?.credentialGeneration) {
+                    fail("ADMIN_ACCESS_REQUIRED", "La cuenta administradora ya no tiene acceso a la gestión local.");
+                }
+                const current = requireAdministrativeTarget(registry, targetId);
+                if (current.accountId === state.entryId) {
+                    fail("ADMIN_SELF_UPDATE_FORBIDDEN", "Usa el cambio de contraseña de tu propia sesión para actualizar la cuenta administradora.");
+                }
+                if (current.passwordReplacementPending === true) {
+                    fail("ACCOUNT_PASSWORD_CHANGE_IN_PROGRESS", "La contraseña de esta cuenta ya se está actualizando localmente.");
+                }
+                const next = createAdministrativeUserRecord({
+                    ...current,
+                    credentialGeneration: current.credentialGeneration + 1,
+                    passwordReplacementPending: true,
+                    passwordReplacementJournal: createPasswordReplacementJournal(current),
+                    updatedAt: timestamp(now)
+                });
+                registry.users = registry.users.map((candidate) => candidate.accountId === current.accountId ? next : candidate);
+                return { previous: current, staged: next };
+            }, { required: true });
+            const restoreStagedCredentialGeneration = async () => mutateAdministrativeRegistry((registry) => {
+                const current = requireAdministrativeTarget(registry, targetId);
+                if (current.credentialGeneration !== staged.staged.credentialGeneration
+                    || current.passwordRecoveryKeyId !== staged.previous.passwordRecoveryKeyId
+                    || current.passwordReplacementPending !== true
+                    || current.passwordReplacementJournal?.id !== staged.staged.passwordReplacementJournal.id) return false;
+                const restored = createAdministrativeUserRecord({
+                    ...current,
+                    credentialGeneration: staged.previous.credentialGeneration,
+                    passwordReplacementPending: staged.previous.passwordReplacementPending,
+                    passwordReplacementJournal: staged.previous.passwordReplacementJournal,
+                    updatedAt: timestamp(now)
+                });
+                registry.users = registry.users.map((candidate) => candidate.accountId === current.accountId ? restored : candidate);
+                return true;
+            }, { required: true });
+            let recovery;
+            try {
+                recovery = await administrativeRecoveryKeyFor(staged.previous);
+            } catch (error) {
+                await restoreStagedCredentialGeneration();
+                throw error;
+            }
+            let snapshotData;
+            try {
+                snapshotData = validateAccountData(await openAccountVaultData({ vault: snapshotEntry.vault, key: recovery.key }, crypto), {
+                    accountId: snapshotEntry.id,
+                    identifier: staged.previous.identifier
+                });
+            } catch (error) {
+                // Restore the staged generation if the old account cannot be
+                // authenticated with its escrowed non-extractable key.
+                await restoreStagedCredentialGeneration();
+                if (error?.code === "WEB_CRYPTO_UNAVAILABLE") throw error;
+                fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La clave de recuperación no coincide con la bóveda actual de esta cuenta.");
+            }
+            let candidate;
+            try {
+                candidate = await createEncryptedAccountVault({
+                    accountId: snapshotEntry.id,
+                    identifierHash: snapshotEntry.vault.identifierHash,
+                    password: nextPassword,
+                    data: snapshotData,
+                    pbkdf2Iterations: snapshotEntry.vault.kdf.iterations
+                }, crypto);
+            } catch (error) {
+                await restoreStagedCredentialGeneration();
+                throw error;
+            }
+            let replacementRecovery;
+            try {
+                replacementRecovery = await recoveryKeyStore().put(candidate.key);
+            } catch (error) {
+                await restoreStagedCredentialGeneration();
+                throw error;
+            }
+            let replacementJournal = staged.staged.passwordReplacementJournal;
+            try {
+                const updated = await updatePasswordReplacementJournal({
+                    accountId: targetId,
+                    credentialGeneration: staged.staged.credentialGeneration,
+                    journalId: replacementJournal.id,
+                    replacementRecoveryKeyId: replacementRecovery.id
+                });
+                replacementJournal = updated.passwordReplacementJournal;
+            } catch (error) {
+                const restored = await restoreStagedCredentialGeneration();
+                if (restored) await bestEffortRemoveAdministrativeRecoveryKey(replacementRecovery.id);
+                throw error;
+            }
+            const preparedOwners = projectOwnerIdsForAccount(snapshotEntry.id, snapshotData).sort();
+            let updatedUser = null;
+            // If the identity vault has reached disk and its compensating
+            // write fails, retain the journal.  Recovery can then inspect the
+            // live vault and deterministically finalize rather than reverting
+            // the registry to an old key while projects use the candidate.
+            let candidateVaultMayBePersisted = false;
+            try {
+                await rekeyAccountProjectLibraries({
+                    accountId: snapshotEntry.id,
+                    data: snapshotData,
+                    oldKey: recovery.key,
+                    newKey: candidate.key,
+                    journal: {
+                        capture: async (snapshots) => {
+                            replacementJournal = await persistPasswordReplacementBackups({
+                                accountId: targetId,
+                                credentialGeneration: staged.staged.credentialGeneration,
+                                journal: replacementJournal,
+                                candidateKey: candidate.key,
+                                snapshots
+                            });
+                        }
+                    },
+                    commit: () => mutateIdentityVault(async () => {
+                        assertActiveState(state, requesterGeneration);
+                        const freshIndex = vaultAdapter.read();
+                        const freshEntryIndex = freshIndex?.entries?.findIndex((entry) => entry.id === targetId) ?? -1;
+                        if (freshEntryIndex < 0) fail("ADMIN_USER_NOT_FOUND", "No se ha encontrado la cuenta local solicitada.");
+                        const freshEntry = freshIndex.entries[freshEntryIndex];
+                        const current = await mutateAdministrativeRegistry((registry) => {
+                            const requester = requireAdministrativeTarget(registry, state.entryId);
+                            if (requester.role !== LOCAL_IDENTITY_ROLES.ADMIN
+                                || activeLockRecord(requester, timestamp(now))
+                                || requester.credentialGeneration !== state.security?.credentialGeneration) {
+                                fail("ADMIN_ACCESS_REQUIRED", "La cuenta administradora ya no tiene acceso a la gestión local.");
+                            }
+                            const target = requireAdministrativeTarget(registry, targetId);
+                            if (target.credentialGeneration !== staged.staged.credentialGeneration
+                                || target.passwordRecoveryKeyId !== recovery.id
+                                || target.passwordReplacementPending !== true
+                                || target.passwordReplacementJournal?.id !== replacementJournal.id
+                                || target.passwordReplacementJournal?.replacementRecoveryKeyId !== replacementRecovery.id) {
+                                fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La recuperación administrativa de esta cuenta cambió antes de completar el restablecimiento.");
+                            }
+                            return target;
+                        }, { required: true });
+                        let freshData;
+                        try {
+                            freshData = validateAccountData(await openAccountVaultData({ vault: freshEntry.vault, key: recovery.key }, crypto), {
+                                accountId: freshEntry.id,
+                                identifier: current.identifier
+                            });
+                        } catch (error) {
+                            if (error?.code === "WEB_CRYPTO_UNAVAILABLE") throw error;
+                            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La bóveda de esta cuenta cambió durante el restablecimiento.");
+                        }
+                        const currentOwners = projectOwnerIdsForAccount(freshEntry.id, freshData).sort();
+                        if (freshEntry.vault.identifierHash !== snapshotEntry.vault.identifierHash
+                            || currentOwners.length !== preparedOwners.length
+                            || currentOwners.some((owner, index) => owner !== preparedOwners[index])) {
+                            fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La cuenta cambió durante el restablecimiento. Inténtalo de nuevo.");
+                        }
+                        const rekeyedData = await rekeyProviderTokenEnvelopes(freshData, {
+                            oldKey: recovery.key,
+                            newKey: candidate.key
+                        });
+                        const rekeyedVault = await encryptAccountVaultData({
+                            vault: candidate.vault,
+                            key: candidate.key,
+                            data: rekeyedData
+                        }, crypto);
+                        const entries = [...freshIndex.entries];
+                        entries[freshEntryIndex] = { ...entries[freshEntryIndex], vault: rekeyedVault };
+                        let vaultWritten = false;
+                        try {
+                            vaultAdapter.write({ ...freshIndex, updatedAt: timestamp(now), entries });
+                            vaultWritten = true;
+                            candidateVaultMayBePersisted = true;
+                            updatedUser = await mutateAdministrativeRegistry((registry) => {
+                                const target = requireAdministrativeTarget(registry, targetId);
+                                if (target.credentialGeneration !== staged.staged.credentialGeneration
+                                    || target.passwordRecoveryKeyId !== recovery.id
+                                    || target.passwordReplacementPending !== true
+                                    || target.passwordReplacementJournal?.id !== replacementJournal.id
+                                    || target.passwordReplacementJournal?.replacementRecoveryKeyId !== replacementRecovery.id) {
+                                    fail("ADMIN_PASSWORD_RECOVERY_UNAVAILABLE", "La recuperación administrativa de esta cuenta cambió antes de completar el restablecimiento.");
+                                }
+                                const next = createAdministrativeUserRecord({
+                                    ...target,
+                                    passwordRecoveryKeyId: replacementRecovery.id,
+                                    // A login which completed while the
+                                    // project rekey was staged received the
+                                    // staging generation. Advance once more
+                                    // at the vault commit so that session
+                                    // cannot later write old-key data back.
+                                    credentialGeneration: target.credentialGeneration + 1,
+                                    passwordReplacementPending: false,
+                                    passwordReplacementJournal: null,
+                                    blocked: false,
+                                    failedLoginAttempts: 0,
+                                    lockedUntil: "",
+                                    passwordChangeRequired: false,
+                                    passwordResetRequestedAt: "",
+                                    updatedAt: timestamp(now)
+                                });
+                                registry.users = registry.users.map((candidateUser) => candidateUser.accountId === target.accountId ? next : candidateUser);
+                                return next;
+                            }, { required: true });
+                        } catch (error) {
+                            let preserveCandidateProjectMigration = false;
+                            if (vaultWritten) {
+                                try {
+                                    vaultAdapter.write(freshIndex);
+                                    candidateVaultMayBePersisted = false;
+                                } catch {
+                                    // Preserve the durable journal and the
+                                    // candidate recovery key. The next login
+                                    // or reset retry determines which vault
+                                    // reached storage before touching the
+                                    // project envelopes.
+                                    preserveCandidateProjectMigration = true;
+                                }
+                            }
+                            if (preserveCandidateProjectMigration) {
+                                throw preservePasswordReplacementProjectMigration(error);
+                            }
+                            throw error;
+                        }
+                    })
+                });
+            } catch (error) {
+                // Once the candidate recovery reference is durable, only the
+                // journal can safely decide whether the old or candidate
+                // vault reached storage. Retain it for every later failure;
+                // a subsequent login/reset retry deterministically rolls
+                // old-key envelopes back or finalizes candidate envelopes.
+                const recoveryJournalMustRemain = Boolean(replacementJournal?.replacementRecoveryKeyId);
+                if (!candidateVaultMayBePersisted && !recoveryJournalMustRemain) {
+                    const restored = await restoreStagedCredentialGeneration();
+                    if (restored) {
+                        discardPasswordReplacementBackups(replacementJournal);
+                        await bestEffortRemoveAdministrativeRecoveryKey(replacementRecovery.id);
+                    }
+                }
+                throw error;
+            }
+            await bestEffortRemoveAdministrativeRecoveryKey(recovery.id);
+            discardPasswordReplacementBackups(replacementJournal);
+            return publicAdministrativeUser(updatedUser);
+            });
+        },
+
+        /**
          * Marks a generic local reset request as handled without changing the
          * user's password or silently removing a separately forced change.
          * Password replacement remains a user-held cryptographic operation
@@ -1288,6 +2396,7 @@ export function createLocalIdentityService({
                     registry.users = registry.users.filter((user) => user.accountId !== targetId);
                     return true;
                 }, { required: true });
+                await bestEffortRemoveAdministrativeRecoveryKey(target.passwordRecoveryKeyId);
                 return Object.freeze({ accountId: target.accountId, deleted: nextIndex.entries.every((entry) => entry.id !== targetId) });
             });
         },
@@ -1337,10 +2446,22 @@ export function createLocalIdentityService({
 
         async loginLocalAccount({ identifier, password } = {}) {
             let canonicalIdentifier = "";
+            let replacementRecoveryState = "none";
             try {
+                canonicalIdentifier = normalizedIdentifier(identifier);
+                if (typeof password !== "string" || !password) throw invalidCredentials();
+                // Interrupted password rotations restore project envelopes
+                // under project-partition locks. This must happen before the
+                // identity-vault lock below, otherwise a normal project save
+                // could deadlock identity→project against project→identity.
+                const recoveryIndex = vaultAdapter.read();
+                if (recoveryIndex?.entries?.length) {
+                    const recoveryMatches = await directlyMatchedEntries(recoveryIndex, canonicalIdentifier);
+                    if (recoveryMatches[0]) {
+                        replacementRecoveryState = await recoverPasswordReplacementIfAvailable(recoveryMatches[0].id);
+                    }
+                }
                 return await mutateIdentityVault(async () => {
-                    canonicalIdentifier = normalizedIdentifier(identifier);
-                    if (typeof password !== "string" || !password) throw invalidCredentials();
                     const index = vaultAdapter.read();
                     if (!index) throw invalidCredentials();
                     const directMatches = await directlyMatchedEntries(index, canonicalIdentifier);
@@ -1349,6 +2470,9 @@ export function createLocalIdentityService({
                         await recordAdministrativeFailure({ entry: directMatches[0], identifier: canonicalIdentifier });
                         throw invalidCredentials();
                     }
+                    if (replacementRecoveryState === "in-progress") {
+                        fail("ACCOUNT_PASSWORD_CHANGE_IN_PROGRESS", "La contraseña de esta cuenta se está actualizando localmente. Inténtalo de nuevo en unos instantes.");
+                    }
                     const migrated = await migrateUnlockedEntryIfPossible(index, match.entry, match.unlocked, match.data);
                     const entry = migrated?.entry || match.entry;
                     const vault = migrated?.vault || match.unlocked.vault;
@@ -1356,11 +2480,17 @@ export function createLocalIdentityService({
                     // password has authenticated this exact encrypted entry.
                     // A correct credential therefore receives ACCOUNT_LOCKED,
                     // while wrong credentials retain the generic response.
-                    const security = await synchronizeAdministrativeLogin({
+                    let security = await synchronizeAdministrativeLogin({
                         entry,
                         data: match.data,
                         provider: "local"
                     });
+                    const recoverySecurity = await storeAdministrativeRecoveryKey({
+                        accountId: entry.id,
+                        key: match.unlocked.key,
+                        replace: true
+                    });
+                    if (recoverySecurity) security = recoverySecurity;
                     const session = activate({
                         entry,
                         vault,
@@ -1375,6 +2505,9 @@ export function createLocalIdentityService({
                 if (error?.code === "WEB_CRYPTO_UNAVAILABLE"
                     || error?.code === "LOCAL_STORAGE_UNAVAILABLE"
                     || error?.code === "ACCOUNT_LOCKED"
+                    || error?.code === "ACCOUNT_PASSWORD_CHANGE_IN_PROGRESS"
+                    || error?.code === "ACCOUNT_PASSWORD_RESET"
+                    || error?.code === "ADMIN_PASSWORD_RECOVERY_UNAVAILABLE"
                     || String(error?.code || "").startsWith("ADMIN_REGISTRY_")) throw error;
                 throw invalidCredentials();
             }
@@ -1403,71 +2536,269 @@ export function createLocalIdentityService({
 
         /**
          * Re-encrypts the active local vault with a caller-supplied password.
-         * An administrator can only mark this operation as required; it never
-         * knows, exports, or replaces another user's cryptographic password.
+         * A separate authenticated local administrator can use the guarded
+         * recovery path for another account; neither flow exposes an old
+         * password or raw account key material.
          */
         async changeLocalPassword({ currentPassword, newPassword } = {}) {
             const state = requireActive();
-            const generation = sessionGeneration;
             const nextPassword = validatedPassword(newPassword);
-            return mutateIdentityVault(async () => {
-                const fresh = await readFreshActiveAccountData(state, generation);
-                let verified;
-                try {
-                    verified = await unlockEncryptedAccountVault({ vault: fresh.vault, password: currentPassword }, crypto);
-                    validateAccountData(verified.data, {
-                        accountId: fresh.data.account.id,
-                        identifier: fresh.data.account.identifier
+            return withPasswordReplacementLock(state.entryId, async () => {
+            const generationBeforeRecovery = sessionGeneration;
+            await recoverInterruptedPasswordReplacement(state.entryId);
+            // Recovery may have finalized a candidate vault written by a
+            // different process. Do not let a cached old key acquire that
+            // generation through the recovery-key enrolment below.
+            await mutateIdentityVault(() => revalidateWorkspaceAccessLocked(
+                state,
+                generationBeforeRecovery,
+                null,
+                { allowPasswordChangeRequired: true }
+            ));
+            let generation = sessionGeneration;
+            // Verify and enrol the old vault key before publishing any
+            // pending marker. A legacy account without escrow therefore
+            // fails before it can enter an unrecoverable transition.
+            let verified;
+            try {
+                verified = await unlockEncryptedAccountVault({ vault: state.vault, password: currentPassword }, crypto);
+                validateAccountData(verified.data, {
+                    accountId: state.data.account.id,
+                    identifier: state.data.account.identifier
+                });
+            } catch (error) {
+                if (error?.code === "WEB_CRYPTO_UNAVAILABLE") throw error;
+                throw invalidCredentials();
+            }
+            const enrolledSecurity = await storeAdministrativeRecoveryKey({
+                accountId: state.entryId,
+                key: verified.key,
+                replace: false,
+                required: true
+            });
+            if (enrolledSecurity) state.security = enrolledSecurity;
+            const previousSecurity = state.security;
+            let stagedCredential = null;
+            try {
+                stagedCredential = await mutateAdministrativeRegistry((registry) => {
+                    const user = administrativeRecordForAccount(registry, state.entryId);
+                    if (!user) return null;
+                    if (activeLockRecord(user, timestamp(now))) {
+                        fail("ACCOUNT_LOCKED", "Esta cuenta local está bloqueada.");
+                    }
+                    if (user.credentialGeneration !== state.security?.credentialGeneration) {
+                        fail("ACCOUNT_PASSWORD_RESET", "La contraseña de esta cuenta ha sido restablecida por la administración local.");
+                    }
+                    if (user.passwordReplacementPending === true) {
+                        fail("ACCOUNT_PASSWORD_CHANGE_IN_PROGRESS", "La contraseña de esta cuenta ya se está actualizando localmente.");
+                    }
+                    const next = createAdministrativeUserRecord({
+                        ...user,
+                        credentialGeneration: user.credentialGeneration + 1,
+                        passwordReplacementPending: true,
+                        passwordReplacementJournal: createPasswordReplacementJournal(user),
+                        updatedAt: timestamp(now)
                     });
-                } catch (error) {
-                    if (error?.code === "WEB_CRYPTO_UNAVAILABLE") throw error;
-                    throw invalidCredentials();
-                }
-                const replacement = await createEncryptedAccountVault({
-                    accountId: fresh.data.account.id,
-                    identifierHash: fresh.vault.identifierHash,
-                    password: nextPassword,
-                    data: fresh.data,
-                    pbkdf2Iterations: fresh.vault.kdf.iterations
-                }, crypto);
-                assertActiveState(state, generation);
-                const entries = [...fresh.index.entries];
-                entries[fresh.entryIndex] = { ...entries[fresh.entryIndex], vault: replacement.vault };
-                const saved = vaultAdapter.write({ ...fresh.index, updatedAt: timestamp(now), entries });
-                state.key = replacement.key;
-                state.vault = saved.entries[fresh.entryIndex].vault;
-                state.data = fresh.data;
-                let security = state.security;
-                try {
-                    const updatedSecurity = await mutateAdministrativeRegistry((registry) => {
-                        const user = administrativeRecordForAccount(registry, state.entryId);
-                        if (!user) return administrativeSecurity();
-                        const next = createAdministrativeUserRecord({
-                            ...user,
-                            passwordChangeRequired: false,
-                            passwordResetRequestedAt: "",
-                            failedLoginAttempts: 0,
-                            lockedUntil: "",
-                            updatedAt: timestamp(now)
-                        });
-                        registry.users = registry.users.map((candidate) => candidate.accountId === state.entryId ? next : candidate);
-                        return administrativeSecurity(next);
-                    }, { required: state.security?.passwordChangeRequired === true });
-                    security = updatedSecurity || administrativeSecurity();
-                } catch (error) {
-                    // The vault has changed but its administrative marker did
-                    // not. Keeping the restricted state is the safe outcome;
-                    // a retry with the new current password can clear it once
-                    // the local administrative key is available again.
-                    state.security = { ...state.security, passwordChangeRequired: true };
-                    sessionGeneration += 1;
-                    publishSession();
-                    throw error;
-                }
-                state.security = security;
-                state.authenticatedAt = timestamp(now);
+                    registry.users = registry.users.map((candidateUser) => candidateUser.accountId === user.accountId ? next : candidateUser);
+                    return next;
+                }, { required: state.security?.passwordChangeRequired === true });
+            } catch (error) {
+                throw error;
+            }
+            if (stagedCredential) {
+                state.security = administrativeSecurity(stagedCredential);
                 sessionGeneration += 1;
-                return publishSession();
+                generation = sessionGeneration;
+                publishSession();
+            }
+            const restoreStagedCredential = async () => {
+                if (!stagedCredential) return false;
+                const restored = await mutateAdministrativeRegistry((registry) => {
+                    const current = administrativeRecordForAccount(registry, state.entryId);
+                    if (!current
+                        || current.credentialGeneration !== stagedCredential.credentialGeneration
+                        || current.passwordReplacementPending !== true
+                        || current.passwordReplacementJournal?.id !== stagedCredential.passwordReplacementJournal.id) return false;
+                    const next = createAdministrativeUserRecord({
+                        ...current,
+                        credentialGeneration: previousSecurity?.credentialGeneration || 1,
+                        passwordReplacementPending: previousSecurity?.passwordReplacementPending === true,
+                        passwordReplacementJournal: null,
+                        updatedAt: timestamp(now)
+                    });
+                    registry.users = registry.users.map((candidateUser) => candidateUser.accountId === current.accountId ? next : candidateUser);
+                    return next;
+                }, { required: state.security?.passwordChangeRequired === true });
+                if (restored && active === state && sessionGeneration === generation) {
+                    state.security = previousSecurity;
+                    sessionGeneration += 1;
+                    generation = sessionGeneration;
+                    publishSession();
+                }
+                return restored;
+            };
+            // The old recovery reference was guaranteed before staging, so
+            // the journal's initial snapshot already contains it.
+            let replacementJournal = stagedCredential.passwordReplacementJournal;
+            // Prepare the new key before taking a project lock. The final
+            // vault data is re-read inside the identity-lock commit below, so
+            // a concurrent profile/provider update cannot be overwritten.
+            let candidate;
+            try {
+                candidate = await createEncryptedAccountVault({
+                    accountId: state.data.account.id,
+                    identifierHash: state.vault.identifierHash,
+                    password: nextPassword,
+                    data: state.data,
+                    pbkdf2Iterations: state.vault.kdf.iterations
+                }, crypto);
+            } catch (error) {
+                await restoreStagedCredential();
+                throw error;
+            }
+            let replacementRecovery;
+            try {
+                replacementRecovery = await recoveryKeyStore().put(candidate.key);
+                const updated = await updatePasswordReplacementJournal({
+                    accountId: state.entryId,
+                    credentialGeneration: stagedCredential.credentialGeneration,
+                    journalId: replacementJournal.id,
+                    replacementRecoveryKeyId: replacementRecovery.id
+                });
+                replacementJournal = updated.passwordReplacementJournal;
+            } catch (error) {
+                const restored = await restoreStagedCredential();
+                if (restored && replacementRecovery?.id) {
+                    await bestEffortRemoveAdministrativeRecoveryKey(replacementRecovery.id);
+                }
+                throw error;
+            }
+            const preparedOwners = projectOwnerIdsForAccount(state.data.account.id, state.data).sort();
+            let candidateVaultMayBePersisted = false;
+            let migration;
+            try {
+                migration = await rekeyAccountProjectLibraries({
+                    accountId: state.data.account.id,
+                    data: state.data,
+                    oldKey: verified.key,
+                    newKey: candidate.key,
+                    journal: {
+                        capture: async (snapshots) => {
+                            replacementJournal = await persistPasswordReplacementBackups({
+                                accountId: state.entryId,
+                                credentialGeneration: stagedCredential.credentialGeneration,
+                                journal: replacementJournal,
+                                candidateKey: candidate.key,
+                                snapshots
+                            });
+                        }
+                    },
+                    commit: () => mutateIdentityVault(async () => {
+                    const fresh = await readFreshActiveAccountData(state, generation);
+                    let freshVerification;
+                    try {
+                        freshVerification = await unlockEncryptedAccountVault({ vault: fresh.vault, password: currentPassword }, crypto);
+                        validateAccountData(freshVerification.data, {
+                            accountId: fresh.data.account.id,
+                            identifier: fresh.data.account.identifier
+                        });
+                    } catch (error) {
+                        if (error?.code === "WEB_CRYPTO_UNAVAILABLE") throw error;
+                        throw invalidCredentials();
+                    }
+                    const currentOwners = projectOwnerIdsForAccount(fresh.data.account.id, fresh.data).sort();
+                    if (fresh.vault.identifierHash !== state.vault.identifierHash
+                        || currentOwners.length !== preparedOwners.length
+                        || currentOwners.some((owner, index) => owner !== preparedOwners[index])) {
+                        fail("SESSION_CHANGED", "La cuenta cambió durante la actualización de contraseña. Inténtalo de nuevo.");
+                    }
+                    const rekeyedData = await rekeyProviderTokenEnvelopes(fresh.data, {
+                        oldKey: freshVerification.key,
+                        newKey: candidate.key
+                    });
+                    const rekeyedVault = await encryptAccountVaultData({
+                        vault: candidate.vault,
+                        key: candidate.key,
+                        data: rekeyedData
+                    }, crypto);
+                    const entries = [...fresh.index.entries];
+                    entries[fresh.entryIndex] = { ...entries[fresh.entryIndex], vault: rekeyedVault };
+                    let vaultWritten = false;
+                    try {
+                        const saved = vaultAdapter.write({ ...fresh.index, updatedAt: timestamp(now), entries });
+                        vaultWritten = true;
+                        candidateVaultMayBePersisted = true;
+                        const security = await mutateAdministrativeRegistry((registry) => {
+                            const user = requireAdministrativeTarget(registry, state.entryId);
+                            if (user.credentialGeneration !== stagedCredential.credentialGeneration
+                                || user.passwordRecoveryKeyId !== stagedCredential.passwordReplacementJournal.oldRecoveryKeyId
+                                || user.passwordReplacementPending !== true
+                                || user.passwordReplacementJournal?.id !== replacementJournal.id
+                                || user.passwordReplacementJournal?.replacementRecoveryKeyId !== replacementRecovery.id) {
+                                fail("ACCOUNT_PASSWORD_RESET", "La cuenta cambió durante la actualización de contraseña.");
+                            }
+                            const next = createAdministrativeUserRecord({
+                                ...user,
+                                passwordRecoveryKeyId: replacementRecovery.id,
+                                // Bump a second time at the final commit. A
+                                // session admitted while staging then cannot
+                                // later write its old-key vault back.
+                                credentialGeneration: user.credentialGeneration + 1,
+                                passwordReplacementPending: false,
+                                passwordReplacementJournal: null,
+                                passwordChangeRequired: false,
+                                passwordResetRequestedAt: "",
+                                failedLoginAttempts: 0,
+                                lockedUntil: "",
+                                updatedAt: timestamp(now)
+                            });
+                            registry.users = registry.users.map((candidateUser) => candidateUser.accountId === state.entryId ? next : candidateUser);
+                            return administrativeSecurity(next);
+                        }, { required: true });
+                        state.key = candidate.key;
+                        state.vault = saved.entries[fresh.entryIndex].vault;
+                        state.data = rekeyedData;
+                        state.security = security;
+                        state.authenticatedAt = timestamp(now);
+                        sessionGeneration += 1;
+                        return publishSession();
+                    } catch (error) {
+                        let preserveCandidateProjectMigration = false;
+                        if (vaultWritten) {
+                            try {
+                                vaultAdapter.write(fresh.index);
+                                candidateVaultMayBePersisted = false;
+                            } catch {
+                                // Keep the durable journal and candidate
+                                // recovery key. A future login will inspect
+                                // which vault reached disk and repair it.
+                                preserveCandidateProjectMigration = true;
+                            }
+                        }
+                        if (preserveCandidateProjectMigration) {
+                            throw preservePasswordReplacementProjectMigration(error);
+                        }
+                        throw error;
+                    }
+                    })
+                });
+            } catch (error) {
+                const recoveryJournalMustRemain = Boolean(replacementJournal?.replacementRecoveryKeyId);
+                if (!candidateVaultMayBePersisted && !recoveryJournalMustRemain) {
+                    const restored = await restoreStagedCredential();
+                    if (restored) {
+                        discardPasswordReplacementBackups(replacementJournal);
+                        await bestEffortRemoveAdministrativeRecoveryKey(replacementRecovery.id);
+                    }
+                }
+                if (recoveryJournalMustRemain) {
+                    revokeActiveForCredentialChange(state, generation);
+                }
+                throw error;
+            }
+            await bestEffortRemoveAdministrativeRecoveryKey(stagedCredential.passwordReplacementJournal.oldRecoveryKeyId);
+            discardPasswordReplacementBackups(replacementJournal);
+            return migration.result;
             });
         },
 
@@ -1475,6 +2806,9 @@ export function createLocalIdentityService({
             const state = requireActive();
             const generation = sessionGeneration;
             const nextDisplayName = normalizedDisplayName(displayName, state.data.account.identifier);
+            // Reject a forced-password/reset state before changing the
+            // in-memory copy as well as before writing it to disk.
+            await revalidateWorkspaceAccess(state, generation);
             const updatedAt = timestamp(now);
             state.data = {
                 ...state.data,
@@ -1509,6 +2843,7 @@ export function createLocalIdentityService({
             const generation = sessionGeneration;
             requireExternalProviderOnline();
             const normalizedProviderName = normalizedProvider(provider);
+            await revalidateWorkspaceAccess(state, generation);
             const storedEnvelope = state.data.providerTokenEnvelopes[normalizedProviderName];
             if (!storedEnvelope) fail("PROVIDER_TOKEN_NOT_FOUND", "Primero debe guardarse un token cifrado del proveedor.");
             if (providerTokenNeedsRenewal(storedEnvelope, now)) {
@@ -1525,19 +2860,34 @@ export function createLocalIdentityService({
                 linkedAt: previous?.linkedAt || updatedAt,
                 updatedAt
             };
+            const externalIdentities = { ...state.data.externalIdentities, [normalizedProviderName]: externalIdentity };
             state.data = {
                 ...state.data,
-                externalIdentities: { ...state.data.externalIdentities, [normalizedProviderName]: externalIdentity }
+                externalIdentities,
+                projectOwnerHistory: normalizedProjectOwnerHistory(state.data.projectOwnerHistory, externalIdentities)
             };
             await persistActive(state, generation);
             // Keep the admin-visible provider metadata in the separately
             // encrypted registry. The regular selector index intentionally
             // remains opaque and must not acquire this user information.
-            const security = await synchronizeAdministrativeLogin({
-                entry: { id: state.entryId },
-                data: state.data,
-                provider: normalizedProviderName
-            });
+            let security;
+            try {
+                security = await synchronizeAdministrativeLogin({
+                    entry: { id: state.entryId },
+                    data: state.data,
+                    provider: normalizedProviderName
+                });
+            } catch (error) {
+                if (["ACCOUNT_LOCKED", "ACCOUNT_DELETED", "ACCOUNT_PASSWORD_CHANGE_IN_PROGRESS"].includes(error?.code)) {
+                    revokeActiveForCredentialChange(state, generation);
+                }
+                throw error;
+            }
+            if (security && security.credentialGeneration !== state.security?.credentialGeneration) {
+                revokeActiveForCredentialChange(state, generation);
+                fail("ACCOUNT_PASSWORD_RESET", "La contraseña de esta cuenta ha sido restablecida por la administración local.");
+            }
+            assertActiveState(state, generation);
             state.externalIdentity = externalIdentity;
             state.security = security || state.security;
             state.authenticatedAt = updatedAt;
@@ -1552,26 +2902,57 @@ export function createLocalIdentityService({
          */
         async startExternalSession({ provider, subject } = {}) {
             const state = requireActive();
+            const generation = sessionGeneration;
             requireExternalProviderOnline();
             const normalizedProviderName = normalizedProvider(provider);
-            const externalIdentity = state.data.externalIdentities[normalizedProviderName];
-            const envelope = state.data.providerTokenEnvelopes[normalizedProviderName];
-            if (!externalIdentity || externalIdentity.subject !== text(subject) || !envelope) {
-                fail("EXTERNAL_IDENTITY_NOT_LINKED", "No existe una identidad externa vinculada a esta cuenta local.");
-            }
-            if (providerTokenNeedsRenewal(envelope, now)) {
-                fail("PROVIDER_TOKEN_RENEWAL_REQUIRED", "La identidad externa requiere una autorización interactiva nueva.");
-            }
-            const security = await synchronizeAdministrativeLogin({
-                entry: { id: state.entryId },
-                data: state.data,
-                provider: normalizedProviderName
+            return mutateIdentityVault(async () => {
+                // Keep this gate and the administrative synchronization under
+                // one vault lock. A stale key must not be able to adopt a
+                // newer registry generation merely by re-entering OAuth.
+                await revalidateWorkspaceAccessLocked(state, generation);
+                const externalIdentity = state.data.externalIdentities[normalizedProviderName];
+                const envelope = state.data.providerTokenEnvelopes[normalizedProviderName];
+                if (!externalIdentity || externalIdentity.subject !== text(subject) || !envelope) {
+                    fail("EXTERNAL_IDENTITY_NOT_LINKED", "No existe una identidad externa vinculada a esta cuenta local.");
+                }
+                if (providerTokenNeedsRenewal(envelope, now)) {
+                    fail("PROVIDER_TOKEN_RENEWAL_REQUIRED", "La identidad externa requiere una autorización interactiva nueva.");
+                }
+                // Re-entry also upgrades a legacy linked account to retain
+                // this provider's opaque project-owner partition. That
+                // history remains encrypted in the account vault even if the
+                // provider is removed later.
+                await persistActiveDataLocked(state, generation, {
+                    ...state.data,
+                    projectOwnerHistory: normalizedProjectOwnerHistory(
+                        state.data.projectOwnerHistory,
+                        state.data.externalIdentities
+                    )
+                });
+                let security;
+                try {
+                    security = await synchronizeAdministrativeLogin({
+                        entry: { id: state.entryId },
+                        data: state.data,
+                        provider: normalizedProviderName
+                    });
+                } catch (error) {
+                    if (["ACCOUNT_LOCKED", "ACCOUNT_DELETED", "ACCOUNT_PASSWORD_CHANGE_IN_PROGRESS"].includes(error?.code)) {
+                        revokeActiveForCredentialChange(state, generation);
+                    }
+                    throw error;
+                }
+                if (security && security.credentialGeneration !== state.security?.credentialGeneration) {
+                    revokeActiveForCredentialChange(state, generation);
+                    fail("ACCOUNT_PASSWORD_RESET", "La contraseña de esta cuenta ha sido restablecida por la administración local.");
+                }
+                assertActiveState(state, generation);
+                state.externalIdentity = externalIdentity;
+                state.security = security || state.security;
+                state.authenticatedAt = timestamp(now);
+                sessionGeneration += 1;
+                return publishSession();
             });
-            state.externalIdentity = externalIdentity;
-            state.security = security || state.security;
-            state.authenticatedAt = timestamp(now);
-            sessionGeneration += 1;
-            return publishSession();
         },
 
         /** Return to the active local companion without writing a session to disk. */
@@ -1590,6 +2971,7 @@ export function createLocalIdentityService({
             requireExternalProviderOnline();
             const normalizedProviderName = normalizedProvider(provider);
             const tokenPayload = normalizedTokenPayload(tokens);
+            await revalidateWorkspaceAccess(state, generation);
             const envelope = await createProviderTokenEnvelope({
                 accountId: state.data.account.id,
                 provider: normalizedProviderName,
@@ -1639,17 +3021,22 @@ export function createLocalIdentityService({
             const generation = sessionGeneration;
             requireExternalProviderOnline();
             const normalizedProviderName = normalizedProvider(provider);
-            const envelope = state.data.providerTokenEnvelopes[normalizedProviderName];
-            if (!envelope) fail("PROVIDER_TOKEN_NOT_FOUND", "No hay un token local para este proveedor.");
-            if (providerTokenNeedsRenewal(envelope, now)) {
-                fail("PROVIDER_TOKEN_RENEWAL_REQUIRED", "El token del proveedor ha expirado y necesita una renovación interactiva.");
-            }
-            const tokens = await openProviderTokenEnvelope({
-                accountId: state.data.account.id,
-                provider: normalizedProviderName,
-                key: state.key,
-                envelope
-            }, crypto);
+            // Token plaintext is a sensitive read. Authenticate the vault
+            // currently on disk under the same mutation lock immediately
+            // before decrypting the cached provider envelope.
+            const tokens = await revalidateWorkspaceAccess(state, generation, async (verifiedState) => {
+                const envelope = verifiedState.data.providerTokenEnvelopes[normalizedProviderName];
+                if (!envelope) fail("PROVIDER_TOKEN_NOT_FOUND", "No hay un token local para este proveedor.");
+                if (providerTokenNeedsRenewal(envelope, now)) {
+                    fail("PROVIDER_TOKEN_RENEWAL_REQUIRED", "El token del proveedor ha expirado y necesita una renovación interactiva.");
+                }
+                return openProviderTokenEnvelope({
+                    accountId: verifiedState.data.account.id,
+                    provider: normalizedProviderName,
+                    key: verifiedState.key,
+                    envelope
+                }, crypto);
+            });
             assertActiveState(state, generation);
             return consumer(Object.freeze(cloneJson(tokens)));
         },
@@ -1674,6 +3061,10 @@ export function createLocalIdentityService({
                 return false;
             }
             return mutateIdentityVault(async () => {
+                // A stale cancellation cleanup is still a vault mutation;
+                // never let it write while a reset/block/forced-password
+                // decision is pending in the administrative directory.
+                await revalidateWorkspaceAccessLocked(state, generation);
                 const fresh = await readFreshActiveAccountData(state, generation);
                 const persistedEnvelope = fresh.data.providerTokenEnvelopes[normalizedProviderName];
                 if (!sameEncryptedEnvelope(persistedEnvelope, expected)) return false;
@@ -1708,6 +3099,7 @@ export function createLocalIdentityService({
             const state = requireActive();
             const generation = sessionGeneration;
             const normalizedProviderName = normalizedProvider(provider);
+            await revalidateWorkspaceAccess(state, generation);
             if (!state.data.providerTokenEnvelopes[normalizedProviderName]) return false;
             const providerTokenEnvelopes = { ...state.data.providerTokenEnvelopes };
             const externalIdentities = { ...state.data.externalIdentities };

@@ -1,9 +1,17 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ADMIN_BOOTSTRAP_IDENTIFIER } from "../../../../front/js/features/identity/index.js";
 import { LOCAL_IDENTITY_MIN_PASSWORD_LENGTH } from "./identityPresentation.js";
 import "./IdentityAccessPanel.css";
 
 const PROVIDERS = Object.freeze(["google", "microsoft"]);
+const IDENTIFIER_LOOKUP_DELAY_MS = 350;
+
+function isLookupReadyIdentifier(value) {
+    const identifier = String(value || "").trim();
+    return identifier.length >= 3
+        && identifier.length <= 320
+        && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(identifier);
+}
 
 function isReservedAdministratorIdentifier(value) {
     return String(value || "").trim().normalize("NFKC").toLowerCase() === ADMIN_BOOTSTRAP_IDENTIFIER;
@@ -68,19 +76,66 @@ export default function IdentityAccessPanel({ identity, className = "" }) {
     const [screen, setScreen] = useState("sign-in");
     const [fields, setFields] = useState({ displayName: "", identifier: "", password: "" });
     const [lookupStatus, setLookupStatus] = useState("idle");
+    const [passwordResetOpen, setPasswordResetOpen] = useState(false);
+    const [passwordResetIdentifier, setPasswordResetIdentifier] = useState("");
     const [passwordAllowed, setPasswordAllowed] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [providerSetup, setProviderSetup] = useState("");
     const [providerFields, setProviderFields] = useState({ displayName: "", identifier: "", password: "" });
     const [passwordChangeFields, setPasswordChangeFields] = useState({ currentPassword: "", newPassword: "", confirmation: "" });
     const [passwordChangeError, setPasswordChangeError] = useState("");
+    const identityRef = useRef(identity);
     const identifierRef = useRef("");
+    const identifierRevisionRef = useRef(0);
+    const identifierLookupTimerRef = useRef(null);
     const headingId = useId();
+    const passwordResetHeadingId = useId();
+    const passwordResetDescriptionId = useId();
     const previouslyAuthenticated = useRef(false);
     const isBusy = identity?.busy === true;
     const identityState = identity?.session?.identityState || identity?.identityState || "unauthenticated";
     const isAuthenticated = identityState !== "unauthenticated";
+    const hasIdentity = Boolean(identity);
     const providerAvailable = (provider) => identity?.providers?.[provider]?.available === true;
+    identityRef.current = identity;
+
+    const checkIdentifier = useCallback(async (candidateIdentifier, expectedRevision = identifierRevisionRef.current) => {
+        const currentIdentity = identityRef.current;
+        const identifier = String(candidateIdentifier || "");
+        const scheduledTimer = identifierLookupTimerRef.current;
+        if (scheduledTimer !== null) {
+            globalThis.clearTimeout(scheduledTimer);
+            identifierLookupTimerRef.current = null;
+        }
+        if (!isLookupReadyIdentifier(identifier)) return null;
+        setLookupStatus("checking");
+        setPasswordAllowed(false);
+        currentIdentity?.clearFeedback?.();
+        const result = await currentIdentity?.checkLocalAccountAvailability?.({ identifier });
+        // Do not apply a delayed selector result to a newer email value.
+        if (identifierRevisionRef.current !== expectedRevision || identifierRef.current !== identifier) return result;
+        if (!result) {
+            setLookupStatus("unavailable");
+            setPasswordAllowed(false);
+            return null;
+        }
+        if (result.exists === true) {
+            setLookupStatus("found");
+            setPasswordAllowed(true);
+            return result;
+        }
+        if (result.exists === null) {
+            // It remains safe to try the password: the encrypted vault will
+            // only unlock after credential verification, without confirming
+            // whether a local account exists.
+            setLookupStatus("indeterminate");
+            setPasswordAllowed(true);
+            return result;
+        }
+        setLookupStatus("missing");
+        setPasswordAllowed(false);
+        return result;
+    }, []);
 
     useEffect(() => {
         if (isAuthenticated) setFields((current) => ({ ...current, password: "" }));
@@ -103,6 +158,26 @@ export default function IdentityAccessPanel({ identity, className = "" }) {
         setPasswordChangeError("");
     }, [identity?.session?.passwordChangeRequired]);
 
+    useEffect(() => {
+        if (!hasIdentity
+            || screen !== "sign-in"
+            || isAuthenticated
+            || isBusy
+            || lookupStatus !== "idle"
+            || !isLookupReadyIdentifier(fields.identifier)) return undefined;
+        const identifier = fields.identifier;
+        const revision = identifierRevisionRef.current;
+        const timer = globalThis.setTimeout(() => {
+            if (identifierLookupTimerRef.current === timer) identifierLookupTimerRef.current = null;
+            void checkIdentifier(identifier, revision);
+        }, IDENTIFIER_LOOKUP_DELAY_MS);
+        identifierLookupTimerRef.current = timer;
+        return () => {
+            globalThis.clearTimeout(timer);
+            if (identifierLookupTimerRef.current === timer) identifierLookupTimerRef.current = null;
+        };
+    }, [checkIdentifier, fields.identifier, hasIdentity, isAuthenticated, isBusy, lookupStatus, screen]);
+
     if (!identity) {
         return <section className={"orbit-identity-access-panel " + className} role="alert">
             No se ha configurado el acceso de identidad local.
@@ -110,41 +185,28 @@ export default function IdentityAccessPanel({ identity, className = "" }) {
     }
 
     const updateIdentifier = (identifier) => {
+        const scheduledTimer = identifierLookupTimerRef.current;
+        if (scheduledTimer !== null) {
+            globalThis.clearTimeout(scheduledTimer);
+            identifierLookupTimerRef.current = null;
+        }
         identifierRef.current = identifier;
+        identifierRevisionRef.current += 1;
         setFields((current) => ({ ...current, identifier, password: "" }));
         setLookupStatus("idle");
         setPasswordAllowed(false);
         identity.clearFeedback?.();
     };
 
-    const checkIdentifier = async () => {
-        const identifier = fields.identifier;
-        setLookupStatus("checking");
-        identity.clearFeedback?.();
-        const result = await identity.checkLocalAccountAvailability?.({ identifier });
-        // Do not apply a delayed selector result to a newer email value.
-        if (identifierRef.current !== identifier || !result) return;
-        if (result.exists === true) {
-            setLookupStatus("found");
-            setPasswordAllowed(true);
-            return;
-        }
-        if (result.exists === null) {
-            // It remains safe to try the password: the encrypted vault will
-            // only unlock after credential verification, without confirming
-            // whether a local account exists.
-            setLookupStatus("indeterminate");
-            setPasswordAllowed(true);
-            return;
-        }
-        setLookupStatus("missing");
-        setPasswordAllowed(false);
+    const checkIdentifierOnBlur = () => {
+        if (isBusy || lookupStatus !== "idle" || !isLookupReadyIdentifier(fields.identifier)) return;
+        void checkIdentifier(fields.identifier, identifierRevisionRef.current);
     };
 
     const submitSignIn = async (event) => {
         event.preventDefault();
         if (!passwordAllowed) {
-            await checkIdentifier();
+            await checkIdentifier(fields.identifier, identifierRevisionRef.current);
             return;
         }
         const result = await identity.loginLocalAccount({
@@ -158,6 +220,8 @@ export default function IdentityAccessPanel({ identity, className = "" }) {
         identity.clearFeedback?.();
         setScreen("register");
         setLookupStatus("idle");
+        setPasswordResetOpen(false);
+        setPasswordResetIdentifier("");
         setPasswordAllowed(false);
         setFields((current) => ({ ...current, password: "" }));
     };
@@ -166,6 +230,8 @@ export default function IdentityAccessPanel({ identity, className = "" }) {
         identity.clearFeedback?.();
         setScreen("sign-in");
         setLookupStatus("idle");
+        setPasswordResetOpen(false);
+        setPasswordResetIdentifier("");
         setPasswordAllowed(false);
         setFields((current) => ({ ...current, password: "" }));
     };
@@ -178,10 +244,30 @@ export default function IdentityAccessPanel({ identity, className = "" }) {
         if (result) setFields((current) => ({ ...current, password: "" }));
     };
 
-    const requestPasswordReset = async () => {
+    const openPasswordReset = () => {
         identity.clearFeedback?.();
-        const result = await identity.requestLocalPasswordReset?.({ identifier: fields.identifier });
-        if (result) setLookupStatus("forgot");
+        setLookupStatus("idle");
+        // Recovery always starts with a separate, explicit identifier. This
+        // prevents a stale sign-in value from creating an accidental request.
+        setPasswordResetIdentifier("");
+        setPasswordResetOpen(true);
+    };
+
+    const closePasswordReset = () => {
+        if (isBusy) return;
+        setPasswordResetOpen(false);
+        setPasswordResetIdentifier("");
+    };
+
+    const requestPasswordReset = async (event) => {
+        event.preventDefault();
+        identity.clearFeedback?.();
+        const result = await identity.requestLocalPasswordReset?.({ identifier: passwordResetIdentifier });
+        if (result) {
+            setPasswordResetOpen(false);
+            setPasswordResetIdentifier("");
+            setLookupStatus("forgot");
+        }
     };
 
     const submitRequiredPasswordChange = async (event) => {
@@ -283,7 +369,7 @@ export default function IdentityAccessPanel({ identity, className = "" }) {
                 <Field label="Correo electrónico">
                     <span className="orbit-identity-access-panel__input-shell">
                         <MailIcon />
-                        <input className="orbit-identity-access-panel__input" type="email" inputMode="email" minLength="3" maxLength="320" autoComplete="username" spellCheck="false" required value={fields.identifier} disabled={isBusy} placeholder="tu@correo.com" onChange={(event) => updateIdentifier(event.target.value)} />
+                        <input className="orbit-identity-access-panel__input" type="email" inputMode="email" minLength="3" maxLength="320" autoComplete="username" spellCheck="false" required value={fields.identifier} disabled={isBusy} placeholder="tu@correo.com" onChange={(event) => updateIdentifier(event.target.value)} onBlur={checkIdentifierOnBlur} />
                     </span>
                 </Field>
                 <Field label="Contraseña">
@@ -294,7 +380,7 @@ export default function IdentityAccessPanel({ identity, className = "" }) {
                     </span>
                 </Field>
                 {lookupFeedback && <p className={"orbit-identity-access-panel__lookup-feedback is-" + lookupStatus} role="status">{lookupFeedback}</p>}
-                <button className="orbit-identity-access-panel__forgot-password" type="button" disabled={isBusy} onClick={requestPasswordReset}>¿Olvidaste tu contraseña?</button>
+                <button className="orbit-identity-access-panel__forgot-password" type="button" disabled={isBusy} onClick={openPasswordReset}>¿Olvidaste tu contraseña?</button>
                 <button className="orbit-identity-access-panel__primary-action" type="submit" disabled={isBusy}>
                     <span>{isBusy ? "Comprobando…" : passwordAllowed ? "Iniciar sesión" : "Continuar"}</span>
                     <ArrowIcon />
@@ -308,6 +394,24 @@ export default function IdentityAccessPanel({ identity, className = "" }) {
                 <span>¿No tienes cuenta?</span>
                 <button type="button" disabled={isBusy} onClick={openRegistration}>Regístrate gratis</button>
             </div>
+            {passwordResetOpen && <div className="orbit-identity-access-panel__recovery-backdrop">
+                <section className="orbit-identity-access-panel__recovery-dialog" role="dialog" aria-modal="true" aria-labelledby={passwordResetHeadingId} aria-describedby={passwordResetDescriptionId}>
+                    <h2 id={passwordResetHeadingId}>Solicita un cambio de contraseña</h2>
+                    <p id={passwordResetDescriptionId}>Introduce el correo o usuario de la cuenta. Por seguridad, Orbit mostrará la misma confirmación aunque no exista una cuenta asociada.</p>
+                    <form className="orbit-identity-access-panel__recovery-form" onSubmit={requestPasswordReset}>
+                        <Field label="Correo electrónico o usuario">
+                            <span className="orbit-identity-access-panel__input-shell">
+                                <MailIcon />
+                                <input className="orbit-identity-access-panel__input" type="text" inputMode="email" minLength="3" maxLength="320" autoComplete="username" spellCheck="false" required autoFocus value={passwordResetIdentifier} disabled={isBusy} placeholder="tu@correo.com" onChange={(event) => setPasswordResetIdentifier(event.target.value)} />
+                            </span>
+                        </Field>
+                        <div className="orbit-identity-access-panel__recovery-actions">
+                            <button className="orbit-identity-access-panel__outline-action" type="button" disabled={isBusy} onClick={closePasswordReset}>Cancelar</button>
+                            <button className="orbit-identity-access-panel__primary-action" type="submit" disabled={isBusy}><span>{isBusy ? "Enviando…" : "Solicitar cambio"}</span><ArrowIcon /></button>
+                        </div>
+                    </form>
+                </section>
+            </div>}
         </>}
 
         {screen === "register" && <>

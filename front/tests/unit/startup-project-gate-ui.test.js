@@ -36,6 +36,8 @@ test("startup UI exposes an accessible determinate-or-indeterminate download pro
 test("welcome replaces project actions with one central preparation view until explicit startup readiness", () => {
     assert.match(welcome, /getStartupProjectReadiness/);
     assert.match(welcome, /const preparing = !readiness\.ready/);
+    assert.match(welcome, /const showProjectHub = Boolean\(projectHub\) && !preparing/);
+    assert.match(welcome, /\{showProjectHub \? <div className="orbit-project-hub-shell"/);
     assert.match(welcome, /data-testid="startup-preparing-view"/);
     assert.match(welcome, /<StartupStatusPanel startup=\{startup\} authoritative=\{authoritativeSnapshot\} presentationPhase=\{phase\} \/>/);
     assert.match(welcome, /data-testid="project-welcome-actions"/);

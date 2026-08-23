@@ -63,11 +63,22 @@ function emptyAdministrationDirectory() {
 
 function administrationUserProjection(user) {
     if (!user || typeof user !== "object") return null;
+    // Defense in depth: the core never returns recovery material, but a host
+    // adapter/test double must not be able to surface recovery metadata,
+    // credential generations, or an encrypted rollback journal into React
+    // state either.
+    const {
+        passwordRecoveryKeyId,
+        credentialGeneration,
+        passwordReplacementPending,
+        passwordReplacementJournal,
+        ...publicUser
+    } = user;
     return Object.freeze({
-        ...user,
-        id: user.accountId || user.id || "",
-        note: user.notes || user.note || "",
-        passwordResetRequested: Boolean(user.passwordResetRequested || user.passwordResetRequestedAt)
+        ...publicUser,
+        id: publicUser.accountId || publicUser.id || "",
+        note: publicUser.notes || publicUser.note || "",
+        passwordResetRequested: Boolean(publicUser.passwordResetRequested || publicUser.passwordResetRequestedAt)
     });
 }
 
@@ -746,6 +757,11 @@ export default function useOrbitIdentity({
         }));
     }, [runAdministration, service]);
 
+    const resetAdministrativeUserPassword = useCallback((accountId, newPassword) => runAdministration(
+        "resetting-administrative-user-password",
+        () => service.resetAdministrativeUserPassword({ accountId, newPassword })
+    ), [runAdministration, service]);
+
     const clearAdministrativePasswordResetRequest = useCallback((accountId) => runAdministration(
         "clearing-local-password-reset-request",
         () => service.clearLocalPasswordResetRequest({ accountId })
@@ -811,6 +827,7 @@ export default function useOrbitIdentity({
             setUserNote: setAdministrativeUserNote,
             deleteUser: deleteAdministrativeUser,
             setPasswordChangeRequired: setAdministrativePasswordChangeRequired,
+            resetUserPassword: resetAdministrativeUserPassword,
             clearPasswordResetRequest: clearAdministrativePasswordResetRequest,
             updateSecuritySettings: updateAdministrativeSecuritySettings
         }),

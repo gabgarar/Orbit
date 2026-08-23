@@ -207,6 +207,7 @@ plugins:
             - Operations:
                 - Overview: operations/index.md
                 - Configuration: operations/configuration.md
+                - Full operational reset: operations/zeroize.md
                 - Time, EOP and ITRF:
                     - Overview: operations/time-eop.md
                     - Local files: operations/time-eop/data-files.md
@@ -434,6 +435,7 @@ nav:
   - Operación:
       - Visión general: operations/index.md
       - Configuración: operations/configuration.md
+      - Restablecimiento operativo completo: operations/zeroize.md
       - Tiempo, EOP e ITRF:
           - Visión general: operations/time-eop.md
           - Archivos locales: operations/time-eop/data-files.md

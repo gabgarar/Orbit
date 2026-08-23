@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AccountMenu from "../AccountMenu.jsx";
 import GlobalSearch from "../GlobalSearch.jsx";
 import { ActivityIcon, BellIcon, CalendarIcon, ControlPanelIcon, DiagnosticsIcon, HelpIcon } from "../icons.jsx";
 import "./TopToolbar.css";
@@ -42,20 +43,12 @@ const diagnosticStatusLabel = {
     error: "con errores"
 };
 
-function accountInitials(session) {
-    const source = String(session?.displayName || session?.identifier || "ORBIT").trim();
-    const pieces = source.split(/\s+/u).filter(Boolean);
-    const initials = pieces.length > 1
-        ? `${pieces[0][0] || ""}${pieces.at(-1)?.[0] || ""}`
-        : source.slice(0, 2);
-    return (initials || "OR").toUpperCase();
-}
-
 export default function TopToolbar({
     hasNotifications,
     activeOperationCount = 0,
     operationsOpen = false,
     plannerOpen = false,
+    notificationsOpen = false,
     diagnosticsStatus = "warning",
     onToggleOperations,
     onTogglePlanner,
@@ -63,7 +56,8 @@ export default function TopToolbar({
     onToggleHelp,
     onToggleDiagnostics,
     identitySession = null,
-    onOpenProjectHub
+    onOpenProjectHub,
+    onSignOut
 }) {
     const [activeSection, setActiveSection] = useState("Satellites");
 
@@ -115,7 +109,7 @@ export default function TopToolbar({
                 title={`${activeOperationCount} ${activeOperationCount === 1 ? "operación en curso" : "operaciones en curso"}`}
                 onClick={onToggleOperations}
             ><ActivityIcon /><span className="toolbar-operation-count" aria-hidden="true">{activeOperationCount > 9 ? "9+" : activeOperationCount}</span></button> : null}
-            <button id="topNotificationsBtn" className={iconButtonClass} type="button" aria-label="Alertas" onClick={onToggleNotifications}>
+            <button id="topNotificationsBtn" className={iconButtonClass} type="button" aria-label="Alertas" aria-controls="orbitNotificationsPanel" aria-expanded={notificationsOpen} onClick={onToggleNotifications}>
                 <BellIcon />
                 {hasNotifications && <span className="toolbar-notification-dot" aria-hidden="true" />}
             </button>
@@ -123,14 +117,15 @@ export default function TopToolbar({
             <button id="topBuiltInTestBtn" data-react-owned="true" className="toolbar-built-in-test-btn toolbar-vector-icon" type="button" aria-label={`Built-In Test continuo: ${diagnosticStatusLabel[diagnosticsStatus] || "pendiente"}`} title={`Built-In Test continuo: ${diagnosticStatusLabel[diagnosticsStatus] || "pendiente"}`} onClick={onToggleDiagnostics}><DiagnosticsIcon /><span className={`toolbar-diagnostics-status is-${diagnosticsStatus}`} aria-hidden="true" /></button>
             <button id="topSettingsBtn" data-react-owned="true" className={iconButtonClass} type="button" aria-label="Configuracion general" onClick={() => window.dispatchEvent(new Event("orbit:config-panel-toggle"))}><ControlPanelIcon /></button>
             <span className="toolbar-action-divider" aria-hidden="true" />
-            <button
-                id="topUserBtn"
-                className="toolbar-avatar"
-                type="button"
-                aria-label={`Abrir proyectos de ${identitySession?.displayName || identitySession?.identifier || "la cuenta"}`}
-                title="Proyectos y cuenta"
-                onClick={onOpenProjectHub}
-            >{accountInitials(identitySession)}</button>
+            <AccountMenu
+                session={identitySession}
+                onSignOut={onSignOut}
+                onOpenProjects={onOpenProjectHub}
+                triggerId="topUserBtn"
+                triggerClassName="toolbar-avatar"
+                popoverClassName="toolbar-account-popover"
+                ariaLabel={`Abrir menú de ${identitySession?.displayName || identitySession?.identifier || "la cuenta"}`}
+            />
         </div>
     </header>;
 }

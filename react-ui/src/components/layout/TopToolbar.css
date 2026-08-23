@@ -358,6 +358,11 @@
     filter: brightness(1.13);
 }
 
+#topToolbar .toolbar-account-popover {
+    top: calc(100% + 10px);
+    z-index: 10610;
+}
+
 @media (max-width: 1100px) {
     #topToolbar.orbit-top-toolbar {
         gap: 14px;
@@ -378,8 +383,7 @@
     }
 
     #topToolbar .toolbar-nav-link:not(.is-active):not(.toolbar-planner-btn),
-    #topToolbar .toolbar-action-divider,
-    #topToolbar .toolbar-avatar {
+    #topToolbar .toolbar-action-divider {
         display: none;
     }
 

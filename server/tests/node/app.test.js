@@ -6,12 +6,15 @@ import path from "node:path";
 import { createOrbitApp } from "../../src/app.js";
 
 function dependencies(isHealthy, overrides = {}) {
+    const { runtime: runtimeOverrides = {}, ...dependencyOverrides } = overrides;
     return {
         runtime: {
             reactDistDir: ".",
             frontDir: path.resolve("..", "front"),
             configDir: ".",
-            docsSiteDir: path.resolve("..", "docs-site")
+            docsSiteDir: path.resolve("..", "docs-site"),
+            dataDir: path.resolve("..", "data"),
+            ...runtimeOverrides
         },
         config: { get: async () => ({ system: {}, data: {} }), save: async () => {} },
         catalog: { get: async () => ({ entries: [] }) },
@@ -19,7 +22,7 @@ function dependencies(isHealthy, overrides = {}) {
         refresher: { refresh: async () => ({ ok: true }), schedule: async () => {} },
         pythonBackend: { isHealthy, reload: async () => true },
         pythonClient: { request: async () => new Response("{}", { status: 200 }) },
-        ...overrides
+        ...dependencyOverrides
     };
 }
 
@@ -56,6 +59,34 @@ test("health endpoint reflects Python backend readiness", async () => {
         assert.equal(response.status, 503);
         assert.deepEqual(await response.json(), { status: "starting", python_backend: "unavailable" });
     });
+});
+
+test("client-state generation is registered on the production application", async () => {
+    const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "orbit-client-state-generation-app-"));
+    const generation = "8ea4e1f7-4d4a-4f3d-9aa4-9869a21d8b2e";
+    await fs.writeFile(
+        path.join(temporaryRoot, ".orbit-client-state-generation.json"),
+        JSON.stringify({ schema: "orbit.client-state-generation", version: 1, generation })
+    );
+
+    try {
+        const app = createOrbitApp(dependencies(async () => true, {
+            runtime: { dataDir: temporaryRoot }
+        }));
+        await withApp(app, async (baseUrl) => {
+            const response = await fetch(`${baseUrl}/api/client-state-generation`);
+            assert.equal(response.status, 200);
+            assert.equal(response.headers.get("cache-control"), "no-store");
+            assert.equal(response.headers.get("pragma"), "no-cache");
+            assert.deepEqual(await response.json(), {
+                schema: "orbit.client-state-generation",
+                version: 1,
+                generation
+            });
+        });
+    } finally {
+        await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
 });
 
 test("the 4K Moon texture is served locally through the explicit assets route", async () => {

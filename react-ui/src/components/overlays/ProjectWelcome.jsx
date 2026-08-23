@@ -48,25 +48,30 @@ export default function ProjectWelcome({ onAction, runtimeStatus, startup, start
     const authoritativeSnapshot = startupPresentation?.authoritativeSnapshot === true;
     const phase = startupPresentation?.phase || "awaiting-snapshot";
     const actionsDisabled = runtimeFailed;
+    // The authenticated project library is deliberately unavailable until the
+    // startup gate is authoritative and ready. Its own controls are also
+    // disabled defensively, but the preparation ledger remains the only
+    // surface visible before that point.
+    const showProjectHub = Boolean(projectHub) && !preparing;
 
     return <section
         id="projectWelcome"
-        className="react-project-welcome !fixed !inset-0 !z-[10500] !grid !place-items-center !overflow-hidden !bg-[#020811] !p-5"
+        className={`react-project-welcome !fixed !inset-0 !z-[10500] !grid !place-items-center !overflow-hidden !bg-[#020811] ${showProjectHub ? "!p-2" : "!p-5"}`}
         aria-label="Bienvenida de Orbit"
     >
         <img className="absolute inset-0 h-full w-full object-cover" src="/assets/fonts/fondo.png" alt="" aria-hidden="true" />
         <div className="absolute inset-0 bg-gradient-to-r from-[#020811]/[.06] to-[#020811]/[.22]" aria-hidden="true" />
-        <div className={`relative z-10 max-h-[calc(100dvh-40px)] ${preparing ? "w-[min(620px,calc(100vw-40px))]" : projectHub ? "w-[min(900px,calc(100vw-40px))]" : "w-[min(510px,calc(100vw-40px))]"} overflow-y-auto rounded-[30px] border border-[#71a9e694] bg-[linear-gradient(135deg,rgba(9,40,77,.91),rgba(3,13,27,.88))] px-[42px] pt-[54px] pb-11 text-center shadow-[0_32px_90px_rgba(0,0,0,.58)] [scrollbar-color:#426589_transparent] [scrollbar-width:thin] max-[520px]:px-6 max-[520px]:pt-9`}>
+        {showProjectHub ? <div className="orbit-project-hub-shell" data-testid="authenticated-project-hub">{projectHub}</div> : <div data-testid="project-welcome-dialog" className={`relative z-10 max-h-[calc(100dvh-40px)] ${preparing ? "w-[min(620px,calc(100vw-40px))]" : "w-[min(510px,calc(100vw-40px))]"} overflow-y-auto rounded-[30px] border border-[#71a9e694] bg-[linear-gradient(135deg,rgba(9,40,77,.91),rgba(3,13,27,.88))] px-[42px] pt-[54px] pb-11 text-center shadow-[0_32px_90px_rgba(0,0,0,.58)] [scrollbar-color:#426589_transparent] [scrollbar-width:thin] max-[520px]:px-6 max-[520px]:pt-9`}>
             <div className="mx-auto h-[76px] w-[100px] bg-[url('/assets/icon/favicon.svg')] bg-center bg-[length:96%] bg-no-repeat saturate-[1.15] drop-shadow-[0_0_18px_rgba(23,155,255,.5)]" aria-hidden="true" />
             <div className={`mt-[30px] font-extrabold tracking-[10px] text-[#2888ff] ${WELCOME_TYPE.auxiliary}`}>O R B I T</div>
-            <h1 className={`!mt-[30px] !mb-[18px] !font-semibold !text-white ${WELCOME_TYPE.title}`}>{preparing ? "Preparando Orbit" : projectHub ? "Tus proyectos" : "Welcome to Orbit"}</h1>
+            <h1 className={`!mt-[30px] !mb-[18px] !font-semibold !text-white ${WELCOME_TYPE.title}`}>{preparing ? "Preparando Orbit" : "Welcome to Orbit"}</h1>
             <div className="mx-auto mb-[27px] h-[3px] w-16 rounded-lg bg-[#168fff] shadow-[0_0_14px_rgba(22,143,255,.6)]" />
             {preparing ? <section className="text-left" data-testid="startup-preparing-view" aria-label="Preparando Orbit">
                 <p className={`!m-0 !mb-5 text-center font-normal text-[#b9c9df] ${WELCOME_TYPE.normal}`} data-testid="startup-preparation-copy">{preparationCopy(phase, startup?.progress)}</p>
                 {runtimeFailed && <RuntimeFailureNotice />}
                 <StartupStatusPanel startup={startup} authoritative={authoritativeSnapshot} presentationPhase={phase} />
                 {!runtimeFailed && <p className={`!mt-4 !mb-0 text-center text-[#9eb6d4] ${WELCOME_TYPE.auxiliary}`}>Este estado se actualiza automáticamente. La escena y el Built-In Test siguen disponibles.</p>}
-            </section> : projectHub ? <div className="mx-auto w-full text-left" data-testid="authenticated-project-hub">{projectHub}</div> : <>
+            </section> : <>
                 <p className={`!m-0 !font-normal !text-[#b9c9df] ${WELCOME_TYPE.normal}`}>Create a project to start modelling your space operations, or open an existing one.</p>
                 {runtimeFailed && <RuntimeFailureNotice />}
                 <div className="mt-10 flex justify-center gap-4 max-[480px]:flex-col" data-testid="project-welcome-actions">
@@ -74,6 +79,6 @@ export default function ProjectWelcome({ onAction, runtimeStatus, startup, start
                     <button className={actionButtonClass} type="button" disabled={actionsDisabled} onClick={() => onAction("open")}>Open project</button>
                 </div>
             </>}
-        </div>
+        </div>}
     </section>;
 }

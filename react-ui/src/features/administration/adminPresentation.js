@@ -26,6 +26,16 @@ function object(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+/**
+ * Login counters are administrative metadata, but they still cross the UI
+ * boundary. Keep them finite, whole and non-negative before rendering them.
+ */
+export function normalizeLoginAttemptCount(value, fallback = 0) {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) return fallback;
+    return Math.min(parsed, 1_000);
+}
+
 export function isAdministratorSession(session) {
     // This is intentionally strict. A casing or display-label variation must
     // never mount the privileged UI by accident; the identity hook emits the
@@ -74,6 +84,20 @@ export function normalizeAdministrationUser(value) {
         identifier,
         provider: normalizeUserProvider(source.provider || source.identityProvider || source.type),
         lastLoginAt: text(source.lastLoginAt || source.lastAuthenticatedAt || source.lastSignInAt),
+        // `failedLoginAttempts` is the live streak. The second field is a
+        // historical snapshot taken immediately before the latest successful
+        // sign-in clears that streak. Accept the legacy aliases only at this
+        // redacted presentation boundary.
+        failedLoginAttempts: normalizeLoginAttemptCount(
+            source.failedLoginAttempts ?? source.currentFailedLoginAttempts,
+            0
+        ),
+        failedLoginAttemptsAtLastSuccess: normalizeLoginAttemptCount(
+            source.failedLoginAttemptsAtLastSuccess
+                ?? source.failedLoginAttemptsBeforeLastSuccess
+                ?? source.lastSuccessfulLoginFailedAttempts,
+            0
+        ),
         blocked: source.blocked === true || source.locked === true,
         passwordChangeRequired,
         passwordResetRequested,
@@ -132,6 +156,7 @@ export function formatLastLogin(value, locale = "es-ES") {
  *   users, settings: { maxLoginAttempts }, loading, busy, error,
  *   searchUsers(query), updateUser(userId, patch), setUserNote(userId, note),
  *   deleteUser(userId), setPasswordChangeRequired(userId, required),
+ *   resetUserPassword(userId, newPassword),
  *   clearPasswordResetRequest(userId), updateSecuritySettings(patch)
  * }
  * ```
@@ -151,6 +176,7 @@ export const USER_ADMINISTRATION_HOOK_CONTRACT = Object.freeze([
     "setUserNote",
     "deleteUser",
     "setPasswordChangeRequired",
+    "resetUserPassword",
     "clearPasswordResetRequest",
     "updateSecuritySettings"
 ]);

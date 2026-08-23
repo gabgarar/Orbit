@@ -20,6 +20,7 @@ test("runtime settings preserve Docker defaults", () => {
     assert.equal(settings.pythonStartupTimeoutMs, DEFAULT_PYTHON_STARTUP_TIMEOUT_MS);
     assert.equal(settings.numericalOrbitProxyTimeoutMs, DEFAULT_NUMERICAL_ORBIT_PROXY_TIMEOUT_MS);
     assert.equal(settings.configDir, path.join("/app/server", "../config"));
+    assert.equal(settings.dataDir, path.join("/app/server", "../data"));
     assert.equal(settings.docsSiteDir, path.join("/app/server", "../docs-site"));
 });
 

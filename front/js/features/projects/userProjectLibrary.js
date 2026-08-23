@@ -148,6 +148,36 @@ export class UserProjectLibraryVersionError extends UserProjectLibraryError {
     }
 }
 
+/**
+ * Password rotation owns an encrypted, durable rollback journal outside this
+ * module. If a best-effort storage rollback cannot be proven complete, mark
+ * the original failure so identity leaves that journal intact for the next
+ * authenticated recovery instead of declaring a mixed-key partition safe.
+ */
+function requirePasswordReplacementRecovery(error) {
+    const source = error && typeof error === "object"
+        ? error
+        : new UserProjectLibraryIntegrityError("Project encryption rollback could not be completed.", { cause: error });
+    try {
+        Object.defineProperty(source, "passwordReplacementRecoveryRequired", {
+            value: true,
+            configurable: true
+        });
+        return source;
+    } catch {
+        const replacement = new UserProjectLibraryIntegrityError(
+            source?.message || "Project encryption rollback could not be completed.",
+            { cause: source }
+        );
+        if (source?.code) replacement.code = source.code;
+        Object.defineProperty(replacement, "passwordReplacementRecoveryRequired", {
+            value: true,
+            configurable: true
+        });
+        return replacement;
+    }
+}
+
 export class UserProjectNotFoundError extends UserProjectLibraryError {
     constructor(projectId) {
         super("The requested local project was not found.");
@@ -636,6 +666,60 @@ export function userProjectLibraryStorageKeys(ownerId, {
     };
 }
 
+function storagePartitionForSnapshotKey(storageKey) {
+    const prefix = `${USER_PROJECT_LIBRARY_NAMESPACE}:v${USER_PROJECT_LIBRARY_VERSION}:owner:`;
+    const key = asTrimmedString(storageKey);
+    if (!key.startsWith(prefix)) {
+        throw new UserProjectLibraryValidationError("A password-recovery snapshot belongs to an unsupported project partition.");
+    }
+    const remainder = key.slice(prefix.length);
+    const separator = remainder.indexOf(":");
+    const partition = separator > 0 ? remainder.slice(0, separator) : "";
+    const kind = separator > 0 ? remainder.slice(separator + 1) : "";
+    if (!partition || (kind !== "index" && !kind.startsWith("project:"))) {
+        throw new UserProjectLibraryValidationError("A password-recovery snapshot has an invalid project storage key.");
+    }
+    return partition;
+}
+
+/**
+ * Restore already-decoded raw project envelopes under the exact same
+ * partition locks used by normal project writes. Identity's interrupted
+ * password-rekey recovery calls this outside its identity lock, avoiding an
+ * identity→project lock inversion while still preventing a live save from
+ * interleaving with the restoration.
+ */
+export async function restoreUserProjectLibraryStorageSnapshots(storageInput, snapshots = []) {
+    const storage = resolveStorageAdapter(storageInput);
+    if (!Array.isArray(snapshots)) {
+        throw new UserProjectLibraryValidationError("Password-recovery snapshots must be an array.");
+    }
+    const byPartition = new Map();
+    for (const candidate of snapshots) {
+        const source = isPlainObject(candidate) ? candidate : null;
+        const storageKey = asTrimmedString(source?.storageKey);
+        const present = source?.present === true;
+        const value = source?.value;
+        if (!storageKey || typeof source?.present !== "boolean" || (present && typeof value !== "string")) {
+            throw new UserProjectLibraryValidationError("A password-recovery snapshot is invalid.");
+        }
+        const partition = storagePartitionForSnapshotKey(storageKey);
+        const entries = byPartition.get(partition) || [];
+        entries.push({ storageKey, present, value: present ? value : "" });
+        byPartition.set(partition, entries);
+    }
+    for (const [partition, entries] of byPartition) {
+        const lockName = `${USER_PROJECT_LIBRARY_NAMESPACE}:v${USER_PROJECT_LIBRARY_VERSION}:${partition}`;
+        await withProjectStorageLock(lockName, async () => {
+            for (const entry of entries) {
+                if (entry.present) await storage.set(entry.storageKey, entry.value);
+                else await storage.remove(entry.storageKey);
+            }
+        });
+    }
+    return true;
+}
+
 function sortedMetadata(projects) {
     return projects
         .map((project) => cloneJson(project, "project metadata"))
@@ -814,6 +898,132 @@ export function createUserProjectLibrary(config = {}) {
         return cloneJson(metadata, "project metadata");
     };
 
+    /**
+     * Re-seal every encrypted document in this owner partition with another
+     * already-authorized vault.  Identity uses this when a local password is
+     * rotated: project names and documents must not remain bound to the old
+     * password-derived key.  All replacement envelopes are prepared before a
+     * write starts; a failed write restores the values changed by this method.
+     *
+     * `commit` is intentionally invoked while the same project-storage lock
+     * remains held.  It lets the identity layer replace its account vault only
+     * after all project envelopes have been prepared, preventing a second tab
+     * from writing an old-key envelope between migration and password commit.
+     */
+    const rekeyEncryption = async (nextVaultInput, {
+        commit,
+        retainRollback = false,
+        beforeWrite,
+        preserveCommitFailure = false
+    } = {}) => {
+        const nextVault = resolveVaultAdapter(nextVaultInput);
+        if (commit !== undefined && typeof commit !== "function") {
+            throw new UserProjectLibraryValidationError("The encryption migration commit must be a function.");
+        }
+        if (typeof retainRollback !== "boolean") {
+            throw new UserProjectLibraryValidationError("The encryption migration rollback option must be boolean.");
+        }
+        if (beforeWrite !== undefined && typeof beforeWrite !== "function") {
+            throw new UserProjectLibraryValidationError("The encryption migration journal callback must be a function.");
+        }
+        if (typeof preserveCommitFailure !== "boolean") {
+            throw new UserProjectLibraryValidationError("The encryption migration preservation option must be boolean.");
+        }
+        return runSerialized(async () => {
+            const indexRaw = await storageGet(keys.index);
+            const index = await readIndex();
+            const replacements = [];
+            for (const metadata of index.projects) {
+                const document = await readProjectDocument(metadata);
+                const key = projectKey(metadata.id);
+                const previous = await storageGet(key);
+                const sealed = await nextVault.seal(
+                    cloneJson(createProjectRecord(metadata.id, metadata.documentRevision, document), "encrypted project value"),
+                    purposeForProject(metadata.id)
+                );
+                replacements.push({
+                    key,
+                    previous,
+                    next: serializeEnvelope({ kind: ENVELOPE_KINDS.PROJECT, projectId: metadata.id, sealed })
+                });
+            }
+            const nextIndex = indexRaw === null || indexRaw === undefined || indexRaw === ""
+                ? null
+                : serializeEnvelope({
+                    kind: ENVELOPE_KINDS.INDEX,
+                    sealed: await nextVault.seal(cloneJson(index, "encrypted project value"), purposeForIndex())
+                });
+            // Give the identity layer a chance to durably store encrypted
+            // rollback snapshots before any live envelope is replaced.  This
+            // makes a browser/process interruption recoverable on the next
+            // authenticated login rather than leaving a mixed-key partition.
+            if (beforeWrite) {
+                const snapshots = replacements.map(({ key, previous }) => ({ key, previous }));
+                if (nextIndex !== null) snapshots.push({ key: keys.index, previous: indexRaw });
+                await beforeWrite(Object.freeze(snapshots.map((snapshot) => Object.freeze({ ...snapshot }))));
+            }
+            const written = [];
+            const restore = async () => {
+                let restorationFailure = null;
+                for (const entry of [...written].reverse()) {
+                    try {
+                        if (entry.previous === null || entry.previous === undefined || entry.previous === "") {
+                            await storageRemove(entry.key);
+                        } else {
+                            await storageSet(entry.key, entry.previous);
+                        }
+                    } catch (error) {
+                        // A password-replacement journal exists precisely to
+                        // repair this case after a browser/storage failure.
+                        // Do not hide it from identity: clearing that journal
+                        // would strand a candidate-key envelope permanently.
+                        restorationFailure ||= error;
+                    }
+                }
+                if (restorationFailure) throw requirePasswordReplacementRecovery(restorationFailure);
+                return true;
+            };
+            try {
+                for (const replacement of replacements) {
+                    await storageSet(replacement.key, replacement.next);
+                    written.push(replacement);
+                }
+                if (nextIndex !== null) {
+                    await storageSet(keys.index, nextIndex);
+                    written.push({ key: keys.index, previous: indexRaw });
+                }
+                const result = commit ? await commit() : undefined;
+                const migration = { migratedProjects: replacements.length, result };
+                if (retainRollback) {
+                    migration.rollback = async () => runSerialized(async () => {
+                        await restore();
+                        return true;
+                    });
+                }
+                return Object.freeze(migration);
+            } catch (error) {
+                // Identity password replacement can prove that the candidate
+                // account vault reached durable storage while its registry
+                // finalization failed.  In that narrow case its own durable
+                // journal must decide recovery; restoring these envelopes to
+                // the old key would make a later candidate-vault finalize
+                // unreadable.  Generic callers retain the normal rollback.
+                if (preserveCommitFailure === true && error?.preserveProjectMigration === true) {
+                    throw error;
+                }
+                try {
+                    await restore();
+                } catch (rollbackError) {
+                    // Keep the original failed operation as the causal error
+                    // while carrying the durable-recovery requirement out to
+                    // identity's encrypted password-replacement journal.
+                    throw requirePasswordReplacementRecovery(error || rollbackError);
+                }
+                throw error;
+            }
+        });
+    };
+
     const createProjectInternal = async (options = {}) => {
         const now = operationNow();
         const index = await readIndex();
@@ -907,6 +1117,7 @@ export function createUserProjectLibrary(config = {}) {
                 return replaceDocumentAndIndex({ index, current, metadata, document: normalizedDocument, now });
             });
         },
+        rekeyEncryption,
         async renameProject(projectId, name) {
             return runSerialized(async () => {
                 const now = operationNow();

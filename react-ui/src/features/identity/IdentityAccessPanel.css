@@ -461,6 +461,51 @@
     gap: 8px;
 }
 
+.orbit-identity-access-panel__recovery-backdrop {
+    position: fixed;
+    z-index: 30;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: rgba(2, 8, 20, .7);
+    backdrop-filter: blur(4px);
+}
+
+.orbit-identity-access-panel__recovery-dialog {
+    width: min(100%, 358px);
+    box-sizing: border-box;
+    padding: 21px;
+    border: 1px solid rgba(105, 151, 235, .72);
+    border-radius: 12px;
+    background: linear-gradient(138deg, rgba(21, 46, 87, .98), rgba(6, 18, 39, .99));
+    box-shadow: 0 25px 70px rgba(0, 0, 0, .6), inset 0 1px rgba(217, 232, 255, .15);
+}
+
+.orbit-identity-access-panel__recovery-dialog h2 {
+    font-size: 16px;
+    text-align: left;
+}
+
+.orbit-identity-access-panel__recovery-dialog > p {
+    margin: 8px 0 0;
+    color: #b5c7e3;
+    font-size: 10px;
+    line-height: 1.5;
+}
+
+.orbit-identity-access-panel__recovery-form {
+    display: grid;
+    gap: 14px;
+    margin-top: 18px;
+}
+
+.orbit-identity-access-panel__recovery-actions {
+    display: grid;
+    grid-template-columns: .88fr 1.12fr;
+    gap: 8px;
+}
+
 .orbit-identity-access-panel__outline-action {
     width: 100%;
     border-color: #426082;
@@ -488,10 +533,17 @@
     font-size: 10px;
 }
 
-.orbit-identity-access-panel button:focus-visible,
-.orbit-identity-access-panel input:focus-visible {
+.orbit-identity-access-panel button:focus-visible {
     outline: 2px solid #9bc1ff;
     outline-offset: 2px;
+}
+
+/* Inputs already live inside a rounded shell.  Put the keyboard-focus cue on
+ * that shell so the control receives one coherent ring instead of a second,
+ * square outline drawn over the typed value. */
+.orbit-identity-access-panel__input-shell:has(.orbit-identity-access-panel__input:focus-visible) {
+    border-color: #9bc1ff;
+    box-shadow: 0 0 0 3px rgba(75, 125, 255, .24);
 }
 
 @media (max-width: 520px) {

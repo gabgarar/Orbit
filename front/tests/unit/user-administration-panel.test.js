@@ -8,6 +8,7 @@ import {
     MAX_LOGIN_ATTEMPTS,
     MIN_LOGIN_ATTEMPTS,
     normalizeAdministrationUser,
+    normalizeLoginAttemptCount,
     normalizeMaximumLoginAttempts,
     providerLabel
 } from "../../../react-ui/src/features/administration/adminPresentation.js";
@@ -15,6 +16,7 @@ import {
 const panel = readFileSync(new URL("../../../react-ui/src/features/administration/UserAdministrationPanel.jsx", import.meta.url), "utf8");
 const panelCss = readFileSync(new URL("../../../react-ui/src/features/administration/UserAdministrationPanel.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../../../react-ui/src/App.jsx", import.meta.url), "utf8");
+const identityHook = readFileSync(new URL("../../../react-ui/src/hooks/useOrbitIdentity.js", import.meta.url), "utf8");
 
 test("the administration workspace is guarded by the exact canonical admin role", () => {
     assert.equal(isAdministratorSession({ role: "admin" }), true);
@@ -31,6 +33,8 @@ test("administration rows retain only safe user facts and distinguish a forced c
         email: "elena@orbit.test",
         provider: "google",
         lastLoginAt: "2026-08-22T09:30:00.000Z",
+        failedLoginAttempts: 2,
+        failedLoginAttemptsAtLastSuccess: 1,
         blocked: true,
         passwordChangeRequired: true,
         passwordResetRequested: true,
@@ -44,6 +48,8 @@ test("administration rows retain only safe user facts and distinguish a forced c
         identifier: "elena@orbit.test",
         provider: "google",
         lastLoginAt: "2026-08-22T09:30:00.000Z",
+        failedLoginAttempts: 2,
+        failedLoginAttemptsAtLastSuccess: 1,
         blocked: true,
         passwordChangeRequired: true,
         passwordResetRequested: true,
@@ -51,6 +57,31 @@ test("administration rows retain only safe user facts and distinguish a forced c
     });
     assert.equal(Object.hasOwn(user, "accessToken"), false);
     assert.equal(providerLabel(user.provider), "Google");
+});
+
+test("administration rows project current and historical failed-login counters safely", () => {
+    const user = normalizeAdministrationUser({
+        accountId: "user-2",
+        identifier: "mar@orbit.test",
+        failedLoginAttempts: "3",
+        failedLoginAttemptsAtLastSuccess: 2
+    });
+
+    assert.equal(user.failedLoginAttempts, 3);
+    assert.equal(user.failedLoginAttemptsAtLastSuccess, 2);
+    assert.equal(normalizeLoginAttemptCount(-1), 0);
+    assert.equal(normalizeLoginAttemptCount("not-a-count", 7), 7);
+    assert.equal(normalizeLoginAttemptCount(5_000), 1_000);
+});
+
+test("the authorized administration hook exposes direct password reset without exposing the core vault", () => {
+    assert.match(identityHook, /service\.resetAdministrativeUserPassword\(\{ accountId, newPassword \}\)/);
+    assert.match(identityHook, /resetUserPassword:\s*resetAdministrativeUserPassword/);
+    assert.match(identityHook, /passwordRecoveryKeyId,/);
+    assert.match(identityHook, /credentialGeneration,/);
+    assert.match(identityHook, /passwordReplacementPending,/);
+    assert.match(identityHook, /passwordReplacementJournal,/);
+    assert.match(identityHook, /\.\.\.publicUser/);
 });
 
 test("directory search matches name or email without changing administrative records", () => {
@@ -93,6 +124,13 @@ test("administration panel exposes required operator controls without accessing 
     assert.match(panel, /Último acceso/);
     assert.match(panel, /Solicitud de cambio de contraseña/);
     assert.match(panel, /Forzar cambio en próximo inicio/);
+    assert.match(panel, /Intentos actuales/);
+    assert.match(panel, /Fallos antes del último éxito/);
+    assert.match(panel, /Establecer una contraseña nueva/);
+    assert.match(panel, /resetUserPassword/);
+    assert.match(panel, /passwordDraft/);
+    assert.match(panel, /No modifica la contraseña de/);
+    assert.match(panel, /selectedUser\.provider !== USER_PROVIDER\.LOCAL/);
     assert.match(panel, /Notas del operador/);
     assert.match(panel, /Confirmar eliminación/);
     assert.match(panel, /Máximo de intentos fallidos/);
@@ -102,4 +140,6 @@ test("administration panel exposes required operator controls without accessing 
     assert.doesNotMatch(panel, /CesiumGlobe|UserProjectHub|getUnlockedVault|localStorage/);
     assert.match(panelCss, /orbit-admin-workspace/);
     assert.match(panelCss, /orbit-admin-directory/);
+    assert.match(panelCss, /orbit-admin-user-row__attempts/);
+    assert.match(panelCss, /orbit-admin-password-form/);
 });

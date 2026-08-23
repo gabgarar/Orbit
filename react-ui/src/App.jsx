@@ -400,6 +400,9 @@ export default function App() {
         onOpenDocument={openProjectDocument}
         onExportProject={exportActiveProject}
         onSignOut={signOut}
+        hasNotifications={notifications.length > 0}
+        notificationsOpen={notificationsOpen}
+        onToggleNotifications={() => setNotificationsOpen((value) => !value)}
     /> : null;
 
     return <>
@@ -410,9 +413,11 @@ export default function App() {
                 activeOperationCount={operations.length}
                 operationsOpen={operationsOpen}
                 plannerOpen={plannerOpen}
+                notificationsOpen={notificationsOpen}
                 diagnosticsStatus={bitStatus}
                 identitySession={identity.session}
                 onOpenProjectHub={openProjectHub}
+                onSignOut={signOut}
                 onToggleOperations={() => setOperationsOpen((value) => !value)}
                 onTogglePlanner={togglePlanner}
                 onToggleNotifications={() => setNotificationsOpen((value) => !value)}
