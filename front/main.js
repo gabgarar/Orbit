@@ -121,6 +121,10 @@ import { createProjectLifecycle } from "./js/runtime/projectLifecycle.js";
 import { setupCameraActions } from "./js/runtime/camera/actions.js";
 import { createFreeCameraKeyboardControls } from "./js/runtime/camera/freeKeyboardControls.js";
 import { formatDurationCompact, parseTleEpochDate } from "./js/runtime/simulation/timeFormatting.js";
+import {
+    buildTleOperationalTimeRange,
+    resolveActiveSatelliteTimeDomain
+} from "./js/runtime/simulation/activeSatelliteTimeDomain.js";
 import { createSimulationState, setSimulationRange, SIMULATION_MODE_RANGE, SIMULATION_MODE_REALTIME, SIMULATION_MODE_STATIC } from "./js/runtime/simulation/simulationState.js";
 import { createSimulationController } from "./js/runtime/simulation/simulationController.js";
 import { resolveSimulationModeRequest } from "./js/runtime/simulation/modePolicy.js";
@@ -1751,6 +1755,24 @@ function presentPlannerForecastConstraint(assessment) {
 }
 
 /**
+ * The calendar can inspect any UTC period.  In Simulated mode a page fully
+ * outside the simulation/MTR domain has no safe pass forecast, but it is not
+ * an operational error and must never snap the operator back to another
+ * week. Source facts and manual events remain available in that page.
+ */
+function presentPlannerPassForecastOutsideDomain(assessment) {
+    const requestedRange = assessment?.requestedRange || null;
+    const message = "No hay pases calculables en el período mostrado porque queda fuera del rango simulado/MTR activo.";
+    clearPlannerPassForecast({ message });
+    plannerPassForecast.context = requestedRange
+        ? plannerPassForecastContext(requestedRange, { allowed: false, reason: message })
+        : null;
+    plannerPassForecast.message = message;
+    setPlannerRuntimeError("forecast", "");
+    publishPlannerState();
+}
+
+/**
  * Start (or reuse) the planner-only all-pairs forecast.  It shares only the
  * validated pair-response cache with the selected timeline; it never emits
  * `orbit:ground-station-timeline-events` and cannot replace its selection.
@@ -1760,6 +1782,10 @@ async function refreshPlannerPassForecast({ force = false } = {}) {
     const assessment = getPlannerForecastRangeAssessment();
     const range = assessment.range;
     if (!assessment.allowed || !range) {
+        if (!range && assessment.requestedRange && assessment.domain) {
+            presentPlannerPassForecastOutsideDomain(assessment);
+            return;
+        }
         presentPlannerForecastConstraint(assessment);
         return;
     }
@@ -1970,20 +1996,6 @@ function closePlannerPassForecast() {
     clearPlannerPassForecast({ message: "El planificador se cerró; los pases pendientes se descartaron." });
 }
 
-function emitPlannerViewRangeRebase(constraint, view) {
-    const domain = constraint?.domain;
-    if (!domain?.startTime || !domain?.endTime || typeof window === "undefined") return false;
-    window.dispatchEvent(new CustomEvent("orbit:planner-view-range-rebase", {
-        detail: {
-            startTime: domain.startTime,
-            endTime: domain.endTime,
-            view: plannerText(view) || "week",
-            reason: "simulation-domain"
-        }
-    }));
-    return true;
-}
-
 function updatePlannerPassForecastViewRange(event) {
     const nextRange = normalizePlannerViewRange(plannerRecord(event?.detail));
     if (!nextRange) {
@@ -2000,14 +2012,11 @@ function updatePlannerPassForecastViewRange(event) {
         masterRange: getMasterTimeRange()
     });
     if (!constraint.range && constraint.domain) {
-        // A calendar period fully outside a historical SP3/MTR is not a
-        // failed pass forecast. Rebase the React cursor to the authoritative
-        // domain and wait for its next exact view-range event; never issue a
-        // request for the invalid period or silently query another month.
-        plannerPassForecastViewRange = null;
-        setPlannerRuntimeError("forecast", "");
-        emitPlannerViewRangeRebase(constraint, nextRange.view);
-        return false;
+        // Retain the requested calendar page. It simply has no forecastable
+        // passes; it must not jump back to the simulation domain.
+        plannerPassForecastViewRange = nextRange;
+        presentPlannerPassForecastOutsideDomain({ ...constraint, requestedRange: nextRange });
+        return true;
     }
     const previousKey = plannerViewRangeKey(plannerPassForecastViewRange);
     const nextKey = plannerViewRangeKey(nextRange);
@@ -3064,7 +3073,7 @@ function commitObjectRangeToMasterTimeRange(range) {
     return getMasterTimeRange();
 }
 
-function clearMasterTimeRangeForProject() {
+function resetSimulationToRealtimeWindow({ refresh = false } = {}) {
     clearMasterTimeRange();
     const now = new Date();
     const start = new Date(now.getTime() - (60 * 60 * 1000));
@@ -3076,6 +3085,143 @@ function clearMasterTimeRangeForProject() {
     simulationState.playing = true;
     simulationState.rewind = false;
     simulationState.lastTickTimestamp = Date.now();
+    if (!refresh) return;
+
+    cancelGroundStationPassAnalysis();
+    applySimulationDateToViewer(now);
+    syncViewerClockPlayback();
+    refreshSatelliteOverlays(viewer);
+    updateTopToolbarTime();
+    refreshSimulationControlsUi();
+}
+
+function clearMasterTimeRangeForProject() {
+    resetSimulationToRealtimeWindow();
+}
+
+function asTimelineEpochMilliseconds(value) {
+    if (value instanceof Date) {
+        const milliseconds = value.getTime();
+        return Number.isFinite(milliseconds) ? milliseconds : null;
+    }
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    const raw = String(value ?? "").trim();
+    if (!raw) return null;
+    if (/^[+-]?\d+(?:\.\d+)?$/.test(raw)) {
+        const milliseconds = Number(raw);
+        return Number.isFinite(milliseconds) ? milliseconds : null;
+    }
+    const milliseconds = Date.parse(raw);
+    return Number.isFinite(milliseconds) ? milliseconds : null;
+}
+
+function activeSatelliteSourceIds() {
+    return [...new Set(getActiveSatelliteLayerIds()
+        .map((layerId) => getSatelliteSourceIdFromLayerId(String(layerId || "").trim()))
+        .map((sourceId) => String(sourceId || "").trim())
+        .filter(Boolean))];
+}
+
+function isTleOperationalSource(sourceId) {
+    const sourceFormat = projectSatelliteSourceFormat(sourceId) || "TLE";
+    return sourceFormat === "TLE" || sourceFormat === "OMM";
+}
+
+function operationalTleEpoch(sourceId) {
+    const normalizedId = String(sourceId || "").trim();
+    if (!normalizedId) return null;
+    const fromLine = parseTleEpochDate(getSatelliteTle(normalizedId)?.line1);
+    if (fromLine instanceof Date && Number.isFinite(fromLine.getTime())) {
+        return fromLine;
+    }
+    const metadata = getCatalogEntryMeta(normalizedId);
+    const epochMs = asTimelineEpochMilliseconds(metadata?.epoch);
+    return Number.isFinite(epochMs) ? new Date(epochMs) : null;
+}
+
+function operationalTleRanges(sourceIds, now = new Date()) {
+    return sourceIds
+        .filter((sourceId) => isTleOperationalSource(sourceId))
+        .map((sourceId) => {
+            const configuredHours = Number(
+                getSatelliteVisualizationConfig(sourceId)?.effective?.propagation_hours
+            );
+            return buildTleOperationalTimeRange({
+                epoch: operationalTleEpoch(sourceId),
+                now,
+                propagationHours: configuredHours
+            });
+        })
+        .filter(Boolean);
+}
+
+/**
+ * Rebuild the timeline after a real satellite-layer membership change.
+ *
+ * Finite ephemerides keep the MTR exact.  TLE/OMM sources only contribute a
+ * short operational planning window when a finite range is already in play,
+ * or after the last finite source is removed.  Adding a TLE to a clean Real
+ * time scene intentionally leaves it in Real time, with its normal future
+ * horizon; this keeps an old SP3 duration from becoming the new TLE range.
+ */
+function reconcileActiveSatelliteTimeDomainAfterLayerChange({
+    announce = false,
+    forceTleRange = false,
+    resetCurrent = false
+} = {}) {
+    const sourceIds = activeSatelliteSourceIds();
+    if (!sourceIds.length) {
+        resetSimulationToRealtimeWindow({ refresh: true });
+        if (announce) {
+            void showAppAlert(
+                "No quedan capas de satélite activas. Orbit ha vuelto a Real time.",
+                uiText("alertTitle")
+            );
+        }
+        return { mode: SIMULATION_MODE_REALTIME, source: "none", range: null, applied: true };
+    }
+
+    const finiteUnion = getObjectIntrinsicTimeRangeUnion(sourceIds);
+    if (!finiteUnion.valid) {
+        // A malformed finite source must remain fail-closed. Keep its current
+        // bounded context rather than fabricating a TLE/realtime substitute.
+        updateTopToolbarTime();
+        return {
+            mode: simulationState.mode,
+            source: "invalid-finite",
+            range: null,
+            applied: false
+        };
+    }
+
+    const resolved = resolveActiveSatelliteTimeDomain({
+        finiteRanges: finiteUnion.ranges,
+        tleRanges: operationalTleRanges(sourceIds)
+    });
+    const currentMasterRange = getMasterTimeRange();
+    const preserveTleOnlyRange = resolved.source === "tle"
+        && simulationState.mode === SIMULATION_MODE_RANGE
+        && Boolean(currentMasterRange);
+    const shouldApplyRange = resolved.mode === SIMULATION_MODE_RANGE
+        && (resolved.source !== "tle" || forceTleRange || preserveTleOnlyRange);
+
+    if (!shouldApplyRange || !resolved.range) {
+        updateTopToolbarTime();
+        return { ...resolved, applied: false };
+    }
+
+    setMasterTimeRange(resolved.range.startTimeMs, resolved.range.endTimeMs);
+    const applied = applyMasterTimeRangeToSimulation({
+        resetCurrent: resetCurrent || (forceTleRange && resolved.source === "tle")
+    });
+
+    if (announce && forceTleRange && resolved.source === "tle") {
+        void showAppAlert(
+            "Se retiró el último producto con efeméride finita. La simulación continúa con la ventana operativa de los TLE activos; antes de su epoch cada TLE se mostrará fuera de rango.",
+            uiText("alertTitle")
+        );
+    }
+    return { ...resolved, applied };
 }
 
 function projectSatelliteSourceFormat(id) {
@@ -3211,12 +3357,7 @@ function forceFiniteEphemerisRange(domain = getFiniteEphemerisDomainState()) {
 }
 
 function reconcileFiniteEphemerisDomainAfterLayerChange() {
-    const domain = getFiniteEphemerisDomainState();
-    if (domain.finiteEphemerisDomainActive && simulationState.mode !== SIMULATION_MODE_RANGE) {
-        forceFiniteEphemerisRange(domain);
-        return;
-    }
-    updateTopToolbarTime();
+    return reconcileActiveSatelliteTimeDomainAfterLayerChange();
 }
 
 function alignSimulationToPreciseProductCoverage(entries, payload) {
@@ -3818,15 +3959,20 @@ function setCompositeLayerActive(layerId, active) {
         }
     }
 
+    const sourceId = getSatelliteSourceIdFromLayerId(layerId);
+    const wasActive = isSatelliteLayerActive(sourceId);
+    const removedFiniteCoverage = !isActive && Boolean(getObjectIntrinsicTimeRange(sourceId));
     const changed = setSatelliteLayerActive(layerId, isActive);
     if (changed) {
         syncGroundStationVisibilityLinks();
-        const sourceId = getSatelliteSourceIdFromLayerId(layerId);
-        if (!isActive && isPreciseProductLayer(sourceId)) {
-            // Activation is intentionally handled by the asynchronous MTR
-            // approval wrapper below.  Deactivation remains local and may
-            // only reconcile the currently active finite-domain policy.
-            reconcileFiniteEphemerisDomainAfterLayerChange();
+        if (!isActive && wasActive) {
+            // Visibility (the eye) intentionally does not affect time. A
+            // removed/deactivated source does: rebuild from only the layers
+            // that remain active so an old SP3 cannot pin the scene forever.
+            reconcileActiveSatelliteTimeDomainAfterLayerChange({
+                announce: true,
+                forceTleRange: removedFiniteCoverage
+            });
         }
     }
     return changed;
@@ -5208,11 +5354,10 @@ function applySimulationRange(startDate, endDate, { preferRequestedRange = false
     simulationState.currentDate = new Date(clamp(displayedTimeMs, startMs, endMs));
     simulationState.rewind = false;
 
-    const targetHours = getRangeHours(startMs, endMs);
-    if (Number.isFinite(targetHours) && targetHours > 0) {
-        setOrbitConfig({ propagation_hours: targetHours });
-        persistSystemSectionPatch("orbit", { propagation_hours: targetHours });
-    }
+    // The simulation interval is scene state; `propagation_hours` is the
+    // operator's future-horizon preference for open-ended TLE/OMM layers.
+    // Do not copy a historical SP3/OEM duration into that preference: doing
+    // so made a later realtime TLE inherit thousands of simulated hours.
 
     if (simulationState.mode === SIMULATION_MODE_REALTIME) {
         simulationState.mode = SIMULATION_MODE_RANGE;
@@ -5265,6 +5410,10 @@ function syncGroundStationVisibilityLinks() {
                         if (!currentStation?.visible
                             || !isCompositeLayerActive(satelliteLayerId)
                             || getCompositeLayerVisibility(satelliteLayerId) !== true
+                            // An SP3/OEM/TLE marker outside its own temporal
+                            // domain is deliberately hidden. Never turn its
+                            // retained callback position into a false RF link.
+                            || satellite.show !== true
                             || !satellitePosition) return [];
                         const stationPosition = Cesium.Cartesian3.fromDegrees(currentStation.longitude_deg, currentStation.latitude_deg, currentStation.altitude_m);
                         const satelliteId = getSatelliteSourceIdFromLayerId(satelliteLayerId);
@@ -5318,6 +5467,9 @@ function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElev
                 if (!currentStation?.visible
                     || !isCompositeLayerActive(satelliteLayerId)
                     || getCompositeLayerVisibility(satelliteLayerId) !== true
+                    // Keep a selected analysis link subject to the same
+                    // temporal gate as ordinary station-to-satellite links.
+                    || satellite.show !== true
                     || !satellitePosition) return [];
                 const target = evaluateGroundStationTarget(currentStation, stationPosition, satellitePosition, satelliteRfProfile);
                 if (!target.usable || target.elevationDeg < minimumElevationDeg) return [];
@@ -5789,6 +5941,15 @@ async function setCompositeLayerActiveWithMasterTimeRange(layerId, active) {
         commitObjectRangeToMasterTimeRange(activation.union.range);
         applyMasterTimeRangeToSimulation({ resetCurrent: activation.approval?.action === "initialize" });
     }
+    if (changed) {
+        // A TLE added to an existing finite scene contributes its operational
+        // window to the scene envelope. A TLE added to a clean Real time
+        // workspace stays in Real time (the reconciler deliberately leaves
+        // a TLE-only scene untouched unless it follows a finite removal).
+        reconcileActiveSatelliteTimeDomainAfterLayerChange({
+            resetCurrent: activation.approval?.action === "initialize"
+        });
+    }
     return changed;
 }
 
@@ -5805,9 +5966,10 @@ async function activateAllSatelliteLayersWithMasterTimeRange() {
     if (activation.union.hasFiniteCoverage) {
         commitObjectRangeToMasterTimeRange(activation.union.range);
         applyMasterTimeRangeToSimulation({ resetCurrent: activation.approval?.action === "initialize" });
-    } else {
-        reconcileFiniteEphemerisDomainAfterLayerChange();
     }
+    reconcileActiveSatelliteTimeDomainAfterLayerChange({
+        resetCurrent: activation.approval?.action === "initialize"
+    });
     return result;
 }
 
@@ -10294,7 +10456,7 @@ function setupPropagatedParametersInspector() {
             if (isManualOrbitDesignActive()) return false;
             bodyCentricCamera.deactivate();
             setAllSatelliteLayersActive(false);
-            reconcileFiniteEphemerisDomainAfterLayerChange();
+            reconcileActiveSatelliteTimeDomainAfterLayerChange({ announce: true });
             for (const stationId of [...groundStationLayers.keys()]) {
                 removeGroundStationLayer(stationId);
             }
@@ -10454,7 +10616,13 @@ function setupPropagatedParametersInspector() {
         },
         onAlignToPreciseProductTimeDomain: (entries, payload) => alignSimulationToPreciseProductCoverage(entries, payload),
         getLoadedOemTimeBounds: () => getLoadedOemEphemerisTimeBounds(),
-        onAlignToOemTimeDomain: () => applyMasterTimeRangeToSimulation({ resetCurrent: true }),
+        onAlignToOemTimeDomain: () => {
+            const aligned = applyMasterTimeRangeToSimulation({ resetCurrent: true });
+            if (aligned) {
+                reconcileActiveSatelliteTimeDomainAfterLayerChange({ resetCurrent: true });
+            }
+            return aligned;
+        },
         onImportOemEphemeris: async (content, fileName) => {
             // Parse once into an isolated preview to obtain the intrinsic
             // domain before mutating the scene. The import is cancelled if

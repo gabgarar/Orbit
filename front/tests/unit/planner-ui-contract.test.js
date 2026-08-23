@@ -290,8 +290,8 @@ test("event activation only dispatches a usable UTC instant and keeps overlappin
     assert.match(panel, /const selectedActivation = useMemo\(\(\) => plannerEventActivation\(selected, plannerState\.context\)/);
     assert.match(panel, /detail: \{ \.\.\.event, time: activation\.targetTime \}/);
     assert.match(panel, /orbit-planner-detail-activation-note/);
-    assert.match(panel, /ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT/);
-    assert.match(panel, /window\.addEventListener\(ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT, rebaseViewRange\)/);
+    assert.doesNotMatch(panel, /planner-view-range-rebase/);
+    assert.doesNotMatch(panel, /rebaseViewRange/);
 });
 
 test("UI consumes semantic planner kinds and colour tokens instead of a parallel event schema", () => {

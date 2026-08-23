@@ -51,7 +51,6 @@ const HOUR_HEIGHT = 52;
 // parallel columns instead of painting one card on top of another.
 const TIMED_EVENT_MIN_DURATION_MS = 30 * 60 * 1000;
 export const PLANNER_REQUEST_MESSAGE_TIMEOUT_MS = 4_500;
-const ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT = "orbit:planner-view-range-rebase";
 const PLANNER_RESIZE_DIRECTIONS = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 const formatter = new Intl.DateTimeFormat("es-ES", {
     timeZone: "UTC",
@@ -504,21 +503,6 @@ export default function PlannerPanel({ onClose }) {
             window.removeEventListener(ORBIT_PLANNER_STATE_EVENT, sync);
             window.removeEventListener(ORBIT_PLANNER_EVENTS_COMPAT_EVENT, syncLegacy);
         };
-    }, []);
-
-    useEffect(() => {
-        const rebaseViewRange = (event) => {
-            const startTime = event?.detail?.startTime;
-            if (!startTime) return;
-            const nextCursor = utcDay(startTime);
-            if (!nextCursor || Number.isNaN(nextCursor.getTime())) return;
-            cursorWasNavigatedByUser.current = true;
-            setViewportCursorReady(true);
-            setCursor(nextCursor);
-            setRequestMessage("La agenda se ha centrado en el intervalo operativo de la escena.");
-        };
-        window.addEventListener(ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT, rebaseViewRange);
-        return () => window.removeEventListener(ORBIT_PLANNER_VIEW_RANGE_REBASE_EVENT, rebaseViewRange);
     }, []);
 
     useEffect(() => {

@@ -10,10 +10,52 @@ import {
     getSatelliteDisplayName,
     getSatelliteTelemetry,
     getSatelliteIds,
+    hydrateCatalogEntries,
     preciseProductSatelliteEntriesFromPayload,
     registerPreciseProductSatelliteEntries,
     setSimulationTimelineProvider
 } from "../../js/satellites.js";
+
+test("a TLE is explicitly unavailable before its own epoch without becoming a finite ephemeris range", () => {
+    const id = "tle:epoch-availability-contract";
+    const line1 = "1 25544U 98067A   26235.50000000  .00000000  00000-0  00000-0 0  9991";
+
+    assert.equal(hydrateCatalogEntries([{
+        catalogId: id,
+        name: "Epoch availability contract",
+        line1,
+        line2: "2 25544  51.6400  10.0000 0004000  60.0000 300.0000 15.50000000000001",
+        sourceFormat: "TLE"
+    }]), 1);
+
+    const beforeEpoch = getObjectMtrStatus(id, "2026-08-23T11:59:59.999Z");
+    assert.equal(beforeEpoch.status, "out_of_range");
+    assert.equal(beforeEpoch.active, false);
+    assert.equal(beforeEpoch.hasIntrinsicTimeRange, false,
+        "an epoch lower bound must not masquerade as a finite SP3/OEM coverage interval");
+    assert.equal(beforeEpoch.range, null);
+    assert.equal(beforeEpoch.reason, "before-tle-epoch");
+
+    setSimulationTimelineProvider(() => ({
+        mode: "range",
+        date: new Date("2026-08-23T11:59:59.999Z"),
+        rangeStart: new Date("2026-08-20T00:00:00.000Z"),
+        rangeEnd: new Date("2026-08-24T00:00:00.000Z")
+    }));
+    try {
+        const telemetry = getSatelliteTelemetry(id);
+        assert.equal(telemetry?.runtime_state, "OUT_OF_RANGE");
+        assert.equal(telemetry?.out_of_range_reason, "before-tle-epoch");
+        assert.equal(telemetry?.temporal_availability_start, "2026-08-23T12:00:00.000Z");
+    } finally {
+        setSimulationTimelineProvider(null);
+    }
+
+    const atEpoch = getObjectMtrStatus(id, "2026-08-23T12:00:00.000Z");
+    assert.equal(atEpoch.status, "active");
+    assert.equal(atEpoch.active, true);
+    assert.equal(atEpoch.reason, null);
+});
 
 test("precise product entries become layer-compatible SP3 catalogue identities", () => {
     const id = "precise:igs-final-demo:G01";

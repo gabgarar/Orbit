@@ -25,13 +25,20 @@ epochs.
 | Generating an orbit outside the MTR | Orbit reports the conflict and offers the same explicit expansion. |
 | New project | The MTR is cleared; the next valid finite object initializes it again. |
 
-Expansion never shrinks the interval. If confirmed, the result is:
+An import expansion never shrinks the interval. If confirmed, the result is:
 
 \[
   [\min(t_\min, r_0),\; \max(t_\max, r_1)]
 \]
 
 where `[r_0, r_1]` is the coverage of the object being added.
+
+When a layer is deactivated or removed, Orbit rebuilds the temporal context
+only from layers that remain active. Removing an SP3 therefore cannot leave its
+historical interval pinned in the scene: remaining finite ephemerides define
+the active envelope; TLE/OMM-only scenes use an operational TLE window; and no
+remaining satellite clears the MTR and returns the scene to **Real time** with
+an operator notice.
 
 ## Confirming expansion
 
@@ -105,15 +112,44 @@ available, no state is created and no trajectory is extrapolated.
 ## TLE, OMM, and the coverage limitation
 
 A TLE/OMM propagated with SGP4 does not publish a tabulated coverage interval
-equivalent to an OEM or SP3 in this workflow. Consequently, a TLE catalog layer
-on its own does not initialize or expand the MTR. Its epoch and use limits still
-matter when judging SGP4 quality, but they are not converted into invented
-finite coverage.
+equivalent to an OEM or SP3 in this workflow. Consequently, adding a TLE layer
+to a clean scene does not initialize or expand the MTR and keeps **Real time**.
+Its epoch and use limits still matter when judging SGP4 quality, but they are
+not converted into invented finite coverage.
+
+The TLE epoch is nevertheless an operational lower availability bound: before
+it, Orbit marks the layer **out of range** and does not retain a marker or
+track from a later update. This is an Orbit operating policy; it does not claim
+that SGP4 is mathematically unable to evaluate backwards, nor does it certify
+accuracy from the epoch onward.
+
+If the last finite OEM/SP3/authored track is removed while TLE/OMM layers stay
+active, Orbit retains a short operational simulation window. It starts at
+`max(now, TLE epoch)` and ends after the configured propagation horizon. That
+keeps the operation usable without inventing tabulated coverage or carrying
+days, months, or hours from a previous SP3 simulation. `propagation_hours` is
+a TLE display/planning preference; applying a simulation range never rewrites
+or persists it as an SP3/OEM duration.
 
 In a scene that already has an MTR because of OEM/SP3 or another finite
-ephemeris, the TLE layer is evaluated only at MTR-permitted epochs. This keeps
-visualization and temporal comparison coherent, but it does not turn a TLE
-into a reference ephemeris or certify its accuracy away from the element epoch.
+ephemeris, the TLE operating window can form part of the scene temporal
+envelope, but each source retains its own contract: SP3/OEM is not evaluated
+outside published samples, and a TLE is not evaluated before its epoch. This
+keeps visualization and temporal comparison coherent, but it does not turn a
+TLE into a reference ephemeris or certify its accuracy away from the element
+epoch.
+
+An envelope can contain a real gap between the last SP3/OEM sample and the
+TLE epoch. To prevent that gap from being drawn as a fictitious orbit, Orbit
+asks the propagator only for a local post-cursor segment (between one minute
+and 24 hours, according to the configured horizon), never for the whole
+envelope. Moving the cursor refreshes that segment; navigation across the full
+MTR remains free and the gap remains visible as missing data for that layer.
+
+To avoid a pause at a segment boundary, Orbit may warm only the adjacent TLE
+segment in the background. This optional warmup is limited to one global
+request, does not change the scene until the cursor enters its interval, and
+visible requests always retain priority.
 
 ## Technical contract
 

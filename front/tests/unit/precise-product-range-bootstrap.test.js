@@ -630,3 +630,143 @@ test("SP3 entries without valid member coverage fail closed and never request ep
         }
     }
 });
+
+test("an SP3 that becomes out of range removes every stale orbit, ground-track and footprint entity", async () => {
+    const previous = {
+        Cesium: globalThis.Cesium,
+        window: globalThis.window,
+        WebSocket: globalThis.WebSocket,
+        fetch: globalThis.fetch,
+        requestAnimationFrame: globalThis.requestAnimationFrame
+    };
+    const satelliteId = "precise:out-of-range-rendering:G01";
+    const entities = [];
+    let timeline = {
+        mode: "range",
+        date: new Date("2026-08-10T12:01:00.000Z"),
+        rangeStart: new Date("2026-08-10T12:00:00.000Z"),
+        rangeEnd: new Date("2026-08-10T12:02:00.000Z")
+    };
+
+    class TestWebSocket {
+        static OPEN = 1;
+
+        constructor() {
+            this.readyState = 0;
+        }
+
+        close() {}
+        send() {}
+    }
+
+    const viewer = {
+        entities: {
+            add(entity) {
+                entities.push(entity);
+                return entity;
+            },
+            remove(entity) {
+                const index = entities.indexOf(entity);
+                if (index >= 0) entities.splice(index, 1);
+                return true;
+            }
+        }
+    };
+    const nextTask = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const hasOverlay = (suffix) => entities.some((entity) => entity.id === `${satelliteId}${suffix}`);
+
+    try {
+        globalThis.Cesium = createCesiumTestDouble();
+        // The shared compact double maps every Cartesian sample to one point.
+        // This case needs a genuine projected path so ground-track creation is
+        // a meaningful precondition for the out-of-range cleanup assertion.
+        globalThis.Cesium.Cartographic.fromCartesian = (cartesian) => {
+            const horizontal = Math.hypot(cartesian.x, cartesian.y);
+            return {
+                longitude: Math.atan2(cartesian.y, cartesian.x),
+                latitude: Math.atan2(cartesian.z, horizontal),
+                height: Math.hypot(horizontal, cartesian.z) - 6_378_137
+            };
+        };
+        globalThis.window = { location: { protocol: "http:", host: "orbit.test" } };
+        globalThis.WebSocket = TestWebSocket;
+        globalThis.requestAnimationFrame = () => 0;
+        globalThis.fetch = async () => ({
+            ok: true,
+            json: async () => ({
+                reference_frame: "ITRF",
+                points: [
+                    { time: "2026-08-10T12:00:00.000Z", position: { x: 7_000_000, y: 0, z: 0 } },
+                    { time: "2026-08-10T12:01:00.000Z", position: { x: 7_050_000, y: 30_000, z: 0 } },
+                    { time: "2026-08-10T12:02:00.000Z", position: { x: 7_100_000, y: 60_000, z: 0 } }
+                ]
+            })
+        });
+
+        setOrbitConfig({
+            satellite_use_3d_model: false,
+            orbit_future_show: true,
+            orbit_ground_track_show: true,
+            propagation_hours: 1
+        });
+        setSimulationTimelineProvider(() => timeline);
+        registerPreciseProductSatelliteEntries([{
+            id: satelliteId,
+            name: "GPS 01",
+            sourceFormat: "SP3",
+            satellite_id: "G01",
+            product_id: "out-of-range-rendering",
+            sp3: {
+                reference_frame: "ITRF",
+                time_scale: "GPS",
+                start_time: "2026-08-10T12:00:00.000Z",
+                end_time: "2026-08-10T12:02:00.000Z"
+            }
+        }]);
+        initSatelliteReceiver(viewer);
+        assert.equal(setSatelliteLayerActive(satelliteId, true), true);
+        await nextTask();
+        await nextTask();
+        refreshSatelliteOverlays(viewer);
+
+        assert.equal(hasOverlay("-orbit"), true, "precondition: an in-range SP3 creates its spatial orbit");
+        assert.equal(hasOverlay("-ground-track"), true, "precondition: an in-range SP3 creates its ground track");
+        assert.equal(hasOverlay("-footprint"), true, "precondition: an in-range SP3 creates its visibility footprint");
+
+        // Move the shared range after the published SP3 coverage.  The
+        // selected layer is still active, so a stale Cesium primitive would
+        // be visible unless the temporal transition removes it explicitly.
+        timeline = {
+            mode: "range",
+            date: new Date("2026-08-10T13:01:00.000Z"),
+            rangeStart: new Date("2026-08-10T13:00:00.000Z"),
+            rangeEnd: new Date("2026-08-10T14:00:00.000Z")
+        };
+        refreshSatelliteOverlays(viewer);
+
+        const telemetry = getSatelliteTelemetry(satelliteId);
+        assert.equal(telemetry.runtime_state, "OUT_OF_RANGE");
+        assert.equal(telemetry.position, null);
+        assert.equal(telemetry.is_visible, false);
+        assert.equal(hasOverlay("-orbit"), false, "no stale spatial orbit may survive outside SP3 coverage");
+        assert.equal(hasOverlay("-ground-track"), false, "no stale ground track may survive outside SP3 coverage");
+        assert.equal(hasOverlay("-footprint"), false, "no stale visibility footprint may survive outside SP3 coverage");
+
+        const pooledSatelliteEntity = entities.find((entity) => entity.satelliteId === satelliteId);
+        assert.ok(pooledSatelliteEntity, "the pooled marker remains owned by the layer");
+        assert.equal(pooledSatelliteEntity.show, false, "the satellite marker itself is hidden outside coverage");
+    } finally {
+        setSatelliteLayerActive(satelliteId, false);
+        setSimulationTimelineProvider(null);
+        setOrbitConfig({
+            satellite_use_3d_model: true,
+            orbit_future_show: true,
+            orbit_ground_track_show: true,
+            propagation_hours: 12
+        });
+        for (const [name, value] of Object.entries(previous)) {
+            if (value === undefined) delete globalThis[name];
+            else globalThis[name] = value;
+        }
+    }
+});

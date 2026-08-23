@@ -26,13 +26,20 @@ fin explícitos.
 | Generación de una órbita fuera del MTR | Orbit informa del conflicto y ofrece la misma ampliación explícita. |
 | Proyecto nuevo | El MTR se reinicia; el siguiente objeto finito válido vuelve a inicializarlo. |
 
-La ampliación nunca reduce el intervalo. Si se confirma, el resultado es:
+La ampliación de una importación nunca reduce el intervalo. Si se confirma, el resultado es:
 
 \[
   [\min(t_\min, r_0),\; \max(t_\max, r_1)]
 \]
 
 donde `[r_0, r_1]` es la cobertura del objeto que se quiere añadir.
+
+Al desactivar o eliminar una capa, Orbit vuelve a construir el contexto
+temporal exclusivamente con las capas que siguen activas. Por tanto, retirar
+un SP3 ya no deja su intervalo histórico fijado en la escena: si quedan otras
+efemérides finitas se usa su envolvente activa; si sólo quedan TLE/OMM se pasa
+a una ventana operativa de TLE; y si no queda ningún satélite se limpia el MTR
+y se vuelve a **Real time**, con un aviso al operador.
 
 ## Confirmar una ampliación
 
@@ -108,16 +115,46 @@ haya cobertura válida, no se crea un estado ni se extrapola una trayectoria.
 ## TLE, OMM y la limitación de cobertura
 
 Un TLE/OMM propagado con SGP4 no publica, en este flujo, un intervalo tabulado
-de cobertura equivalente a OEM o SP3. Por ello una capa de catálogo TLE por sí
-sola no inicializa ni amplía el MTR. Su época y sus límites de uso siguen siendo
-importantes para evaluar la calidad de SGP4, pero no se convierten en una
-cobertura finita inventada.
+de cobertura equivalente a OEM o SP3. Por ello añadir una capa TLE por sí sola
+a una escena limpia no inicializa ni amplía el MTR y conserva **Real time**.
+Su época y sus límites de uso siguen siendo importantes para evaluar la calidad
+de SGP4, pero no se convierten en una cobertura finita inventada.
+
+La época del TLE sí es un límite operativo inferior: antes de ella Orbit marca
+la capa como **fuera de rango** y no conserva un marcador ni una traza de una
+actualización posterior. Es una política de uso de Orbit; no afirma que SGP4
+sea matemáticamente incapaz de evaluar hacia atrás ni certifica precisión a
+partir de la época.
+
+Si se retira el último OEM/SP3/track finito mientras quedan TLE/OMM activos,
+Orbit conserva la simulación en una ventana operativa corta: empieza en
+`max(ahora, epoch del TLE)` y termina tras el horizonte de propagación
+configurado. Esa ventana permite continuar la operación sin inventar cobertura
+tabulada ni arrastrar días, meses u horas de una simulación SP3 anterior. El
+horizonte `propagation_hours` es una preferencia de visualización/planificación
+de los TLE; aplicar un rango de simulación no lo reescribe ni lo guarda con la
+duración del SP3/OEM.
 
 En una escena que ya tiene MTR por un OEM/SP3 u otra efeméride finita, la
-capa TLE se evalúa únicamente en las épocas permitidas por el MTR. Esto ordena
-la visualización y la comparación temporal, pero no convierte un TLE en una
+ventana operativa del TLE puede formar parte de la envolvente temporal de la
+escena, pero cada fuente conserva su propio contrato: el SP3/OEM no se evalúa
+fuera de sus muestras y el TLE no se evalúa antes de su epoch. Esto ordena la
+visualización y la comparación temporal, pero no convierte un TLE en una
 efeméride de referencia ni certifica su precisión fuera de la época de sus
 elementos.
+
+Una envolvente puede contener un hueco real entre el último SP3/OEM y la época
+del TLE. Para que ese hueco no se dibuje como una órbita ficticia, Orbit pide
+al propagador únicamente un tramo local posterior al cursor (entre un minuto y
+24 horas, según el horizonte configurado), nunca toda la envolvente. Al mover
+el cursor se renueva ese tramo; la navegación por el MTR completo sigue siendo
+libre y el hueco permanece visible como falta de datos de esa capa.
+
+Para que el avance no tenga que esperar al llegar al borde de un tramo, Orbit
+puede precargar en segundo plano únicamente el tramo TLE adyacente. Esa
+precarga es opcional, se limita a una solicitud global, no cambia la escena
+hasta que el cursor entre en su intervalo y las solicitudes visibles mantienen
+siempre la prioridad.
 
 ## Contrato técnico
 

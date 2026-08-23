@@ -107,8 +107,8 @@ function plannerRangeDomain({ mode, simulationRange, masterRange } = {}) {
  * Simulated mode.  The visible calendar may be a whole month while an SP3's
  * MTR is only a day; pass work must use the exact intersection instead of
  * rejecting the entire agenda.  When there is no overlap, no range is
- * returned: callers can rebase the calendar rather than silently calculate
- * an unrelated period.
+ * returned: callers keep the calendar page and simply do not calculate
+ * passes for an unrelated period.
  *
  * This helper only clips an already requested interval. It never extends a
  * source range or manufactures a start/end timestamp.

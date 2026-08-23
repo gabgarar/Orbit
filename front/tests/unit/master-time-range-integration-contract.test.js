@@ -39,6 +39,54 @@ test("bulk sidebar calls await activation outcomes instead of treating a Promise
     assert.match(sidebarSource, /await Promise\.resolve\(processItem\(queue\[index\]\)\)/);
 });
 
+test("changing a scene range never turns an old SP3/OEM duration into the TLE propagation preference", () => {
+    const start = mainSource.indexOf("function applySimulationRange(");
+    const end = mainSource.indexOf("function clearGroundStationAnalysisVisuals(", start);
+    assert.ok(start >= 0 && end > start, "applySimulationRange must remain independently inspectable");
+    const applyRange = mainSource.slice(start, end);
+
+    assert.doesNotMatch(applyRange, /setOrbitConfig\(\{\s*propagation_hours\s*:/);
+    assert.doesNotMatch(applyRange, /persistSystemSectionPatch\(\s*["']orbit["']\s*,\s*\{\s*propagation_hours\s*:/);
+    assert.match(applyRange, /propagation_hours[\s\S]*future-horizon preference/i);
+});
+
+test("satellite membership rebuilds the scene domain and announces both safe fallbacks", () => {
+    const helperStart = mainSource.indexOf("function reconcileActiveSatelliteTimeDomainAfterLayerChange(");
+    const helperEnd = mainSource.indexOf("function projectSatelliteSourceFormat(", helperStart);
+    assert.ok(helperStart >= 0 && helperEnd > helperStart, "active-layer time reconciler must be explicit");
+    const helper = mainSource.slice(helperStart, helperEnd);
+
+    assert.match(helper, /activeSatelliteSourceIds\(\)/);
+    assert.match(helper, /resolveActiveSatelliteTimeDomain\(/);
+    assert.match(helper, /operationalTleRanges\(sourceIds\)/);
+    assert.match(helper, /setMasterTimeRange\(resolved\.range\.startTimeMs, resolved\.range\.endTimeMs\)/);
+    assert.match(helper, /resetSimulationToRealtimeWindow\(\{ refresh: true \}\)/);
+    assert.match(helper, /No quedan capas de satélite activas[\s\S]*Real time/);
+    assert.match(helper, /Se retiró el último producto con efeméride finita[\s\S]*ventana operativa de los TLE activos/);
+
+    const deactivateStart = mainSource.indexOf("function setCompositeLayerActive(");
+    const deactivateEnd = mainSource.indexOf("function duplicateSatelliteLayer(", deactivateStart);
+    const deactivate = mainSource.slice(deactivateStart, deactivateEnd);
+    assert.match(deactivate, /removedFiniteCoverage/);
+    assert.match(deactivate, /reconcileActiveSatelliteTimeDomainAfterLayerChange\(\{[\s\S]*announce:\s*true,[\s\S]*forceTleRange:\s*removedFiniteCoverage/);
+
+    const removeAllStart = mainSource.indexOf("onRemoveAllLayers: () => {");
+    const removeAllEnd = mainSource.indexOf("onShowAllObjects:", removeAllStart);
+    const removeAll = mainSource.slice(removeAllStart, removeAllEnd);
+    assert.match(removeAll, /setAllSatelliteLayersActive\(false\);[\s\S]*reconcileActiveSatelliteTimeDomainAfterLayerChange\(\{ announce: true \}\)/);
+});
+
+test("activating TLE and finite layers recomputes their combined active envelope", () => {
+    const activationStart = mainSource.indexOf("async function setCompositeLayerActiveWithMasterTimeRange(");
+    const activationEnd = mainSource.indexOf("function unavailablePreciseGroundPassMessage(", activationStart);
+    assert.ok(activationStart >= 0 && activationEnd > activationStart);
+    const activation = mainSource.slice(activationStart, activationEnd);
+
+    assert.match(activation, /commitObjectRangeToMasterTimeRange\(activation\.union\.range\)/);
+    assert.match(activation, /reconcileActiveSatelliteTimeDomainAfterLayerChange\(\{[\s\S]*resetCurrent:\s*activation\.approval\?\.action === "initialize"/);
+    assert.match(activation, /activateAllSatelliteLayersWithMasterTimeRange[\s\S]*reconcileActiveSatelliteTimeDomainAfterLayerChange\(/);
+});
+
 test("an OEM file is routed to the native finite importer before catalogue/TLE parsing", () => {
     assert.match(sidebarSource, /export function isNativeOemEphemerisFileName\(fileName\)/);
     const nativeOemGuard = sidebarSource.indexOf("if (isNativeOemEphemerisFileName(file.name))");

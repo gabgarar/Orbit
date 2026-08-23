@@ -124,5 +124,7 @@ test("main runtime wires explicit view/filter events and keeps static/realtime a
     assert.match(mainSource, /if \(simulationState\.mode !== SIMULATION_MODE_RANGE\)[\s\S]*La agenda no mueve la escena/);
     assert.match(mainSource, /simulationState\.mode === SIMULATION_MODE_RANGE[\s\S]*String\(simulationState\.mode \|\| ""\)/);
     assert.match(mainSource, /clampPlannerViewRangeToSimulationDomain\(/);
-    assert.match(mainSource, /orbit:planner-view-range-rebase/);
+    assert.match(mainSource, /function presentPlannerPassForecastOutsideDomain\(assessment\)/);
+    assert.match(mainSource, /plannerPassForecastViewRange = nextRange;[\s\S]*presentPlannerPassForecastOutsideDomain\(\{ \.\.\.constraint, requestedRange: nextRange \}\)/);
+    assert.doesNotMatch(mainSource, /planner-view-range-rebase/);
 });

@@ -11,6 +11,13 @@ import {
     isInsideObjectRange,
     validateObjectRange
 } from "./runtime/simulation/masterTimeRange.js";
+import { parseTleEpochDate } from "./runtime/simulation/timeFormatting.js";
+import { resolveBoundedTleEphemerisWindow } from "./runtime/simulation/tleEphemerisWindow.js";
+import {
+    resolveNextTleEphemerisPrefetchWindow,
+    shouldScheduleTleEphemerisPrefetch,
+    TLE_EPHEMERIS_PREFETCH_LIMITS
+} from "./runtime/simulation/tleEphemerisPrefetch.js";
 
 const logger = getLogger("satellites");
 
@@ -197,6 +204,11 @@ class EntityPool {
 
         const { entity, orbitEntity, groundTrackEntity, footprintEntity } = state;
 
+        // Vector overlays are separate Cesium entities rather than children
+        // of the pooled marker. Remove them before this marker can be reused
+        // for another source id.
+        removeSatelliteVectorEntities(id, this.viewer);
+
         // Limpiar polylines
         if (orbitEntity) {
             this.viewer.entities.remove(orbitEntity);
@@ -247,6 +259,24 @@ let satelliteEntities = {};
 let satelliteState = {};
 let entityPool = null;
 let currentViewer = null;
+
+function setSatelliteVectorEntitiesVisible(id, visible) {
+    const entities = satelliteVectorEntities.get(String(id || "").trim());
+    for (const entity of entities || []) {
+        entity.show = visible === true;
+    }
+}
+
+function removeSatelliteVectorEntities(id, viewer = currentViewer) {
+    const satId = String(id || "").trim();
+    const entities = satelliteVectorEntities.get(satId);
+    if (!entities) return;
+    for (const entity of entities) {
+        viewer?.entities?.remove?.(entity);
+    }
+    satelliteVectorEntities.delete(satId);
+}
+
 const hiddenSatelliteIds = new Set();
 const catalogSatelliteIds = new Set();
 const activeLayerSatelliteIds = new Set();
@@ -271,6 +301,7 @@ const preciseProductEntryBySatelliteId = new Map();
 // at a different date.
 const rangeEphemerisCache = new Map();
 const rangeEphemerisRequests = new Map();
+const rangeEphemerisRequestMetadata = new Map();
 const RANGE_EPHEMERIS_CACHE_LIMIT = 24;
 const RANGE_EPHEMERIS_MAX_POINTS = 12_000;
 // A multi-constellation SP3 commonly carries more than one hundred spacecraft.
@@ -281,6 +312,7 @@ const RANGE_EPHEMERIS_MAX_POINTS = 12_000;
 const RANGE_EPHEMERIS_MAX_CONCURRENT_REQUESTS = 4;
 const rangeEphemerisQueue = [];
 let activeRangeEphemerisRequestCount = 0;
+let activeRangeEphemerisPrefetchCount = 0;
 let rangeEphemerisRevision = 0;
 const STATIC_EPHEMERIS_MIN_HORIZON_SECONDS = 24 * 60 * 60;
 // Manual tracks are generated locally from a user-authored definition. They
@@ -432,6 +464,49 @@ function isFiniteEphemerisSource(id) {
     );
 }
 
+/**
+ * Return whether this source is an open-ended SGP4-style catalogue record.
+ * The distinction matters in a mixed scene: a Master Time Range may include
+ * an old finite SP3 and a later TLE, but it must never become one giant TLE
+ * propagation request across the gap.
+ */
+function isOpenEndedTleSource(id) {
+    const normalizedId = String(id || "").trim();
+    if (!normalizedId || isFiniteEphemerisSource(normalizedId)) return false;
+    const metadata = catalogEntryMetaBySatelliteId.get(normalizedId) || null;
+    const sourceFormat = String(metadata?.sourceFormat ?? metadata?.source_format ?? "TLE")
+        .trim()
+        .toUpperCase();
+    return sourceFormat === "TLE" || sourceFormat === "OMM";
+}
+
+/**
+ * A TLE is a propagator rather than a finite ephemeris, but Orbit treats its
+ * epoch as an operational lower availability bound.  This avoids presenting
+ * a state before the element set exists when a scene also contains an older
+ * SP3/OEM interval.  The epoch deliberately does not become an intrinsic
+ * time range: after it, SGP4 remains an open-ended propagator.
+ */
+function operationalTleEpochMilliseconds(id) {
+    const normalizedId = String(id || "").trim();
+    if (!normalizedId) return null;
+    const metadata = catalogEntryMetaBySatelliteId.get(normalizedId) || null;
+    const sourceFormat = String(metadata?.sourceFormat ?? metadata?.source_format ?? "TLE")
+        .trim()
+        .toUpperCase();
+    if (sourceFormat !== "TLE" && sourceFormat !== "OMM") return null;
+
+    const fromLine = parseTleEpochDate(tleBySatelliteId.get(normalizedId)?.line1);
+    if (fromLine instanceof Date && Number.isFinite(fromLine.getTime())) {
+        return fromLine.getTime();
+    }
+
+    // Imported catalogues can retain a normalized epoch even while their
+    // on-demand TLE text has not yet been hydrated.  It is only a fallback;
+    // an actual line 1 remains the authoritative epoch when available.
+    return finiteEpochMilliseconds(metadata?.epoch);
+}
+
 /** Whether a source may be sampled at all, independent of the current date. */
 function hasValidatedFiniteCoverage(id) {
     return !isFiniteEphemerisSource(id) || Boolean(intrinsicTimeRangeForSatellite(id));
@@ -450,12 +525,29 @@ function intrinsicTimeStatusForSatellite(id, atTime) {
     const checkedAtMs = finiteEpochMilliseconds(atTime);
     if (!range) {
         const finiteSource = isFiniteEphemerisSource(id);
+        const tleEpochMs = finiteSource ? null : operationalTleEpochMilliseconds(id);
+        if (!finiteSource
+            && Number.isFinite(tleEpochMs)
+            && Number.isFinite(checkedAtMs)
+            && checkedAtMs < tleEpochMs) {
+            return {
+                status: "out_of_range",
+                active: false,
+                hasIntrinsicTimeRange: false,
+                range: null,
+                checkedAtMs,
+                availabilityStartTimeMs: tleEpochMs,
+                availabilityStartTime: new Date(tleEpochMs).toISOString(),
+                reason: "before-tle-epoch"
+            };
+        }
         return {
             // A finite source has an explicit temporal contract.  Missing or
             // malformed coverage is not a legacy permission to query it at
             // wall-clock `now`: the renderer, telemetry and range endpoint
-            // must all fail closed.  Non-finite catalogue sources (TLE/OMM)
-            // intentionally remain usable without an intrinsic interval.
+            // must all fail closed. TLE sources remain open-ended after their
+            // epoch, but the epoch itself is an explicit lower operational
+            // availability bound (above).
             status: finiteSource ? "out_of_range" : "active",
             active: !finiteSource,
             hasIntrinsicTimeRange: false,
@@ -489,7 +581,9 @@ export function getObjectIntrinsicTimeRange(id) {
 /**
  * Report whether an object has data at a specific UTC instant without
  * sampling it. Finite ephemerides fail closed: malformed/missing query time
- * yields `out_of_range`, never an extrapolated state.
+ * yields `out_of_range`, never an extrapolated state. TLE sources also report
+ * `out_of_range` before their element-set epoch, while retaining their normal
+ * open-ended propagation behaviour from that epoch onward.
  */
 export function getObjectMtrStatus(id, atTime = new Date()) {
     const status = intrinsicTimeStatusForSatellite(id, atTime);
@@ -561,25 +655,34 @@ export function getObjectIntrinsicTimeRangeUnion(ids) {
  * cancellation-by-staleness and Cesium state application remain at the call
  * site, where the active layer and simulation-range contracts are known.
  */
-function enqueueRangeEphemerisRequest(task) {
+function enqueueRangeEphemerisRequest(task, { prefetch = false } = {}) {
     return new Promise((resolve, reject) => {
-        rangeEphemerisQueue.push({ task, resolve, reject });
+        rangeEphemerisQueue.push({ task, resolve, reject, prefetch: prefetch === true });
         drainRangeEphemerisQueue();
     });
 }
 
 function drainRangeEphemerisQueue() {
-    while (
-        activeRangeEphemerisRequestCount < RANGE_EPHEMERIS_MAX_CONCURRENT_REQUESTS
-        && rangeEphemerisQueue.length
-    ) {
-        const next = rangeEphemerisQueue.shift();
+    while (activeRangeEphemerisRequestCount < RANGE_EPHEMERIS_MAX_CONCURRENT_REQUESTS && rangeEphemerisQueue.length) {
+        // A foreground simulation request always passes speculative TLE
+        // warmups in the queue.  One background request may run at a time,
+        // leaving three transport slots available even while it is in flight.
+        const foregroundIndex = rangeEphemerisQueue.findIndex((entry) => !entry.prefetch);
+        const nextIndex = foregroundIndex >= 0
+            ? foregroundIndex
+            : (activeRangeEphemerisPrefetchCount < TLE_EPHEMERIS_PREFETCH_LIMITS.maxConcurrentPrefetches ? 0 : -1);
+        if (nextIndex < 0) break;
+        const [next] = rangeEphemerisQueue.splice(nextIndex, 1);
         activeRangeEphemerisRequestCount += 1;
+        if (next.prefetch) activeRangeEphemerisPrefetchCount += 1;
         Promise.resolve()
             .then(next.task)
             .then(next.resolve, next.reject)
             .finally(() => {
                 activeRangeEphemerisRequestCount = Math.max(0, activeRangeEphemerisRequestCount - 1);
+                if (next.prefetch) {
+                    activeRangeEphemerisPrefetchCount = Math.max(0, activeRangeEphemerisPrefetchCount - 1);
+                }
                 drainRangeEphemerisQueue();
             });
     }
@@ -645,6 +748,7 @@ function clearUnavailablePreciseProductRendering(id) {
         state.orbitEntity = null;
     }
     if (currentViewer) remove2DOverlays(currentViewer, state);
+    setSatelliteVectorEntitiesVisible(id, false);
     if (state.entity) state.entity.show = false;
 }
 
@@ -1263,6 +1367,24 @@ function getExactTimelineEphemerisWindow(id, simulationCtx) {
     const rangeStartMs = simulationCtx?.rangeStart?.getTime?.();
     const rangeEndMs = simulationCtx?.rangeEnd?.getTime?.();
     if (simulationCtx?.mode === "range" && Number.isFinite(rangeStartMs) && Number.isFinite(rangeEndMs) && rangeEndMs > rangeStartMs) {
+        if (isOpenEndedTleSource(id)) {
+            const currentTimeMs = simulationCtx?.date?.getTime?.();
+            const tleWindow = resolveBoundedTleEphemerisWindow({
+                rangeStartMs,
+                rangeEndMs,
+                currentTimeMs,
+                epochMs: operationalTleEpochMilliseconds(id),
+                propagationHours: getPropagationHoursForSatellite(id)
+            });
+            if (!tleWindow) return null;
+            return {
+                kind: tleWindow.kind,
+                startMs: tleWindow.startTimeMs,
+                endMs: tleWindow.endTimeMs,
+                availabilityStartTimeMs: tleWindow.availabilityStartTimeMs,
+                boundedTleWindow: true
+            };
+        }
         return { kind: "range", startMs: rangeStartMs, endMs: rangeEndMs };
     }
 
@@ -1287,7 +1409,29 @@ function intersectEphemerisWindowWithIntrinsicRange(id, ephemerisWindow) {
     // Treating an old/hydrated record as unrestricted would turn a missing
     // metadata field into silent extrapolation. TLE/OMM records deliberately
     // keep the normal open-ended propagator path.
-    if (!range) return isFinitePreciseProductTrack(id) ? null : ephemerisWindow;
+    if (!range) {
+        if (isFinitePreciseProductTrack(id)) return null;
+        // Defense in depth: a caller outside the range-mode renderer (for
+        // example Static mode or a delayed request) must never turn a TLE
+        // epoch into backward SGP4 propagation. The normal range helper also
+        // bounds the *end*, so this only needs to enforce the hard lower
+        // availability limit.
+        const tleEpochMs = isOpenEndedTleSource(id)
+            ? operationalTleEpochMilliseconds(id)
+            : null;
+        if (!Number.isFinite(tleEpochMs)) return ephemerisWindow;
+        const startMs = Math.max(Number(ephemerisWindow.startMs), tleEpochMs);
+        const endMs = Number(ephemerisWindow.endMs);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return null;
+        return {
+            ...ephemerisWindow,
+            startMs,
+            endMs,
+            availabilityStartTimeMs: tleEpochMs,
+            renderable: endMs > startMs,
+            intrinsicRange: null
+        };
+    }
     const startMs = Math.max(ephemerisWindow.startMs, range.startTimeMs);
     const endMs = Math.min(ephemerisWindow.endMs, range.endTimeMs);
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return null;
@@ -1305,9 +1449,86 @@ function intersectEphemerisWindowWithIntrinsicRange(id, ephemerisWindow) {
 function rangeEphemerisKey(id, simulationCtx) {
     const requestedWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
     const window = intersectEphemerisWindowWithIntrinsicRange(id, requestedWindow);
-    return window && window.renderable !== false
-        ? `${rangeEphemerisRevision}|${id}|${window.kind}|${window.startMs}|${window.endMs}`
-        : null;
+    return rangeEphemerisKeyForWindow(id, window);
+}
+
+function normalizeRangeEphemerisWindow(window) {
+    if (!window || typeof window !== "object") return null;
+    const startMs = Number(window.startMs ?? window.startTimeMs);
+    const endMs = Number(window.endMs ?? window.endTimeMs);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+    return {
+        ...window,
+        startMs,
+        endMs,
+        renderable: window.renderable !== false
+    };
+}
+
+function rangeEphemerisKeyForWindow(id, window, revision = rangeEphemerisRevision) {
+    const normalizedWindow = normalizeRangeEphemerisWindow(window);
+    if (!normalizedWindow || normalizedWindow.renderable === false) return null;
+    return `${revision}|${id}|${normalizedWindow.kind}|${normalizedWindow.startMs}|${normalizedWindow.endMs}`;
+}
+
+function isTleRangeEphemeris(id, ephemeris) {
+    const normalizedId = String(id || "").trim();
+    return Boolean(
+        normalizedId
+        && isOpenEndedTleSource(normalizedId)
+        && ephemeris
+        && String(ephemeris.sourceId || "").trim() === normalizedId
+        && ephemeris.windowKind === "tle-range"
+    );
+}
+
+function isTleRangeEphemerisUsableAtTimelineTime(id, ephemeris, simulationCtx) {
+    if (!isTleRangeEphemeris(id, ephemeris)) return false;
+    const atMs = simulationCtx?.date?.getTime?.();
+    if (!Number.isFinite(atMs)
+        || atMs < Number(ephemeris.startMs)
+        || atMs > Number(ephemeris.endMs)) {
+        return false;
+    }
+    const epochMs = operationalTleEpochMilliseconds(id);
+    return !Number.isFinite(epochMs) || atMs >= epochMs;
+}
+
+function findCachedTleRangeEphemeris(id, simulationCtx) {
+    // Prefer the segment which keeps the most future coverage.  A next-window
+    // warmup can overlap the final minute of the active segment at a range
+    // boundary, and it is the better one to make visible then.
+    let selected = null;
+    for (const ephemeris of rangeEphemerisCache.values()) {
+        if (!isTleRangeEphemerisUsableAtTimelineTime(id, ephemeris, simulationCtx)) continue;
+        if (!selected || ephemeris.endMs > selected.endMs) selected = ephemeris;
+    }
+    return selected;
+}
+
+function findPendingTleRangeEphemeris(id, simulationCtx) {
+    for (const [key, metadata] of rangeEphemerisRequestMetadata.entries()) {
+        if (!metadata?.prefetch
+            || metadata.revision !== rangeEphemerisRevision
+            || metadata.id !== String(id || "").trim()
+            || !isTleRangeEphemerisUsableAtTimelineTime(id, metadata.ephemeris, simulationCtx)) {
+            continue;
+        }
+        const pending = rangeEphemerisRequests.get(key);
+        if (pending) return pending;
+    }
+    return null;
+}
+
+function registerRangeEphemerisRequest(key, request, metadata = null) {
+    rangeEphemerisRequests.set(key, request);
+    if (metadata) rangeEphemerisRequestMetadata.set(key, metadata);
+    return request;
+}
+
+function unregisterRangeEphemerisRequest(key) {
+    rangeEphemerisRequests.delete(key);
+    rangeEphemerisRequestMetadata.delete(key);
 }
 
 function rangeEphemerisStepSeconds(ephemerisWindow) {
@@ -1327,7 +1548,13 @@ function parseRangeEphemeris(payload, key, id = "") {
             ? { timeMs, x: position.x, y: position.y, z: position.z }
             : null;
     }).filter(Boolean);
-    if (parsed.length < 2) return null;
+    // A finite SP3 may use a conventional all-zero missing-state sentinel;
+    // its established renderer contract preserves the valid surrounding
+    // samples. A TLE has no such sparse source contract, however: accepting a
+    // missing TLE sample would join two propagated sides of a temporal gap
+    // with one Cesium polyline. Reject that TLE response instead.
+    if (parsed.length < 2
+        || (isOpenEndedTleSource(id) && parsed.length !== points.length)) return null;
 
     for (let index = 1; index < parsed.length; index += 1) {
         if (parsed[index].timeMs <= parsed[index - 1].timeMs) return null;
@@ -1344,6 +1571,16 @@ function parseRangeEphemeris(payload, key, id = "") {
         // A server response which strays beyond the registered finite source
         // domain is discarded as a whole. Trimming it here would hide a
         // contract violation and could bridge a gap with interpolation.
+        return null;
+    }
+
+    const tleEpochMs = isOpenEndedTleSource(id)
+        ? operationalTleEpochMilliseconds(id)
+        : null;
+    if (Number.isFinite(tleEpochMs) && parsed.some((point) => point.timeMs < tleEpochMs)) {
+        // The client selected a bounded post-epoch window. A delayed or
+        // misbehaving endpoint must not widen it backwards and fabricate a
+        // pre-epoch state just because SGP4 can numerically propagate there.
         return null;
     }
 
@@ -1377,6 +1614,143 @@ function cacheRangeEphemeris(key, ephemeris) {
     while (rangeEphemerisCache.size > RANGE_EPHEMERIS_CACHE_LIMIT) {
         rangeEphemerisCache.delete(rangeEphemerisCache.keys().next().value);
     }
+}
+
+function tagRangeEphemerisWindow(ephemeris, id, ephemerisWindow) {
+    if (!ephemeris || !ephemerisWindow) return ephemeris;
+    return {
+        ...ephemeris,
+        sourceId: String(id || "").trim(),
+        windowKind: ephemerisWindow.kind || null
+    };
+}
+
+function selectedRangeMatchesContext(simulationCtx, rangeStartMs, rangeEndMs) {
+    return simulationCtx?.mode === "range"
+        && simulationCtx.rangeStart?.getTime?.() === rangeStartMs
+        && simulationCtx.rangeEnd?.getTime?.() === rangeEndMs;
+}
+
+function scheduledTleEphemerisPrefetchCount() {
+    let count = 0;
+    for (const metadata of rangeEphemerisRequestMetadata.values()) {
+        if (metadata?.prefetch && metadata.revision === rangeEphemerisRevision) count += 1;
+    }
+    return count;
+}
+
+/**
+ * Warm exactly one bounded TLE segment ahead of the segment currently shown.
+ *
+ * This is cache-only while it remains in the future.  If the operator moves
+ * into it before it completes, the foreground path adopts the same pending
+ * promise; the speculative response is then applied only after its timestamp
+ * has become valid for the current playhead.
+ */
+function scheduleNextTleRangeEphemerisPrefetch(viewer, id, state, activeWindow, simulationCtx) {
+    if (!isOpenEndedTleSource(id)
+        || !activeLayerSatelliteIds.has(id)
+        || hiddenSatelliteIds.has(id)
+        || simulationCtx?.mode !== "range") {
+        return null;
+    }
+
+    const normalizedActiveWindow = normalizeRangeEphemerisWindow(activeWindow);
+    const rangeStartMs = simulationCtx.rangeStart?.getTime?.();
+    const rangeEndMs = simulationCtx.rangeEnd?.getTime?.();
+    if (!normalizedActiveWindow
+        || normalizedActiveWindow.kind !== "tle-range"
+        || !Number.isFinite(rangeStartMs)
+        || !Number.isFinite(rangeEndMs)) {
+        return null;
+    }
+
+    const epochMs = operationalTleEpochMilliseconds(id);
+    const rawNextWindow = resolveNextTleEphemerisPrefetchWindow({
+        currentWindow: normalizedActiveWindow,
+        rangeStartMs,
+        rangeEndMs,
+        epochMs,
+        propagationHours: getPropagationHoursForSatellite(id)
+    });
+    const nextWindow = intersectEphemerisWindowWithIntrinsicRange(
+        id,
+        normalizeRangeEphemerisWindow(rawNextWindow)
+    );
+    const nextKey = rangeEphemerisKeyForWindow(id, nextWindow);
+    if (!nextKey
+        || !shouldScheduleTleEphemerisPrefetch({
+            nextWindow,
+            cacheHasNext: rangeEphemerisCache.has(nextKey),
+            requestPending: rangeEphemerisRequests.has(nextKey),
+            // Include queued work as well as active fetches: a dense layer
+            // activation must never accumulate an unbounded speculative list.
+            activePrefetchCount: scheduledTleEphemerisPrefetchCount()
+        })) {
+        return null;
+    }
+
+    const requestRevision = rangeEphemerisRevision;
+    const startTime = new Date(nextWindow.startMs).toISOString();
+    const endTime = new Date(nextWindow.endMs).toISOString();
+    const request = enqueueRangeEphemerisRequest(async () => {
+        const currentContext = resolveSimulationTimelineContext();
+        const currentMs = currentContext?.date?.getTime?.();
+        // A warmup belongs to this selected scene range only.  Do not send it
+        // after an import, visibility change, range edit, or far timeline
+        // jump has made the adjacent segment irrelevant.
+        if (requestRevision !== rangeEphemerisRevision
+            || !activeLayerSatelliteIds.has(id)
+            || hiddenSatelliteIds.has(id)
+            || !selectedRangeMatchesContext(currentContext, rangeStartMs, rangeEndMs)
+            || !Number.isFinite(currentMs)
+            || currentMs < normalizedActiveWindow.startMs
+            || currentMs > nextWindow.endMs) {
+            return null;
+        }
+        const response = await fetch("/api/ephemeris", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({
+                sat_id: id,
+                start_time: startTime,
+                end_time: endTime,
+                step_seconds: rangeEphemerisStepSeconds(nextWindow),
+                include_velocity: false
+            })
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const parsed = parseRangeEphemeris(await response.json(), nextKey, id);
+        if (!parsed) throw new Error("La precarga de efeméride TLE no contiene muestras terrestres válidas.");
+        // A new TLE/catalogue invalidates both the old cache and this response.
+        if (requestRevision !== rangeEphemerisRevision) return null;
+        const ephemeris = tagRangeEphemerisWindow(parsed, id, nextWindow);
+        cacheRangeEphemeris(nextKey, ephemeris);
+        const latestContext = resolveSimulationTimelineContext();
+        if (satelliteState[id] === state
+            && isTleRangeEphemerisUsableAtTimelineTime(id, ephemeris, latestContext)) {
+            applyRangeEphemerisToState(viewer, id, state, ephemeris);
+        }
+        return ephemeris;
+    }).catch((error) => {
+        // A warmup is deliberately optional: the usual foreground request can
+        // still recover later, so never surface a speculative failure as a
+        // broken satellite or block the render loop.
+        logger.debug?.(`No se pudo precargar la siguiente efeméride de ${id}:`, error);
+        return null;
+    }).finally(() => unregisterRangeEphemerisRequest(nextKey));
+
+    return registerRangeEphemerisRequest(nextKey, request, {
+        id: String(id || "").trim(),
+        revision: requestRevision,
+        prefetch: true,
+        ephemeris: {
+            startMs: nextWindow.startMs,
+            endMs: nextWindow.endMs,
+            windowKind: nextWindow.kind,
+            sourceId: String(id || "").trim()
+        }
+    });
 }
 
 function invalidateRangeEphemerides() {
@@ -1414,25 +1788,71 @@ function requestRangeEphemeris(viewer, id, state, simulationCtx) {
     );
     const key = rangeEphemerisKey(id, simulationCtx);
     if (!key || !ephemerisWindow || isLocalEphemerisTrack(id) || !canRenderPreciseProduct(id)) return Promise.resolve(null);
-    if (state.rangeEphemeris?.key === key) return Promise.resolve(state.rangeEphemeris);
+    if (state.rangeEphemeris?.key === key
+        || isTleRangeEphemerisUsableAtTimelineTime(id, state.rangeEphemeris, simulationCtx)) {
+        return Promise.resolve(state.rangeEphemeris);
+    }
 
-    const cached = rangeEphemerisCache.get(key);
+    // A TLE window advances in five-minute key increments while its samples
+    // remain physically valid. Reuse a cached segment that covers the new
+    // playhead rather than re-propagating almost identical 12-hour paths.
+    const cached = rangeEphemerisCache.get(key)
+        || findCachedTleRangeEphemeris(id, simulationCtx);
     if (cached) {
         applyRangeEphemerisToState(viewer, id, state, cached);
+        void scheduleNextTleRangeEphemerisPrefetch(viewer, id, state, {
+            kind: cached.windowKind,
+            startMs: cached.startMs,
+            endMs: cached.endMs
+        }, simulationCtx);
         return Promise.resolve(cached);
     }
 
     const pending = rangeEphemerisRequests.get(key);
     if (pending) return pending;
 
+    const reusablePending = findPendingTleRangeEphemeris(id, simulationCtx);
+    if (reusablePending) {
+        return reusablePending.then((ephemeris) => {
+            const currentContext = resolveSimulationTimelineContext();
+            if (ephemeris
+                && satelliteState[id] === state
+                && isTleRangeEphemerisUsableAtTimelineTime(id, ephemeris, currentContext)) {
+                applyRangeEphemerisToState(viewer, id, state, ephemeris);
+                // `reusablePending` resolves only after its request has left
+                // the low-priority queue.  Now that this formerly speculative
+                // segment is visible, warm one successor too; this keeps the
+                // hand-off smooth during continuous timeline playback without
+                // recursively filling the cache while it remains in future.
+                void scheduleNextTleRangeEphemerisPrefetch(viewer, id, state, {
+                    kind: ephemeris.windowKind,
+                    startMs: ephemeris.startMs,
+                    endMs: ephemeris.endMs
+                }, currentContext);
+            }
+            return ephemeris;
+        });
+    }
+
     const startTime = new Date(ephemerisWindow.startMs).toISOString();
     const endTime = new Date(ephemerisWindow.endMs).toISOString();
+    const requestRevision = rangeEphemerisRevision;
     const request = enqueueRangeEphemerisRequest(async () => {
         // A large product can remain queued while the operator changes the
         // time range or removes the layer. Do not spend a request on that
         // obsolete work.
-        if (!activeLayerSatelliteIds.has(id)
-            || rangeEphemerisKey(id, resolveSimulationTimelineContext()) !== key) {
+        const currentContext = resolveSimulationTimelineContext();
+        const currentKey = rangeEphemerisKey(id, currentContext);
+        const currentInTleWindow = isOpenEndedTleSource(id)
+            && isTleRangeEphemerisUsableAtTimelineTime(id, {
+                startMs: ephemerisWindow.startMs,
+                endMs: ephemerisWindow.endMs,
+                windowKind: ephemerisWindow.kind,
+                sourceId: String(id || "").trim()
+            }, currentContext);
+        if (requestRevision !== rangeEphemerisRevision
+            || !activeLayerSatelliteIds.has(id)
+            || (!currentInTleWindow && currentKey !== key)) {
             return null;
         }
         const response = await fetch("/api/ephemeris", {
@@ -1447,12 +1867,17 @@ function requestRangeEphemeris(viewer, id, state, simulationCtx) {
             })
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const ephemeris = parseRangeEphemeris(await response.json(), key, id);
-        if (!ephemeris) throw new Error("La efeméride de simulación no contiene muestras en un marco terrestre disponible.");
+        const parsed = parseRangeEphemeris(await response.json(), key, id);
+        if (!parsed) throw new Error("La efeméride de simulación no contiene muestras en un marco terrestre disponible.");
+        if (requestRevision !== rangeEphemerisRevision) return null;
+        const ephemeris = tagRangeEphemerisWindow(parsed, id, ephemerisWindow);
         cacheRangeEphemeris(key, ephemeris);
-        const currentContext = resolveSimulationTimelineContext();
-        if (rangeEphemerisKey(id, currentContext) === key && satelliteState[id] === state) {
+        const latestContext = resolveSimulationTimelineContext();
+        if (satelliteState[id] === state
+            && (rangeEphemerisKey(id, latestContext) === key
+                || isTleRangeEphemerisUsableAtTimelineTime(id, ephemeris, latestContext))) {
             applyRangeEphemerisToState(viewer, id, state, ephemeris);
+            void scheduleNextTleRangeEphemerisPrefetch(viewer, id, state, ephemerisWindow, latestContext);
         }
         return ephemeris;
     }).catch((error) => {
@@ -1464,10 +1889,19 @@ function requestRangeEphemeris(viewer, id, state, simulationCtx) {
         }
         logger.warn(`No se pudo cargar la efeméride simulada de ${id}:`, error);
         return null;
-    }).finally(() => rangeEphemerisRequests.delete(key));
+    }).finally(() => unregisterRangeEphemerisRequest(key));
 
-    rangeEphemerisRequests.set(key, request);
-    return request;
+    return registerRangeEphemerisRequest(key, request, {
+        id: String(id || "").trim(),
+        revision: requestRevision,
+        prefetch: false,
+        ephemeris: {
+            startMs: ephemerisWindow.startMs,
+            endMs: ephemerisWindow.endMs,
+            windowKind: ephemerisWindow.kind,
+            sourceId: String(id || "").trim()
+        }
+    });
 }
 
 /**
@@ -1717,13 +2151,16 @@ function isOutsideSimulationTrackWindow(id, state, simulationDate) {
         return isFiniteEphemerisSource(id);
     }
 
-    // The source range is authoritative even when the current local state is
-    // a smaller cached/requested sub-window. This catches a finite SP3 that
-    // has not been materialised yet and prevents manual/OEM realtime paths
-    // from retaining their last marker after their final sample.
+    // Temporal availability is authoritative even when the current local
+    // state is a smaller cached/requested sub-window. This catches a finite
+    // SP3 that has not been materialised yet, and also hides a TLE before its
+    // own epoch instead of retaining a streamed/latest marker there.
     const intrinsicStatus = intrinsicTimeStatusForSatellite(id, simMs);
+    if (intrinsicStatus.active !== true) {
+        return true;
+    }
     if (isFiniteEphemerisSource(id)) {
-        return intrinsicStatus.active !== true;
+        return false;
     }
 
     if (!hasValidSimulationTrackWindow(state)) {
@@ -1739,6 +2176,12 @@ function applyOutOfTimeVisualState(id, state, outOfTime) {
         return;
     }
     if (state.isOutOfTimeVisualState === outOfTime) {
+        // A delayed range/render callback can arrive after the temporal state
+        // was already marked out of range. Keep detached helper entities
+        // fail-closed on repeated transitions too.
+        if (outOfTime) {
+            setSatelliteVectorEntitiesVisible(id, false);
+        }
         return;
     }
 
@@ -1768,6 +2211,7 @@ function applyOutOfTimeVisualState(id, state, outOfTime) {
         if (state.footprintEntity) {
             state.footprintEntity.show = false;
         }
+        setSatelliteVectorEntitiesVisible(id, false);
         // Se oculta completamente para que la ausencia de datos temporales sea inequívoca.
         entity.show = false;
         return;
@@ -1807,6 +2251,11 @@ function applySatelliteVisibility(id, state) {
     if (state.footprintEntity) {
         state.footprintEntity.show = visible && overlayMode.showFootprint;
     }
+
+    // The vector overlay is an independent entity collection. It must follow
+    // the same layer/eye/time gate as its owning satellite, never its last
+    // retained Cartesian callback position.
+    setSatelliteVectorEntitiesVisible(id, visible);
 
     return visible;
 }
@@ -2500,6 +2949,14 @@ function startSmoothUpdate(viewer) {
             const outsideTrackWindow = isOutsideSimulationTrackWindow(id, state, temporalDate);
             applyOutOfTimeVisualState(id, state, outsideTrackWindow);
             if (outsideTrackWindow) {
+                if (useSimulationOrbit && isOpenEndedTleSource(id)
+                    && intrinsicTimeStatusForSatellite(id, temporalDate).active === true) {
+                    // A bounded TLE segment has expired as the operator moved
+                    // the playhead. Ask for the next local segment instead of
+                    // retaining the previous marker or joining it to an old
+                    // SP3-era trajectory.
+                    renderFutureOrbitForState(viewer, id, state, state.lastOrbitPayload);
+                }
                 // Do not interpolate a stale last state while the object is
                 // out of its own finite source range. The retained runtime
                 // record only lets it reactivate when the timeline returns.
@@ -3188,6 +3645,12 @@ function outOfRangeTelemetry({
     temporalStatus
 }) {
     const range = temporalStatus?.range || null;
+    const tleEpoch = Number.isFinite(temporalStatus?.availabilityStartTimeMs)
+        ? new Date(temporalStatus.availabilityStartTimeMs).toISOString()
+        : null;
+    const outOfRangeMessage = temporalStatus?.reason === "before-tle-epoch"
+        ? `Este TLE aún no está disponible para la época actual. Su epoch es ${tleEpoch || "posterior"}.`
+        : "Este objeto no tiene datos para la época actual.";
     const sourceFrame = sourceFormat === "OEM"
         ? String(oemTrack?.refFrame || "").trim().toUpperCase() || null
         : sourceFormat === "SP3"
@@ -3217,11 +3680,14 @@ function outOfRangeTelemetry({
         rendering_available: frameStatus?.available ?? null,
         intrinsic_time_range: cloneIntrinsicTimeRange(range),
         has_intrinsic_time_range: temporalStatus?.hasIntrinsicTimeRange === true,
+        ...(temporalStatus?.availabilityStartTime
+            ? { temporal_availability_start: temporalStatus.availabilityStartTime }
+            : {}),
         temporal_status: "out_of_range",
         object_status: "out_of_range",
         out_of_range: true,
         out_of_range_reason: temporalStatus?.reason || "outside-intrinsic-time-range",
-        out_of_range_message: "Este objeto no tiene datos para la época actual.",
+        out_of_range_message: outOfRangeMessage,
         is_visible: false,
         is_active: false,
         runtime_state: "OUT_OF_RANGE",
@@ -3517,6 +3983,7 @@ export function setSatelliteLayerActive(id, active) {
             if (state.entity) {
                 state.entity.show = false;
             }
+            setSatelliteVectorEntitiesVisible(id, false);
         }
         emitObjectStateChanged({ sourceId: id, reason: "activation" });
         return true;
@@ -3584,6 +4051,7 @@ export function setAllSatelliteLayersActive(active) {
         if (state.entity) {
             state.entity.show = false;
         }
+        setSatelliteVectorEntitiesVisible(id, false);
     }
 
     emitObjectStateChanged({ scope: "all-satellites", reason: "activation" });
@@ -3645,9 +4113,9 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
 
     const simulationCtx = resolveSimulationTimelineContext();
     const temporalDate = temporalDateForSimulationContext(simulationCtx);
-    const isOutOfIntrinsicRange = isOutsideSimulationTrackWindow(id, state, temporalDate);
-    applyOutOfTimeVisualState(id, state, isOutOfIntrinsicRange);
-    if (isOutOfIntrinsicRange) {
+    const intrinsicStatus = intrinsicTimeStatusForSatellite(id, temporalDate);
+    if (intrinsicStatus.active !== true) {
+        applyOutOfTimeVisualState(id, state, true);
         // Keep the layer selected but remove every render/interpolation path.
         // It can reappear only if the shared timeline returns to its own
         // intrinsic coverage; no old marker or extrapolated polyline survives.
@@ -3659,13 +4127,20 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         remove2DOverlays(viewer, state);
         return;
     }
+
     const rangeKey = rangeEphemerisKey(id, simulationCtx);
     const exactTimelineWindow = getExactTimelineEphemerisWindow(id, simulationCtx);
-    const activeRangeEphemeris = rangeKey && state.rangeEphemeris?.key === rangeKey
+    const activeRangeEphemeris = rangeKey
+        && (state.rangeEphemeris?.key === rangeKey
+            || isTleRangeEphemerisUsableAtTimelineTime(id, state.rangeEphemeris, simulationCtx))
         ? state.rangeEphemeris
         : null;
     if (exactTimelineWindow && !isLocalEphemerisTrack(id)) {
         if (!activeRangeEphemeris) {
+            // TLE windows intentionally follow the playhead in bounded
+            // segments. Re-requesting here when it crosses a segment edge is
+            // what keeps free timeline navigation working without ever
+            // drawing a line through an SP3-to-TLE gap.
             invalidateRetimedRangeOrbit(viewer, state);
             void requestRangeEphemeris(viewer, id, state, simulationCtx);
             return;
@@ -3683,6 +4158,20 @@ function renderFutureOrbitForState(viewer, id, state, orbitPayload) {
         };
     } else {
         state.awaitingRangeEphemeris = false;
+    }
+
+    const isOutsideTrackWindow = isOutsideSimulationTrackWindow(id, state, temporalDate);
+    applyOutOfTimeVisualState(id, state, isOutsideTrackWindow);
+    if (isOutsideTrackWindow) {
+        // An exact source can only become visible with a matching timestamped
+        // segment. This remains a fail-closed fallback for malformed response
+        // windows and a finite source outside its intrinsic coverage.
+        if (state.orbitEntity) {
+            viewer.entities.remove(state.orbitEntity);
+            state.orbitEntity = null;
+        }
+        remove2DOverlays(viewer, state);
+        return;
     }
 
     const rawOrbit = orbitPayload?.orbit;
@@ -4007,6 +4496,12 @@ export function clearAllSatelliteVisualizationConfigs() {
 }
 
 function vectorPosition(state) {
+    // Vector callbacks can outlive the marker that created them. Never use a
+    // cached Cartesian point once its source is hidden or outside its own
+    // temporal coverage.
+    if (state?.isOutOfTimeVisualState === true || state?.entity?.show !== true) {
+        return null;
+    }
     const position = state?.renderPosition || state?.targetPosition;
     return position && Number.isFinite(position.x) ? position : null;
 }
@@ -4226,11 +4721,15 @@ export function setSatelliteVectorVisualization(id, visible, forceTerms = ["cent
     const satId = String(id || "").trim();
     const existing = satelliteVectorEntities.get(satId);
     if (!visible || !satId || !currentViewer) {
-        existing?.forEach((entity) => currentViewer?.entities.remove(entity));
-        satelliteVectorEntities.delete(satId);
+        removeSatelliteVectorEntities(satId);
         return;
     }
-    if (existing || !satelliteState[satId]) return;
+    const state = satelliteState[satId];
+    if (!state) return;
+    if (existing) {
+        applySatelliteVisibility(satId, state);
+        return;
+    }
     satelliteVectorEntities.set(satId, createVectorEntities(
         currentViewer,
         `${satId}-vectors`,
@@ -4240,6 +4739,7 @@ export function setSatelliteVectorVisualization(id, visible, forceTerms = ["cent
         (state) => state?.lastVelocity,
         forceTerms
     ));
+    applySatelliteVisibility(satId, state);
 }
 
 function normalizeOemUnit(value, kind) {
@@ -6059,6 +6559,7 @@ function removeManualOrbitTrack(id) {
     satelliteVisualOverridesById.delete(id);
     satelliteIdsDirty = true;
     activeLayerIdsDirty = true;
+    removeSatelliteVectorEntities(id);
 
     const state = satelliteState[id];
     if (state && currentViewer) {
@@ -6083,6 +6584,7 @@ function removeOemEphemerisTrack(id) {
     activeLayerIdsDirty = true;
     catalogEntryMetaBySatelliteId.delete(id);
     tleBySatelliteId.delete(id);
+    removeSatelliteVectorEntities(id);
 
     const state = satelliteState[id];
     if (state && currentViewer) {

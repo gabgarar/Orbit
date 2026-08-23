@@ -35,3 +35,12 @@ test("every pass marker is keyboard-accessible, described by a tooltip, and seek
     assert.match(timeControlBarSource, /eventType: marker\.eventType/);
     assert.match(timeControlBarSource, /time: new Date\(marker\.time\)\.toISOString\(\)/);
 });
+
+test("simulation timeline keeps native scrubbing and adds wheel and rail-drag navigation", () => {
+    assert.match(timeControlBarSource, /timelineStepFromPointer/);
+    assert.match(timeControlBarSource, /timelineStepFromWheel/);
+    assert.match(timeControlBarSource, /onWheel=\{wheelTimelineNavigation\}/);
+    assert.match(timeControlBarSource, /onPointerDown=\{beginTimelinePointerNavigation\}/);
+    assert.match(timeControlBarSource, /onPointerMove=\{moveTimelinePointerNavigation\}/);
+    assert.match(timeControlBarSource, /onChange=\{\(event\) => seekTimelineStep\(Number\(event\.target\.value\)\)\}/);
+});

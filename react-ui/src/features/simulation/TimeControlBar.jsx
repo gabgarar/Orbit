@@ -1,7 +1,13 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CalendarIcon, ChevronDownIcon } from "../../components/icons.jsx";
 import PassTimelineMarkers from "./PassTimelineMarkers.jsx";
 import { GROUND_STATION_TIMELINE_EVENTS_EVENT } from "../../../../front/js/features/groundStations/passTimelineEvents.js";
+import {
+    clampTimelineStep,
+    normalizeTimelineSteps,
+    timelineStepFromPointer,
+    timelineStepFromWheel
+} from "../../../../front/js/runtime/simulation/timelineNavigation.js";
 import {
     legacyGroundStationPassesToTimelineEvents,
     normalizeGroundStationTimelineEvents
@@ -57,6 +63,8 @@ export default function TimeControlBar() {
     const [speedMenuOpen, setSpeedMenuOpen] = useState(false); const [dateMenuOpen, setDateMenuOpen] = useState(false); const [designMode, setDesignMode] = useState(isManualOrbitDesignActive);
     const [timelineEventState, setTimelineEventState] = useState({ source: "none", status: "idle", events: [] });
     const [accessWindow, setAccessWindow] = useState(null);
+    const timelineGestureRef = useRef(null);
+    const timelineStepRef = useRef(0);
     const sendAction = (type, value) => window.dispatchEvent(new CustomEvent("orbit:simulation-action", { detail: { type, value } }));
 
     useEffect(() => { const sync = (event) => setSimulation((current) => ({ ...current, ...(event.detail || {}) })); window.addEventListener("orbit:simulation-state", sync); return () => window.removeEventListener("orbit:simulation-state", sync); }, []);
@@ -138,6 +146,75 @@ export default function TimeControlBar() {
         };
     }, [rightPanelBottom, timelineDockVisible]);
 
+    const timelineSteps = normalizeTimelineSteps(simulation.timelineSteps);
+    const currentTimelineStep = clampTimelineStep(simulation.timelineStep, timelineSteps);
+    useEffect(() => {
+        // Wheel and drag gestures can arrive faster than the runtime's next
+        // state publication. Retain the locally requested step so a trackpad
+        // gesture advances smoothly instead of repeatedly seeking from an old
+        // React snapshot.
+        timelineStepRef.current = currentTimelineStep;
+    }, [currentTimelineStep]);
+
+    const seekTimelineStep = (step) => {
+        const nextStep = clampTimelineStep(step, timelineSteps);
+        timelineStepRef.current = nextStep;
+        sendAction("timeline", nextStep);
+    };
+    const stepFromTimelinePointer = (event) => {
+        const bounds = event.currentTarget?.getBoundingClientRect?.();
+        return timelineStepFromPointer({
+            clientX: event.clientX,
+            left: bounds?.left,
+            width: bounds?.width,
+            steps: timelineSteps
+        });
+    };
+    const isTimelineControlTarget = (target) => typeof target?.closest === "function"
+        && Boolean(target.closest("input, button, a, [data-pass-event]"));
+    const beginTimelinePointerNavigation = (event) => {
+        if (event.button !== 0 || isTimelineControlTarget(event.target)) return;
+        const step = stepFromTimelinePointer(event);
+        if (step === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        timelineGestureRef.current = { pointerId: event.pointerId };
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        seekTimelineStep(step);
+    };
+    const moveTimelinePointerNavigation = (event) => {
+        if (timelineGestureRef.current?.pointerId !== event.pointerId) return;
+        const step = stepFromTimelinePointer(event);
+        if (step === null || step === timelineStepRef.current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        seekTimelineStep(step);
+    };
+    const endTimelinePointerNavigation = (event) => {
+        if (timelineGestureRef.current?.pointerId !== event.pointerId) return;
+        timelineGestureRef.current = null;
+        if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+            event.currentTarget.releasePointerCapture?.(event.pointerId);
+        }
+    };
+    const wheelTimelineNavigation = (event) => {
+        // Preserve browser pinch zoom. Ordinary wheel/trackpad gestures over
+        // the rail are timeline navigation, never Cesium camera zoom.
+        if (event.ctrlKey || event.metaKey) return;
+        if (!Number.isFinite(event.deltaX) || !Number.isFinite(event.deltaY)
+            || (event.deltaX === 0 && event.deltaY === 0)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const nextStep = timelineStepFromWheel({
+            currentStep: timelineStepRef.current,
+            steps: timelineSteps,
+            deltaX: event.deltaX,
+            deltaY: event.deltaY,
+            deltaMode: event.deltaMode
+        });
+        if (nextStep !== timelineStepRef.current) seekTimelineStep(nextStep);
+    };
+
     const marks = buildTimelineMarks(simulation.startDate, simulation.endDate);
     const analysisRangeMatchesTimeline = (() => {
         if (accessWindow?.source !== "simulation-range") return false;
@@ -151,7 +228,7 @@ export default function TimeControlBar() {
         && (timelineEventState.source !== "legacy" || analysisRangeMatchesTimeline)
         ? timelineEventState.events
         : [];
-    const progress = Math.max(0, Math.min(100, ((simulation.timelineStep || 0) / (simulation.timelineSteps || 1000)) * 100));
+    const progress = Math.max(0, Math.min(100, (currentTimelineStep / timelineSteps) * 100));
     const markerPositionClass = progress <= 3
         ? "is-start translate-x-0 after:left-[6px]"
         : progress >= 97
@@ -204,7 +281,15 @@ export default function TimeControlBar() {
             </div>
 
             <div className="col-[2] grid min-w-0 grid-cols-[minmax(160px,1fr)] items-center self-stretch max-[1100px]:col-[1] max-[1100px]:grid-cols-1 max-[1100px]:gap-2">
-                <div className="relative h-full min-w-0" style={{ "--timeline-progress": progress + "%" }}>
+                <div
+                    className="relative h-full min-w-0 touch-none select-none"
+                    style={{ "--timeline-progress": progress + "%" }}
+                    onWheel={wheelTimelineNavigation}
+                    onPointerDown={beginTimelinePointerNavigation}
+                    onPointerMove={moveTimelinePointerNavigation}
+                    onPointerUp={endTimelinePointerNavigation}
+                    onPointerCancel={endTimelinePointerNavigation}
+                >
                     <output
                         className={classNames(
                             "pointer-events-none absolute z-[3] top-[5px] rounded-[5px] border border-[#4777e9] bg-[#2459d9] px-[6px] py-[4px] font-sans text-[9px] leading-none font-bold whitespace-nowrap text-white shadow-[0_5px_12px_rgba(21,71,198,.34)] after:absolute after:bottom-[-5px] after:size-2 after:rotate-45 after:border-r after:border-b after:border-[#4777e9] after:bg-[#2459d9] after:content-['']",
@@ -217,12 +302,13 @@ export default function TimeControlBar() {
                     <input
                         className="absolute top-[20px] left-0 z-[3] h-3 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-[4px] [&::-webkit-slider-runnable-track]:bg-[linear-gradient(to_right,#4779ff_0_var(--timeline-progress),#253a57_var(--timeline-progress)_100%)] [&::-webkit-slider-runnable-track]:shadow-[inset_0_0_0_1px_rgba(113,141,181,.18)] [&::-webkit-slider-thumb]:mt-[-5px] [&::-webkit-slider-thumb]:size-[13px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[#6f98ff] [&::-webkit-slider-thumb]:bg-[#2860ed] [&::-webkit-slider-thumb]:shadow-[0_0_0_3px_rgba(54,99,239,.2)] [&::-moz-range-track]:h-[3px] [&::-moz-range-track]:rounded-[4px] [&::-moz-range-track]:bg-[#253a57] [&::-moz-range-track]:shadow-[inset_0_0_0_1px_rgba(113,141,181,.18)] [&::-moz-range-progress]:h-[3px] [&::-moz-range-progress]:rounded-[4px] [&::-moz-range-progress]:bg-[#4779ff] [&::-moz-range-thumb]:size-[10px] [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-[#6f98ff] [&::-moz-range-thumb]:bg-[#2860ed] [&::-moz-range-thumb]:shadow-[0_0_0_3px_rgba(54,99,239,.2)]"
                         aria-label="Linea temporal de simulacion"
+                        title="Arrastra para recorrer la simulación. Usa la rueda para avanzar o retroceder."
                         type="range"
                         min="0"
-                        max={simulation.timelineSteps || 1000}
+                        max={timelineSteps}
                         step="1"
-                        value={simulation.timelineStep || 0}
-                        onChange={(event) => sendAction("timeline", Number(event.target.value))}
+                        value={currentTimelineStep}
+                        onChange={(event) => seekTimelineStep(Number(event.target.value))}
                     />
                     <PassTimelineMarkers
                         events={timelineEvents}
