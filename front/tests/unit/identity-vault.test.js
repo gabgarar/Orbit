@@ -7,7 +7,7 @@ import {
     createGuardedLocalStorageAdapter,
     createInMemoryIdentitySelectorKeyStore,
     createProviderTokenEnvelope,
-    hashLocalIdentifier,
+    hashLegacyLocalIdentifier,
     hashLocalIdentifierWithSelectorKey,
     openAccountJson,
     openProviderTokenEnvelope,
@@ -47,7 +47,7 @@ test("new identifier selectors are keyed per installation and cannot be reproduc
     const first = await hashLocalIdentifierWithSelectorKey("operator@orbit.test", firstKey.key);
     const repeated = await hashLocalIdentifierWithSelectorKey("OPERATOR@ORBIT.TEST", firstKey.key);
     const second = await hashLocalIdentifierWithSelectorKey("operator@orbit.test", secondKey.key);
-    const legacy = await hashLocalIdentifier("operator@orbit.test");
+    const legacy = await hashLegacyLocalIdentifier("operator@orbit.test");
 
     assert.equal(first, repeated, "normalization remains stable inside one installation");
     assert.notEqual(first, second, "a different installation key produces a different selector");
@@ -57,7 +57,7 @@ test("new identifier selectors are keyed per installation and cannot be reproduc
 test("guarded local storage only accepts a versioned encrypted account index", async () => {
     const storage = new MemoryStorage();
     const adapter = createGuardedLocalStorageAdapter(storage);
-    const identifierHash = await hashLocalIdentifier("operator@orbit.test");
+    const identifierHash = await hashLegacyLocalIdentifier("operator@orbit.test");
     const privateData = {
         account: { identifier: "operator@orbit.test", displayName: "Operator" },
         profile: { callsign: "ORBIT-1" }
@@ -93,7 +93,7 @@ test("guarded local storage only accepts a versioned encrypted account index", a
 });
 
 test("an account key seals owner/purpose-bound project data and cannot be reused after a binding change", async () => {
-    const identifierHash = await hashLocalIdentifier("operator@orbit.test");
+    const identifierHash = await hashLegacyLocalIdentifier("operator@orbit.test");
     const encrypted = await createEncryptedAccountVault({
         accountId: "local-demo",
         identifierHash,
@@ -130,7 +130,7 @@ test("an account key seals owner/purpose-bound project data and cannot be reused
 });
 
 test("provider token envelopes remain encrypted even before the outer account vault is persisted", async () => {
-    const identifierHash = await hashLocalIdentifier("operator@orbit.test");
+    const identifierHash = await hashLegacyLocalIdentifier("operator@orbit.test");
     const encrypted = await createEncryptedAccountVault({
         accountId: "local-demo",
         identifierHash,

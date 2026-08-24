@@ -4,4 +4,3 @@
  * either event payload.
  */
 export const ORBIT_IDENTITY_SESSION_CHANGED_EVENT = "orbit:identity-session-changed";
-export const ORBIT_IDENTITY_PROVIDER_AVAILABILITY_EVENT = "orbit:identity-provider-availability";

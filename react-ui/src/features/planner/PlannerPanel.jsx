@@ -50,7 +50,7 @@ const HOUR_HEIGHT = 52;
 // card. The collision layout receives this same footprint so close facts use
 // parallel columns instead of painting one card on top of another.
 const TIMED_EVENT_MIN_DURATION_MS = 30 * 60 * 1000;
-export const PLANNER_REQUEST_MESSAGE_TIMEOUT_MS = 4_500;
+const PLANNER_REQUEST_MESSAGE_TIMEOUT_MS = 4_500;
 const PLANNER_RESIZE_DIRECTIONS = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 const formatter = new Intl.DateTimeFormat("es-ES", {
     timeZone: "UTC",

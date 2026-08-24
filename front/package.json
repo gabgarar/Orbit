@@ -8,6 +8,7 @@
   "knip": {
     "entry": ["main.js", "tests/unit/**/*.test.js"],
     "project": ["js/**/*.js", "tests/unit/**/*.test.js"],
+    "tags": ["-lintignore"],
     "ignoreExportsUsedInFile": true,
     "ignoreIssues": {
       "js/runtime/runtimeStatus.js": ["exports"]

@@ -10,7 +10,8 @@ import {
     normalizeAdministrationUser,
     normalizeLoginAttemptCount,
     normalizeMaximumLoginAttempts,
-    providerLabel
+    providerLabel,
+    USER_ADMINISTRATION_HOOK_CONTRACT
 } from "../../../react-ui/src/features/administration/adminPresentation.js";
 
 const panel = readFileSync(new URL("../../../react-ui/src/features/administration/UserAdministrationPanel.jsx", import.meta.url), "utf8");
@@ -24,6 +25,24 @@ test("the administration workspace is guarded by the exact canonical admin role"
     assert.equal(isAdministratorSession({ role: "operator" }), false);
     assert.equal(isAdministratorSession(null), false);
     assert.match(panel, /if \(!isAdministratorSession\(session\)\) return null/);
+});
+
+test("the administration hook contract keeps every operator mutation explicit", () => {
+    assert.deepEqual(USER_ADMINISTRATION_HOOK_CONTRACT, [
+        "users",
+        "settings",
+        "loading",
+        "busy",
+        "error",
+        "searchUsers",
+        "updateUser",
+        "setUserNote",
+        "deleteUser",
+        "setPasswordChangeRequired",
+        "resetUserPassword",
+        "clearPasswordResetRequest",
+        "updateSecuritySettings"
+    ]);
 });
 
 test("administration rows retain only safe user facts and distinguish a forced change from a request", () => {

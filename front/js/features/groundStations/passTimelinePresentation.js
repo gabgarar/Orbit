@@ -1,5 +1,4 @@
 import { getTimelinePosition } from "./passTimeline.js";
-export { GROUND_STATION_TIMELINE_EVENTS_EVENT } from "./passTimelineEvents.js";
 
 /**
  * Event contract published by the scene while the simulation timeline is
@@ -159,8 +158,4 @@ export function getPassTimelinePresentation(events, startDate, endDate) {
             relatedEvents: grouped.get(event.passKey) || []
         }];
     });
-}
-
-export function passTimelineEventLabel(eventType) {
-    return eventLabels[text(eventType).toLowerCase()] || text(eventType);
 }

@@ -6,10 +6,10 @@
  * starts from the default rect instead of retaining a previous workspace.
  */
 
-export const PLANNER_WINDOW_MARGIN = 12;
-export const PLANNER_WINDOW_COMPACT_BREAKPOINT = 680;
-export const PLANNER_WINDOW_DEFAULT = Object.freeze({ width: 1220, height: 840 });
-export const PLANNER_WINDOW_MINIMUM = Object.freeze({ width: 760, height: 500 });
+const PLANNER_WINDOW_MARGIN = 12;
+const PLANNER_WINDOW_COMPACT_BREAKPOINT = 680;
+const PLANNER_WINDOW_DEFAULT = Object.freeze({ width: 1220, height: 840 });
+const PLANNER_WINDOW_MINIMUM = Object.freeze({ width: 760, height: 500 });
 
 function finiteNumber(value) {
     const number = Number(value);

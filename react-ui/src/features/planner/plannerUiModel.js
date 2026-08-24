@@ -27,8 +27,6 @@ import {
 } from "../../../../front/js/features/planner/plannerEvents.js";
 import {
     MANUAL_PLANNER_ICS_MIME_TYPE,
-    createManualPlannerSyncAdapter,
-    getManualPlannerSyncCapabilities,
     parseManualPlannerEventsIcs,
     serializeManualPlannerEventsToIcs
 } from "../../../../front/js/features/planner/manualPlannerIcs.js";
@@ -37,10 +35,7 @@ export {
     PLANNER_COLOR_TOKENS,
     PLANNER_EVENT_KINDS,
     layoutPlannerEventLanes,
-    normalizePlannerState,
     MANUAL_PLANNER_ICS_MIME_TYPE,
-    createManualPlannerSyncAdapter,
-    getManualPlannerSyncCapabilities,
     parseManualPlannerEventsIcs,
     serializeManualPlannerEventsToIcs
 };
@@ -360,7 +355,7 @@ export function formatUtcInput(value) {
 }
 
 /** datetime-local has no timezone.  Orbit labels this field UTC, so append Z. */
-export function parseUtcInput(value) {
+function parseUtcInput(value) {
     const candidate = text(value);
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(candidate)) return null;
     return plannerIsoTimestamp(`${candidate}:00.000Z`);

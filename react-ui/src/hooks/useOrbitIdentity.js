@@ -136,6 +136,8 @@ let oauthTransactionSequence = 0;
  * This is a cancellation boundary, not an OAuth secret.  It lets the
  * companion bind its browser/callback work to this one UI request without
  * putting verifier, state, authorization URLs, or token material in the DOM.
+ *
+ * @public Stable transaction boundary contract covered by identity tests.
  */
 export function createOAuthCompanionTransaction(provider) {
     const normalizedProvider = expectedCompanionProvider(provider);
@@ -164,6 +166,11 @@ export function createOAuthCompanionTransaction(provider) {
     };
 }
 
+/**
+ * Cancels a companion transaction without exposing OAuth material.
+ *
+ * @public Stable transaction boundary contract covered by identity tests.
+ */
 export function cancelOAuthCompanionTransaction(transaction) {
     if (!transaction || transaction.cancelled === true || transaction.finalized === true) return false;
     transaction.cancelled = true;
@@ -254,6 +261,8 @@ async function waitForPendingProviderTokenWrites(transaction) {
  * Removes only the exact encrypted envelope written by a cancelled request.
  * A different active request/session or a different envelope wins: cleanup
  * must never erase a valid later provider link.
+ *
+ * @public Stable cleanup contract covered by identity race-condition tests.
  */
 export async function cleanupCancelledOAuthTransaction(service, transaction) {
     if ((!transaction?.cancelled && transaction?.failed !== true) || !service) return false;
@@ -276,6 +285,11 @@ export async function cleanupCancelledOAuthTransaction(service, transaction) {
     }
 }
 
+/**
+ * Confirms that a signed-out transaction still owns the local session it may close.
+ *
+ * @public Stable ownership contract covered by identity race-condition tests.
+ */
 export function canFinalizeSignedOutOAuthTransaction(service, transaction) {
     return transaction?.signedOut === true
         && transactionStillOwnsRequest(transaction)
@@ -360,6 +374,8 @@ function notifyOAuthCompanionRequest(eventTarget, request) {
  * Invokes only a configured in-process OAuth companion.  `service` passed to
  * it is a provider- and transaction-scoped capability, so a late callback
  * cannot complete a cancelled flow or switch to another provider.
+ *
+ * @public Stable trusted-companion contract covered by identity tests.
  */
 export async function startTrustedOAuthCompanion({
     companion,

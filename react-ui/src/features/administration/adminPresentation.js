@@ -7,7 +7,7 @@
  * storage itself.
  */
 
-export const ADMIN_ROLE = "admin";
+const ADMIN_ROLE = "admin";
 export const USER_PROVIDER = Object.freeze({
     LOCAL: "local",
     GOOGLE: "google",
@@ -29,6 +29,8 @@ function object(value) {
 /**
  * Login counters are administrative metadata, but they still cross the UI
  * boundary. Keep them finite, whole and non-negative before rendering them.
+ *
+ * @public Stable presentation contract covered by the administration tests.
  */
 export function normalizeLoginAttemptCount(value, fallback = 0) {
     const parsed = Number(value);
@@ -43,7 +45,7 @@ export function isAdministratorSession(session) {
     return session?.role === ADMIN_ROLE;
 }
 
-export function normalizeUserProvider(value) {
+function normalizeUserProvider(value) {
     const provider = text(value).toLowerCase();
     if (provider === USER_PROVIDER.GOOGLE) return USER_PROVIDER.GOOGLE;
     if (provider === USER_PROVIDER.MICROSOFT) return USER_PROVIDER.MICROSOFT;
@@ -65,6 +67,8 @@ export function providerLabel(provider) {
  * Normalizes the deliberately small administration-user projection. Unknown
  * properties are ignored so the UI cannot accidentally render token, password
  * or encrypted-vault fields added by a future service.
+ *
+ * @public Stable redacted-user projection contract covered by the administration tests.
  */
 export function normalizeAdministrationUser(value) {
     const source = object(value);
@@ -164,6 +168,8 @@ export function formatLastLogin(value, locale = "es-ES") {
  * The hook must enforce authorization and validate every mutation. Rendering
  * this panel is not an authorization decision; `isAdministratorSession()` is
  * only a defensive UI gate.
+ *
+ * @public Stable contract between the identity hook and administration workspace.
  */
 export const USER_ADMINISTRATION_HOOK_CONTRACT = Object.freeze([
     "users",

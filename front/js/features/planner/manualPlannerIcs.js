@@ -17,6 +17,13 @@ import {
  * transport implementation.
  */
 
+/**
+ * MIME type consumed by the React download bridge. The bridge lives outside
+ * this legacy runtime's Knip project, so retain this intentional public
+ * contract while excluding it from the runtime-only unused-export scan.
+ *
+ * @lintignore
+ */
 export const MANUAL_PLANNER_ICS_MIME_TYPE = "text/calendar;charset=utf-8";
 export const MANUAL_PLANNER_ICS_MAX_BYTES = 1_048_576;
 export const MANUAL_PLANNER_ICS_MAX_EVENTS = 500;

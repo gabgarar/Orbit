@@ -6,6 +6,11 @@
  * companion to take ownership of an interactive browser flow.
  */
 
+/**
+ * Event name exposed to the configured local OAuth companion.
+ *
+ * @public Stable companion integration contract covered by identity tests.
+ */
 export const ORBIT_IDENTITY_OAUTH_REQUEST_EVENT = "orbit:identity-oauth-request";
 export const LOCAL_IDENTITY_MIN_PASSWORD_LENGTH = 12;
 
@@ -50,11 +55,6 @@ function text(value) {
     return value === undefined || value === null ? "" : String(value).trim();
 }
 
-export function identityProviderLabel(provider) {
-    const normalized = text(provider).toLowerCase();
-    return PROVIDER_LABELS[normalized] || "Proveedor externo";
-}
-
 export function identityErrorMessage(error) {
     const code = text(error?.code);
     if (ERROR_MESSAGES[code]) return ERROR_MESSAGES[code];
@@ -80,6 +80,8 @@ export function oauthProviderAvailabilityMessage(availability) {
  * companion owns the entire PKCE transaction, including verifier/state and
  * callback handling. Tokens, passwords, account data, authorization URLs and
  * client secrets are never put in DOM events.
+ *
+ * @public Stable, redacted companion-event payload contract covered by identity tests.
  */
 export function oauthCompanionRequestDetail(request) {
     const provider = text(request?.provider).toLowerCase();

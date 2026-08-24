@@ -19,7 +19,6 @@ import {
     layoutPlannerEventLanes,
     makeManualEventPayload,
     normalizePlannerUiState,
-    parseUtcInput,
     plannerEventActivation,
     plannerEventDescription,
     plannerViewRangePayload
@@ -202,7 +201,6 @@ test("planner anchors an initial historical cursor to the published scene before
 });
 
 test("manual planner events are strict UTC intervals and use the canonical mutation events", () => {
-    assert.equal(parseUtcInput("2026-08-18T14:30"), "2026-08-18T14:30:00.000Z");
     assert.equal(formatUtcInput("2026-08-18T14:30:45Z"), "2026-08-18T14:30");
     const created = makeManualEventPayload({
         title: "Contacto de prueba",

@@ -218,12 +218,6 @@ async function orbitIndexedDbNames(indexedDb) {
     return [...names].sort();
 }
 
-/** Delete only known/discovered Orbit IndexedDB databases. */
-export async function clearOrbitIndexedDatabases(indexedDb = browserValue("indexedDB")) {
-    const names = await orbitIndexedDbNames(indexedDb);
-    return clearOrbitIndexedDatabaseNames(indexedDb, names);
-}
-
 async function clearOrbitIndexedDatabaseNames(indexedDb, names) {
     const removed = [];
     for (const name of names) {

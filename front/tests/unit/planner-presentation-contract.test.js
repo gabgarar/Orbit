@@ -17,7 +17,7 @@ test("planner keeps operational state compact and removes the redundant range/st
 });
 
 test("planner acknowledgements expire and overlay the window instead of taking calendar height", () => {
-    assert.match(panel, /export const PLANNER_REQUEST_MESSAGE_TIMEOUT_MS = 4_500;/);
+    assert.match(panel, /const PLANNER_REQUEST_MESSAGE_TIMEOUT_MS = 4_500;/);
     assert.match(panel, /if \(!requestMessage\) return undefined;[\s\S]*window\.setTimeout\(\(\) => setRequestMessage\(""\), PLANNER_REQUEST_MESSAGE_TIMEOUT_MS\);[\s\S]*window\.clearTimeout\(timeout\)/);
     assert.match(panel, /\{requestMessage \? <p className="orbit-planner-request-toast" role="status" aria-live="polite">/);
     assert.doesNotMatch(panel, /orbit-planner-request-message/);

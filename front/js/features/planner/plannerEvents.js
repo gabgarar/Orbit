@@ -1086,10 +1086,6 @@ function getPlannerOverlapGroupsWithComparator(events, overlaps) {
     return groups;
 }
 
-export function getPlannerOverlapGroups(events) {
-    return getPlannerOverlapGroupsWithComparator(events, plannerEventsOverlap);
-}
-
 function normalizeLaneLayoutOptions(options = {}) {
     const source = options && typeof options === "object" ? options : {};
     const requestedMinimum = Number(source.minimumDurationMs);

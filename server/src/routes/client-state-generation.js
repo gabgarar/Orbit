@@ -3,7 +3,7 @@ import path from "node:path";
 
 export const CLIENT_STATE_GENERATION_FILE = ".orbit-client-state-generation.json";
 export const CLIENT_STATE_GENERATION_SCHEMA = "orbit.client-state-generation";
-export const CLIENT_STATE_GENERATION_VERSION = 1;
+const CLIENT_STATE_GENERATION_VERSION = 1;
 
 const INITIAL_CLIENT_STATE_GENERATION = Object.freeze({
     schema: CLIENT_STATE_GENERATION_SCHEMA,

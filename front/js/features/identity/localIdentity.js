@@ -44,7 +44,7 @@ import {
 export const LOCAL_ACCOUNT_DATA_SCHEMA = "orbit.identity.local-account-data";
 export const LOCAL_ACCOUNT_DATA_VERSION = 1;
 export const SUPPORTED_TOKEN_PROVIDERS = Object.freeze(["google", "microsoft"]);
-export { ADMIN_BOOTSTRAP_IDENTIFIER, LOCAL_IDENTITY_ROLES } from "./identityAdministration.js";
+export { ADMIN_BOOTSTRAP_IDENTIFIER } from "./identityAdministration.js";
 
 const MIN_PASSWORD_LENGTH = 12;
 const MAX_IDENTIFIER_LENGTH = 320;

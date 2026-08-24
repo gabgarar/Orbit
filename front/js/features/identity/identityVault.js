@@ -372,9 +372,6 @@ export async function hashLegacyLocalIdentifier(identifier, cryptoRef = globalTh
     return base64UrlEncode(new Uint8Array(digest));
 }
 
-/** @deprecated Use hashLegacyLocalIdentifier only to migrate a v1 index. */
-export const hashLocalIdentifier = hashLegacyLocalIdentifier;
-
 function selectorKeyHashName(key) {
     const hash = key?.algorithm?.hash;
     return typeof hash === "string" ? hash : hash?.name;

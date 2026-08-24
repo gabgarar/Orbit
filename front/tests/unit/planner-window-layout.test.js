@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-    PLANNER_WINDOW_MARGIN,
     initialPlannerWindowRect,
     isPlannerWindowCompactViewport,
     movePlannerWindowRect,
@@ -11,13 +10,15 @@ import {
     resizePlannerWindowRect
 } from "../../../react-ui/src/features/planner/plannerWindowLayout.js";
 
+const EXPECTED_WINDOW_MARGIN = 12;
+
 function assertFitsViewport(rect, viewport) {
-    assert.ok(rect.width <= viewport.width - (PLANNER_WINDOW_MARGIN * 2));
-    assert.ok(rect.height <= viewport.height - (PLANNER_WINDOW_MARGIN * 2));
-    assert.ok(rect.x >= PLANNER_WINDOW_MARGIN);
-    assert.ok(rect.y >= PLANNER_WINDOW_MARGIN);
-    assert.ok(rect.x + rect.width <= viewport.width - PLANNER_WINDOW_MARGIN);
-    assert.ok(rect.y + rect.height <= viewport.height - PLANNER_WINDOW_MARGIN);
+    assert.ok(rect.width <= viewport.width - (EXPECTED_WINDOW_MARGIN * 2));
+    assert.ok(rect.height <= viewport.height - (EXPECTED_WINDOW_MARGIN * 2));
+    assert.ok(rect.x >= EXPECTED_WINDOW_MARGIN);
+    assert.ok(rect.y >= EXPECTED_WINDOW_MARGIN);
+    assert.ok(rect.x + rect.width <= viewport.width - EXPECTED_WINDOW_MARGIN);
+    assert.ok(rect.y + rect.height <= viewport.height - EXPECTED_WINDOW_MARGIN);
 }
 
 test("planner window geometry always fits a desktop, narrow, or corrupted viewport", () => {
@@ -54,8 +55,8 @@ test("planner drag and eight-edge resize retain safe opposite edges without esca
 
     const moved = movePlannerWindowRect(initial, -1000, 1000, viewport);
     assertFitsViewport(moved, viewport);
-    assert.equal(moved.x, PLANNER_WINDOW_MARGIN);
-    assert.equal(moved.y + moved.height, viewport.height - PLANNER_WINDOW_MARGIN);
+    assert.equal(moved.x, EXPECTED_WINDOW_MARGIN);
+    assert.equal(moved.y + moved.height, viewport.height - EXPECTED_WINDOW_MARGIN);
 
     const west = resizePlannerWindowRect(initial, "w", 100, 0, viewport);
     assert.equal(west.x + west.width, initial.x + initial.width);
