@@ -4983,6 +4983,10 @@ function updateGroundStationLayer(layerId, patch = {}) {
     syncGroundStationVisibilityLinks();
     // A pass table is derived from the station contract, so never retain a
     // calculation made with its previous mask/RF/location values.
+    // Keep the selected AOS/LOS connector itself: its endpoints resolve the
+    // station contract on every Cesium frame, so it immediately moves to the
+    // edited position. Clearing it here would leave no visible link until an
+    // operator explicitly re-ran the pass analysis.
     cancelGroundStationPassAnalysis();
     // The aggregate timeline uses the identical station contract. Its cache
     // key includes this signature, but the currently displayed result must be
@@ -5522,32 +5526,53 @@ function showGroundStationAnalysisVisuals(station, satelliteLayerId, minimumElev
     if (!station || !satellite?.position) return;
     const satelliteId = getSatelliteSourceIdFromLayerId(satelliteLayerId);
     const satelliteRfProfile = getCatalogEntryMeta(satelliteId)?.rfProfile || null;
-    const stationPosition = Cesium.Cartesian3.fromDegrees(station.longitude_deg, station.latitude_deg, station.altitude_m);
     groundStationAnalysisLink = viewer.entities.add({
         id: `ground-station-link:${station.id}`,
         polyline: {
-            // AOS/LOS uses the same instantaneous line-of-sight geometry as
-            // the lightweight live links above: never interpolate along the
-            // Earth surface.
+            // Mantener geometría instantánea sin interpolación
             arcType: Cesium.ArcType.NONE,
             clampToGround: false,
+
             positions: new Cesium.CallbackProperty((time) => {
                 const currentStation = groundStationLayers.get(station.id);
                 const satellitePosition = satellite.position?.getValue?.(time);
+
                 if (!currentStation?.visible
                     || !isCompositeLayerActive(satelliteLayerId)
                     || getCompositeLayerVisibility(satelliteLayerId) !== true
-                    // Keep a selected analysis link subject to the same
-                    // temporal gate as ordinary station-to-satellite links.
                     || satellite.show !== true
                     || !satellitePosition) return [];
-                const target = evaluateGroundStationTarget(currentStation, stationPosition, satellitePosition, satelliteRfProfile);
-                if (!target.usable || target.elevationDeg < minimumElevationDeg) return [];
-                return [stationPosition, satellitePosition];
+
+                // Resolve the station endpoint on every Cesium frame. This
+                // guarantees that an edit is reflected without retaining an
+                // endpoint from the station's prior configuration.
+                const currentStationPosition = Cesium.Cartesian3.fromDegrees(
+                    currentStation.longitude_deg,
+                    currentStation.latitude_deg,
+                    currentStation.altitude_m
+                );
+                const target = evaluateGroundStationTarget(
+                    currentStation,
+                    currentStationPosition,
+                    satellitePosition,
+                    satelliteRfProfile
+                );
+                const currentMinimumElevationDeg = Number.isFinite(Number(currentStation.min_elevation_deg))
+                    ? Number(currentStation.min_elevation_deg)
+                    : minimumElevationDeg;
+
+                if (!target.usable || target.elevationDeg < currentMinimumElevationDeg) return [];
+
+                return [currentStationPosition, satellitePosition];
             }, false),
-            width: 1.8,
-            material: Cesium.Color.fromCssColorString("#69f0a5").withAlpha(0.88)
+
+            width: 2.2,
+            material: new Cesium.PolylineGlowMaterialProperty({
+                glowPower: 0.1,
+                color: Cesium.Color.fromCssColorString("#69f0a5").withAlpha(0.88)
+            })
         },
+
         properties: { layerType: "GROUND_STATION_ANALYSIS" }
     });
 }

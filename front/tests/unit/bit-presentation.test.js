@@ -9,6 +9,7 @@ import {
     initialBitSummary,
     visibleBitComponents
 } from "../../js/features/diagnostics/bitPresentation.js";
+import { buildBitDashboard } from "../../js/features/diagnostics/bitDashboardPresentation.js";
 
 function diagnosticsFixture(overrides = {}) {
     return normalizeSystemDiagnosticsPayload({
@@ -80,6 +81,85 @@ test("continuous BIT status ignores CI/CD and absent optional-parser warnings", 
 
     assert.equal(continuousBitStatus({ availability: "available", diagnostics, local: null }), "healthy");
     assert.equal(continuousBitStatus({ availability: "unavailable", diagnostics, local: null }), "warning");
+});
+
+test("the BIT dashboard separates service liveness, PBIT, time, and runtime validation sections", () => {
+    const diagnostics = diagnosticsFixture();
+    const dashboard = buildBitDashboard({
+        availability: "available",
+        diagnostics,
+        runtimeHealth: {
+            availability: "available",
+            gatewayStatus: "healthy",
+            pythonBackendStatus: "healthy"
+        }
+    });
+
+    assert.deepEqual(dashboard.sections.map(({ id }) => id), ["services", "time", "runtime"]);
+    assert.deepEqual(dashboard.sections[0].rows.map(({ id }) => id), [
+        "gateway", "python-backend", "diagnostics-api", "monitor"
+    ]);
+    assert.equal(dashboard.summaries.services.status, "healthy");
+    assert.equal(dashboard.pbit.result, "Superado");
+    assert.equal(dashboard.summaries.pbit.projectReady, true);
+    assert.equal(dashboard.summaries.time.status, "healthy");
+    assert.equal(dashboard.summaries.runtime.status, "healthy");
+    assert.equal(dashboard.sections.some(({ id }) => id === "scene"), false,
+        "inactive cached products must not occupy the operator dashboard");
+});
+
+test("the BIT dashboard keeps a time warning separate from healthy service liveness", () => {
+    const diagnostics = diagnosticsFixture({
+        erp: { status: "warning", message: "finals2000A usa predicción" }
+    });
+    const dashboard = buildBitDashboard({
+        availability: "available",
+        diagnostics,
+        runtimeHealth: {
+            availability: "available",
+            gatewayStatus: "healthy",
+            pythonBackendStatus: "healthy"
+        }
+    });
+
+    assert.equal(dashboard.summaries.services.status, "healthy");
+    assert.equal(dashboard.summaries.time.status, "warning");
+    assert.equal(dashboard.status, "warning");
+    assert.equal(dashboard.issues.some(({ id, sectionId }) => id === "erp" && sectionId === "time"), true);
+});
+
+test("the BIT dashboard keeps an unqueried service health check pending instead of reporting a false outage", () => {
+    const dashboard = buildBitDashboard({
+        availability: "loading",
+        diagnostics: null,
+        runtimeHealth: null
+    });
+
+    const services = dashboard.sections.find(({ id }) => id === "services");
+    assert.equal(services.rows.find(({ id }) => id === "gateway")?.status, "warning");
+    assert.equal(services.rows.find(({ id }) => id === "python-backend")?.status, "warning");
+    assert.equal(services.summary.error, 0);
+});
+
+test("the BIT dashboard adds scene data only when the matching sources are active", () => {
+    const diagnostics = diagnosticsFixture();
+    const dashboard = buildBitDashboard({
+        availability: "available",
+        diagnostics,
+        runtimeHealth: {
+            availability: "available",
+            gatewayStatus: "healthy",
+            pythonBackendStatus: "healthy"
+        },
+        local: {
+            sp3: { activeCount: 1, status: "healthy" },
+            oem: { activeCount: 1, status: "healthy" },
+            mtr: { active: true, status: "healthy" }
+        }
+    });
+
+    assert.deepEqual(dashboard.sections.find(({ id }) => id === "scene")?.rows.map(({ id }) => id), ["sp3", "oem"]);
+    assert.equal(dashboard.sections.find(({ id }) => id === "time")?.rows.some(({ id }) => id === "mtr"), true);
 });
 
 test("IBIT is only marked passed after an explicit terminal ready ledger", () => {

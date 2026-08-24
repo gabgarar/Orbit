@@ -2,45 +2,49 @@
 
 [Home](../index.md) · [User Guide](index.md) · [Validation](../operations/validation.md)
 
-The **Built-In Test (BIT)** icon, to the right of **Help**, opens a read-only
-diagnostics panel. It does not start long propagations or alter an orbit: it
-shows the **IBIT** initial-startup result and Orbit's current continuous state.
+The **Built-In Test (BIT)** icon, to the right of **Help**, opens the
+continuous, read-only diagnostics panel. It does not start long propagations or
+alter an orbit. The redesigned panel separates service availability, the
+startup **PBIT**, time data, and operational validation so a data-quality
+warning is not mistaken for a service failure.
 
 ## Statuses and refresh
 
 BIT polls `/api/system/diagnostics` continuously from application startup,
-including while its panel is closed. The icon dot summarizes visible
-components; **Refresh** only requests an immediate non-blocking poll. Each
-card shows **Healthy**, **Warning**, or **Error**, together with the last
-validation time published by that component. Against an older backend it tries
-`/api/diagnostics` and explicitly reports missing remote data instead of
-inventing a healthy status.
+including while its panel is closed, and uses `/api/diagnostics` for older
+backends. In parallel it reads `GET /health`, the liveness check for the **web
+gateway** and its **Python backend**. A `200` means the gateway can reach the
+backend; a `503` can mean the gateway responded but the backend is not yet
+available. Neither result decides project readiness.
 
-## What it checks
+The icon dot summarizes visible components; **Refresh** only requests an
+immediate non-blocking poll. Each row shows **Healthy**, **Warning**, or
+**Error**, together with its last published validation time. If the diagnostics
+channel is unavailable, the panel says so instead of inventing a healthy state.
 
-| Card | Published information |
+## Panel sections
+
+| Section | Meaning |
 | --- | --- |
-| Runtime monitor | Whether the service's continuous check loop is still running; a failure here is never hidden merely because scene products are absent. |
-| ERP / EOP loader | Whether C01/C04 loaded, update date, provenance URL, coverage, and cache state. |
-| Initial IBIT | Startup result, explicit `ready`/`projectReady` decision, published steps, warnings, errors, timestamps, and known progress. It is marked **Passed** only after an explicit terminal and ready ledger. |
-| SP3, OEM, and MTR | Shown only when the scene contains the respective product or range. SP3 also includes product count and scene-known local EOP overlap. |
-| Propagators and forces | Bounded deterministic probes for two-body energy, Cowell/RK4, J2/J3/J4, plus geopotential, drag, and SRP availability under the current time contract. |
-| Gravity cache | Per-model EGM96/EGM2008 source, local cache and coefficient-file state, digest, detected `maxDegree`/`maxOrder` and coverage profile, freshness/fallback state, and any validation error. |
-| Time manager (MTR) | Master Time Range, clamp state, and active SP3/OEM scene layers. |
-| Reference frames | ITRF-to-EME2000 probe, norm residual, and EOP quality of the available route. |
-BIT does not show CI/CD: a downloadable delivery must already originate from
-an approved CI/CD revision. Runtime operational checks must not be confused
-with release approval.
+| **Orbit services** | Web gateway, Python backend, diagnostics channel, and continuous monitor. This is availability, not authorization to create projects. |
+| **Startup PBIT** | Startup ledger, its steps, warnings, errors, and progress, plus the readiness decision. |
+| **Time and reference** | ERP/EOP, the reference-frame route, and, when present, the scene clock (MTR). Limited ERP coverage or a prediction is an operational warning; it does not by itself fail the gateway or Python backend. |
+| **Runtime validation** | Bounded probes for gravity models, propagators, and force models. They are runtime checks, not CI/CD or release/mission certification. |
+| **Scene data** | SP3 and OEM are shown only when sources are active in the scene. An absent optional source is not displayed as a failure. |
 
-## Reading the initial IBIT
+MTR is contextual as well: it is shown only when the scene has an active
+master time range. Its local range and clamp facts are not fabricated from a
+remote card.
 
-The **initial IBIT** block is the source of truth for whether Orbit may
-accept gated project work. `ready: true` / `projectReady: true` are required;
-the state is normally `ready`, or `degraded-ready` with its visible caveat. A
-container healthcheck, a card marked Healthy, or a terminal warning does not
-replace that decision. When it is `pending` or `blocked`, inspect
-`requiredSteps` and `blockers` rather than guessing which data are still
-missing.
+## Startup PBIT and readiness
+
+The **startup PBIT** block (the `startup` ledger, also called initial IBIT) is
+the source of truth for whether Orbit may accept gated project work.
+`ready: true` / `projectReady: true` are required; the state is normally
+`ready`, or `degraded-ready` with its visible caveat. A healthy `/health`, a
+card marked Healthy, or a terminal warning does not replace that decision.
+When it is `pending` or `blocked`, inspect `requiredSteps` and `blockers`
+rather than guessing which data are still missing.
 
 The startup progress details show the current gravity model, completed and
 total models, and one entry per model. Download percentage is deliberately
@@ -54,12 +58,12 @@ preview/create and orbit-parameter work with the published HTTP 503 readiness
 reason. A first download can take longer; a later valid cached start normally
 only validates local files and finishes faster.
 
-## Initial BIT notice when Orbit opens
+## Startup PBIT notice when Orbit opens
 
-When the terminal **initial BIT check** ledger (also called PBIT or initial
-IBIT) publishes one or more warnings but no blocking error, Orbit shows a
-compact, non-modal card when the application opens. It summarizes up to three
-actionable reasons and offers
+When the terminal **startup PBIT** ledger (also called initial IBIT) publishes
+one or more warnings but no blocking error, Orbit shows a compact, non-modal
+card when the application opens. It summarizes up to three actionable reasons
+and offers
 **Review BIT** to open the complete diagnostic. It does not change `ready`,
 `projectReady`, or the project-creation decision: a degradable warning can
 still permit work under the contract published by the service.
@@ -81,9 +85,10 @@ the startup surface and in BIT as conditions requiring correction.
 
 An EOP warning can mean that the C01 copy is older than seven days, its
 coverage does not reach the current date, or IERS did not respond and Orbit is
-keeping the last valid copy. If no valid copy exists, visualization may use
-nominal terrestrial rotation. That route does not automatically turn an SP3
-into **ITRF (with ERP applied)** or unlock strict ECI.
+keeping the last valid copy. It is a time-and-reference warning, not an
+automatic service-availability failure. If no valid copy exists, visualization
+may use nominal terrestrial rotation. That route does not automatically turn an
+SP3 into **ITRF (with ERP applied)** or unlock strict ECI.
 
 ## Reading a gravity-cache card
 

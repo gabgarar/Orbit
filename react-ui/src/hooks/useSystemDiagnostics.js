@@ -4,11 +4,13 @@ import {
     DIAGNOSTICS_LOCAL_STATE_EVENT,
     DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT,
     DIAGNOSTICS_STATE_EVENT,
+    fetchRuntimeHealth,
     fetchSystemDiagnostics
 } from "../../../front/js/features/diagnostics/diagnosticsContract.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 8_000;
+const RUNTIME_HEALTH_POLL_INTERVAL_MS = 30_000;
 
 function nowUtc() {
     return new Date().toISOString();
@@ -19,6 +21,7 @@ function initialState() {
         availability: "loading",
         endpoint: "",
         diagnostics: null,
+        runtimeHealth: null,
         local: null,
         checkedAt: "",
         error: "",
@@ -45,6 +48,8 @@ export default function useSystemDiagnostics({ enabled = true, pollIntervalMs = 
     const inFlightRef = useRef(false);
     const abortRef = useRef(null);
     const intervalRef = useRef(null);
+    const runtimeHealthRef = useRef(null);
+    const runtimeHealthCheckedAtRef = useRef(0);
     const stopWhenRef = useRef(stopWhen);
     stopWhenRef.current = stopWhen;
     const endpoints = useMemo(() => DIAGNOSTIC_ENDPOINT_CANDIDATES, []);
@@ -58,7 +63,7 @@ export default function useSystemDiagnostics({ enabled = true, pollIntervalMs = 
         window.dispatchEvent(new Event(DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT));
     }, []);
 
-    const refresh = useCallback(async () => {
+    const refresh = useCallback(async ({ forceRuntimeHealth = false } = {}) => {
         if (!enabled || inFlightRef.current || typeof window === "undefined") return null;
         inFlightRef.current = true;
         const controller = new AbortController();
@@ -72,10 +77,23 @@ export default function useSystemDiagnostics({ enabled = true, pollIntervalMs = 
 
         try {
             const fetchImpl = typeof window.fetch === "function" ? window.fetch.bind(window) : null;
-            const result = await fetchSystemDiagnostics(fetchImpl, endpoints, { signal: controller.signal });
+            const shouldRefreshRuntimeHealth = forceRuntimeHealth
+                || !runtimeHealthRef.current
+                || (Date.now() - runtimeHealthCheckedAtRef.current) >= RUNTIME_HEALTH_POLL_INTERVAL_MS;
+            const [result, runtimeHealth] = await Promise.all([
+                fetchSystemDiagnostics(fetchImpl, endpoints, { signal: controller.signal }),
+                shouldRefreshRuntimeHealth
+                    ? fetchRuntimeHealth(fetchImpl, undefined, { signal: controller.signal })
+                    : Promise.resolve(runtimeHealthRef.current)
+            ]);
             if (!mountedRef.current || controller.signal.aborted) return result;
+            if (shouldRefreshRuntimeHealth && runtimeHealth) {
+                runtimeHealthRef.current = runtimeHealth;
+                runtimeHealthCheckedAtRef.current = Date.now();
+            }
             const snapshot = {
                 ...result,
+                runtimeHealth: runtimeHealthRef.current,
                 checkedAt: nowUtc()
             };
             publishDiagnosticsState(snapshot);
@@ -96,6 +114,7 @@ export default function useSystemDiagnostics({ enabled = true, pollIntervalMs = 
                 availability: "unavailable",
                 endpoint: "",
                 diagnostics: null,
+                runtimeHealth: runtimeHealthRef.current,
                 error: timedOut
                     ? "La consulta de diagn\u00f3sticos super\u00f3 8 s. Comprueba que Orbit est\u00e1 iniciado."
                     : String(error?.message || "No se pudo consultar el diagn\u00f3stico del sistema."),
@@ -126,7 +145,7 @@ export default function useSystemDiagnostics({ enabled = true, pollIntervalMs = 
     useEffect(() => {
         if (!enabled || typeof window === "undefined") return undefined;
         mountedRef.current = true;
-        void refresh();
+        void refresh({ forceRuntimeHealth: true });
         const interval = window.setInterval(() => {
             requestLocalState();
             void refresh();

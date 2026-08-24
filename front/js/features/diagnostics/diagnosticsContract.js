@@ -16,6 +16,11 @@ export const DIAGNOSTIC_ENDPOINT_CANDIDATES = Object.freeze([
     "/api/diagnostics"
 ]);
 
+// Liveness is separate from diagnostics/readiness: the gateway can answer
+// while PBIT is still running, and the diagnostics monitor can be healthy
+// while its Python worker is still coming up.
+export const RUNTIME_HEALTH_ENDPOINT = "/health";
+
 export const DIAGNOSTIC_COMPONENTS = Object.freeze([
     { id: "startup", label: "Startup sequence" },
     { id: "monitor", label: "Runtime monitor" },
@@ -228,6 +233,90 @@ export function findDiagnosticComponent(diagnostics, id) {
  * Fetch a supported endpoint in order.  A missing endpoint is a controlled
  * outcome, not a rejected import/propagation operation.
  */
+/**
+ * Normalize the public gateway liveness response without conflating it with
+ * project readiness or the richer diagnostics ledger. A non-2xx response can
+ * still be useful: it proves the gateway answered while its Python worker is
+ * not ready yet.
+ */
+export function normalizeRuntimeHealthPayload(payload, { responseOk = true } = {}) {
+    const source = record(payload) || {};
+    const publishedStatus = normalizeDiagnosticStatus(
+        firstValue(source, ["status", "health", "state", "result"]),
+        "warning"
+    );
+    const pythonPublished = firstValue(source, [
+        "python_backend", "pythonBackend", "backend", "python", "worker"
+    ]);
+    const pythonBackendStatus = pythonPublished === undefined
+        ? "warning"
+        : normalizeDiagnosticStatus(pythonPublished, "warning");
+    const gatewayStatus = responseOk
+        ? "healthy"
+        : publishedStatus === "error"
+            ? "error"
+            : "warning";
+    const status = [gatewayStatus, pythonBackendStatus, publishedStatus].includes("error")
+        ? "error"
+        : [gatewayStatus, pythonBackendStatus, publishedStatus].includes("warning")
+            ? "warning"
+            : "healthy";
+    return {
+        status,
+        gatewayStatus,
+        pythonBackendStatus,
+        raw: source
+    };
+}
+
+/** Fetch the actual local gateway/Python liveness snapshot for the BIT. */
+export async function fetchRuntimeHealth(fetchImpl = globalThis.fetch, endpoint = RUNTIME_HEALTH_ENDPOINT, options = {}) {
+    if (typeof fetchImpl !== "function") {
+        return {
+            availability: "unavailable",
+            endpoint: "",
+            status: "error",
+            gatewayStatus: "error",
+            pythonBackendStatus: "warning",
+            error: "Fetch no esta disponible en este entorno.",
+            raw: {}
+        };
+    }
+
+    try {
+        const response = await fetchImpl(endpoint, {
+            method: "GET",
+            cache: "no-store",
+            headers: { Accept: "application/json" },
+            signal: options.signal
+        });
+        let payload = {};
+        try {
+            payload = await response?.json?.() || {};
+        } catch {
+            payload = {};
+        }
+        const normalized = normalizeRuntimeHealthPayload(payload, { responseOk: response?.ok === true });
+        return {
+            availability: "available",
+            endpoint,
+            ...normalized,
+            error: response?.ok ? "" : `El servicio respondio HTTP ${response?.status ?? "?"}.`
+        };
+    } catch (error) {
+        if (error?.name === "AbortError") throw error;
+        return {
+            availability: "unavailable",
+            endpoint: "",
+            status: "error",
+            gatewayStatus: "error",
+            pythonBackendStatus: "warning",
+            error: text(error?.message) || "No se pudo consultar la disponibilidad del servicio.",
+            raw: {}
+        };
+    }
+}
+
 export async function fetchSystemDiagnostics(fetchImpl = globalThis.fetch, endpoints = DIAGNOSTIC_ENDPOINT_CANDIDATES, options = {}) {
     if (typeof fetchImpl !== "function") {
         return { availability: "unavailable", endpoint: "", diagnostics: null, error: "Fetch no est\u00e1 disponible en este entorno." };

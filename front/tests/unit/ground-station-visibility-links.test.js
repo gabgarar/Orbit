@@ -79,6 +79,50 @@ test("the selected AOS/LOS connector follows the same layer-visibility contract"
         "the one-off analysis line must also disappear when its satellite eye is closed");
 });
 
+test("updating a station preserves the dynamic selected connector while invalidating its obsolete pass analysis", () => {
+    const update = sourceBetween(
+        "function updateGroundStationLayer(layerId, patch = {})",
+        "function buildGroundStationTelemetry"
+    );
+    const cancelPassAnalysis = update.indexOf("cancelGroundStationPassAnalysis()");
+
+    assert.ok(cancelPassAnalysis >= 0,
+        "a location/RF edit must still invalidate the pre-edit pass calculation and table");
+    assert.doesNotMatch(update, /clearGroundStationAnalysisVisuals\(\)/,
+        "the selected connector has dynamic endpoints and must remain visible at the edited station instead of disappearing");
+});
+
+test("the selected AOS/LOS connector resolves the station endpoint inside each Cesium callback", () => {
+    const analysis = sourceBetween(
+        "function showGroundStationAnalysisVisuals",
+        "function publishGroundStationsState"
+    );
+    const callbackStart = analysis.indexOf("positions: new Cesium.CallbackProperty");
+    const callback = analysis.slice(callbackStart, analysis.indexOf("}, false)", callbackStart));
+
+    assert.ok(callbackStart >= 0, "the selected connector must retain dynamic endpoints");
+    assert.match(callback, /const currentStationPosition\s*=\s*Cesium\.Cartesian3\.fromDegrees\(/);
+    assert.match(callback, /evaluateGroundStationTarget\([\s\S]*?currentStationPosition/);
+    assert.match(callback, /return \[currentStationPosition, satellitePosition\]/);
+    assert.doesNotMatch(analysis.slice(0, callbackStart), /const stationPosition\s*=\s*Cesium\.Cartesian3\.fromDegrees/,
+        "a pre-captured station position would keep the old location after an edit");
+});
+
+test("the selected connector applies the station's current elevation mask after an edit", () => {
+    const analysis = sourceBetween(
+        "function showGroundStationAnalysisVisuals",
+        "function publishGroundStationsState"
+    );
+    const callbackStart = analysis.indexOf("positions: new Cesium.CallbackProperty");
+    const callback = analysis.slice(callbackStart, analysis.indexOf("}, false)", callbackStart));
+
+    assert.ok(callbackStart >= 0, "the selected connector must remain dynamic");
+    assert.match(callback, /currentStation\.min_elevation_deg/,
+        "an edit to the station mask must affect the existing selected connector immediately");
+    assert.doesNotMatch(callback, /target\.elevationDeg\s*<\s*minimumElevationDeg/,
+        "a pre-edit analysis threshold must not keep the connector visible against the new station mask");
+});
+
 test("ground-station connectors use a straight Cartesian line of sight, never an Earth arc", () => {
     const liveLinks = sourceBetween(
         "function syncGroundStationVisibilityLinks()",

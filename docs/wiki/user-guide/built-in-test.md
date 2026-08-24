@@ -2,45 +2,51 @@
 
 [Inicio](../index.md) · [Guía de usuario](index.md) · [Validación](../operations/validation.md)
 
-El icono **Built-In Test (BIT)**, situado a la derecha de **Help**, abre un
-panel de diagnóstico de solo lectura. No inicia propagaciones largas ni cambia
-una órbita: presenta el resultado del **IBIT** (la comprobación inicial de
-arranque) y el estado continuo actual de Orbit y de la escena.
+El icono **Built-In Test (BIT)**, situado a la derecha de **Help**, abre el
+panel continuo de diagnóstico de solo lectura. No inicia propagaciones largas
+ni cambia una órbita. El rediseño separa la disponibilidad de los servicios,
+el **PBIT de inicio**, los datos de tiempo y las validaciones operativas para
+que un aviso de calidad no parezca un fallo del servicio.
 
 ## Estados y actualización
 
-El BIT consulta `/api/system/diagnostics` continuamente desde que se abre
-Orbit, también con el panel cerrado. El punto del icono resume el estado de
-los componentes visibles; **Actualizar** solo solicita una consulta inmediata
-sin bloquear la interfaz. Cada tarjeta muestra **Healthy**, **Warning** o
-**Error** y su última hora de validación publicada. Si se ejecuta contra una
-versión anterior del backend, intenta `/api/diagnostics` y deja claro que los
-datos remotos no están disponibles en vez de inventar un estado saludable.
+BIT consulta continuamente `/api/system/diagnostics` desde que se abre Orbit,
+también con el panel cerrado, y usa `/api/diagnostics` como compatibilidad con
+backends anteriores. En paralelo lee `GET /health`: es la comprobación de vida
+del **gateway web** y de su **backend Python**. Un `200` indica que el gateway
+puede alcanzar al backend; un `503` puede indicar que el gateway respondió pero
+el backend todavía no está disponible. Ninguno de los dos resultados decide la
+readiness del proyecto.
 
-## Qué comprueba
+El punto del icono resume los componentes visibles; **Actualizar** solicita
+una consulta inmediata sin bloquear la interfaz. Cada fila muestra
+**Healthy**, **Warning** o **Error** y la última validación publicada. Si el
+canal de diagnósticos no responde, el panel lo indica en vez de inventar un
+estado saludable.
 
-| Tarjeta | Información publicada |
+## Secciones del panel
+
+| Sección | Qué significa |
 | --- | --- |
-| Monitor del runtime | Si el ciclo de comprobación continuo del servicio sigue activo; un fallo aquí nunca queda oculto por la ausencia de productos de escena. |
-| ERP / EOP loader | Si se cargó C01/C04, fecha de actualización, URL de procedencia, cobertura y estado de caché. |
-| IBIT inicial | Resultado del arranque, decisión explícita `ready`/`projectReady`, pasos publicados, avisos, errores, tiempos y progreso conocido. Solo se marca **Superado** cuando el ledger terminal y `ready` son explícitos. |
-| SP3, OEM y MTR | Se muestran solo si la escena contiene el producto o rango correspondiente. Para SP3 incluye el número de productos y el solape/local EOP conocido por la escena. |
-| Propagadores y fuerzas | Sondas deterministas de energía two-body, Cowell/RK4, J2/J3/J4 y disponibilidad de geopotencial, arrastre y SRP bajo el contrato temporal actual. |
-| Caché de gravedad | Fuente EGM96/EGM2008 por modelo, estado de caché y fichero de coeficientes local, huella, `maxDegree`/`maxOrder` detectados y perfil de cobertura, frescura/fallback y cualquier error de validación. |
-| Time manager (MTR) | Rango temporal maestro, estado del clamp y capas SP3/OEM activas de la escena. |
-| Marcos de referencia | Sonda ITRF a EME2000, residual de norma y calidad EOP de la ruta disponible. |
-El BIT no muestra CI/CD: una entrega descargable debe proceder de una revisión
-de CI/CD ya aprobada. Las comprobaciones operacionales en ejecución no deben
-confundirse con la aprobación de una release.
+| **Servicios de Orbit** | Gateway web, backend Python, canal de diagnósticos y monitor continuo. Describe disponibilidad; no autoriza crear proyectos. |
+| **PBIT de inicio** | El ledger de arranque, sus pasos, avisos, errores y progreso, junto con la decisión de readiness. |
+| **Tiempo y referencia** | ERP/EOP, ruta de marcos y, cuando existe, el reloj de escena (MTR). Una cobertura ERP limitada o una predicción es un aviso operacional: no hace fallar por sí sola al gateway ni al backend Python. |
+| **Validaciones del runtime** | Sondas acotadas de modelos de gravedad, propagadores y fuerzas. Son comprobaciones en ejecución; no son CI/CD ni una certificación de release o de misión. |
+| **Datos de la escena** | SP3 y OEM solo se muestran cuando hay fuentes activas en la escena. La ausencia de una fuente opcional no se presenta como un fallo. |
 
-## Interpretar el IBIT inicial
+El MTR también es contextual: solo se publica cuando la escena tiene un rango
+temporal maestro activo. Sus hechos locales (rango y clamp) no se fabrican a
+partir de una tarjeta remota.
 
-El bloque **IBIT inicial** es la fuente de verdad para saber si Orbit
-puede aceptar trabajo de proyecto bloqueado. Exige `ready: true` /
-`projectReady: true`; el estado normalmente es `ready`, o `degraded-ready` con
-su advertencia visible. Un healthcheck del contenedor, una tarjeta Healthy o un
-aviso terminal no sustituyen esa decisión. Si está en `pending` o `blocked`,
-revise `requiredSteps` y `blockers` en lugar de adivinar qué datos faltan.
+## PBIT de inicio y readiness
+
+El bloque **PBIT de inicio** (ledger `startup`, también llamado IBIT inicial)
+es la fuente de verdad para saber si Orbit puede aceptar trabajo de proyecto
+bloqueado. Exige `ready: true` / `projectReady: true`; el estado normalmente
+es `ready`, o `degraded-ready` con su advertencia visible. Un `/health`
+saludable, una tarjeta Healthy o un aviso terminal no sustituyen esa decisión.
+Si está en `pending` o `blocked`, revise `requiredSteps` y `blockers` en lugar
+de adivinar qué datos faltan.
 
 Los detalles de progreso muestran el modelo de gravedad actual, modelos
 completados/totales y una entrada por modelo. El porcentaje de descarga es
@@ -56,11 +62,11 @@ parámetros orbitales con la razón de readiness HTTP 503 publicada. La primera
 descarga puede tardar más; un arranque posterior con caché válida normalmente
 solo valida ficheros locales y termina antes.
 
-## Aviso de la comprobación inicial de BIT al abrir Orbit
+## Aviso del PBIT al abrir Orbit
 
-Cuando el ledger terminal de la **comprobación inicial de BIT** (también llamada
-PBIT o IBIT inicial) publica uno o más avisos pero no un error bloqueante,
-Orbit muestra una tarjeta compacta y no modal al abrir la aplicación. Resume
+Cuando el ledger terminal del **PBIT de inicio** (también llamado IBIT inicial)
+publica uno o más avisos pero no un error bloqueante, Orbit muestra una tarjeta
+compacta y no modal al abrir la aplicación. Resume
 hasta tres motivos accionables y ofrece
 **Revisar BIT** para abrir el diagnóstico completo. No cambia `ready`,
 `projectReady` ni la decisión de creación de proyecto: un aviso degradable
@@ -84,9 +90,10 @@ requiere corrección.
 
 Una advertencia puede significar que la copia C01 tiene más de siete días,
 que su cobertura no alcanza la fecha actual o que IERS no respondió y Orbit
-conserva la última copia válida. Si no existe copia válida, la vista puede usar
-una rotación terrestre nominal. Esa ruta no convierte automáticamente un SP3
-en **ITRF (con ERP aplicado)** ni habilita ECI estricto.
+conserva la última copia válida. Es un aviso sobre tiempo y referencia, no un
+fallo automático de disponibilidad de servicio. Si no existe copia válida, la
+vista puede usar una rotación terrestre nominal. Esa ruta no convierte
+automáticamente un SP3 en **ITRF (con ERP aplicado)** ni habilita ECI estricto.
 
 ## Interpretar una tarjeta de caché de gravedad
 

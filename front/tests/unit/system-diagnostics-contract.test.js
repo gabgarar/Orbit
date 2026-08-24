@@ -8,10 +8,13 @@ import {
     DIAGNOSTICS_LOCAL_STATE_EVENT,
     DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT,
     DIAGNOSTICS_STATE_EVENT,
+    RUNTIME_HEALTH_ENDPOINT,
+    fetchRuntimeHealth,
     fetchSystemDiagnostics,
     findDiagnosticComponent,
     normalizeDiagnosticComponent,
     normalizeDiagnosticStatus,
+    normalizeRuntimeHealthPayload,
     normalizeSystemDiagnosticsPayload
 } from "../../js/features/diagnostics/diagnosticsContract.js";
 
@@ -99,6 +102,44 @@ test("an unavailable diagnostics endpoint is an explicit warning state, not a fa
     assert.match(result.error, /connection refused/);
 });
 
+test("runtime health exposes gateway and Python liveness without claiming project readiness", async () => {
+    const requests = [];
+    const healthy = await fetchRuntimeHealth(async (url) => {
+        requests.push(url);
+        return {
+            ok: true,
+            status: 200,
+            json: async () => ({ status: "ok", python_backend: "ok" })
+        };
+    });
+
+    assert.deepEqual(requests, [RUNTIME_HEALTH_ENDPOINT]);
+    assert.equal(healthy.availability, "available");
+    assert.equal(healthy.gatewayStatus, "healthy");
+    assert.equal(healthy.pythonBackendStatus, "healthy");
+    assert.equal(healthy.status, "healthy");
+    assert.equal("projectReady" in healthy, false);
+
+    const starting = normalizeRuntimeHealthPayload(
+        { status: "starting", python_backend: "unavailable" },
+        { responseOk: false }
+    );
+    assert.equal(starting.gatewayStatus, "warning");
+    assert.equal(starting.pythonBackendStatus, "warning");
+    assert.equal(starting.status, "warning");
+});
+
+test("unreachable runtime health remains an explicit service error", async () => {
+    const result = await fetchRuntimeHealth(async () => {
+        throw new Error("connection refused");
+    });
+
+    assert.equal(result.availability, "unavailable");
+    assert.equal(result.gatewayStatus, "error");
+    assert.equal(result.status, "error");
+    assert.match(result.error, /connection refused/);
+});
+
 test("Built-In Test is continuous, contextual, and preserves its cache event contract", () => {
     const panel = readFileSync(
         new URL("../../../react-ui/src/components/overlays/BuiltInTestPanel.jsx", import.meta.url),
@@ -126,6 +167,10 @@ test("Built-In Test is continuous, contextual, and preserves its cache event con
         new URL("../../js/features/diagnostics/diagnosticsContract.js", import.meta.url),
         "utf8"
     );
+    const dashboard = readFileSync(
+        new URL("../../js/features/diagnostics/bitDashboardPresentation.js", import.meta.url),
+        "utf8"
+    );
 
     assert.match(toolbar, /topBuiltInTestBtn/);
     assert.match(toolbar, /Built-In Test/);
@@ -133,10 +178,15 @@ test("Built-In Test is continuous, contextual, and preserves its cache event con
     assert.doesNotMatch(toolbar, /<span>Built-In Test<\/span>/);
     assert.match(panel, /role="dialog"/);
     assert.match(panel, /aria-modal="true"/);
-    assert.match(panel, /visibleBitComponents/);
-    assert.match(panel, /IBIT/);
-    assert.match(panel, /SP3 \/ ERP overlap/);
-    assert.match(panel, /Timeline clamp/);
+    assert.match(panel, /buildBitDashboard/);
+    assert.match(panel, /PBIT de inicio/);
+    assert.match(dashboard, /Servicios de Orbit/);
+    assert.match(dashboard, /Tiempo y referencia/);
+    assert.match(dashboard, /Validaciones del runtime/);
+    assert.match(dashboard, /Gateway web/);
+    assert.match(dashboard, /Backend Python/);
+    assert.match(panel, /ERP aplicado/);
+    assert.match(panel, /Ajuste de timeline/);
     assert.doesNotMatch(panel, /quality\.yml/);
     assert.doesNotMatch(panel, /docs-pages\.yml/);
     assert.match(panel, /lastValidatedAt/);
@@ -155,6 +205,8 @@ test("Built-In Test is continuous, contextual, and preserves its cache event con
     assert.doesNotMatch(app, /stopWhen:/);
     assert.match(hook, /DIAGNOSTICS_STATE_EVENT/);
     assert.match(hook, /DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT/);
+    assert.match(hook, /fetchRuntimeHealth/);
+    assert.match(contract, /RUNTIME_HEALTH_ENDPOINT/);
     assert.match(hook, /setInterval/);
     assert.match(runtime, /DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT/);
     assert.match(runtime, /publishDiagnosticsLocalState/);
