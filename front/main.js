@@ -125,7 +125,7 @@ import {
     buildTleOperationalTimeRange,
     resolveActiveSatelliteTimeDomain
 } from "./js/runtime/simulation/activeSatelliteTimeDomain.js";
-import { createSimulationState, setSimulationRange, SIMULATION_MODE_RANGE, SIMULATION_MODE_REALTIME, SIMULATION_MODE_STATIC } from "./js/runtime/simulation/simulationState.js";
+import { createSimulationState, getActiveSimulationRange, setSimulationRange, SIMULATION_MODE_RANGE, SIMULATION_MODE_REALTIME, SIMULATION_MODE_STATIC } from "./js/runtime/simulation/simulationState.js";
 import { createSimulationController } from "./js/runtime/simulation/simulationController.js";
 import { resolveSimulationModeRequest } from "./js/runtime/simulation/modePolicy.js";
 import {
@@ -204,6 +204,19 @@ import {
     updateOperation
 } from "./js/features/operations/operationsContract.js";
 import { createPropagatedParametersContextBuilder } from "./js/features/propagatedParameters/context.js";
+import {
+    buildPropagatedParametersExport,
+    buildPropagatedParametersInspector
+} from "./js/features/propagatedParameters/inspectorContract.js";
+import {
+    normalizePropagatedParametersSamplingInterval,
+    resolvePropagatedParametersSampling
+} from "./js/features/propagatedParameters/sampling.js";
+import {
+    createPropagationHistoryEntry,
+    normalizePropagationHistory,
+    updatePropagationHistoryEntry
+} from "./js/features/propagatedParameters/propagationHistory.js";
 import {
     DIAGNOSTICS_STATE_EVENT,
     DIAGNOSTICS_LOCAL_STATE_EVENT,
@@ -546,14 +559,34 @@ let propagatedParametersRequestId = 0;
 let propagatedParametersOperationId = null;
 let propagatedParametersRefreshTimer = null;
 let propagatedParametersLastContext = null;
+let propagatedParametersObservedSimulationRangeKey = "";
+// Unlike the global activity ledger, this compact audit belongs to the open
+// project and survives a local-vault/project-file round trip. It never holds
+// ephemeris samples or a backend response body.
+let propagatedParametersHistory = [];
+let propagatedParametersHistorySequence = 0;
+// This is a presentation/request preference only. The simulation range
+// remains owned by the shared clock and is never changed by the inspector.
+let propagatedParametersSamplingIntervalSeconds = null;
+// Omit this field to ask the service for the source-native state. A concrete
+// value is only a requested output frame: the server still validates its
+// transform/EOP route over the whole range before publishing any result.
+let propagatedParametersRequestedOutputFrame = null;
 const propagatedParametersInspectorState = {
     open: false,
     status: "idle",
     target: null,
     range: null,
+    simulationRange: null,
+    sampling: null,
+    samplingIntervalSeconds: null,
+    requestedOutputFrame: null,
+    inspector: null,
+    exportMetadata: null,
     result: null,
     earthOrientationPreflight: null,
     earthOrientationProvenance: null,
+    history: [],
     error: ""
 };
 let manualOrbitDesignSession = null;
@@ -670,8 +703,7 @@ function requestProjectActionDialog(mode) {
 const SIMULATION_TIMELINE_STEPS = 10000;
 const SIMULATION_LONG_RANGE_WARNING_HOURS = 24 * 7;
 const PROPAGATED_PARAMETERS_DEFAULT_HOURS = 24;
-const PROPAGATED_PARAMETERS_MIN_SAMPLES = 25;
-const PROPAGATED_PARAMETERS_MAX_SAMPLES = 121;
+const PROPAGATED_PARAMETERS_OUTPUT_FRAMES = new Set(["TEME", "ITRF", "EME2000", "GCRF", "ICRF"]);
 const PROPAGATED_PARAMETERS_MANUAL_REFRESH_DEBOUNCE_MS = 280;
 // The detailed AOS/LOS panel remains deliberately dense: it is the
 // authoritative operator result and drives the elevation plot.  The station
@@ -743,6 +775,9 @@ const projectLifecycle = createProjectLifecycle({
     getPlannerHiddenLayerIds: getPlannerHiddenLayerIdsForProject,
     restorePlannerHiddenLayerIds: restorePlannerHiddenLayerIdsFromProject,
     clearPlannerHiddenLayerIds,
+    getPropagationHistory: getPropagatedParametersHistoryForProject,
+    restorePropagationHistory: restorePropagatedParametersHistoryForProject,
+    clearPropagationHistory: clearPropagatedParametersHistoryForProject,
     getSimulationState: () => simulationState,
     getMasterTimeRange: () => masterTimeRangeDetail(),
     clearMasterTimeRange: clearMasterTimeRangeForProject,
@@ -9527,8 +9562,92 @@ const buildPropagatedParametersContext = createPropagatedParametersContextBuilde
     getManualOrbitProjectEntry,
     getLayerDisplayName,
     getSimulationTelemetryContext,
+    getActiveSimulationRange: () => getActiveSimulationRange(simulationState),
     getManualOrbitDefinitionSource: () => manualOrbitDefinitionSource
 });
+
+function nextPropagatedParametersHistoryId() {
+    propagatedParametersHistorySequence += 1;
+    return `propagation:${Date.now()}:${propagatedParametersHistorySequence}`;
+}
+
+function propagatedParametersHistorySource(context, target) {
+    const declared = context?.catalogMeta?.sourceFormat
+        ?? context?.catalogMeta?.source_format
+        ?? context?.catalogMeta?.format
+        ?? context?.sourceFormat
+        ?? context?.source_format
+        ?? (context?.kind === "manual-design" || context?.manualOrbit ? "manual" : null)
+        ?? target?.source
+        ?? null;
+    return declared ? String(declared).trim().toUpperCase() : null;
+}
+
+function getPropagatedParametersHistoryForProject() {
+    return normalizePropagationHistory(propagatedParametersHistory);
+}
+
+function publishPropagatedParametersHistory({ snapshot = true } = {}) {
+    propagatedParametersHistory = normalizePropagationHistory(propagatedParametersHistory);
+    publishPropagatedParametersInspectorState({ history: propagatedParametersHistory });
+    // A history mutation is an authored project change. Publish a dedicated
+    // snapshot immediately instead of relying only on the normal dirty
+    // debounce: a user may open another project just after a long request
+    // succeeds or is cancelled.
+    if (snapshot && projectLifecycle.hasOpenProject()) {
+        publishAuthenticatedProjectDocumentSnapshot("propagation-history");
+    }
+}
+
+function restorePropagatedParametersHistoryForProject(entries) {
+    propagatedParametersHistory = normalizePropagationHistory(entries);
+    publishPropagatedParametersHistory({ snapshot: false });
+}
+
+function clearPropagatedParametersHistoryForProject() {
+    propagatedParametersHistory = [];
+    // Project replacement/reset owns the subsequent snapshot. Do not write a
+    // transient empty audit into the project that is about to be replaced.
+    publishPropagatedParametersHistory({ snapshot: false });
+}
+
+function startPropagatedParametersHistory(context, target, range, sampling, {
+    requestedOutputFrame = null,
+    message = "Preparando efemérides."
+} = {}) {
+    // A pre-project scene inspection may still be useful, but it must never
+    // leak into whichever project the user creates later.
+    if (!projectLifecycle.hasOpenProject()) return null;
+    const id = nextPropagatedParametersHistoryId();
+    const entry = createPropagationHistoryEntry({
+        id,
+        status: "running",
+        target: { id: target?.id || null, name: target?.name || null },
+        source: propagatedParametersHistorySource(context, target),
+        propagator: target?.propagator || context?.propagator || null,
+        range,
+        sampling,
+        requestedOutputFrame,
+        message
+    });
+    if (!entry) return null;
+    propagatedParametersHistory = normalizePropagationHistory([
+        ...propagatedParametersHistory,
+        entry
+    ]);
+    publishPropagatedParametersHistory();
+    return entry.id;
+}
+
+function updatePropagatedParametersHistory(id, patch = {}) {
+    if (!id) return;
+    propagatedParametersHistory = updatePropagationHistoryEntry(
+        propagatedParametersHistory,
+        id,
+        patch
+    );
+    publishPropagatedParametersHistory();
+}
 
 function publishPropagatedParametersInspectorState(patch = {}) {
     Object.assign(propagatedParametersInspectorState, patch);
@@ -9557,11 +9676,20 @@ function closePropagatedParametersInspector() {
     }
     stopPropagatedParametersRequest();
     propagatedParametersLastContext = null;
+    propagatedParametersObservedSimulationRangeKey = "";
+    propagatedParametersSamplingIntervalSeconds = null;
+    propagatedParametersRequestedOutputFrame = null;
     publishPropagatedParametersInspectorState({
         open: false,
         status: "idle",
         target: null,
         range: null,
+        simulationRange: null,
+        sampling: null,
+        samplingIntervalSeconds: null,
+        requestedOutputFrame: null,
+        inspector: null,
+        exportMetadata: null,
         result: null,
         earthOrientationPreflight: null,
         earthOrientationProvenance: null,
@@ -9574,123 +9702,7 @@ function propagatedParametersDate(value) {
     return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function normalizePropagatedParametersRange(value = {}) {
-    const range = value && typeof value === "object" ? value : {};
-    const start = propagatedParametersDate(
-        range.startTime
-        ?? range.start_time
-        ?? range.startUtc
-        ?? range.start_utc
-        ?? range.startDate
-        ?? range.start_date
-        ?? range.start
-        ?? range.from
-    );
-    const end = propagatedParametersDate(
-        range.endTime
-        ?? range.end_time
-        ?? range.endUtc
-        ?? range.end_utc
-        ?? range.endDate
-        ?? range.end_date
-        ?? range.end
-        ?? range.to
-    );
-    if (!start || !end || end.getTime() <= start.getTime()) {
-        throw new Error("La fecha final debe ser posterior a la fecha inicial.");
-    }
-
-    const hours = (end.getTime() - start.getTime()) / 3_600_000;
-    if (!Number.isFinite(hours) || hours > PROPAGATED_PARAMETERS_MAX_RANGE_HOURS) {
-        throw new Error(`El intervalo no puede superar ${PROPAGATED_PARAMETERS_MAX_RANGE_HOURS / 24} dias.`);
-    }
-    return {
-        startTime: start.toISOString(),
-        endTime: end.toISOString(),
-        hours
-    };
-}
-
-function getPropagatedParametersRangeOverride(context) {
-    if (!context?.rangeOverride || typeof context.rangeOverride !== "object") {
-        return null;
-    }
-    return normalizePropagatedParametersRange(context.rangeOverride);
-}
-
-function withPropagatedParametersRangeOverride(context, range, mode = "custom") {
-    const normalizedRange = normalizePropagatedParametersRange(range);
-    return {
-        ...context,
-        rangeOverride: {
-            startTime: normalizedRange.startTime,
-            endTime: normalizedRange.endTime,
-            mode
-        },
-        // Keep the context summary coherent for the React Information tab.
-        // `rangeOverride` remains the explicit marker that this is a user
-        // selection rather than the runtime's default realtime horizon.
-        startTime: normalizedRange.startTime,
-        endTime: normalizedRange.endTime,
-        timeRange: {
-            ...(context?.timeRange || {}),
-            mode,
-            startDate: normalizedRange.startTime,
-            endDate: normalizedRange.endTime
-        }
-    };
-}
-
-function withPropagatedParametersSimulationRange(context) {
-    const range = normalizePropagatedParametersRange({
-        startTime: simulationState.startDate,
-        endTime: simulationState.endDate
-    });
-    return {
-        ...context,
-        rangeOverride: null,
-        startTime: range.startTime,
-        endTime: range.endTime,
-        timeRange: {
-            ...(context?.timeRange || {}),
-            mode: "simulated",
-            startDate: range.startTime,
-            endDate: range.endTime
-        },
-        simulation: getSimulationTelemetryContext()
-    };
-}
-
-function propagatedParametersRangeFromEventDetail(detail) {
-    const payload = detail && typeof detail === "object" ? detail : {};
-    const range = payload.range && typeof payload.range === "object"
-        ? payload.range
-        : payload;
-    return normalizePropagatedParametersRange(range);
-}
-
-function propagatedParametersRangeError(error, fallback = "El intervalo de propagacion no es valido.") {
-    // A rejected edit supersedes any in-flight propagation. Without this the
-    // old response could arrive later and make the invalid dates appear valid.
-    stopPropagatedParametersRequest();
-    publishPropagatedParametersInspectorState({
-        status: "error",
-        error: extractManualOrbitError(error, fallback)
-    });
-}
-
-function resolvePropagatedParametersRange(context) {
-    // A user-edited interval belongs to the inspector request, not implicitly
-    // to the global clock.  It has priority for both a realtime and a range
-    // workspace and survives Refresh through `propagatedParametersLastContext`.
-    const rangeOverride = getPropagatedParametersRangeOverride(context);
-    if (rangeOverride) {
-        return {
-            mode: context?.kind === "manual-design" ? "manual-design-override" : "custom",
-            ...rangeOverride
-        };
-    }
-
+function resolvePropagatedParametersRange(context, simulationRange = getActiveSimulationRange(simulationState)) {
     if (context?.kind === "manual-design") {
         const start = propagatedParametersDate(context.startTime || context.timeRange?.startDate || context.manualOrbit?.epochStartUtc || context.manualOrbit?.epochUtc);
         const end = propagatedParametersDate(context.endTime || context.timeRange?.endDate || context.manualOrbit?.epochEndUtc);
@@ -9710,8 +9722,8 @@ function resolvePropagatedParametersRange(context) {
     }
 
     if (simulationState.mode === SIMULATION_MODE_RANGE) {
-        const start = propagatedParametersDate(simulationState.startDate);
-        const end = propagatedParametersDate(simulationState.endDate);
+        const start = propagatedParametersDate(simulationRange?.startTime);
+        const end = propagatedParametersDate(simulationRange?.endTime);
         if (!start || !end || end.getTime() <= start.getTime()) {
             throw new Error("El intervalo de simulación no es válido.");
         }
@@ -9720,9 +9732,12 @@ function resolvePropagatedParametersRange(context) {
             throw new Error(`El intervalo no puede superar ${PROPAGATED_PARAMETERS_MAX_RANGE_HOURS / 24} dias.`);
         }
         return {
-            mode: "simulated",
-            startTime: start.toISOString(),
-            endTime: end.toISOString(),
+            // This is inspector provenance, not a separate local simulation
+            // mode. The range remains wholly owned by the shared clock.
+            mode: "simulation-range",
+            source: simulationRange.source,
+            startTime: simulationRange.startTime,
+            endTime: simulationRange.endTime,
             hours
         };
     }
@@ -9743,27 +9758,17 @@ function resolvePropagatedParametersRange(context) {
         : PROPAGATED_PARAMETERS_DEFAULT_HOURS;
     const end = new Date(start.getTime() + (hours * 3_600_000));
     return {
-        mode: "realtime",
+        mode: simulationState.mode === SIMULATION_MODE_STATIC ? "static" : "realtime",
         startTime: start.toISOString(),
         endTime: end.toISOString(),
         hours
     };
 }
 
-function getPropagatedParametersSampleCount(range) {
-    const hours = Number(range?.hours);
-    if (!Number.isFinite(hours) || hours <= 0) {
-        return 2;
-    }
-    // Dense enough to reveal secular drift and drag without turning a long
-    // design window into an expensive renderer-style ephemeris request.
-    const requested = hours <= 48
-        ? Math.round(hours * 4) + 1 // 15-minute cadence for short windows
-        : Math.round(hours) + 1; // one-hour cadence for longer windows
-    return Math.max(
-        PROPAGATED_PARAMETERS_MIN_SAMPLES,
-        Math.min(PROPAGATED_PARAMETERS_MAX_SAMPLES, requested)
-    );
+function normalizePropagatedParametersOutputFrame(value) {
+    if (value === null || value === undefined || value === "" || value === "native") return null;
+    const frame = String(value).trim().toUpperCase().replace(/_/g, "");
+    return PROPAGATED_PARAMETERS_OUTPUT_FRAMES.has(frame) ? frame : null;
 }
 
 function buildPropagatedParametersTarget(context) {
@@ -9953,21 +9958,12 @@ function buildPropagatedParametersManualSource(context) {
     };
 }
 
-async function buildPropagatedParametersRequest(context, range) {
+async function buildPropagatedParametersRequest(context, range, sampling) {
     const isManual = context?.kind === "manual-design" || Boolean(context?.manualOrbit);
     let source;
     if (isManual) {
         source = buildPropagatedParametersManualSource(context);
     } else {
-        const sourceFormat = String(context?.catalogMeta?.sourceFormat || context?.catalogMeta?.source_format || "TLE").toUpperCase();
-        if (sourceFormat === "OEM") {
-            throw new Error("Las efemérides OEM aún no se pueden repropagar como elementos osculantes.");
-        }
-        if (sourceFormat === "SP3" && context?.preciseRendering?.available === false) {
-            const nativeFrame = context.preciseRendering.nativeFrame || "el marco nativo";
-            const reason = context.preciseRendering.reason ? ` ${context.preciseRendering.reason}` : "";
-            throw new Error(`No se pueden calcular parámetros osculantes para este SP3: la representación desde ${nativeFrame} no está disponible.${reason}`);
-        }
         const satId = String(context?.sourceId || getSatelliteSourceIdFromLayerId(context?.id || "") || "").trim();
         if (!satId) {
             throw new Error("Selecciona una capa orbital de catálogo válida.");
@@ -9979,15 +9975,27 @@ async function buildPropagatedParametersRequest(context, range) {
         const tle = getSatelliteTle(satId) || await getSatelliteTleAsync(satId);
         const line1 = String(tle?.line1 || "").trim();
         const line2 = String(tle?.line2 || "").trim();
+        const declaredFormat = String(
+            context?.catalogMeta?.sourceFormat
+            ?? context?.catalogMeta?.source_format
+            ?? context?.catalogMeta?.format
+            ?? ""
+        ).trim().toUpperCase();
+        const sourceFormat = ["TLE", "OMM", "SP3", "OEM"].includes(declaredFormat)
+            ? declaredFormat
+            : null;
         source = line1 && line2
-            ? { type: "catalog", line1, line2 }
-            : { type: "catalog", satId };
+            ? { type: "catalog", line1, line2, ...(sourceFormat ? { sourceFormat } : {}) }
+            : { type: "catalog", satId, ...(sourceFormat ? { sourceFormat } : {}) };
     }
     return {
         source,
         startTime: range.startTime,
         endTime: range.endTime,
-        samples: getPropagatedParametersSampleCount(range)
+        samples: sampling.sampleCount,
+        ...(propagatedParametersRequestedOutputFrame
+            ? { outputFrame: propagatedParametersRequestedOutputFrame }
+            : {})
     };
 }
 
@@ -10029,9 +10037,22 @@ async function requestPropagatedParameters(context) {
     stopPropagatedParametersRequest("C\u00e1lculo de par\u00e1metros sustituido por una nueva solicitud.");
     const requestId = ++propagatedParametersRequestId;
     const target = buildPropagatedParametersTarget(context);
+    const previousTargetId = String(propagatedParametersInspectorState?.target?.id || "").trim();
+    if (previousTargetId && target.id && previousTargetId !== target.id) {
+        // A requested output frame belongs to one inspector target. Do not let
+        // a choice made for a TLE leak into a newly selected SP3/OEM/manual
+        // source with different native-frame semantics.
+        propagatedParametersRequestedOutputFrame = null;
+    }
+    publishPropagatedParametersInspectorState({
+        requestedOutputFrame: propagatedParametersRequestedOutputFrame
+    });
+    const simulationRange = getActiveSimulationRange(simulationState);
+    propagatedParametersObservedSimulationRangeKey = propagatedParametersSimulationRangeKey(simulationRange);
     let range;
+    let sampling = null;
     try {
-        range = resolvePropagatedParametersRange(context);
+        range = resolvePropagatedParametersRange(context, simulationRange);
     } catch (error) {
         if (requestId !== propagatedParametersRequestId) {
             return;
@@ -10042,6 +10063,11 @@ async function requestPropagatedParameters(context) {
             status: "error",
             target,
             range: null,
+            simulationRange,
+            sampling: null,
+            samplingIntervalSeconds: propagatedParametersSamplingIntervalSeconds,
+            inspector: null,
+            exportMetadata: null,
             result: null,
             earthOrientationPreflight: null,
             earthOrientationProvenance: null,
@@ -10051,6 +10077,46 @@ async function requestPropagatedParameters(context) {
     }
 
     propagatedParametersLastContext = context;
+    sampling = resolvePropagatedParametersSampling(
+        range,
+        propagatedParametersSamplingIntervalSeconds
+    );
+    const historyId = startPropagatedParametersHistory(context, target, range, sampling, {
+        requestedOutputFrame: propagatedParametersRequestedOutputFrame,
+        message: "Solicitud de efemérides preparada."
+    });
+    const inspectorContext = { ...context, simulationRange };
+    const preflightInspector = buildPropagatedParametersInspector(inspectorContext, {
+        start_time: range.startTime,
+        end_time: range.endTime,
+        reference_frame: context?.referenceFrame || null,
+        sample_interval_seconds: sampling.effectiveIntervalSeconds,
+        sampling
+    });
+    if (preflightInspector.availability?.code === "local-oem-no-backend-provider") {
+        updatePropagatedParametersHistory(historyId, {
+            status: "failed",
+            finishedAt: new Date().toISOString(),
+            error: preflightInspector.availability.reason,
+            message: "La fuente no dispone de un proveedor de efemérides verificable."
+        });
+        publishPropagatedParametersInspectorState({
+            open: true,
+            status: "error",
+            target,
+            range,
+            simulationRange,
+            sampling,
+            samplingIntervalSeconds: propagatedParametersSamplingIntervalSeconds,
+            inspector: preflightInspector,
+            exportMetadata: null,
+            result: null,
+            earthOrientationPreflight: null,
+            earthOrientationProvenance: null,
+            error: preflightInspector.availability.reason
+        });
+        return;
+    }
     const earthOrientationPreflight = assessAutomaticEarthOrientationPreflight({
         startTime: range.startTime,
         endTime: range.endTime
@@ -10063,6 +10129,11 @@ async function requestPropagatedParameters(context) {
         status: "propagating",
         target,
         range,
+        simulationRange,
+        sampling,
+        samplingIntervalSeconds: propagatedParametersSamplingIntervalSeconds,
+        inspector: preflightInspector,
+        exportMetadata: null,
         result: null,
         earthOrientationPreflight: earthOrientationPreflightDetail,
         earthOrientationProvenance: null,
@@ -10072,13 +10143,19 @@ async function requestPropagatedParameters(context) {
     let operationId = null;
     let operationTerminal = false;
     operationId = beginRuntimeSceneOperation("propagated-parameters", {
-        title: "Calculando par\u00e1metros propagados",
+        title: sampling.taskTitle || "Calculando par\u00e1metros propagados",
         stage: "Preparando efem\u00e9rides",
-        message: earthOrientationOperationMessage(
-            earthOrientationPreflight,
-            "El cálculo de parámetros propagados",
-            "Calculando el estado orbital para la ventana solicitada."
-        ),
+        message: sampling.expensive
+            ? `${sampling.taskMessage} ${earthOrientationOperationMessage(
+                earthOrientationPreflight,
+                "El cálculo de parámetros propagados",
+                "Calculando el estado orbital para la ventana solicitada."
+            )}`
+            : earthOrientationOperationMessage(
+                earthOrientationPreflight,
+                "El cálculo de parámetros propagados",
+                sampling.taskMessage || "Calculando el estado orbital para la ventana solicitada."
+            ),
         cancelWork: (message) => {
             if (propagatedParametersAbortController === controller) {
                 propagatedParametersAbortController = null;
@@ -10088,9 +10165,16 @@ async function requestPropagatedParameters(context) {
             }
             propagatedParametersRequestId += 1;
             controller.abort();
+            updatePropagatedParametersHistory(historyId, {
+                status: "cancelled",
+                finishedAt: new Date().toISOString(),
+                message: String(message || "Cálculo de parámetros propagados cancelado.")
+            });
             if (!String(message || "").includes("sustituido")) {
                 publishPropagatedParametersInspectorState({
                     status: "idle",
+                    inspector: null,
+                    exportMetadata: null,
                     result: null,
                     earthOrientationPreflight: null,
                     earthOrientationProvenance: null,
@@ -10100,21 +10184,29 @@ async function requestPropagatedParameters(context) {
         }
     });
     propagatedParametersOperationId = operationId;
+    // High-resolution requests are intentionally not downsampled. Open the
+    // shared task panel once so the operator immediately sees the long-running
+    // operation, its sample count and the normal cancellation control.
+    if (sampling.expensive) {
+        window.dispatchEvent(new Event("orbit:operations-open"));
+    }
 
     try {
-        const requestPayload = await buildPropagatedParametersRequest(context, range);
+        const requestPayload = await buildPropagatedParametersRequest(context, range, sampling);
         if (requestId !== propagatedParametersRequestId || propagatedParametersInspectorState.open !== true) {
             cancelRuntimeSceneOperation(operationId, "C\u00e1lculo de par\u00e1metros sustituido o cerrado antes de propagarse.");
             operationTerminal = true;
             return;
         }
         advanceRuntimeSceneOperation(operationId, {
-            stage: "Propagando ventana solicitada",
-            message: earthOrientationOperationMessage(
-                earthOrientationPreflight,
-                "El cálculo de parámetros propagados",
-                "El motor está calculando las efemérides solicitadas."
-            ),
+            stage: sampling.taskStage || "Propagando ventana solicitada",
+            message: sampling.expensive
+                ? sampling.taskMessage
+                : earthOrientationOperationMessage(
+                    earthOrientationPreflight,
+                    "El cálculo de parámetros propagados",
+                    sampling.taskMessage || "El motor está calculando las efemérides solicitadas."
+                ),
             progress: 35
         });
         const response = await fetch("/api/orbit-parameters", {
@@ -10140,17 +10232,56 @@ async function requestPropagatedParameters(context) {
                 : "Preparando los parámetros derivados para la inspección.",
             progress: 85
         });
+        const inspectedResponse = {
+            ...responsePayload,
+            // The endpoint samples equidistant points. This client-side
+            // statement records the exact requested/effective cadence without
+            // pretending the source product itself was resampled natively.
+            sample_interval_seconds: sampling.effectiveIntervalSeconds,
+            sampling: {
+                ...sampling,
+                source: "inspector-request"
+            }
+        };
         const resolvedRange = {
             ...range,
-            startTime: responsePayload?.start_time || responsePayload?.startTime || range.startTime,
-            endTime: responsePayload?.end_time || responsePayload?.endTime || range.endTime,
-            referenceFrame: responsePayload?.reference_frame || responsePayload?.referenceFrame || null
+            startTime: inspectedResponse?.start_time || inspectedResponse?.startTime || range.startTime,
+            endTime: inspectedResponse?.end_time || inspectedResponse?.endTime || range.endTime,
+            referenceFrame: inspectedResponse?.reference_frame || inspectedResponse?.referenceFrame || null,
+            sampleCount: sampling.sampleCount,
+            sampleIntervalSeconds: sampling.effectiveIntervalSeconds
         };
+        const inspector = buildPropagatedParametersInspector(inspectorContext, inspectedResponse);
+        const exportMetadata = buildPropagatedParametersExport({
+            context: inspectorContext,
+            result: inspectedResponse,
+            inspector,
+            format: "json",
+            scope: "all"
+        }).metadata;
+        updatePropagatedParametersHistory(historyId, {
+            status: "completed",
+            finishedAt: new Date().toISOString(),
+            message: "Parámetros propagados calculados.",
+            result: {
+                sampleCount: Array.isArray(inspector?.rows)
+                    ? inspector.rows.length
+                    : (Array.isArray(inspectedResponse?.samples) ? inspectedResponse.samples.length : null),
+                outputFrame: inspector?.frame?.current ?? inspectedResponse?.reference_frame ?? inspectedResponse?.referenceFrame ?? null,
+                nativeFrame: inspector?.frame?.native ?? null,
+                calculationFrame: inspector?.frame?.calculation ?? inspector?.frame?.dynamics ?? null
+            }
+        });
         publishPropagatedParametersInspectorState({
             status: "ready",
             target,
             range: resolvedRange,
-            result: responsePayload,
+            simulationRange,
+            sampling,
+            samplingIntervalSeconds: propagatedParametersSamplingIntervalSeconds,
+            inspector,
+            exportMetadata,
+            result: inspectedResponse,
             earthOrientationPreflight: earthOrientationPreflightDetail,
             earthOrientationProvenance: actualEarthOrientation ? earthOrientationCoverageDetail(actualEarthOrientation) : null,
             error: ""
@@ -10160,7 +10291,12 @@ async function requestPropagatedParameters(context) {
                 status: "ready",
                 target,
                 range: resolvedRange,
-                result: responsePayload,
+                simulationRange,
+                sampling,
+                samplingIntervalSeconds: propagatedParametersSamplingIntervalSeconds,
+                inspector,
+                exportMetadata,
+                result: inspectedResponse,
                 earthOrientationPreflight: earthOrientationPreflightDetail,
                 earthOrientationProvenance: actualEarthOrientation ? earthOrientationCoverageDetail(actualEarthOrientation) : null
             }
@@ -10181,12 +10317,34 @@ async function requestPropagatedParameters(context) {
             return;
         }
         const errorMessage = extractManualOrbitError(error, "No se pudieron calcular las efem\u00e9rides.");
+        const inspector = buildPropagatedParametersInspector(inspectorContext, {
+            start_time: range?.startTime,
+            end_time: range?.endTime,
+            reference_frame: context?.referenceFrame || null,
+            capabilities: {
+                inspector: {
+                    available: false,
+                    reason: errorMessage
+                }
+            }
+        });
+        updatePropagatedParametersHistory(historyId, {
+            status: "failed",
+            finishedAt: new Date().toISOString(),
+            error: errorMessage,
+            message: "No se pudieron calcular las efemérides solicitadas."
+        });
         failRuntimeSceneOperation(operationId, new Error(errorMessage));
         operationTerminal = true;
         publishPropagatedParametersInspectorState({
             status: "error",
             target,
             range,
+            simulationRange,
+            sampling,
+            samplingIntervalSeconds: propagatedParametersSamplingIntervalSeconds,
+            inspector,
+            exportMetadata: null,
             result: null,
             earthOrientationPreflight: earthOrientationPreflightDetail,
             earthOrientationProvenance: null,
@@ -10202,6 +10360,124 @@ async function requestPropagatedParameters(context) {
         if (propagatedParametersOperationId === operationId) {
             propagatedParametersOperationId = null;
         }
+    }
+}
+
+function propagatedParametersSimulationRangeKey(range = getActiveSimulationRange(simulationState)) {
+    if (!range) return "no-simulation-range";
+    return `${range.mode}:${range.startTime}:${range.endTime}`;
+}
+
+function syncPropagatedParametersForSimulationState() {
+    const simulationRange = getActiveSimulationRange(simulationState);
+    const simulationKey = propagatedParametersSimulationRangeKey(simulationRange);
+    if (simulationKey === propagatedParametersObservedSimulationRangeKey) {
+        return;
+    }
+    propagatedParametersObservedSimulationRangeKey = simulationKey;
+    if (propagatedParametersInspectorState.open !== true
+        || propagatedParametersLastContext?.kind === "manual-design") {
+        return;
+    }
+    void requestPropagatedParameters({
+        ...propagatedParametersLastContext,
+        simulation: getSimulationTelemetryContext(),
+        simulationRange
+    });
+}
+
+window.addEventListener("orbit:simulation-state", syncPropagatedParametersForSimulationState);
+
+function propagatedParametersExportFilename(format, detail = {}) {
+    const target = String(
+        detail.fileName
+        || propagatedParametersInspectorState.target?.name
+        || propagatedParametersLastContext?.name
+        || "orbit-propagated-parameters"
+    ).trim();
+    const stem = (target || "orbit-propagated-parameters")
+        .replace(/[\\/:*?"<>|]+/g, "-")
+        .replace(/\s+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 96) || "orbit-propagated-parameters";
+    return `${stem}.${format === "csv" ? "csv" : "json"}`;
+}
+
+function downloadPropagatedParametersExport(exported, filename) {
+    if (typeof document === "undefined"
+        || typeof Blob === "undefined"
+        || typeof URL === "undefined"
+        || typeof URL.createObjectURL !== "function") {
+        return false;
+    }
+    const url = URL.createObjectURL(new Blob([exported.content], { type: exported.mimeType }));
+    try {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.style.display = "none";
+        document.body?.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        return true;
+    } finally {
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+}
+
+function publishPropagatedParametersExportResult(detail) {
+    window.dispatchEvent(new CustomEvent("orbit:propagated-parameters-export-result", { detail }));
+}
+
+function exportPropagatedParameters(detail = {}) {
+    const requestedFormat = String(detail?.format || "json").toLowerCase() === "csv" ? "csv" : "json";
+    const requestedScope = String(detail?.scope || "all").toLowerCase() === "visible" ? "visible" : "all";
+    try {
+        const result = propagatedParametersInspectorState.result;
+        if (!result || typeof result !== "object") {
+            throw new Error("No hay una inspección de efemérides lista para exportar.");
+        }
+        const context = {
+            ...(propagatedParametersLastContext || {}),
+            simulationRange: propagatedParametersInspectorState.simulationRange ?? null
+        };
+        const inspector = propagatedParametersInspectorState.inspector
+            || buildPropagatedParametersInspector(context, result);
+        if (inspector.availability?.available === false) {
+            throw new Error(inspector.availability.reason || "Esta fuente no declara datos exportables para el inspector.");
+        }
+        const exported = buildPropagatedParametersExport({
+            context,
+            result,
+            inspector,
+            format: requestedFormat,
+            scope: requestedScope,
+            rows: detail?.rows,
+            columns: detail?.columns,
+            metadata: detail?.metadata
+        });
+        const filename = propagatedParametersExportFilename(exported.format, detail);
+        if (!downloadPropagatedParametersExport(exported, filename)) {
+            throw new Error("La descarga no está disponible en este entorno.");
+        }
+        publishPropagatedParametersExportResult({
+            ok: true,
+            source: "propagated-parameters-runtime",
+            format: exported.format,
+            scope: exported.scope,
+            count: exported.rows.length,
+            filename,
+            metadata: exported.metadata,
+            columns: exported.columns
+        });
+    } catch (error) {
+        publishPropagatedParametersExportResult({
+            ok: false,
+            source: "propagated-parameters-runtime",
+            format: requestedFormat,
+            scope: requestedScope,
+            reason: extractManualOrbitError(error, "No se pudieron exportar las efemérides.")
+        });
     }
 }
 
@@ -10238,71 +10514,25 @@ function setupPropagatedParametersInspector() {
             void requestPropagatedParameters(propagatedParametersLastContext);
         }
     });
-    window.addEventListener("orbit:propagated-parameters-range-change", (event) => {
-        const context = propagatedParametersLastContext;
-        if (!context) {
-            return;
-        }
-        try {
-            const range = propagatedParametersRangeFromEventDetail(event.detail);
-            const nextContext = withPropagatedParametersRangeOverride(
-                context,
-                range,
-                context.kind === "manual-design" ? "manual-design-override" : "custom"
-            );
-            void requestPropagatedParameters(nextContext);
-        } catch (error) {
-            propagatedParametersRangeError(error);
+    window.addEventListener("orbit:propagated-parameters-sampling-change", (event) => {
+        const detail = event.detail && typeof event.detail === "object" ? event.detail : {};
+        propagatedParametersSamplingIntervalSeconds = normalizePropagatedParametersSamplingInterval(
+            detail.sampleIntervalSeconds ?? detail.sample_interval_seconds
+        );
+        if (propagatedParametersLastContext) {
+            void requestPropagatedParameters(propagatedParametersLastContext);
         }
     });
-    window.addEventListener("orbit:propagated-parameters-apply-simulation", async (event) => {
-        const context = propagatedParametersLastContext;
-        if (!context) {
-            return;
-        }
-
-        let requestedRange;
-        try {
-            requestedRange = propagatedParametersRangeFromEventDetail(event.detail);
-        } catch (error) {
-            propagatedParametersRangeError(error);
-            return;
-        }
-
-        if (context.kind === "manual-design") {
-            // The manual-design session already owns the global clock and
-            // keeps it aligned to the editor epochs. Applying an arbitrary
-            // inspector interval globally would make the preview and its
-            // epoch fields disagree, so it is deliberately a local override
-            // until the user changes the design window itself.
-            const nextContext = withPropagatedParametersRangeOverride(
-                context,
-                requestedRange,
-                "manual-design-override"
-            );
-            void requestPropagatedParameters(nextContext);
-            return;
-        }
-
-        // The inspector is another timeline entry point, not a second scene
-        // range.  It therefore uses the exact same expansion/cancel decision
-        // as imports and the primary timeline.  Within MTR it preserves the
-        // authoritative bounds; outside it never silently substitutes them.
-        const applied = await requestMasterTimeRangeFromTimeline(
-            new Date(requestedRange.startTime),
-            new Date(requestedRange.endTime)
+    window.addEventListener("orbit:propagated-parameters-frame-change", (event) => {
+        const detail = event.detail && typeof event.detail === "object" ? event.detail : {};
+        propagatedParametersRequestedOutputFrame = normalizePropagatedParametersOutputFrame(
+            detail.requestedOutputFrame
+            ?? detail.requested_output_frame
+            ?? detail.outputFrame
+            ?? detail.output_frame
         );
-        if (!applied) {
-            propagatedParametersRangeError(new Error("No se pudo aplicar el intervalo de simulacion."));
-            return;
-        }
-
-        try {
-            // Drop the local override after it becomes the shared range, so a
-            // later Refresh follows any normal simulation timeline changes.
-            void requestPropagatedParameters(withPropagatedParametersSimulationRange(context));
-        } catch (error) {
-            propagatedParametersRangeError(error);
+        if (propagatedParametersLastContext) {
+            void requestPropagatedParameters(propagatedParametersLastContext);
         }
     });
     window.addEventListener("orbit:propagated-parameters-close", () => {
@@ -10310,6 +10540,9 @@ function setupPropagatedParametersInspector() {
     });
     window.addEventListener("orbit:propagated-parameters-cancel", () => {
         closePropagatedParametersInspector();
+    });
+    window.addEventListener("orbit:propagated-parameters-export", (event) => {
+        exportPropagatedParameters(event.detail || {});
     });
     window.addEventListener("orbit:selected-layer-state", (event) => {
         if (propagatedParametersInspectorState.open !== true || propagatedParametersLastContext?.kind === "manual-design") {
@@ -10381,6 +10614,8 @@ function setupPropagatedParametersInspector() {
             } catch (error) {
                 publishPropagatedParametersInspectorState({
                     status: "error",
+                    inspector: null,
+                    exportMetadata: null,
                     result: null,
                     error: extractManualOrbitError(error, "El intervalo de diseño no es válido.")
                 });

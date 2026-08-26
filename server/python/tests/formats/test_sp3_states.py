@@ -34,6 +34,34 @@ def _sp3_text(*, frame: str = "IGS20") -> str:
     )
 
 
+def _sp3_header_orbit_accuracy_line(*exponents: str) -> str:
+    """Make one fixed-width standard SP3 ``++`` header record for a test."""
+
+    fields = [*exponents, *("0" for _ in range(17 - len(exponents)))]
+    return "++" + (" " * 7) + "".join(f"{field:>3}" for field in fields)
+
+
+def _sp3_with_header_orbit_accuracy_text(
+    *,
+    g01_exponent: str = "13",
+    g02_exponent: str = "000",
+) -> str:
+    return "\n".join(
+        [
+            _sp3_header(frame="ITRF"),
+            "+    2   G01G02",
+            _sp3_header_orbit_accuracy_line(g01_exponent, g02_exponent),
+            "%c cc UTC ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc ccc",
+            "*  2026 07 26 00 00 00.00000000",
+            "PG01 7000.000000 0.000000 0.000000 0.000000",
+            "PG02 8000.000000 0.000000 0.000000 0.000000",
+            "*  2026 07 26 00 01 00.00000000",
+            "PG01 7060.000000 0.000000 0.000000 0.000000",
+            "PG02 8060.000000 0.000000 0.000000 0.000000",
+        ]
+    )
+
+
 def _polynomial_sp3_text(*, epochs: int = 11) -> str:
     """A UTC SP3 whose x component is quadratic in elapsed minutes."""
 
@@ -163,9 +191,48 @@ def test_sp3_keeps_embedded_clock_and_clock_rate_outside_cartesian_velocity():
     assert provider.clock_sample_count == 2
     assert clock.bias_seconds == pytest.approx(0.0)
     assert clock.rate_seconds_per_second == pytest.approx(0.0)
-    state = provider.native_state_at(datetime(2026, 7, 26, 0, 0, 30, tzinfo=UTC))
-    assert state.velocity_m_s == pytest.approx((1_000.0, 0.0, 0.0))
-    assert state.provenance["sp3_clock_bias_seconds"] == pytest.approx(0.0)
+    # The first source record is 00:00:18 GPS, i.e. 00:00:00 UTC in 2026.
+    exact = provider.native_state_at(datetime(2026, 7, 26, 0, 0, tzinfo=UTC))
+    assert exact.velocity_m_s == pytest.approx((1_000.0, 0.0, 0.0))
+    assert exact.provenance["sp3_clock_bias_seconds"] == pytest.approx(0.0)
+
+    interpolated = provider.native_state_at(datetime(2026, 7, 26, 0, 0, 30, tzinfo=UTC))
+    assert "sp3_clock_bias_seconds" not in interpolated.provenance
+    assert interpolated.provenance["tabular_interpolation"]["clock_observation"] == "not_interpolated"
+
+
+def test_sp3_retains_declared_header_orbit_accuracy_with_its_file_wide_scope():
+    provider = Sp3StateProvider.from_text(_sp3_with_header_orbit_accuracy_text())
+
+    exact = provider.for_satellite("G01").samples[0]
+    assert exact.provenance["sp3_header_orbit_accuracy_exponent"] == 13
+    assert exact.provenance["sp3_header_orbit_accuracy_base"] == 2
+    assert exact.provenance["sp3_header_orbit_sigma_mm"] == pytest.approx(8_192.0)
+    assert exact.provenance["sp3_header_orbit_sigma_units"] == "mm"
+    assert (
+        exact.provenance["sp3_header_orbit_accuracy_scope"]
+        == "file-wide satellite orbit one-standard-deviation"
+    )
+
+    # A zero exponent is the SP3 spelling for unknown accuracy, not 2^0 mm.
+    g02 = provider.for_satellite("G02").samples[0]
+    assert "sp3_header_orbit_sigma_mm" not in g02.provenance
+
+    # The declaration remains source-level provenance when a Cartesian state
+    # is interpolated; it is never converted into an invented row sigma.
+    interpolated = provider.native_state_at(
+        datetime(2026, 7, 26, 0, 0, 30, tzinfo=UTC),
+        satellite_id="G01",
+    )
+    assert interpolated.provenance["sp3_header_orbit_sigma_mm"] == pytest.approx(8_192.0)
+    assert interpolated.provenance["tabular_interpolation"]["method"] == "LAGRANGE"
+
+
+def test_sp3_rejects_a_nonstandard_populated_header_orbit_accuracy_field():
+    source = _sp3_with_header_orbit_accuracy_text(g01_exponent="1X3")
+
+    with pytest.raises(EphemerisFormatError, match="exponente de exactitud"):
+        Sp3StateProvider.from_text(source)
 
 
 def test_sp3_skips_real_world_all_zero_position_records_as_missing_states():

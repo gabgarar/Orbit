@@ -9,17 +9,20 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi import HTTPException
 from orbit_api.api.routes.orbit_parameters import create_orbit_parameters_router
-from orbit_api.application.manual_orbits import ManualOrbitError
 from orbit_api.application.manual_erp import ManualErpRepository
+from orbit_api.application.manual_orbits import ManualOrbitError
 from orbit_api.application.orbit_parameters import (
     OrbitParametersError,
     build_orbit_parameters,
 )
 from orbit_api.domain.requests import (
     MANUAL_ORBIT_SGP4_UNAVAILABLE_MESSAGE,
+    ORBIT_PARAMETERS_MAX_SAMPLES,
     OrbitParametersRequest,
 )
-from orbit_api.frames import FrameTransformService
+from orbit_api.formats import OemStateProvider
+from orbit_api.formats.tabular import TabularStateProvider
+from orbit_api.frames import FrameId, FrameTransformService, StateVector
 from orbit_api.orbits.forces import GravityFieldModel
 from orbit_api.orbits.propagators.sgp4.propagator import SGP4Propagator
 from orbit_api.timekeeping import (
@@ -263,6 +266,18 @@ def test_cowell_inspector_budget_includes_dense_sample_cost():
         )
 
 
+def test_cowell_budget_rejects_a_full_resolution_year_without_materialising_a_huge_cache():
+    # Analytical sources may request every minute of the supported one-year
+    # inspector range. A native fixed-step RK4 model still has its own force
+    # evaluation budget and must reject that impossible request immediately,
+    # rather than constructing an O(n²) ordered cache just to report it.
+    with pytest.raises(OrbitParametersError, match="al menos 7,201 pasos"):
+        build_orbit_parameters(
+            manual_request(propagator="cowell-rk4", hours=365 * 24, samples=525_601),
+            resolve_propagator=native_only_resolver,
+        )
+
+
 def test_route_maps_cowell_inspector_budget_to_actionable_422():
     router = create_orbit_parameters_router(
         native_only_resolver,
@@ -420,6 +435,61 @@ def test_inspector_rebuilds_a_configured_geopotential_manual_orbit(manual_erp_sn
     assert response["model"]["geopotential"]["evaluation_frame"] == "ITRF"
 
 
+def test_manual_inspector_preserves_runtime_published_acceleration(monkeypatch):
+    """A numerical runtime may publish acceleration; the inspector must not drop it."""
+
+    class AcceleratingCowellRuntime:
+        def native_state_at(self, instant: datetime) -> StateVector:
+            return StateVector(
+                epoch=instant,
+                time_scale="UTC",
+                frame=FrameId.EME2000,
+                frame_realization=None,
+                center="EARTH",
+                position_m=(7_000_000.0, 0.0, 0.0),
+                velocity_m_s=(0.0, 7_500.0, 1_000.0),
+                acceleration_m_s2=(-8.1, 0.02, -0.03),
+                provenance={
+                    "source": "manual",
+                    "propagator": "cowell-rk4",
+                    "acceleration_source": "runtime-force-evaluation",
+                },
+            )
+
+    def build_accelerating_runtime(*_args, **_kwargs):
+        return (
+            "manual:cowell-acceleration-fixture",
+            AcceleratingCowellRuntime(),
+            {
+                "id": "cowell-rk4",
+                "label": "Cowell numerical propagation",
+                "applied_engine": "cowell-rk4",
+                "force_terms": ["central"],
+                "inspector_requires_numerical_budget": False,
+            },
+        )
+
+    monkeypatch.setattr(
+        "orbit_api.application.orbit_parameters.build_manual_orbit_propagator",
+        build_accelerating_runtime,
+    )
+
+    response = build_orbit_parameters(
+        manual_request(propagator="cowell-rk4", hours=1, samples=2),
+        resolve_propagator=native_only_resolver,
+    )
+
+    for sample in response["samples"]:
+        state = sample["state"]
+        assert state["acceleration_units"] == "km/s^2"
+        assert state["acceleration"] == pytest.approx({
+            "x": -0.0081,
+            "y": 0.00002,
+            "z": -0.00003,
+        })
+        assert state["provenance"]["acceleration_source"] == "runtime-force-evaluation"
+
+
 def test_catalog_sgp4_inspection_keeps_the_raw_teme_label():
     line1 = "1 25544U 98067A   24001.00000000  .00000000  00000+0  00000+0 0  9991"
     line2 = "2 25544  51.6400  10.0000 0005000  30.0000 330.0000 15.50000000000000"
@@ -447,6 +517,432 @@ def test_catalog_sgp4_inspection_keeps_the_raw_teme_label():
     assert actual["elements"]["central_body_mu_km3_s2"] == pytest.approx(propagator.sat.mu)
     assert math.isclose(actual["state"]["position"]["x"], expected_teme[0], abs_tol=1e-9)
     assert actual["state"]["position"]["x"] != pytest.approx(propagator.propagate_datetime(start)[0] / 1000.0)
+    assert "acceleration" not in actual["state"]
+    assert "acceleration_units" not in actual["state"]
+
+
+def test_manual_inspector_transforms_table_states_without_relabelling_native_elements():
+    request = OrbitParametersRequest(
+        source={"type": "manual", "manualOrbit": manual_payload()},
+        startTime=EPOCH.isoformat(),
+        endTime=(EPOCH + timedelta(minutes=10)).isoformat(),
+        samples=2,
+        outputFrame="ITRF",
+    )
+
+    response = build_orbit_parameters(
+        request,
+        resolve_propagator=native_only_resolver,
+        frame_transformer=strict_force_transformer(),
+    )
+
+    first = response["samples"][0]
+    frame = response["capabilities"]["inspector"]["frame"]
+    assert response["native_reference_frame"] == "EME2000"
+    assert response["reference_frame"] == response["output_reference_frame"] == "ITRF"
+    assert response["model"]["state_reference_frame"] == "EME2000"
+    assert first["native_reference_frame"] == "EME2000"
+    assert first["state"]["reference_frame"] == "ITRF"
+    # The table is terrestrial, but the osculating calculation deliberately
+    # stays in the native inertial state rather than being mislabelled ITRF.
+    assert first["elements"]["reference_frame"] == "EME2000"
+    assert first["osculating_elements"] == {
+        "available": True,
+        "calculation_reference_frame": "EME2000",
+        "calculation_state": "native",
+    }
+    assert first["frame_transform"]["applied"] is True
+    assert first["state"]["provenance"]["frame_transform"]["source_frame"] == "EME2000"
+    assert frame["native"]["reference_frame"] == "EME2000"
+    assert frame["current"]["reference_frame"] == "ITRF"
+    assert frame["output"]["requested_frame"] == "ITRF"
+    assert frame["output"]["provenance"]["target_frame"] == "ITRF"
+    assert frame["selectable"] is True
+    assert frame["available_output_frames"] == [
+        "TEME", "ITRF", "EME2000", "GCRF", "ICRF"
+    ]
+
+
+def test_requested_output_frame_requires_a_real_transform_service():
+    request = OrbitParametersRequest(
+        source={"type": "manual", "manualOrbit": manual_payload()},
+        startTime=EPOCH.isoformat(),
+        endTime=(EPOCH + timedelta(minutes=10)).isoformat(),
+        samples=2,
+        outputFrame="ITRF",
+    )
+
+    with pytest.raises(OrbitParametersError, match="FrameTransformService"):
+        build_orbit_parameters(
+            request,
+            resolve_propagator=native_only_resolver,
+        )
+
+
+def test_requested_output_frame_reports_strict_eop_failures_actionably():
+    unavailable_eop_transformer = FrameTransformService(
+        StaticEarthOrientationProvider(
+            EarthOrientation(
+                dut1_seconds=0.17,
+                xp_radians=1.0e-6,
+                yp_radians=-0.8e-6,
+                source="unusable output-frame fixture",
+                version="r1",
+                quality="predicted",
+            )
+        ),
+        strict_eop=True,
+        leap_second_table=LeapSecondTable(
+            entries=((datetime(2025, 1, 1, tzinfo=UTC), 38),),
+            source="fixture leap seconds",
+            version="fixture-2025",
+            sha256="b" * 64,
+            expires_at=datetime(2027, 1, 1, tzinfo=UTC),
+        ),
+    )
+    request = OrbitParametersRequest(
+        source={"type": "manual", "manualOrbit": manual_payload()},
+        startTime=EPOCH.isoformat(),
+        endTime=(EPOCH + timedelta(minutes=10)).isoformat(),
+        samples=2,
+        outputFrame="ITRF",
+    )
+
+    with pytest.raises(OrbitParametersError, match="No se pudo transformar") as rejected:
+        build_orbit_parameters(
+            request,
+            resolve_propagator=native_only_resolver,
+            frame_transformer=unavailable_eop_transformer,
+        )
+
+    assert "calidad final o rapid" in str(rejected.value)
+
+
+def test_catalog_tle_output_frame_transforms_the_table_but_keeps_teme_elements():
+    line1 = "1 25544U 98067A   24001.00000000  .00000000  00000+0  00000+0 0  9991"
+    line2 = "2 25544  51.6400  10.0000 0005000  30.0000 330.0000 15.50000000000000"
+    propagator = SGP4Propagator(line1, line2)
+    request = OrbitParametersRequest(
+        source={"type": "catalog", "line1": line1, "line2": line2},
+        startTime=EPOCH.isoformat(),
+        endTime=(EPOCH + timedelta(minutes=10)).isoformat(),
+        samples=2,
+        outputFrame="ITRF",
+    )
+
+    response = build_orbit_parameters(
+        request,
+        resolve_propagator=lambda *_args: ("ISS", propagator),
+        frame_transformer=strict_force_transformer(),
+    )
+
+    first = response["samples"][0]
+    assert response["native_reference_frame"] == "TEME"
+    assert response["reference_frame"] == "ITRF"
+    assert first["state"]["reference_frame"] == "ITRF"
+    assert first["elements"]["reference_frame"] == "TEME"
+    assert first["frame_transform"]["applied"] is True
+
+
+def test_tabular_sp3_can_use_a_verified_inertial_output_for_osculating_elements():
+    start = EPOCH
+    provider = TabularStateProvider(
+        source_format="SP3",
+        samples=(
+            StateVector.from_kilometres(
+                epoch=start,
+                time_scale="UTC",
+                frame=FrameId.ITRF,
+                frame_realization=None,
+                center="EARTH",
+                position_km=(20_000.0, 1_000.0, -2_000.0),
+                velocity_km_s=(0.1, 3.0, 2.0),
+                provenance={"source_format": "SP3"},
+            ),
+            StateVector.from_kilometres(
+                epoch=start + timedelta(minutes=15),
+                time_scale="UTC",
+                frame=FrameId.ITRF,
+                frame_realization=None,
+                center="EARTH",
+                position_km=(20_100.0, 3_700.0, -200.0),
+                velocity_km_s=(0.1, 3.0, 2.0),
+                provenance={"source_format": "SP3"},
+            ),
+        ),
+        declared_interpolation="LINEAR",
+        declared_interpolation_degree=1,
+    )
+    request = OrbitParametersRequest(
+        source={"kind": "catalog", "satId": "precise:fixture:G01"},
+        startTime=start.isoformat(),
+        endTime=(start + timedelta(minutes=15)).isoformat(),
+        samples=2,
+        outputFrame="GCRF",
+    )
+
+    response = build_orbit_parameters(
+        request,
+        resolve_propagator=lambda *_args: ("G01 fixture", provider),
+        frame_transformer=strict_force_transformer(),
+    )
+
+    first = response["samples"][0]
+    inspector = response["capabilities"]["inspector"]
+    assert response["native_reference_frame"] == "ITRF"
+    assert response["reference_frame"] == "GCRF"
+    assert response["model"]["state_reference_frame"] == "ITRF"
+    assert response["element_type"] == "osculating"
+    assert first["state"]["reference_frame"] == "GCRF"
+    assert first["elements"]["reference_frame"] == "GCRF"
+    assert first["osculating_elements"]["calculation_state"] == "output"
+    assert first["frame_transform"]["provenance"]["source_frame"] == "ITRF"
+    assert inspector["output_cartesian"]["reference_frame"] == "GCRF"
+    assert inspector["osculating_elements"]["reference_frame"] == "GCRF"
+
+
+def test_catalog_omm_provenance_is_preserved_while_sgp4_remains_the_applied_engine():
+    line1 = "1 25544U 98067A   24001.00000000  .00000000  00000+0  00000+0 0  9991"
+    line2 = "2 25544  51.6400  10.0000 0005000  30.0000 330.0000 15.50000000000000"
+    propagator = SGP4Propagator(line1, line2)
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    response = build_orbit_parameters(
+        OrbitParametersRequest(
+            source={"kind": "catalog", "line1": line1, "line2": line2, "sourceFormat": "OMM"},
+            startTime=start.isoformat(),
+            endTime=(start + timedelta(minutes=20)).isoformat(),
+            samples=2,
+        ),
+        resolve_propagator=lambda *_args: ("ISS OMM", propagator),
+    )
+
+    assert response["source"]["source_format"] == "OMM"
+    assert response["model"]["id"] == "sgp4"
+    assert response["model"]["input_source_format"] == "OMM"
+    assert response["model"]["state_source"] == "raw_sgp4_teme"
+
+
+def test_catalog_tabular_sp3_returns_native_cartesian_without_terrestrial_elements():
+    start = datetime(2026, 7, 20, 12, tzinfo=UTC)
+    provider = TabularStateProvider(
+        source_format="SP3",
+        samples=(
+            StateVector.from_kilometres(
+                epoch=start,
+                time_scale="UTC",
+                frame=FrameId.ITRF,
+                frame_realization="IGS20",
+                center="EARTH",
+                position_km=(20_000.0, 1_000.0, -2_000.0),
+                velocity_km_s=(0.1, 3.0, 2.0),
+                provenance={"source_format": "SP3", "agency": "fixture"},
+            ),
+            StateVector.from_kilometres(
+                epoch=start + timedelta(minutes=15),
+                time_scale="UTC",
+                frame=FrameId.ITRF,
+                frame_realization="IGS20",
+                center="EARTH",
+                position_km=(20_100.0, 3_700.0, -200.0),
+                velocity_km_s=(0.1, 3.0, 2.0),
+                provenance={"source_format": "SP3", "agency": "fixture"},
+            ),
+        ),
+        declared_interpolation="LINEAR",
+        declared_interpolation_degree=1,
+    )
+
+    def resolver(sat_id, supplied_line1, supplied_line2, *_args):
+        assert sat_id == "precise:fixture:G01"
+        assert supplied_line1 is None and supplied_line2 is None
+        return "G01 fixture", provider
+
+    response = build_orbit_parameters(
+        OrbitParametersRequest(
+            source={"kind": "catalog", "satId": "precise:fixture:G01"},
+            startTime=start.isoformat(),
+            endTime=(start + timedelta(minutes=15)).isoformat(),
+            samples=2,
+        ),
+        resolve_propagator=resolver,
+    )
+
+    first = response["samples"][0]
+    assert response["source"]["source_format"] == "SP3"
+    assert response["reference_frame"] == "IGS20"
+    assert response["element_type"] == first["element_type"] == "native-cartesian"
+    assert response["model"]["id"] == "tabular-sp3"
+    assert response["model"]["state_source"] == "native_tabular_state"
+    assert response["model"]["interpolation"]["method"] == "LINEAR"
+    assert response["capabilities"]["inspector"]["mode"] == "native-cartesian"
+    assert response["capabilities"]["inspector"]["osculating_elements"]["available"] is False
+    assert first["state"]["reference_frame"] == "IGS20"
+    assert first["state"]["position"]["x"] == pytest.approx(20_000.0)
+    assert first["state"]["velocity"]["y"] == pytest.approx(3.0)
+    assert first["state"]["provenance"]["source_format"] == "SP3"
+    assert "elements" not in first
+    assert first["osculating_elements"]["available"] is False
+
+
+def test_catalog_tabular_oem_derives_elements_only_for_complete_inertial_states():
+    start = datetime(2026, 7, 20, 12, tzinfo=UTC)
+    provider = TabularStateProvider(
+        source_format="OEM",
+        samples=(
+            StateVector.from_kilometres(
+                epoch=start,
+                time_scale="UTC",
+                frame=FrameId.EME2000,
+                frame_realization=None,
+                center="EARTH",
+                position_km=(7_000.0, 0.0, 0.0),
+                velocity_km_s=(0.0, 7.5, 1.0),
+                provenance={"source_format": "OEM", "segment_index": 0},
+            ),
+            StateVector.from_kilometres(
+                epoch=start + timedelta(minutes=10),
+                time_scale="UTC",
+                frame=FrameId.EME2000,
+                frame_realization=None,
+                center="EARTH",
+                position_km=(5_600.0, 4_200.0, 600.0),
+                velocity_km_s=(-4.5, 6.0, 0.8),
+                provenance={"source_format": "OEM", "segment_index": 0},
+            ),
+        ),
+        declared_interpolation="LINEAR",
+        declared_interpolation_degree=1,
+    )
+
+    response = build_orbit_parameters(
+        OrbitParametersRequest(
+            source={"kind": "catalog", "satId": "oem:fixture"},
+            startTime=start.isoformat(),
+            endTime=(start + timedelta(minutes=10)).isoformat(),
+            samples=2,
+        ),
+        resolve_propagator=lambda *_args: ("OEM fixture", provider),
+    )
+
+    assert response["source"]["source_format"] == "OEM"
+    assert response["element_type"] == "osculating"
+    assert response["capabilities"]["inspector"]["mode"] == "native-cartesian-and-osculating"
+    assert response["capabilities"]["inspector"]["osculating_elements"]["available"] is True
+    assert response["samples"][0]["elements"]["reference_frame"] == "EME2000"
+
+
+def _multi_segment_oem_provider() -> OemStateProvider:
+    """A real OEM adapter, not a flattened TabularStateProvider test double."""
+
+    return OemStateProvider.from_text(
+        """
+CCSDS_OEM_VERS = 2.0
+CREATION_DATE = 2026-07-20T00:00:00Z
+ORIGINATOR = Orbit test fixture
+
+META_START
+OBJECT_NAME = SEGMENT ZERO
+OBJECT_ID = 2026-001A
+CENTER_NAME = EARTH
+REF_FRAME = ITRF2020
+TIME_SYSTEM = UTC
+START_TIME = 2026-07-20T12:00:00Z
+STOP_TIME = 2026-07-20T12:01:00Z
+INTERPOLATION = LINEAR
+INTERPOLATION_DEGREE = 1
+META_STOP
+2026-07-20T12:00:00Z 7000.0 0.0 0.0 0.0 7.5 1.0
+2026-07-20T12:01:00Z 6999.0 450.0 60.0 -0.5 7.48 1.0
+
+META_START
+OBJECT_NAME = SEGMENT ONE
+OBJECT_ID = 2026-001A
+CENTER_NAME = EARTH
+REF_FRAME = EME2000
+TIME_SYSTEM = UTC
+START_TIME = 2026-07-20T12:02:00Z
+STOP_TIME = 2026-07-20T12:03:00Z
+INTERPOLATION = LINEAR
+INTERPOLATION_DEGREE = 1
+META_STOP
+2026-07-20T12:02:00Z 7000.0 0.0 0.0 0.0 7.5 1.0 0.001 0.0 0.0
+2026-07-20T12:03:00Z 6999.0 450.0 60.0 -0.5 7.48 1.0 0.001 0.0 0.0
+COVARIANCE_START
+EPOCH = 2026-07-20T12:02:00Z
+1.0
+2.0 3.0
+4.0 5.0 6.0
+7.0 8.0 9.0 10.0
+11.0 12.0 13.0 14.0 15.0
+16.0 17.0 18.0 19.0 20.0 21.0
+COVARIANCE_STOP
+"""
+    )
+
+
+def test_catalog_oem_provider_requires_explicit_segment_and_preserves_native_contract():
+    provider = _multi_segment_oem_provider()
+    start = datetime(2026, 7, 20, 12, 2, tzinfo=UTC)
+    end = start + timedelta(minutes=1)
+
+    request = OrbitParametersRequest(
+        source={"kind": "catalog", "satId": "oem:multi", "segmentIndex": 1},
+        startTime=start.isoformat(),
+        endTime=end.isoformat(),
+        samples=2,
+    )
+    assert request.source.segment_index == 1
+
+    response = build_orbit_parameters(
+        request,
+        resolve_propagator=lambda *_args: ("OEM multi-segment fixture", provider),
+    )
+
+    first, last = response["samples"]
+    assert response["source"]["source_format"] == "OEM"
+    assert response["source"]["segment_index"] == 1
+    assert response["source"]["oem"]["segment_count"] == 2
+    assert response["source"]["oem"]["segment_index"] == 1
+    assert response["source"]["oem"]["reference_frame"] == "EME2000"
+    assert response["model"]["interpolation"]["method"] == "LINEAR"
+    assert response["model"]["oem"]["covariance"] == {
+        "available": True,
+        "record_count": 1,
+        "attachment": "exact-epoch-only",
+        "epochs": [start.isoformat()],
+    }
+    assert response["reference_frame"] == "EME2000"
+    assert (
+        response["capabilities"]["inspector"]["mode"]
+        == "native-cartesian-and-osculating"
+    )
+    assert first["state"]["acceleration"]["x"] == pytest.approx(0.001)
+    assert first["state"]["covariance_units"] == "SI-state-vector"
+    assert first["state"]["covariance"][0][0] == pytest.approx(1_000_000.0)
+    assert first["state"]["provenance"]["oem_covariance"]["attached"] is True
+    assert last["state"]["provenance"]["oem_covariance"]["attached"] is False
+
+    with pytest.raises(OrbitParametersError, match="source.segmentIndex"):
+        build_orbit_parameters(
+            OrbitParametersRequest(
+                source={"kind": "catalog", "satId": "oem:multi"},
+                startTime=start.isoformat(),
+                endTime=end.isoformat(),
+                samples=2,
+            ),
+            resolve_propagator=lambda *_args: ("OEM multi-segment fixture", provider),
+        )
+
+    with pytest.raises(OrbitParametersError, match="unico segmento OEM"):
+        build_orbit_parameters(
+            OrbitParametersRequest(
+                source={"kind": "catalog", "satId": "oem:multi", "segmentIndex": 0},
+                startTime=(start - timedelta(minutes=2)).isoformat(),
+                endTime=end.isoformat(),
+                samples=2,
+            ),
+            resolve_propagator=lambda *_args: ("OEM multi-segment fixture", provider),
+        )
 
 
 def test_request_contract_accepts_direct_sources_and_rejects_invalid_ranges_and_samples():
@@ -460,18 +956,46 @@ def test_request_contract_accepts_direct_sources_and_rejects_invalid_ranges_and_
     assert direct_catalog.source.sat_id == "ISS"
     assert direct_catalog.samples == 3
 
+    output_frame_request = OrbitParametersRequest(
+        source={"kind": "catalog", "satId": "ISS"},
+        startTime=EPOCH.isoformat(),
+        endTime=(EPOCH + timedelta(hours=1)).isoformat(),
+        outputFrame="gcrf",
+    )
+    assert output_frame_request.output_frame == "GCRF"
+
+    with pytest.raises(ValidationError, match="output_frame"):
+        OrbitParametersRequest(
+            source={"kind": "catalog", "satId": "ISS"},
+            startTime=EPOCH.isoformat(),
+            endTime=(EPOCH + timedelta(hours=1)).isoformat(),
+            outputFrame="ECI",
+        )
+
     with pytest.raises(ValidationError, match="end_time debe ser mayor"):
         OrbitParametersRequest(
             source={"kind": "catalog", "satId": "ISS"},
             startTime=EPOCH.isoformat(),
             endTime=EPOCH.isoformat(),
         )
+    # A one-minute cadence across a full 365-day UI range requires 525,601
+    # endpoint-inclusive samples. The request contract accepts that complete
+    # operator-selected series rather than silently forcing the old 121/2000
+    # point display caps.
+    full_year_minute_cadence = OrbitParametersRequest(
+        source={"kind": "catalog", "satId": "ISS"},
+        startTime=EPOCH.isoformat(),
+        endTime=(EPOCH + timedelta(days=365)).isoformat(),
+        samples=525_601,
+    )
+    assert full_year_minute_cadence.samples == 525_601
+
     with pytest.raises(ValidationError):
         OrbitParametersRequest(
             source={"kind": "catalog", "satId": "ISS"},
             startTime=EPOCH.isoformat(),
             endTime=(EPOCH + timedelta(hours=1)).isoformat(),
-            samples=2_001,
+            samples=ORBIT_PARAMETERS_MAX_SAMPLES + 1,
         )
 
 

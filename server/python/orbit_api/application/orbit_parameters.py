@@ -35,7 +35,13 @@ from orbit_api.domain.requests import (
     OrbitParametersRequest,
     require_manual_orbit_runtime_propagator,
 )
-from orbit_api.frames import FrameTransformService, StateVector
+from orbit_api.formats import OemStateProvider
+from orbit_api.frames import (
+    FrameId,
+    FrameTransformationError,
+    FrameTransformService,
+    StateVector,
+)
 from orbit_api.orbits.forces import GravityFieldModel, GravityModelRegistry
 from orbit_api.orbits.propagators.classical import (
     EARTH_EQUATORIAL_RADIUS_KM,
@@ -47,6 +53,19 @@ _TWO_PI = 2.0 * math.pi
 _RAD_TO_DEG = 180.0 / math.pi
 _CIRCULAR_TOLERANCE = 1e-8
 _SINGULARITY_TOLERANCE = 1e-10
+_INSPECTOR_INERTIAL_FRAMES = {
+    FrameId.TEME,
+    FrameId.GCRF,
+    FrameId.ICRF,
+    FrameId.EME2000,
+}
+_INSPECTOR_OUTPUT_FRAMES = (
+    FrameId.TEME,
+    FrameId.ITRF,
+    FrameId.EME2000,
+    FrameId.GCRF,
+    FrameId.ICRF,
+)
 
 # Native fixed-step RK4 models intentionally use a 60 s internal step.
 # Sampling an inspector range far from a manual epoch would otherwise turn one
@@ -72,9 +91,19 @@ def _rk4_required_integration_steps(
     chronologically, so a range wholly on one side of the epoch normally needs
     only the furthest endpoint. The exact amount is also affected by sample
     density: sub-minute points can make the integrator execute one shortened
-    RK4 step per point. Simulate the tiny ordered cache here (at most 2,000
-    entries) so the budget reflects both cases without force evaluation.
+    RK4 step per point. Do not materialise an unbounded ordered cache here:
+    the public inspector request can legitimately contain a full year at a
+    one-minute cadence for analytical sources. A numerical RK4 request with
+    more distinct samples than its internal step budget already exceeds that
+    budget before any force evaluation.
     """
+
+    if samples - 1 > _COWELL_RK4_MAX_INSPECTOR_STEPS:
+        # Every distinct requested epoch beyond the seed requires at least
+        # one fixed-step evaluation.  Returning the first over-budget value
+        # lets the caller reject immediately instead of performing O(n²)
+        # insertions into the cache merely to produce an error.
+        return _COWELL_RK4_MAX_INSPECTOR_STEPS + 1
 
     duration_seconds = (end_time - start_time).total_seconds()
     cached_offsets = [0.0]
@@ -136,7 +165,7 @@ def _enforce_numerical_inspector_budget(
         f"El inspector limita {engine_label} a "
         f"{_COWELL_RK4_MAX_INSPECTOR_STEPS:,} pasos internos "
         f"(~{maximum_hours:g} h de integración a 60 s/paso) por solicitud; este rango requiere "
-        f"{required_steps:,} pasos (equivalentes a ~{required_hours:g} h de integración). "
+        f"al menos {required_steps:,} pasos (equivalentes a ~{required_hours:g} h de integración). "
         "Reduce el intervalo, acerca el epoch al intervalo o usa un propagador analítico."
     )
 
@@ -166,17 +195,500 @@ def _clamped_acos(value: float) -> float:
     return math.acos(max(-1.0, min(1.0, value)))
 
 
-def _state_vector_payload(
-    state: tuple[float, float, float, float, float, float],
-    frame: str,
-) -> dict[str, Any]:
-    x, y, z, vx, vy, vz = state
-    return {
-        "reference_frame": frame,
+def _state_frame_label(state: StateVector) -> str:
+    """Return the source's exact frame label without dropping a realization."""
+
+    return state.frame_label
+
+
+def _public_state_provenance(value: Any) -> Any:
+    """Keep native provenance JSON-safe without inventing a simplified label.
+
+    Format readers mostly publish primitive values, but an integration can
+    attach datetimes, enums, tuples, or nested mappings.  The inspector is a
+    public API, so return their factual value in a JSON-compatible shape
+    rather than leaking an internal MappingProxyType (or failing the route's
+    response encoder).
+    """
+
+    if isinstance(value, datetime.datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _public_state_provenance(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_public_state_provenance(item) for item in value]
+    if hasattr(value, "value") and isinstance(value.value, str):
+        return value.value
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _native_state_vector_payload(state: StateVector) -> dict[str, Any]:
+    """Publish a native tabular state without forcing it through six-vector APIs.
+
+    SP3/OEM products can legitimately omit velocity.  Their samples must
+    remain inspectable as Cartesian position records instead of being rejected
+    just because osculating elements require a six-component inertial state.
+    """
+
+    payload: dict[str, Any] = {
+        "reference_frame": _state_frame_label(state),
+        "frame": state.frame.value if isinstance(state.frame, FrameId) else str(state.frame),
+        "frame_realization": state.frame_realization,
+        "center": state.center,
+        "epoch": state.epoch.isoformat(),
+        "time_scale": state.time_scale.value,
         "position_units": "km",
-        "velocity_units": "km/s",
-        "position": {"x": x, "y": y, "z": z},
-        "velocity": {"x": vx, "y": vy, "z": vz},
+        "position": {
+            "x": state.position_m[0] / 1_000.0,
+            "y": state.position_m[1] / 1_000.0,
+            "z": state.position_m[2] / 1_000.0,
+        },
+        "provenance": _public_state_provenance(dict(state.provenance)),
+    }
+    if state.velocity_m_s is not None:
+        payload["velocity_units"] = "km/s"
+        payload["velocity"] = {
+            "x": state.velocity_m_s[0] / 1_000.0,
+            "y": state.velocity_m_s[1] / 1_000.0,
+            "z": state.velocity_m_s[2] / 1_000.0,
+        }
+    if state.acceleration_m_s2 is not None:
+        payload["acceleration_units"] = "km/s^2"
+        payload["acceleration"] = {
+            "x": state.acceleration_m_s2[0] / 1_000.0,
+            "y": state.acceleration_m_s2[1] / 1_000.0,
+            "z": state.acceleration_m_s2[2] / 1_000.0,
+        }
+    if state.covariance is not None:
+        # Covariance remains in the StateVector's SI basis.  No unit
+        # conversion is inferred here because its mixed position/velocity
+        # terms require a matrix-unit contract of their own.
+        payload["covariance"] = [list(row) for row in state.covariance]
+        payload["covariance_units"] = "SI-state-vector"
+    return payload
+
+
+def _native_state_components_km(state: StateVector) -> tuple[float, float, float, float, float, float]:
+    """Convert a complete native state to the legacy km/km/s element input."""
+
+    if state.velocity_m_s is None:
+        raise OrbitParametersError("El estado nativo no contiene velocidad para derivar elementos osculantes")
+    return (
+        state.position_m[0] / 1_000.0,
+        state.position_m[1] / 1_000.0,
+        state.position_m[2] / 1_000.0,
+        state.velocity_m_s[0] / 1_000.0,
+        state.velocity_m_s[1] / 1_000.0,
+        state.velocity_m_s[2] / 1_000.0,
+    )
+
+
+def _state_vector_for_inspector(
+    state: StateVector | tuple[float, float, float, float, float, float],
+    *,
+    fallback_frame: str,
+    instant: datetime.datetime,
+) -> StateVector:
+    """Return one explicit native ``StateVector`` for every inspector engine.
+
+    Older propagators still expose a six-component km/km/s tuple.  Output
+    transformations must not operate on that unlabelled tuple, so build the
+    same explicit Earth-centred, UTC state that those propagators document.
+    Modern providers already return their own richer state (including source
+    time scale, realization, covariance and acceleration) unchanged.
+    """
+
+    if isinstance(state, StateVector):
+        return state
+    try:
+        components = tuple(float(value) for value in state)
+    except (TypeError, ValueError) as exc:
+        raise OrbitParametersError(
+            "El propagador devolviÃ³ un vector de estado no numÃ©rico"
+        ) from exc
+    if len(components) != 6:
+        raise OrbitParametersError("El propagador devolviÃ³ un vector de estado invÃ¡lido")
+    return StateVector.from_kilometres(
+        epoch=instant,
+        time_scale="UTC",
+        frame=fallback_frame,
+        frame_realization=None,
+        center="EARTH",
+        position_km=components[:3],
+        velocity_km_s=components[3:],
+        provenance={"state_source": "legacy-native-propagator"},
+    )
+
+
+def _requested_output_frame(payload: OrbitParametersRequest) -> FrameId | None:
+    """Resolve the request's already-validated output frame to ``FrameId``."""
+
+    if payload.output_frame is None:
+        return None
+    try:
+        return FrameId(payload.output_frame)
+    except ValueError as exc:  # Defensive guard for model-copy/direct callers.
+        raise OrbitParametersError(
+            f"El marco de salida solicitado '{payload.output_frame}' no estÃ¡ soportado"
+        ) from exc
+
+
+def _same_requested_output_frame(state: StateVector, target: FrameId) -> bool:
+    """Return whether a request only confirms the already-native frame.
+
+    ``ITRF`` is a generic request, while an imported state can carry a more
+    precise realization such as IGS20.  It is safe and more truthful to retain
+    that realization instead of attempting a datum relabel just to satisfy the
+    generic output label.
+    """
+
+    return state.frame is target
+
+
+def _transform_state_for_output(
+    state: StateVector,
+    *,
+    requested_frame: FrameId | None,
+    frame_transformer: FrameTransformService | None,
+    instant: datetime.datetime,
+) -> tuple[StateVector, dict[str, Any]]:
+    """Produce the requested table state or fail before publishing a relabel.
+
+    A caller can always inspect the native frame.  Once another frame is
+    requested, though, a real ``FrameTransformService`` route (and therefore
+    its EOP/leap-second contract where applicable) is mandatory.  There is no
+    fallback that merely changes a frame string.
+    """
+
+    native_frame = _state_frame_label(state)
+    if requested_frame is None:
+        return state, {
+            "requested_frame": None,
+            "native_frame": native_frame,
+            "output_frame": native_frame,
+            "applied": False,
+            "mode": "native",
+        }
+    if _same_requested_output_frame(state, requested_frame):
+        return state, {
+            "requested_frame": requested_frame.value,
+            "native_frame": native_frame,
+            "output_frame": native_frame,
+            "applied": False,
+            "mode": "native-request-confirmed",
+        }
+    if frame_transformer is None:
+        raise OrbitParametersError(
+            "Se solicitÃ³ output_frame="
+            f"{requested_frame.value}, pero FrameTransformService no estÃ¡ configurado. "
+            "No se puede cambiar el marco de un estado sin una transformaciÃ³n y EOP verificables."
+        )
+    try:
+        transformed = frame_transformer.transform(
+            state,
+            target_frame=requested_frame,
+        )
+    except FrameTransformationError as exc:
+        raise OrbitParametersError(
+            "No se pudo transformar el estado del inspector de "
+            f"{native_frame} a {requested_frame.value} en {instant.isoformat()}: {exc}"
+        ) from exc
+    except (TypeError, ValueError, ArithmeticError, OverflowError) as exc:
+        raise OrbitParametersError(
+            "La transformaciÃ³n de marco del inspector fallÃ³ de "
+            f"{native_frame} a {requested_frame.value} en {instant.isoformat()}: {exc}"
+        ) from exc
+    if not isinstance(transformed, StateVector) or transformed.frame is not requested_frame:
+        raise OrbitParametersError(
+            "FrameTransformService no devolviÃ³ el marco de salida solicitado "
+            f"({requested_frame.value})"
+        )
+    transform_provenance = transformed.provenance.get("frame_transform")
+    return transformed, {
+        "requested_frame": requested_frame.value,
+        "native_frame": native_frame,
+        "output_frame": _state_frame_label(transformed),
+        "applied": True,
+        "mode": "transformed",
+        "path": list(transformed.transform_path),
+        "provenance": _public_state_provenance(transform_provenance)
+        if transform_provenance is not None
+        else None,
+    }
+
+
+def _osculating_state_reason(state: StateVector) -> str | None:
+    """Return why a Cartesian state cannot safely yield classical elements."""
+
+    if state.center != "EARTH":
+        return "Los elementos osculantes del inspector solo estÃ¡n definidos para estados centrados en la Tierra."
+    if state.frame not in _INSPECTOR_INERTIAL_FRAMES:
+        return (
+            "Los elementos osculantes requieren un marco inercial; "
+            f"el estado disponible estÃ¡ en {_state_frame_label(state)}."
+        )
+    if state.velocity_m_s is None:
+        return "El estado cartesiano no contiene velocidad para derivar elementos osculantes."
+    return None
+
+
+def _select_osculating_calculation_state(
+    native_state: StateVector,
+    output_state: StateVector,
+) -> tuple[StateVector | None, str | None, str | None]:
+    """Prefer native inertial dynamics, then a safely transformed output.
+
+    This keeps an ITRF *display* from relabelling elements that were computed
+    in TEME/EME2000.  Conversely, a terrestrial tabular state transformed to
+    GCRF may legitimately provide elements in that requested inertial output
+    frame.  The returned string records which state was used for calculation.
+    """
+
+    native_reason = _osculating_state_reason(native_state)
+    if native_reason is None:
+        return native_state, "native", None
+    output_reason = _osculating_state_reason(output_state)
+    if output_reason is None:
+        return output_state, "output", None
+    if output_state is native_state:
+        return None, None, native_reason
+    return None, None, (
+        f"Marco nativo: {native_reason} Marco de salida: {output_reason}"
+    )
+
+
+def _output_frame_capability(
+    *,
+    native_frame: str,
+    output_frame: str,
+    requested_frame: FrameId | None,
+    frame_transformer: FrameTransformService | None,
+    transform_applied: bool,
+    calculation_frame: str | None,
+    transform_provenance: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Expose exact frame provenance and safe selector capabilities to clients."""
+
+    supported = [item.value for item in _INSPECTOR_OUTPUT_FRAMES]
+    selectable = frame_transformer is not None
+    requestable = supported if selectable else [native_frame]
+    reason = (
+        None
+        if selectable
+        else (
+            "FrameTransformService no estÃ¡ configurado; solo se puede mostrar "
+            "el marco nativo de esta fuente."
+        )
+    )
+    return {
+        "native": {"reference_frame": native_frame},
+        "current": {"reference_frame": output_frame},
+        "output": {
+            "requested_frame": requested_frame.value if requested_frame is not None else None,
+            "reference_frame": output_frame,
+            "transformed": transform_applied,
+            "provenance": transform_provenance if transform_applied else None,
+        },
+        "calculation": {
+            "reference_frame": calculation_frame,
+            "elements_follow_calculation_frame": calculation_frame is not None,
+        },
+        "supported_output_frames": supported,
+        "available_output_frames": requestable,
+        "requestable_output_frames": requestable,
+        "selectable": selectable,
+        "reason": reason,
+        "frame_transform_service_configured": selectable,
+        "selection_requires_runtime_validation": True,
+    }
+
+
+def _tabular_interpolation_contract(propagator: Any) -> dict[str, Any]:
+    """Expose the actual per-provider interpolation declaration and cadence."""
+
+    samples = tuple(getattr(propagator, "samples", ()) or ())
+    cadence: float | None = None
+    if len(samples) >= 2:
+        try:
+            cadence = (samples[-1].epoch - samples[0].epoch).total_seconds() / (len(samples) - 1)
+        except (AttributeError, TypeError, ValueError, ArithmeticError):
+            cadence = None
+    declared_method = getattr(propagator, "declared_interpolation", None)
+    declared_degree = getattr(propagator, "declared_interpolation_degree", None)
+    if declared_method is None:
+        method = "NONE" if len(samples) < 2 else "LINEAR"
+    else:
+        method = str(declared_method).strip().upper() or None
+    return {
+        "method": method,
+        "declared_method": declared_method,
+        "declared_degree": declared_degree,
+        "sample_count": len(samples),
+        "mean_sample_cadence_seconds": cadence,
+    }
+
+
+def _tabular_frame_label(propagator: Any) -> str:
+    """Resolve a provider's native frame, retaining a terrestrial realization."""
+
+    frame = getattr(propagator, "native_frame", None)
+    realization = getattr(propagator, "native_realization", None)
+    if frame is not None:
+        frame_name = frame.value if isinstance(frame, FrameId) else str(frame)
+        return str(realization or frame_name)
+    return str(getattr(propagator, "dynamics_reference_frame", "")).strip() or "UNKNOWN"
+
+
+def _tabular_osculating_capability(propagator: Any) -> tuple[bool, str | None]:
+    """Allow two-body element derivation only for an Earth-centred inertial state.
+
+    A tabular format is not itself a dynamics model.  We can nevertheless
+    derive instantaneous elements when the source explicitly provides the
+    full Cartesian state in one of the inertial frames Orbit understands.  A
+    terrestrial SP3/OEM sample is deliberately kept Cartesian-only.
+    """
+
+    samples = tuple(getattr(propagator, "samples", ()) or ())
+    if not samples:
+        return False, "El proveedor tabular no declaró muestras nativas."
+    first = samples[0]
+    frame = getattr(first, "frame", None)
+    center = str(getattr(first, "center", "")).strip().upper()
+    inertial_frames = {FrameId.TEME, FrameId.GCRF, FrameId.ICRF, FrameId.EME2000}
+    if frame not in inertial_frames:
+        return False, "Las muestras tabulares no están en un marco inercial apto para elementos osculantes."
+    if center != "EARTH":
+        return False, "Los elementos osculantes del inspector solo están definidos para estados centrados en la Tierra."
+    if any(getattr(sample, "velocity_m_s", None) is None for sample in samples):
+        return False, "La efeméride tabular no declara velocidad en todas sus muestras."
+    return True, None
+
+
+def _tabular_native_state_provider(propagator: Any) -> Callable[[datetime.datetime], StateVector]:
+    native_provider = getattr(propagator, "native_state_at", None)
+    if not callable(native_provider):
+        raise OrbitParametersError("El proveedor tabular no expone estados nativos para inspección")
+
+    def state_at(moment: datetime.datetime) -> StateVector:
+        result = native_provider(moment)
+        if not isinstance(result, StateVector):
+            raise OrbitParametersError("El proveedor tabular no devolvió un StateVector nativo válido")
+        return result
+
+    return state_at
+
+
+def _oem_selected_segment(
+    propagator: OemStateProvider,
+    *,
+    segment_index: int | None,
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+) -> tuple[int, Any]:
+    """Return one OEM segment only when its whole inspection interval is usable.
+
+    OEM segment metadata can change frame, centre, time scale and interpolation
+    contract.  The inspector must therefore never infer a segment from a
+    partial interval or interpolate across a boundary.  A multi-segment OEM
+    requires an explicit request choice; a one-segment OEM uses its sole
+    segment by construction.
+    """
+
+    if propagator.segment_count > 1 and segment_index is None:
+        raise OrbitParametersError(
+            "La OEM contiene varios segmentos; especifica source.segmentIndex "
+            "para inspeccionar uno sin cruzar discontinuidades"
+        )
+    if propagator.segment_count == 1:
+        if segment_index is not None:
+            raise OrbitParametersError(
+                "source.segmentIndex solo se admite para una fuente OEM multisegmento"
+            )
+        selected_index = 0
+    else:
+        assert segment_index is not None
+        selected_index = segment_index
+    try:
+        segment = propagator.segment(selected_index)
+    except (TypeError, ValueError, IndexError) as exc:
+        raise OrbitParametersError(
+            f"La OEM no contiene el segmento solicitado ({selected_index})"
+        ) from exc
+
+    # Query both bounds through OemStateProvider rather than its bare
+    # TabularStateProvider.  This applies the segment's source time scale and
+    # retains OEM covariance attachment semantics at exact record epochs.
+    try:
+        propagator.native_state_at(start_time, segment_index=selected_index)
+        propagator.native_state_at(end_time, segment_index=selected_index)
+    except (TypeError, ValueError, ArithmeticError, OverflowError) as exc:
+        raise OrbitParametersError(
+            "El intervalo solicitado debe quedar integramente dentro de un unico "
+            f"segmento OEM (segmentIndex={selected_index}); no se interpolan "
+            f"discontinuidades. Detalle: {exc}"
+        ) from exc
+    return selected_index, segment
+
+
+def _oem_native_state_provider(
+    propagator: OemStateProvider,
+    segment_index: int,
+) -> Callable[[datetime.datetime], StateVector]:
+    """Keep the OEM wrapper in the sampling path so covariance is not lost."""
+
+    def state_at(moment: datetime.datetime) -> StateVector:
+        result = propagator.native_state_at(moment, segment_index=segment_index)
+        if not isinstance(result, StateVector):
+            raise OrbitParametersError(
+                "El proveedor OEM no devolvio un StateVector nativo valido"
+            )
+        return result
+
+    return state_at
+
+
+def _oem_segment_contract(
+    propagator: OemStateProvider,
+    *,
+    segment_index: int,
+    segment: Any,
+) -> dict[str, Any]:
+    """Expose selected OEM metadata without flattening its native contract."""
+
+    metadata = propagator.metadata
+    declared = metadata.segments[segment_index]
+    covariances = propagator.covariances(segment_index=segment_index)
+    return {
+        "file_version": metadata.version,
+        "creation_date": metadata.creation_date,
+        "originator": metadata.originator,
+        "segment_index": segment_index,
+        "segment_count": propagator.segment_count,
+        "object_name": declared.object_name,
+        "object_id": declared.object_id,
+        "center": declared.center_name,
+        "reference_frame": declared.reference_frame.label,
+        "time_scale": declared.time_scale.value,
+        "declared_coverage": {
+            "start_time": declared.start_time,
+            "stop_time": declared.stop_time,
+            "usable_start_time": declared.usable_start_time,
+            "usable_stop_time": declared.usable_stop_time,
+        },
+        "native_state_coverage": {
+            "start_time": segment.coverage_start.isoformat(),
+            "stop_time": segment.coverage_stop.isoformat(),
+            "time_scale": segment.native_time_scale.value,
+        },
+        "interpolation": _tabular_interpolation_contract(segment),
+        "covariance": {
+            "available": bool(covariances),
+            "record_count": len(covariances),
+            "attachment": "exact-epoch-only",
+            "epochs": [record.epoch.isoformat() for record in covariances],
+        },
     }
 
 
@@ -302,10 +814,22 @@ def derive_osculating_elements(
     }
 
 
-def _native_state_provider(propagator: Any, frame: str) -> Callable[[datetime.datetime], tuple[float, float, float, float, float, float]]:
+def _native_state_provider(
+    propagator: Any,
+    frame: str,
+) -> Callable[[datetime.datetime], StateVector | tuple[float, float, float, float, float, float]]:
+    """Return a native state without discarding runtime-only components.
+
+    Historical propagators expose a six-component km/km/s tuple.  Modern
+    native providers return a ``StateVector`` which can additionally carry a
+    physically evaluated acceleration, covariance, and provenance.  The
+    inspector must preserve that richer result verbatim; it must never infer
+    an acceleration for a source such as SGP4 that did not publish one.
+    """
+
     native_provider = getattr(propagator, "native_state_at", None)
     if callable(native_provider):
-        def typed_state_at(moment: datetime.datetime) -> tuple[float, float, float, float, float, float]:
+        def typed_state_at(moment: datetime.datetime) -> StateVector:
             result = native_provider(moment)
             if not isinstance(result, StateVector):
                 raise OrbitParametersError("El propagador no devolvió un StateVector nativo válido")
@@ -314,8 +838,7 @@ def _native_state_provider(propagator: Any, frame: str) -> Callable[[datetime.da
                 raise OrbitParametersError(
                     f"El propagador devolvió {actual_frame} cuando el inspector esperaba {frame}"
                 )
-            components = result.components()
-            return tuple(component / 1000.0 for component in components)  # type: ignore[return-value]
+            return result
 
         return typed_state_at
     method_name = "propagate_teme_datetime" if frame == "TEME" else "propagate_eme2000_datetime"
@@ -339,10 +862,118 @@ def _native_state_provider(propagator: Any, frame: str) -> Callable[[datetime.da
     return state_at
 
 
-def _catalog_source(payload: OrbitParametersRequest, resolve_propagator: Callable) -> tuple[str, Callable, str, float, dict[str, Any], dict[str, Any]]:
+def _catalog_source(
+    payload: OrbitParametersRequest,
+    resolve_propagator: Callable,
+    *,
+    start_time: datetime.datetime,
+    end_time: datetime.datetime,
+) -> tuple[str, Callable, str, float, dict[str, Any], dict[str, Any]]:
     source = payload.source
     name, propagator = resolve_propagator(source.sat_id, source.line1, source.line2)
-    # Catalogues in Orbit are TLE/SGP4.  Explicitly choose the raw TEME API;
+    # OemStateProvider intentionally has no file-wide frame/samples facade:
+    # its segments may differ. Select one explicitly before the generic
+    # tabular branch, and keep the wrapper for native covariance handling.
+    if isinstance(propagator, OemStateProvider):
+        segment_index, segment = _oem_selected_segment(
+            propagator,
+            segment_index=source.segment_index,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        frame = _tabular_frame_label(segment)
+        osculating_available, osculating_reason = _tabular_osculating_capability(
+            segment
+        )
+        interpolation = _tabular_interpolation_contract(segment)
+        oem = _oem_segment_contract(
+            propagator,
+            segment_index=segment_index,
+            segment=segment,
+        )
+        model = {
+            "id": "tabular-oem",
+            "label": "Estado tabular nativo OEM",
+            "source_format": "OEM",
+            "dynamics_reference_frame": frame,
+            "state_reference_frame": frame,
+            "ephemeris_reference_frame": frame,
+            "state_source": "native_tabular_state",
+            "interpolation": interpolation,
+            "oem": oem,
+            "osculating_elements": {
+                "available": osculating_available,
+                "reason": osculating_reason,
+            },
+        }
+        identity = {
+            "kind": "catalog",
+            "name": name,
+            "sat_id": source.sat_id,
+            "runtime_id": source.sat_id,
+            "source_format": "OEM",
+            "reference_frame": frame,
+            "state_source": "native_tabular_state",
+            "interpolation": interpolation,
+            "segment_index": segment_index,
+            "oem": oem,
+        }
+        return (
+            name,
+            _oem_native_state_provider(propagator, segment_index),
+            frame,
+            EARTH_MU_KM3_S2,
+            model,
+            identity,
+        )
+
+    if source.segment_index is not None:
+        raise OrbitParametersError(
+            "source.segmentIndex solo se admite para una fuente OEM multisegmento"
+        )
+    source_format = str(getattr(propagator, "source_format", "")).strip().upper()
+    # Runtime imports may resolve a per-object TabularStateProvider rather
+    # than an SGP4 propagator.  The object carries a native frame/time-state
+    # contract, so never relabel it as TEME or route it through Satrec.
+    if source_format in {"SP3", "OEM"}:
+        frame = _tabular_frame_label(propagator)
+        osculating_available, osculating_reason = _tabular_osculating_capability(propagator)
+        interpolation = _tabular_interpolation_contract(propagator)
+        model = {
+            "id": f"tabular-{source_format.lower()}",
+            "label": f"Estado tabular nativo {source_format}",
+            "source_format": source_format,
+            "dynamics_reference_frame": frame,
+            "state_reference_frame": frame,
+            "ephemeris_reference_frame": frame,
+            "state_source": "native_tabular_state",
+            "interpolation": interpolation,
+            "osculating_elements": {
+                "available": osculating_available,
+                "reason": osculating_reason,
+            },
+        }
+        identity = {
+            "kind": "catalog",
+            "name": name,
+            "sat_id": source.sat_id,
+            "runtime_id": source.sat_id,
+            "source_format": source_format,
+            "reference_frame": frame,
+            "state_source": "native_tabular_state",
+            "interpolation": interpolation,
+        }
+        return name, _tabular_native_state_provider(propagator), frame, EARTH_MU_KM3_S2, model, identity
+    # Catalogue OMM imports in Orbit may carry valid TLE lines and therefore
+    # execute through SGP4. Preserve that input provenance independently from
+    # the actual engine: it is an OMM-fed SGP4 calculation, not an invented
+    # OMM analytical propagator.
+    declared_catalog_format = str(
+        getattr(source, "source_format", None) or source_format or "TLE"
+    ).strip().upper()
+    if declared_catalog_format not in {"TLE", "OMM"}:
+        declared_catalog_format = "TLE"
+    # Catalogues in Orbit are TLE/SGP4. Explicitly choose the raw TEME API;
     # `propagate_datetime` is ITRF and must never be inferred to be ECI.
     frame = str(getattr(propagator, "dynamics_reference_frame", "TEME"))
     sgp4_satrec = getattr(propagator, "sat", None)
@@ -353,6 +984,7 @@ def _catalog_source(payload: OrbitParametersRequest, resolve_propagator: Callabl
     model = {
         "id": getattr(propagator, "model_id", "sgp4"),
         "label": "SGP4",
+        "input_source_format": declared_catalog_format,
         "dynamics_reference_frame": "TEME",
         "state_reference_frame": "TEME",
         "ephemeris_reference_frame": (
@@ -368,6 +1000,7 @@ def _catalog_source(payload: OrbitParametersRequest, resolve_propagator: Callabl
         "kind": "catalog",
         "name": name,
         "sat_id": source.sat_id,
+        "source_format": declared_catalog_format,
         "reference_frame": frame,
     }
     return name, _native_state_provider(propagator, frame), frame, mu, model, identity
@@ -460,7 +1093,14 @@ def build_orbit_parameters(
     manual_erp_repository: ManualErpRepository | None = None,
     gravity_model_registry: GravityModelRegistry | None = None,
 ) -> dict[str, Any]:
-    """Propagate a source at evenly spaced instants and derive its elements."""
+    """Sample a source at evenly spaced instants and derive only safe elements.
+
+    Catalogue TLE/SGP4 and manual dynamics retain the established osculating
+    response.  A runtime-resolved SP3/OEM TabularStateProvider instead exposes
+    its native Cartesian samples, provenance, and declared interpolation.  It
+    derives osculating elements only when that native state is explicitly
+    Earth-centred, inertial, and complete.
+    """
 
     normalise_utc = ensure_utc or normalize_utc
     start_time = normalise_utc(payload.start_time)
@@ -481,7 +1121,18 @@ def build_orbit_parameters(
             max(normalise_utc(payload.source.manual_orbit.epoch), end_time),
         )
     else:
-        name, state_at, frame, mu, model, identity = _catalog_source(payload, resolve_propagator)
+        name, state_at, frame, mu, model, identity = _catalog_source(
+            payload,
+            resolve_propagator,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+    tabular_native = model.get("state_source") == "native_tabular_state"
+    tabular_source_format = str(
+        model.get("source_format") or identity.get("source_format") or ""
+    ).upper() or None
+    requested_output_frame = _requested_output_frame(payload)
 
     duration_seconds = (end_time - start_time).total_seconds()
     if payload.source.kind == "manual":
@@ -497,27 +1148,111 @@ def build_orbit_parameters(
         )
 
     points: list[dict[str, Any]] = []
+    output_frame_labels: list[str] = []
+    calculation_frame_labels: list[str] = []
+    osculating_unavailable_reasons: list[str] = []
+    transform_provenances: list[dict[str, Any]] = []
+    transform_applied = False
     for index in range(payload.samples):
         fraction = index / (payload.samples - 1)
         instant = start_time + datetime.timedelta(seconds=duration_seconds * fraction)
         try:
-            state = state_at(instant)
-            elements = derive_osculating_elements(
-                state,
-                reference_frame=frame,
-                central_body_mu_km3_s2=mu,
+            raw_state = state_at(instant)
+            native_state = _state_vector_for_inspector(
+                raw_state,
+                fallback_frame=frame,
+                instant=instant,
             )
+            output_state, frame_transform = _transform_state_for_output(
+                native_state,
+                requested_frame=requested_output_frame,
+                frame_transformer=frame_transformer,
+                instant=instant,
+            )
+            native_frame = _state_frame_label(native_state)
+            output_frame = _state_frame_label(output_state)
+            output_frame_labels.append(output_frame)
+            transform_applied = transform_applied or bool(frame_transform["applied"])
+            if isinstance(frame_transform.get("provenance"), dict):
+                transform_provenances.append(frame_transform["provenance"])
+            calculation_state, calculation_origin, unavailable_reason = (
+                _select_osculating_calculation_state(native_state, output_state)
+            )
+
+            point: dict[str, Any] = {
+                "time": instant.isoformat(),
+                # The table always follows the selected output frame.  The
+                # source/dynamics frame is retained alongside it so an ITRF
+                # display cannot be mistaken for an ITRF element calculation.
+                "reference_frame": output_frame,
+                "native_reference_frame": native_frame,
+                "output_reference_frame": output_frame,
+                "frame_transform": frame_transform,
+                "state": _native_state_vector_payload(output_state),
+            }
+            if tabular_native:
+                if not isinstance(raw_state, StateVector):
+                    raise OrbitParametersError("El proveedor tabular no devolvió un StateVector nativo válido")
+                raw_interpolation = dict(native_state.provenance).get("tabular_interpolation")
+                point["sampling"] = (
+                    _public_state_provenance(raw_interpolation)
+                    if isinstance(raw_interpolation, dict)
+                    else {
+                        "method": "EXACT",
+                        "source_format": tabular_source_format,
+                    }
+                )
+
+            if calculation_state is None:
+                if not tabular_native:
+                    raise OrbitParametersError(
+                        unavailable_reason
+                        or "El estado propagado no permite derivar elementos osculantes."
+                    )
+                reason = unavailable_reason or (
+                    "El estado tabular no permite derivar elementos osculantes."
+                )
+                osculating_unavailable_reasons.append(reason)
+                point["element_type"] = "native-cartesian"
+                point["osculating_elements"] = {
+                    "available": False,
+                    "reason": reason,
+                    "calculation_reference_frame": None,
+                }
+            else:
+                calculation_frame = _state_frame_label(calculation_state)
+                try:
+                    elements = derive_osculating_elements(
+                        _native_state_components_km(calculation_state),
+                        reference_frame=calculation_frame,
+                        central_body_mu_km3_s2=mu,
+                    )
+                except OrbitParametersError as exc:
+                    if not tabular_native:
+                        raise
+                    reason = str(exc)
+                    osculating_unavailable_reasons.append(reason)
+                    point["element_type"] = "native-cartesian"
+                    point["osculating_elements"] = {
+                        "available": False,
+                        "reason": reason,
+                        "calculation_reference_frame": calculation_frame,
+                        "calculation_state": calculation_origin,
+                    }
+                else:
+                    calculation_frame_labels.append(calculation_frame)
+                    point["element_type"] = "osculating"
+                    point["elements"] = elements
+                    point["osculating_elements"] = {
+                        "available": True,
+                        "calculation_reference_frame": calculation_frame,
+                        "calculation_state": calculation_origin,
+                    }
         except OrbitParametersError:
             raise
         except (TypeError, ValueError, ArithmeticError, OverflowError) as exc:
             raise OrbitParametersError(f"No se pudieron propagar parámetros orbitales: {exc}") from exc
-        points.append({
-            "time": instant.isoformat(),
-            "reference_frame": frame,
-            "element_type": "osculating",
-            "state": _state_vector_payload(state, frame),
-            "elements": elements,
-        })
+        points.append(point)
 
     automatic_eop_window: dict[str, object] | None = None
     if payload.source.kind == "manual":
@@ -536,12 +1271,101 @@ def build_orbit_parameters(
             if automatic_eop_window is not None:
                 model["earth_orientation_window"] = automatic_eop_window
 
+    osculating_available = bool(points) and all(
+        point.get("osculating_elements", {}).get("available") is True
+        for point in points
+    )
+    osculating_reason = (
+        osculating_unavailable_reasons[0] if osculating_unavailable_reasons else None
+    )
+    output_reference_frame = output_frame_labels[0] if output_frame_labels else frame
+    calculation_reference_frame = (
+        calculation_frame_labels[0] if calculation_frame_labels else None
+    )
+    frame_capability = _output_frame_capability(
+        native_frame=frame,
+        output_frame=output_reference_frame,
+        requested_frame=requested_output_frame,
+        frame_transformer=frame_transformer,
+        transform_applied=transform_applied,
+        calculation_frame=calculation_reference_frame,
+        transform_provenance=(transform_provenances[0] if transform_provenances else None),
+    )
+
+    if tabular_native:
+        inspector_capability = {
+            "available": True,
+            "mode": "native-cartesian" if not osculating_available else "native-cartesian-and-osculating",
+            "source_format": tabular_source_format,
+            "native_cartesian": {
+                "available": True,
+                "reference_frame": frame,
+                "interpolation": model.get("interpolation"),
+            },
+            "output_cartesian": {
+                "available": True,
+                "reference_frame": output_reference_frame,
+            },
+            "osculating_elements": {
+                "available": osculating_available,
+                "reason": osculating_reason,
+                "reference_frame": calculation_reference_frame,
+            },
+            "frame": frame_capability,
+            "frames": frame_capability,
+        }
+    else:
+        inspector_capability = {
+            "available": True,
+            "mode": "osculating-elements",
+            "source_format": identity.get("source_format"),
+            "native_cartesian": {"available": True, "reference_frame": frame},
+            "output_cartesian": {
+                "available": True,
+                "reference_frame": output_reference_frame,
+            },
+            "osculating_elements": {
+                "available": osculating_available,
+                "reason": osculating_reason,
+                "reference_frame": calculation_reference_frame,
+            },
+            "frame": frame_capability,
+            "frames": frame_capability,
+        }
+
+    model["output_reference_frame"] = output_reference_frame
+    model["requested_output_frame"] = (
+        requested_output_frame.value if requested_output_frame is not None else None
+    )
+    model["frame_transform_service_configured"] = frame_transformer is not None
+    if tabular_native:
+        # Keep the source-declared capability intact and expose separately
+        # what the selected output table can actually derive.  An ITRF SP3
+        # transformed to GCRF is the important case: native elements remain
+        # unavailable, while the verified inertial output can support them.
+        model["native_osculating_elements"] = dict(
+            model.get("osculating_elements") or {}
+        )
+    model["output_osculating_elements"] = {
+        "available": osculating_available,
+        "reason": osculating_reason,
+        "reference_frame": calculation_reference_frame,
+    }
+
     return {
         "source": identity,
         "satellite": name,
-        "reference_frame": frame,
-        "element_type": "osculating",
+        "reference_frame": output_reference_frame,
+        "native_reference_frame": frame,
+        "output_reference_frame": output_reference_frame,
+        "requested_output_frame": (
+            requested_output_frame.value if requested_output_frame is not None else None
+        ),
+        "frame": frame_capability,
+        "frames": frame_capability,
+        "element_type": "osculating" if osculating_available else "native-cartesian",
         "model": model,
+        "capabilities": {"inspector": inspector_capability},
         "start_time": start_time.isoformat(),
         "end_time": end_time.isoformat(),
         "duration_seconds": duration_seconds,

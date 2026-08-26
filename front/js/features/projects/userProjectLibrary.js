@@ -435,6 +435,7 @@ export function normalizeUserProjectDocument(value, { name } = {}) {
         celestialBodies: source.celestialBodies,
         plannerEvents: source.plannerEvents,
         plannerHiddenLayerIds: source.plannerHiddenLayerIds,
+        propagationHistory: source.propagationHistory,
         layerNames: source.layerNames,
         layerTree: source.layerTree,
         groundStations: source.groundStations,

@@ -1,5 +1,6 @@
 import { normalizePlannerEvents } from "../features/planner/plannerEvents.js";
 import { normalizePlannerHiddenLayerIds } from "../features/planner/plannerRuntimeContext.js";
+import { normalizePropagationHistory } from "../features/propagatedParameters/propagationHistory.js";
 
 export const PROJECT_FORMAT = "orbit-project";
 export const PROJECT_VERSION = 1;
@@ -60,7 +61,16 @@ export function normalizeProjectPlannerHiddenLayerIds(value) {
     return normalizePlannerHiddenLayerIds(value);
 }
 
-export function buildProjectDocument({ name, satellites, layerNames, layerTree, groundStations, simulation, manualOrbits, celestialBodies, plannerEvents, plannerHiddenLayerIds }) {
+/**
+ * Persist a compact propagation audit owned by the project. It deliberately
+ * contains request/result metadata only; sampled ephemerides stay transient
+ * in the inspector and can be exported explicitly when required.
+ */
+export function normalizeProjectPropagationHistory(value) {
+    return normalizePropagationHistory(value);
+}
+
+export function buildProjectDocument({ name, satellites, layerNames, layerTree, groundStations, simulation, manualOrbits, celestialBodies, plannerEvents, plannerHiddenLayerIds, propagationHistory }) {
     return {
         format: PROJECT_FORMAT,
         version: PROJECT_VERSION,
@@ -80,6 +90,9 @@ export function buildProjectDocument({ name, satellites, layerNames, layerTree, 
         // Planner-only visibility is authored per project. It intentionally
         // does not mutate `visible` in the scene layer tree.
         plannerHiddenLayerIds: normalizeProjectPlannerHiddenLayerIds(plannerHiddenLayerIds),
+        // This is an audit trail of completed/running inspector requests, not
+        // a second ephemerides cache. The normalizer drops raw samples.
+        propagationHistory: normalizeProjectPropagationHistory(propagationHistory),
         layerNames: layerNames && typeof layerNames === "object" ? layerNames : {},
         layerTree: layerTree && typeof layerTree === "object" ? layerTree : { folders: [], layerParents: {} },
         groundStations: Array.isArray(groundStations) ? groundStations : [],

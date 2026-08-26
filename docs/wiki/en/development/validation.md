@@ -45,7 +45,7 @@ Examples of rules:
 | API Orbit | `horizon_hours` is between 0.1 and 8760; `samples`, if supplied, between 2 and 7200. |
 | Station | Latitude −90…90°, longitude −180…180°, minimum elevation 0…90°. |
 | Manual AOS/LOS | `source.kind: manual` requires `manualOrbit` and cannot include `sat_id` or TLE lines; the access window still uses UTC `start_time < end_time`. |
-| Orbital parameters | 2…2000 samples; RK4 models are rejected if they exceed their internal step budget. |
+| Orbital parameters | 2…600,000 samples; an explicit cadence retains every point. RK4 models are rejected if they exceed their independent internal-step budget. |
 | Manual orbit | Requires Keplerian elements or state vector; Force options are normalized to the chosen engine. |
 | Precise GNSS product | Required SP3; associated CLK, ERP, SUM, ATT, and OSB; field extensions and upload/file/expansion limits. Provider and class are derived from the SP3; `require_eci` remains an internal guard for a future comparison. |
 
@@ -96,7 +96,10 @@ a known `REF_FRAME`. OEM covariances are only accepted for blocks
 cartesians; RTN/RSW/TNW representations are rejected. The interpolation
 Hermite requires an odd degree and appropriate position/velocity data.
 
-OEM remains a local-viewer route, not an operational runtime provider. SP3 is
+An OEM loaded locally without a registered adapter remains a viewer-only route
+and is not re-propagated as catalogue data. When a verified OEM provider is
+registered in the backend, it can feed the ephemerides inspector within its
+declared segment and coverage. SP3 is
 published through `POST /api/precise-products/import`, with CLK/ERP/SUM/ATT/OSB
 ancillary products,
 compressed-file validation, manifest, checksums, and rehydration. That

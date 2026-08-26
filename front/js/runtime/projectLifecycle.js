@@ -3,7 +3,8 @@ import {
     isProjectDocument,
     normalizeProjectName,
     normalizeProjectPlannerEvents,
-    normalizeProjectPlannerHiddenLayerIds
+    normalizeProjectPlannerHiddenLayerIds,
+    normalizeProjectPropagationHistory
 } from "./projectDocument.js";
 import { downloadProjectDocument, readProjectDocument, saveProjectDocument } from "./projectFileIO.js";
 import {
@@ -104,6 +105,7 @@ export function createProjectLifecycle(deps) {
         restoreGroundStations = async () => ({ restored: [], failed: [], idMap: {} }),
         getPlannerManualEvents = () => [], restorePlannerManualEvents = async () => {}, clearPlannerManualEvents = () => {},
         getPlannerHiddenLayerIds = () => [], restorePlannerHiddenLayerIds = async () => {}, clearPlannerHiddenLayerIds = () => {},
+        getPropagationHistory = () => [], restorePropagationHistory = async () => {}, clearPropagationHistory = () => {},
         getCelestialBodies = () => [], restoreCelestialBodies = () => [], clearCelestialBodies = () => {},
         // Local OEM tracks are intentionally not serialised: their samples
         // live only in the imported file/runtime. SP3 entries, by contrast,
@@ -185,6 +187,7 @@ export function createProjectLifecycle(deps) {
             manualOrbits,
             plannerEvents: getPlannerManualEvents(),
             plannerHiddenLayerIds: getPlannerHiddenLayerIds(),
+            propagationHistory: getPropagationHistory(),
             celestialBodies: getCelestialBodies(),
             layerNames: Object.fromEntries(getLayerNameOverrides()),
             layerTree: getObjectSidebar()?.getProjectTree?.(),
@@ -234,6 +237,7 @@ export function createProjectLifecycle(deps) {
         || getCelestialBodies().length > 0
         || getPlannerManualEvents().length > 0
         || getPlannerHiddenLayerIds().length > 0
+        || getPropagationHistory().length > 0
         || (getObjectSidebar()?.getProjectTree?.().folders.length || 0) > 0;
 
     const clearContents = () => {
@@ -261,6 +265,7 @@ export function createProjectLifecycle(deps) {
         deferredSatelliteIds.clear();
         clearPlannerManualEvents();
         clearPlannerHiddenLayerIds();
+        clearPropagationHistory();
         setAllSatelliteLayersActive(false);
         for (const stationId of [...getGroundStationLayers().keys()]) removeGroundStationLayer(stationId);
         clearCelestialBodies(); clearDuplicateLayers(); getLayerNameOverrides().clear(); clearSatelliteVisualizationConfigs();
@@ -327,6 +332,7 @@ export function createProjectLifecycle(deps) {
         setProjectName(normalizeProjectName(project.name || file.name.replace(/\.json$/i, "")));
         const manualOrbits = Array.isArray(project.manualOrbits) ? project.manualOrbits : [];
         const groundStations = Array.isArray(project.groundStations) ? project.groundStations : [];
+        const propagationHistory = normalizeProjectPropagationHistory(project.propagationHistory);
         const manualIds = new Set(manualOrbits
             .map((entry) => String(entry?.id || "").trim())
             .filter(Boolean));
@@ -396,6 +402,14 @@ export function createProjectLifecycle(deps) {
             );
         } catch {
             showAlert("El proyecto se abrio, pero los filtros de capas del planificador no pudieron restaurarse.", getAlertTitle());
+        }
+        try {
+            // The audit trail is project-owned metadata. It has no Cesium
+            // handles or source samples, so it can restore independently of
+            // a missing catalogue/SP3 product and remains useful for review.
+            await restorePropagationHistory(propagationHistory);
+        } catch {
+            showAlert("El proyecto se abrio, pero no se pudo restaurar el historial de propagaciones.", getAlertTitle());
         }
         Object.entries(remapLayerNames(project.layerNames, groundStationIdMap))
             .forEach(([id, name]) => getLayerNameOverrides().set(id, name));

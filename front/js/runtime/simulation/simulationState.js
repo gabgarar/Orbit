@@ -23,6 +23,27 @@ export function setSimulationRange(state, startDate, endDate) {
     return true;
 }
 
+/**
+ * Return the finite interval that is actively driving the shared simulation
+ * clock. `startDate`/`endDate` remain populated while the clock is realtime
+ * or static for implementation convenience, but those retained values are
+ * not an authored simulation domain and must never leak into analysis UI.
+ */
+export function getActiveSimulationRange(state) {
+    if (!state || state.mode !== SIMULATION_MODE_RANGE) return null;
+    const start = new Date(state.startDate);
+    const end = new Date(state.endDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+        return null;
+    }
+    return {
+        mode: SIMULATION_MODE_RANGE,
+        source: "simulation-range",
+        startTime: start.toISOString(),
+        endTime: end.toISOString()
+    };
+}
+
 export function advanceSimulation(state, elapsedMs) {
     // A static scene intentionally keeps the sampled instant unchanged even
     // if a caller tries to advance the shared clock.

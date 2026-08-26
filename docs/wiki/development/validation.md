@@ -45,7 +45,7 @@ Ejemplos de reglas:
 | Órbita de API | `horizon_hours` está entre 0.1 y 8760; `samples`, si se suministra, entre 2 y 7200. |
 | Estación | Latitud −90…90°, longitud −180…180°, elevación mínima 0…90°. |
 | AOS/LOS manual | `source.kind: manual` requiere `manualOrbit` y no admite `sat_id` ni líneas TLE; la ventana de acceso sigue usando `start_time < end_time` en UTC. |
-| Parámetros orbitales | 2…2000 muestras; los modelos RK4 se rechazan si exceden su presupuesto interno de pasos. |
+| Parámetros orbitales | 2…600.000 muestras; una cadencia explícita conserva todos sus puntos. Los modelos RK4 se rechazan si exceden su presupuesto interno de pasos. |
 | Órbita manual | Requiere elementos keplerianos o vector de estado; las opciones de fuerzas se normalizan al motor elegido. |
 | Producto GNSS preciso | SP3 obligatorio; CLK, ERP, SUM, ATT y OSB asociados; extensiones por campo y límites de carga/archivo/expansión. El proveedor y la clase se derivan del SP3; `require_eci` queda como guard interno para una futura comparación. |
 
@@ -96,8 +96,10 @@ un `REF_FRAME` conocido. Las covarianzas OEM sólo se aceptan para bloques
 cartesianos; las representaciones RTN/RSW/TNW se rechazan. La interpolación
 Hermite requiere un grado impar y datos de posición/velocidad apropiados.
 
-OEM sigue siendo una ruta de visor local, no un proveedor operativo de
-runtime. SP3 sí se publica mediante `POST /api/precise-products/import`, con
+Una OEM local sin adaptador registrado sigue siendo solo una ruta de visor y
+no se repropaga como catálogo. Cuando un proveedor OEM verificable está
+registrado en el backend, sí puede alimentar el inspector de efemérides dentro
+de su segmento y cobertura declarados. SP3 sí se publica mediante `POST /api/precise-products/import`, con
 productos auxiliares CLK/ERP/SUM/ATT/OSB, validación por campo, manifest, checksums y
 rehidratación. Esa disponibilidad no convierte al importador en una descarga
 remota ni garantiza una interpolación de alta fidelidad del centro de análisis.

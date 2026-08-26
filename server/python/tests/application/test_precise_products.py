@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from orbit_api.api.routes.ground_stations import create_ground_stations_router
 from orbit_api.api.routes.orbits import create_orbits_router
 from orbit_api.application import precise_products
+from orbit_api.application.orbit_parameters import build_orbit_parameters
 from orbit_api.application.orbit_runtime import OrbitRuntime
 from orbit_api.application.precise_products import (
     PreciseProductImportError,
@@ -22,7 +23,11 @@ from orbit_api.application.precise_products import (
     decode_precise_product_upload,
     import_precise_product,
 )
-from orbit_api.domain.requests import AosLosRequest, StationInput
+from orbit_api.domain.requests import (
+    AosLosRequest,
+    OrbitParametersRequest,
+    StationInput,
+)
 from orbit_api.frames import (
     FrameId,
     FrameTransformService,
@@ -119,6 +124,31 @@ def _clk_text() -> str:
         "                                                            END OF HEADER\n"
         "AS G01 2026 07 26 00 00 18.0000000  2  1.234567890D-04  2.0D-12"
     )
+
+
+def _clk_text_at(
+    *,
+    time_scale: str,
+    second: float,
+    bias: str = "1.234567890D-04",
+    sigma: str = "2.0D-12",
+    drift: str | None = None,
+) -> str:
+    """Build one explicit RINEX AS observation for association tests."""
+
+    values = [bias, sigma]
+    if drift is not None:
+        values.append(drift)
+    return "\n".join([
+        "     3.04           C                   RINEX VERSION / TYPE",
+        f"{time_scale:<60}TIME SYSTEM ID",
+        "                                                            END OF HEADER",
+        (
+            "AS G01 2026 07 26 00 00 "
+            f"{second:010.7f}  {len(values)}  "
+            + "  ".join(values)
+        ),
+    ])
 
 
 def _erp_text(mjds: tuple[float, ...] = (61247.0, 61248.0)) -> str:
@@ -219,6 +249,85 @@ def test_import_classifies_current_igs_final_and_associates_optional_rinex_clock
         "sample_count": 2,
         "mean_sample_cadence_seconds": 60.0,
     }
+
+
+def test_rinex_clk_exact_physical_epoch_enriches_native_sp3_inspector_without_interpolation():
+    # The SP3 is UTC at 00:00:18. In 2026, the same physical instant is
+    # 00:00:36 GPS in the companion CLK. This verifies a scale-aware join,
+    # rather than a raw calendar-string comparison.
+    product = import_precise_product([
+        _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),
+        _upload(
+            "IGS0OPSFIN_20262070000_01D_30S_CLK.CLK",
+            _clk_text_at(time_scale="GPS", second=36.0, drift="3.0D-15"),
+        ),
+    ])
+    provider = product.provider_for_satellite("G01")
+    start = datetime(2026, 7, 26, 0, 0, 18, tzinfo=UTC)
+    exact = provider.native_state_at(start)
+
+    clock = exact.provenance["clock"]
+    assert clock["source_format"] == "RINEX_CLK"
+    assert clock["association"] == "exact-physical-epoch"
+    assert clock["time_scale"] == "GPS"
+    assert clock["bias_seconds"] == pytest.approx(1.234567890e-4)
+    assert clock["bias_sigma_seconds"] == pytest.approx(2.0e-12)
+    assert clock["drift_seconds_per_second"] == pytest.approx(3.0e-15)
+    assert exact.provenance["clock_bias_seconds"] == pytest.approx(1.234567890e-4)
+    assert exact.provenance["clock_sigma_seconds"] == pytest.approx(2.0e-12)
+
+    # The tabular provider must not carry the direct clock observation into a
+    # midpoint orbital interpolation.
+    midpoint = provider.native_state_at(start + timedelta(seconds=30))
+    assert "clock" not in midpoint.provenance
+    assert "rinex_clk" not in midpoint.provenance
+    assert "clock_bias_seconds" not in midpoint.provenance
+    assert midpoint.provenance["tabular_interpolation"]["clock_observation"] == "not_interpolated"
+
+    association = product.clock_summary("G01")["rinex_clk"]["association"]
+    assert association == {
+        "policy": "exact-physical-epoch-only",
+        "interpolation": "not_performed",
+        "associated_state_sample_count": 1,
+        "unmatched_clock_sample_count": 0,
+    }
+
+    # ``build_orbit_parameters`` is the inspector route's application
+    # contract. It serializes the same direct, source-labelled clock rather
+    # than a synthetic orbital element or interpolated timing value.
+    response = build_orbit_parameters(
+        OrbitParametersRequest(
+            source={"kind": "catalog", "satId": "precise:fixture:G01"},
+            startTime=start.isoformat(),
+            endTime=(start + timedelta(minutes=1)).isoformat(),
+            samples=2,
+        ),
+        resolve_propagator=lambda *_args: ("G01", provider),
+    )
+    provenance = response["samples"][0]["state"]["provenance"]
+    assert provenance["clock"]["source_format"] == "RINEX_CLK"
+    assert provenance["clock"]["bias_seconds"] == pytest.approx(1.234567890e-4)
+
+
+def test_rinex_clk_between_sp3_epochs_remains_an_unassociated_companion():
+    # 00:01:06 GPS is 00:00:48 UTC: between the SP3 source epochs. The
+    # importer must not select either neighbour or interpolate the CLK value.
+    product = import_precise_product([
+        _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),
+        _upload(
+            "IGS0OPSFIN_20262070000_01D_30S_CLK.CLK",
+            _clk_text_at(time_scale="GPS", second=66.0),
+        ),
+    ])
+    provider = product.provider_for_satellite("G01")
+    first = provider.native_state_at(datetime(2026, 7, 26, 0, 0, 18, tzinfo=UTC))
+    second = provider.native_state_at(datetime(2026, 7, 26, 0, 1, 18, tzinfo=UTC))
+
+    assert "clock" not in first.provenance
+    assert "clock" not in second.provenance
+    association = product.clock_summary("G01")["rinex_clk"]["association"]
+    assert association["associated_state_sample_count"] == 0
+    assert association["unmatched_clock_sample_count"] == 1
 
 
 def test_precise_product_requires_sp3_with_the_public_exact_error():

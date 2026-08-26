@@ -1629,10 +1629,19 @@ class ManualOrbitRequest(BaseModel):
         return self
 
 
-# The inspector is intended for a readable table/chart, not an unbounded OEM
-# export.  Keep its sampling budget explicit and independent from the much
-# larger renderer ephemeris ceiling.
-ORBIT_PARAMETERS_MAX_SAMPLES = 2_000
+# The inspector is intentionally separate from renderer ephemerides, but an
+# operator-selected cadence must not be silently coarsened.  The UI permits a
+# maximum 365-day simulation interval and a one-minute explicit cadence; that
+# complete request has 525,601 endpoint-inclusive samples.  Keep modest
+# headroom above it solely to reject malformed/unbounded API payloads while
+# allowing every cadence the product exposes to be calculated in full.
+ORBIT_PARAMETERS_MAX_SAMPLES = 600_000
+
+# These are deliberately concrete, unambiguous Earth-centred frames.  The
+# inspector must not accept presentation labels such as ECI/ECEF here: a
+# requested output frame changes the Cartesian values and therefore needs a
+# frame-transform route whose semantics can be verified by the backend.
+ORBIT_PARAMETERS_OUTPUT_FRAMES = ("TEME", "ITRF", "EME2000", "GCRF", "ICRF")
 
 
 class OrbitParametersSource(BaseModel):
@@ -1660,6 +1669,20 @@ class OrbitParametersSource(BaseModel):
     line2: str | None = Field(
         default=None,
         validation_alias=AliasChoices("line2", "tle_line2", "tleLine2"),
+    )
+    source_format: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_format", "sourceFormat", "format"),
+    )
+    segment_index: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices(
+            "segment_index",
+            "segmentIndex",
+            "oem_segment_index",
+            "oemSegmentIndex",
+        ),
     )
     manual_orbit: ManualOrbitRequest | None = Field(
         default=None,
@@ -1708,6 +1731,16 @@ class OrbitParametersSource(BaseModel):
             return "manual"
         return normalized
 
+    @field_validator("source_format", mode="before")
+    @classmethod
+    def normalize_source_format(cls, value: object) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        normalized = str(value).strip().upper().replace("_", "-")
+        if normalized not in {"TLE", "OMM", "SP3", "OEM"}:
+            raise ValueError("source_format debe ser TLE, OMM, SP3 u OEM")
+        return normalized
+
     @model_validator(mode="after")
     def validate_source(self):
         has_satellite = bool(self.sat_id and self.sat_id.strip())
@@ -1716,8 +1749,15 @@ class OrbitParametersSource(BaseModel):
         if self.kind == "manual":
             if self.manual_orbit is None:
                 raise ValueError("Una fuente manual requiere manual_orbit")
-            if has_satellite or has_tle or has_partial_tle:
-                raise ValueError("Una fuente manual no puede incluir sat_id ni líneas TLE")
+            if (
+                has_satellite
+                or has_tle
+                or has_partial_tle
+                or self.segment_index is not None
+            ):
+                raise ValueError(
+                    "Una fuente manual no puede incluir sat_id, líneas TLE ni segment_index"
+                )
         else:
             if self.manual_orbit is not None:
                 raise ValueError("Una fuente de catálogo no puede incluir manual_orbit")
@@ -1748,6 +1788,10 @@ class OrbitParametersRequest(BaseModel):
         ge=2,
         le=ORBIT_PARAMETERS_MAX_SAMPLES,
     )
+    output_frame: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("output_frame", "outputFrame"),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -1767,11 +1811,24 @@ class OrbitParametersRequest(BaseModel):
         line1 = payload.get("line1", payload.get("tleLine1", payload.get("tle_line1")))
         line2 = payload.get("line2", payload.get("tleLine2", payload.get("tle_line2")))
         if sat_id is not None or line1 is not None or line2 is not None:
+            source_format = payload.get(
+                "sourceFormat",
+                payload.get("source_format", payload.get("format")),
+            )
+            segment_index = payload.get(
+                "segmentIndex",
+                payload.get(
+                    "segment_index",
+                    payload.get("oemSegmentIndex", payload.get("oem_segment_index")),
+                ),
+            )
             payload["source"] = {
                 "kind": "catalog",
                 "satId": sat_id,
                 "line1": line1,
                 "line2": line2,
+                "sourceFormat": source_format,
+                "segmentIndex": segment_index,
             }
         return payload
 
@@ -1779,6 +1836,28 @@ class OrbitParametersRequest(BaseModel):
     @classmethod
     def normalize_inspector_utc(cls, value: datetime.datetime) -> datetime.datetime:
         return ensure_utc(value)
+
+    @field_validator("output_frame", mode="before")
+    @classmethod
+    def normalize_output_frame(_cls, value: object) -> str | None:
+        """Accept only a concrete inspector output frame.
+
+        ``FrameTransformService`` intentionally rejects generic ECI/ECEF
+        labels.  Rejecting them at the request boundary makes the endpoint's
+        contract clear before it can accidentally relabel any state vector.
+        """
+
+        if value is None:
+            return None
+        normalized = str(value).strip().upper().replace("_", "")
+        if not normalized:
+            return None
+        if normalized not in ORBIT_PARAMETERS_OUTPUT_FRAMES:
+            choices = ", ".join(ORBIT_PARAMETERS_OUTPUT_FRAMES)
+            raise ValueError(
+                f"output_frame debe ser uno de {choices}; ECI/ECEF no son marcos inequÃ­vocos"
+            )
+        return normalized
 
     @model_validator(mode="after")
     def validate_range(self):

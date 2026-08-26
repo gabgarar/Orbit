@@ -140,6 +140,54 @@ Two services don't accidentally share a table configured for each other.
 In strict mode, an identified local EOP C04 snapshot and a table are required.
 local leap seconds that covers the required interval.
 
+## Ephemerides inspector
+
+The ephemerides inspector is a presentation boundary between the scene runtime
+and a propagation result. The runtime remains the owner of the clock, layer
+selection, HTTP request, cancellation, and frame/time policy; React does not
+derive an alternative orbit from what it renders.
+
+```mermaid
+flowchart LR
+    S[Simulation state] --> R[Validated active range]
+    R --> C[Propagated-parameters context]
+    C --> Q[Orbital-service request]
+    Q --> N[Pure inspector normalizer]
+    N --> P[Read-only React panel]
+    N --> E[Export metadata and rows]
+```
+
+An active range exists only in `range` mode with `end > start`. It is published
+as `simulationRange`, and the inspector observes a domain key (mode, start,
+end), not playhead ticks. Moving the playhead therefore does not restart
+propagation, whereas mode or boundary changes replace a pending request. Manual
+design retains its epoch window as an explicit exception and never mutates the
+shared clock.
+
+The normalizer receives backend and context facts and publishes an `inspector`
+presentation contract: source profile, availability, method, frame, quality,
+forces, precision, Cartesian columns, and rows. The frame sub-contract separates
+`native`, `current` (the table's actual output), `output` (requested frame and
+transform provenance), and `calculation` (element frame), together with the
+options the service can attempt to validate. React sends only a concrete
+`outputFrame` or omits it for **Native**; it never changes the global clock/range
+or relabels a prior response. Presentation must preserve an
+absent fact as absent; it cannot infer TLE from a vector, SGP4 from OEM/SP3, or
+an Earth realization from generic ECI/ECEF. Derived columns require finite
+inputs and stay distinct from original Cartesian components.
+
+Export is built from the same normalized contract and receives an
+`exportMetadata` snapshot with profile, availability, frame, method, `range`,
+`simulationRange`, columns, `scope`, and `presentation.timeFilter`/
+`presentation.sort`. Filters are local predicates over normalized rows: they do
+not change the request, simulation, or provenance. This boundary prevents a
+partial export from losing the explanation of how its states were obtained.
+
+Contract tests cover the read-only active range, TLE/SP3/OEM/OMM/vector/numeric/manual
+profiles, common and derived columns, SP3 `++` accuracy, exact CLK association,
+output-frame/per-row transformation provenance, and the filter/export-metadata coupling.
+The operator specification is [Ephemerides inspector](../user-guide/ephemerides.md).
+
 ## Data, cache and coherence
 
 | Resource | Current policy |

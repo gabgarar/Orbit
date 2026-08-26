@@ -19,6 +19,7 @@ limits affecting data retention and technical interpretation.
 | [Visualization](visualization.md) | Configure the appearance of objects, orbits, map and scene. |
 | [3D View](three-d-view.md) | Change projection, navigation, camera and local recording. |
 | [Timeline](timeline.md) | Work in static, real-time or range simulation mode. |
+| [Ephemerides inspector](ephemerides.md) | Inspect provenance, Cartesian states, derived columns, project propagation history, and exports of an orbital series. |
 | [Event planner](planner.md) | Inspect passes, validity boundaries, and manual events in day, week, or month views. |
 | [Master Time Range](master-time-range.md) | Keep one coherent UTC window for finite-coverage objects. |
 | [Built-In Test](built-in-test.md) | Inspect published runtime health and local scene state. |

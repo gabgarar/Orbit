@@ -269,6 +269,75 @@ test("project lifecycle round-trips authored planner events but never derived pa
     }
 });
 
+test("project lifecycle persists and restores compact propagation history independently of scene layers", async () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const events = new EventTarget();
+    globalThis.window = events;
+    globalThis.document = { querySelectorAll: () => [] };
+    try {
+        let projectName = "Propagation audit";
+        let propagationHistory = [{
+            id: "propagation:1",
+            status: "completed",
+            startedAt: "2026-08-26T08:00:00.000Z",
+            updatedAt: "2026-08-26T08:00:03.000Z",
+            finishedAt: "2026-08-26T08:00:03.000Z",
+            target: { id: "25544", name: "ISS" },
+            source: "TLE",
+            range: { startTime: "2026-08-26T00:00:00.000Z", endTime: "2026-08-26T01:00:00.000Z" },
+            sampling: { effectiveIntervalSeconds: 60, sampleCount: 61 },
+            result: { sampleCount: 61, outputFrame: "TEME" }
+        }];
+        let clearCount = 0;
+        let restored = null;
+        const lifecycle = createProjectLifecycle({
+            getProjectName: () => projectName,
+            setProjectName: (value) => { projectName = value; },
+            getProjectFileHandle: () => null,
+            setProjectFileHandle: () => {},
+            getActiveSatelliteIds: () => [],
+            setAllSatelliteLayersActive: () => {},
+            setSatelliteLayerActive: () => {},
+            getGroundStationLayers: () => new Map(),
+            removeGroundStationLayer: () => {},
+            clearDuplicateLayers: () => {},
+            getLayerNameOverrides: () => new Map(),
+            clearSatelliteVisualizationConfigs: () => {},
+            getObjectSidebar: () => null,
+            getPropagationHistory: () => propagationHistory,
+            clearPropagationHistory: () => { clearCount += 1; propagationHistory = []; },
+            restorePropagationHistory: async (entries) => { restored = entries; propagationHistory = entries; },
+            getSimulationState: () => ({ mode: "realtime", startDate: new Date(), endDate: new Date() }),
+            applySimulationRange: () => {},
+            showConfirm: async () => true,
+            showAlert: () => {},
+            getAlertTitle: () => "Orbit"
+        });
+
+        const saved = lifecycle.buildDocument();
+        assert.equal(saved.propagationHistory.length, 1);
+        const file = {
+            name: "propagation-audit.json",
+            text: async () => JSON.stringify({
+                ...saved,
+                propagationHistory: [{
+                    ...saved.propagationHistory[0],
+                    samples: [{ x: 7000 }]
+                }]
+            })
+        };
+        assert.equal(await lifecycle.loadFile(file), true);
+        assert.equal(clearCount, 1);
+        assert.equal(restored.length, 1);
+        assert.equal("samples" in restored[0], false);
+        assert.equal(restored[0].target.name, "ISS");
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+    }
+});
+
 test("project lifecycle serializes manual orbits separately and restores them without catalogue activation", async () => {
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;

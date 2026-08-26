@@ -8,14 +8,37 @@ retaining the frame, realization and time scale declared by the source file.
 from __future__ import annotations
 
 import datetime
+import math
 from bisect import bisect_left
 from dataclasses import dataclass, field
-import math
+from itertools import pairwise
 
 from orbit_api.frames import FrameId, FrameTransformService, StateVector
 from orbit_api.timekeeping import TimeScale, from_utc, to_utc, utc_now
 
 from .metadata import EphemerisFormatError
+
+# Clock values in an SP3/CLK provenance record are observations at one source
+# epoch. They must never be inherited by an interpolated Cartesian state just
+# because that state starts from the first interpolation node.
+_SAMPLE_BOUND_CLOCK_PROVENANCE_KEYS = frozenset({
+    "clock",
+    "rinex_clk",
+    "sp3_clock_bias_seconds",
+    "sp3_clock_rate_seconds_per_second",
+    "clock_bias_seconds",
+    "clockBiasSeconds",
+    "clock_sigma_seconds",
+    "clockSigmaSeconds",
+    "clock_rate_seconds_per_second",
+    "clockRateSecondsPerSecond",
+    "clock_units",
+    "clockUnits",
+    "clock_rate_units",
+    "clockRateUnits",
+    "sigma_units",
+    "sigmaUnits",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +71,7 @@ class TabularStateProvider:
 
         ordered = tuple(sorted(self.samples, key=lambda state: state.epoch))
         first = ordered[0]
-        for previous, current in zip(ordered, ordered[1:]):
+        for previous, current in pairwise(ordered):
             if previous.epoch == current.epoch:
                 raise EphemerisFormatError("La efeméride tabulada contiene épocas duplicadas")
         for state in ordered[1:]:
@@ -384,6 +407,13 @@ class TabularStateProvider:
     ) -> StateVector:
         first = selected[0]
         provenance = dict(first.provenance)
+        removed_clock_observation = any(
+            key in state.provenance
+            for state in selected
+            for key in _SAMPLE_BOUND_CLOCK_PROVENANCE_KEYS
+        )
+        for key in _SAMPLE_BOUND_CLOCK_PROVENANCE_KEYS:
+            provenance.pop(key, None)
         interpolation: dict[str, object] = {
             "method": method,
             "source_format": self.source_format,
@@ -393,6 +423,8 @@ class TabularStateProvider:
             "sample_epochs": [state.epoch.isoformat() for state in selected],
             "covariance": "not_interpolated",
         }
+        if removed_clock_observation:
+            interpolation["clock_observation"] = "not_interpolated"
         if extra:
             interpolation.update(extra)
         provenance["tabular_interpolation"] = interpolation

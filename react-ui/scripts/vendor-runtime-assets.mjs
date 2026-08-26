@@ -16,7 +16,23 @@ function npmInvocation() {
     if (process.env.npm_execpath) {
         return { command: process.execPath, prefix: [process.env.npm_execpath] };
     }
-    return { command: process.platform === "win32" ? "npm.cmd" : "npm", prefix: [] };
+    if (process.platform === "win32") {
+        // `execFile("npm.cmd")` is not a reliable Windows process launch: on
+        // Node 24 it can reject with EINVAL before npm gets a chance to run.
+        // Invoke npm's JavaScript entry point through the active Node runtime
+        // instead. This keeps `npm pack` argument-safe (no shell) and lets a
+        // direct `node scripts/vendor-runtime-assets.mjs` work just like an
+        // invocation from `npm run build`.
+        const npmCli = path.join(
+            path.dirname(process.execPath),
+            "node_modules",
+            "npm",
+            "bin",
+            "npm-cli.js"
+        );
+        return { command: process.execPath, prefix: [npmCli] };
+    }
+    return { command: "npm", prefix: [] };
 }
 
 async function readRuntimePackages() {

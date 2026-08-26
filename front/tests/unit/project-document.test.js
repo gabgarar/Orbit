@@ -6,6 +6,7 @@ import {
     normalizeProjectName,
     normalizeProjectPlannerEvents,
     normalizeProjectPlannerHiddenLayerIds,
+    normalizeProjectPropagationHistory,
     PROJECT_FORMAT,
     PROJECT_VERSION
 } from "../../js/runtime/projectDocument.js";
@@ -73,4 +74,34 @@ test("project documents persist planner-only hidden layer ids separately from sc
         normalizeProjectPlannerHiddenLayerIds(["station:old", "station:old", "sat:one"]),
         document.plannerHiddenLayerIds
     );
+});
+
+test("project documents retain the bounded propagation audit without persisting ephemeris samples", () => {
+    const propagationHistory = [{
+        id: "propagation:iss:1",
+        status: "completed",
+        startedAt: "2026-08-26T08:00:00.000Z",
+        updatedAt: "2026-08-26T08:00:03.000Z",
+        finishedAt: "2026-08-26T08:00:03.000Z",
+        target: { id: "25544", name: "ISS" },
+        source: "TLE",
+        range: { startTime: "2026-08-26T00:00:00.000Z", endTime: "2026-08-26T01:00:00.000Z" },
+        sampling: { effectiveIntervalSeconds: 60, sampleCount: 61 },
+        result: { sampleCount: 61, outputFrame: "TEME", samples: [{ x: 1 }] }
+    }];
+    const document = buildProjectDocument({ name: "Audit", propagationHistory });
+
+    assert.deepEqual(document.propagationHistory, [{
+        id: "propagation:iss:1",
+        status: "completed",
+        startedAt: "2026-08-26T08:00:00.000Z",
+        updatedAt: "2026-08-26T08:00:03.000Z",
+        finishedAt: "2026-08-26T08:00:03.000Z",
+        target: { id: "25544", name: "ISS" },
+        source: "TLE",
+        range: { startTime: "2026-08-26T00:00:00.000Z", endTime: "2026-08-26T01:00:00.000Z" },
+        sampling: { effectiveIntervalSeconds: 60, sampleCount: 61 },
+        result: { sampleCount: 61, outputFrame: "TEME" }
+    }]);
+    assert.deepEqual(normalizeProjectPropagationHistory(undefined), []);
 });

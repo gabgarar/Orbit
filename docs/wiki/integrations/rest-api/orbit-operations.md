@@ -11,7 +11,7 @@
 | `GET /api/orbits/:satId` | Muestrea una órbita futura de catálogo. | `horizon_hours`: 0.1–8760; `samples`: 2–7200 si se especifica. |
 | `POST /api/orbits` | Muestrea una órbita desde catálogo o TLE explícito. | Los mismos límites de horizonte y muestras. |
 | `POST /api/ephemeris` | Construye una serie temporal. | `start_time < end_time`, `step_seconds` > 0 y ≤ 3600; máximo 20 000 puntos. |
-| `POST /api/orbit-parameters` | Calcula elementos osculadores en un rango. | 2–2000 muestras y presupuesto de integración para RK4. |
+| `POST /api/orbit-parameters` | Calcula estados y elementos osculadores en un rango. | 2–600.000 muestras; una cadencia explícita se conserva completa. Los modelos RK4 mantienen además su presupuesto independiente de pasos internos. |
 
 Ejemplo de propagación desde TLE explícito:
 

@@ -23,6 +23,7 @@ export function createPropagatedParametersContextBuilder(services) {
         getManualOrbitProjectEntry,
         getLayerDisplayName,
         getSimulationTelemetryContext,
+        getActiveSimulationRange = () => null,
         getManualOrbitDefinitionSource
     } = services;
 
@@ -54,6 +55,7 @@ export function createPropagatedParametersContextBuilder(services) {
                 startTime,
                 endTime,
                 timeRange: { mode: "manual-design", startDate: startTime, endDate: endTime },
+                simulationRange: getActiveSimulationRange(),
                 referenceFrame: normalizeManualOrbitPreviewReferenceFrame(
                     inspectorManualOrbit.previewReferenceFrame,
                     "eme2000"
@@ -111,6 +113,7 @@ export function createPropagatedParametersContextBuilder(services) {
             endTime: asIsoDate(detail.endTime || timeRange?.endDate),
             timeRange,
             simulation: getSimulationTelemetryContext(),
+            simulationRange: getActiveSimulationRange(),
             referenceFrame,
             displayReferenceFrame,
             preciseRendering,

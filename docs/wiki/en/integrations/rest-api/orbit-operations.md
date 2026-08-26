@@ -11,7 +11,7 @@
 | `GET /api/orbits/:satId` | Samples a future catalog orbit. | `horizon_hours`: 0.1–8760; `samples`: 2–7200 if specified. |
 | `POST /api/orbits` | Samples an orbit from catalog or explicit TLE. | The same horizon limits and samples. |
 | `POST /api/ephemeris` | Build a time series. | `start_time < end_time`, `step_seconds` > 0 and ≤ 3600; maximum 20,000 points. |
-| `POST /api/orbit-parameters` | Calculates osculating elements in a range. | 2–2000 samples and integration budget for RK4. |
+| `POST /api/orbit-parameters` | Calculates state and osculating elements in a range. | 2–600,000 samples; an explicit cadence is kept complete. RK4 models additionally retain their independent internal-step budget. |
 
 Example of propagation from explicit TLE:
 

@@ -140,6 +140,57 @@ dos servicios no comparten accidentalmente una tabla configurada para el otro.
 En modo estricto se exige un snapshot EOP C04 local identificado y una tabla
 local de segundos intercalares que cubra el intervalo requerido.
 
+## Inspector de efemérides
+
+El inspector de efemérides es un límite de presentación entre el runtime de
+escena y el resultado de propagación. El runtime sigue siendo dueño del reloj,
+la selección de capa, la solicitud HTTP, la cancelación y la política de
+marcos/tiempo; React no deriva una órbita alternativa a partir de lo que pinta.
+
+```mermaid
+flowchart LR
+    S[Estado de simulación] --> R[Rango activo validado]
+    R --> C[Contexto de parámetros propagados]
+    C --> Q[Solicitud al servicio orbital]
+    Q --> N[Normalizador puro del inspector]
+    N --> P[Panel React de solo lectura]
+    N --> E[Metadatos y filas de exportación]
+```
+
+El rango activo existe únicamente en modo `range` y con `end > start`. Se
+publica como `simulationRange` y el inspector lo observa por una clave de
+dominio (modo, inicio y fin), no por el *tick* del cursor. Por ello mover el
+playhead no relanza una propagación, mientras que cambiar de modo o límites
+sustituye una solicitud pendiente. El diseño manual conserva su ventana de
+*epochs* como excepción explícita y no muta el reloj compartido.
+
+El normalizador recibe hechos del backend y del contexto y publica un contrato
+de presentación `inspector`: perfil de fuente, disponibilidad, método, marco,
+calidad, fuerzas, precisión, columnas cartesianas y filas. El subcontrato de
+marco separa `native`, `current` (salida real de la tabla), `output` (solicitud
+y procedencia de transformación) y `calculation` (marco de elementos), además
+de las opciones que el servicio puede intentar validar. El selector React envía
+solo un `outputFrame` concreto o lo omite para **Nativo**; nunca cambia el
+reloj/rango global ni relabela una respuesta previa. Las capas de
+presentación deben conservar un dato ausente como ausente; no pueden inferir un
+TLE desde un vector, SGP4 desde OEM/SP3, ni una realización terrestre desde una
+etiqueta ECI/ECEF genérica. Las columnas derivadas requieren entradas finitas y
+deben quedar diferenciadas de los componentes cartesianos originales.
+
+La exportación se construye a partir del mismo contrato normalizado y recibe un
+*snapshot* `exportMetadata` con perfil, disponibilidad, marco, método, `range`,
+`simulationRange`, columnas, `scope` y `presentation.timeFilter`/
+`presentation.sort`. Los filtros son predicados locales sobre las filas ya
+normalizadas: no cambian la solicitud, la simulación ni la procedencia. Este
+límite evita que una exportación parcial pierda la explicación de cómo se
+obtuvo cada estado.
+
+Las pruebas de contrato cubren el rango activo de solo lectura, perfiles
+TLE/SP3/OEM/OMM/vector/numeric/manual, columnas comunes y derivadas, la
+precisión `++` de SP3, la asociación exacta CLK, el marco de salida/transformación
+por fila y el acoplamiento entre filtro y metadatos de exportación. La especificación para
+operadores está en [Inspector de efemérides](../user-guide/ephemerides.md).
+
 ## Datos, caché y coherencia
 
 | Recurso | Política actual |

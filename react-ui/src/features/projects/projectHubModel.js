@@ -39,6 +39,7 @@ export function createBlankUserProjectDocument(name = "Untitled project") {
         manualOrbits: [],
         plannerEvents: [],
         plannerHiddenLayerIds: [],
+        propagationHistory: [],
         celestialBodies: [],
         layerNames: {},
         layerTree: { folders: [], layerParents: {} },

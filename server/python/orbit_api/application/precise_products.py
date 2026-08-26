@@ -25,12 +25,14 @@ import re
 import shutil
 import tempfile
 import zipfile
+from bisect import bisect_left
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from orbit_api.formats import (
+    ClockSample,
     EphemerisFormatError,
     RinexClockProduct,
     Sp3StateProvider,
@@ -53,6 +55,12 @@ MAX_PRECISE_PRODUCT_FILE_BYTES = 32 * 1024 * 1024
 MAX_PRECISE_PRODUCT_EXPANDED_BYTES = 256 * 1024 * 1024
 MAX_PRECISE_PRODUCT_ZIP_MEMBERS = 16
 _PRODUCT_ID_PATTERN = re.compile(r"^precise-[0-9a-f]{20}$")
+
+# SP3 writes epochs with up to eight fractional digits while Python's
+# ``datetime`` stores microseconds. A two-microsecond comparison is therefore
+# enough to absorb independent source rounding without treating a nearby CLK
+# record as an orbital-state annotation.
+_RINEX_CLK_ASSOCIATION_TOLERANCE = datetime.timedelta(microseconds=2)
 
 _PROVIDER_LABELS = {
     "cddis_igs": "NASA CDDIS / IGS",
@@ -343,6 +351,17 @@ class PreciseProduct:
                 for sample in (self.clock.samples_for_satellite(identifier) if self.clock is not None else ())
             )
         )
+        providers = (
+            (self.provider_for_satellite(satellite_id),)
+            if satellite_id is not None
+            else tuple(self.sp3.satellites.values())
+        )
+        associated_state_sample_count = sum(
+            1
+            for provider in providers
+            for state in provider.samples
+            if isinstance(state.provenance.get("rinex_clk"), Mapping)
+        )
         return {
             "present": bool(embedded_samples or rinex_samples),
             "sp3_embedded": {
@@ -362,6 +381,15 @@ class PreciseProduct:
                 "satellite_ids": list(selected_clock_ids) if self.clock is not None else [],
                 "time_scale": self.clock.metadata.time_scale_label if self.clock is not None else None,
                 "file": self.clock_file.name if self.clock_file is not None else None,
+                "association": {
+                    "policy": "exact-physical-epoch-only",
+                    "interpolation": "not_performed",
+                    "associated_state_sample_count": associated_state_sample_count,
+                    "unmatched_clock_sample_count": max(
+                        len(rinex_samples) - associated_state_sample_count,
+                        0,
+                    ),
+                },
                 "coverage": _clock_coverage(
                     rinex_samples,
                     self.clock.metadata.time_scale if self.clock is not None else TimeScale.UNKNOWN,
@@ -806,6 +834,17 @@ def build_precise_product(
     # unselected member whose different coverage would incorrectly block a
     # future ECI operation for the chosen subset.
     sp3 = _annotate_precise_gnss_frame_contract(sp3, erp)
+    # A RINEX CLK record is a timing observation, not an orbital state.  It
+    # can only enrich an SP3 sample after proving that both source calendars
+    # name the exact same physical epoch.  The association intentionally
+    # never interpolates a clock solution or applies a nearest-neighbour
+    # substitution.
+    sp3 = _associate_rinex_clock_samples(
+        sp3,
+        clock,
+        erp=erp,
+        source_file=recognized["clk"].name if "clk" in recognized else None,
+    )
     if require_eci:
         eci_capability = _eci_conversion_contract(sp3, erp)
         if not eci_capability["available"]:
@@ -2130,6 +2169,177 @@ def _subset_sp3_state_provider(
             if identifier in sp3.clock_samples
         },
     )
+
+
+def _associate_rinex_clock_samples(
+    sp3: Sp3StateProvider,
+    clock: RinexClockProduct | None,
+    *,
+    erp: IgsErpEarthOrientationProvider | None,
+    source_file: str | None,
+) -> Sp3StateProvider:
+    """Attach only exact RINEX ``AS`` clock observations to SP3 samples.
+
+    The result remains an SP3 Cartesian provider: a clock record is added as
+    sample provenance and never becomes a state component.  Association is
+    intentionally conservative.  A record is eligible only when its declared
+    time scale can be converted through the same pinned product time contract
+    as the SP3 and it agrees with exactly one SP3 source epoch to the format
+    rounding tolerance.  No nearest-neighbour matching and no clock
+    interpolation are permitted.
+    """
+
+    if clock is None or clock.metadata.time_scale is TimeScale.UNKNOWN:
+        return sp3
+
+    providers: dict[str, TabularStateProvider] = {}
+    for satellite_id, provider in sp3.satellites.items():
+        clock_samples = clock.samples_for_satellite(satellite_id)
+        if not clock_samples:
+            providers[satellite_id] = provider
+            continue
+        indexed_clock_samples = _rinex_clock_samples_by_utc(
+            sp3,
+            clock_samples,
+            erp=erp,
+        )
+        if not indexed_clock_samples:
+            providers[satellite_id] = provider
+            continue
+
+        clock_epochs = tuple(epoch for epoch, _sample in indexed_clock_samples)
+        annotated_samples: list[StateVector] = []
+        for state in provider.samples:
+            state_utc = _clock_association_utc(
+                sp3,
+                state.epoch,
+                state.time_scale,
+                erp=erp,
+            )
+            associated = (
+                _exact_rinex_clock_sample(clock_epochs, indexed_clock_samples, state_utc)
+                if state_utc is not None
+                else None
+            )
+            annotated_samples.append(
+                _state_with_rinex_clock(state, associated, source_file=source_file)
+                if associated is not None
+                else state
+            )
+        providers[satellite_id] = replace(provider, samples=tuple(annotated_samples))
+    return replace(sp3, satellites=providers)
+
+
+def _rinex_clock_samples_by_utc(
+    sp3: Sp3StateProvider,
+    samples: Sequence[ClockSample],
+    *,
+    erp: IgsErpEarthOrientationProvider | None,
+) -> tuple[tuple[datetime.datetime, ClockSample], ...]:
+    """Return auditable UTC keys for RINEX records whose scale is usable.
+
+    A malformed or unsupported companion clock must not make a previously
+    valid SP3 orbit disappear.  It simply remains an unassociated companion
+    in the product payload.  ``RinexClockProduct`` already validates its
+    records; this guard is specifically about a safe physical time join.
+    """
+
+    resolved: list[tuple[datetime.datetime, ClockSample]] = []
+    for sample in samples:
+        utc = _clock_association_utc(sp3, sample.epoch, sample.time_scale, erp=erp)
+        if utc is not None:
+            resolved.append((utc, sample))
+    return tuple(sorted(resolved, key=lambda value: value[0]))
+
+
+def _clock_association_utc(
+    sp3: Sp3StateProvider,
+    epoch: datetime.datetime,
+    time_scale: TimeScale | str,
+    *,
+    erp: IgsErpEarthOrientationProvider | None,
+) -> datetime.datetime | None:
+    """Resolve a source epoch for clock matching without widening import scope."""
+
+    try:
+        return _precise_epoch_utc(sp3, epoch, time_scale, erp)
+    except PreciseProductImportError:
+        # Retain the CLK for inspection as a companion, but do not claim an
+        # association when its scale cannot be proven against this product's
+        # pinned leap-second/ERP contract.
+        return None
+
+
+def _exact_rinex_clock_sample(
+    clock_epochs: Sequence[datetime.datetime],
+    indexed_samples: Sequence[tuple[datetime.datetime, ClockSample]],
+    state_utc: datetime.datetime,
+) -> ClockSample | None:
+    """Find a unique CLK record at this physical epoch, if one exists."""
+
+    index = bisect_left(clock_epochs, state_utc)
+    candidates: list[ClockSample] = []
+    for candidate_index in (index - 1, index):
+        if not 0 <= candidate_index < len(indexed_samples):
+            continue
+        candidate_epoch, candidate = indexed_samples[candidate_index]
+        if abs(candidate_epoch - state_utc) <= _RINEX_CLK_ASSOCIATION_TOLERANCE:
+            candidates.append(candidate)
+    # A duplicate physical epoch from a strange source scale conversion is
+    # ambiguous.  Refuse it rather than selecting one arbitrarily.
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _state_with_rinex_clock(
+    state: StateVector,
+    clock: ClockSample,
+    *,
+    source_file: str | None,
+) -> StateVector:
+    """Return an exact SP3 sample with its direct RINEX clock provenance."""
+
+    clock_payload: dict[str, object] = {
+        "source_format": "RINEX_CLK",
+        "association": "exact-physical-epoch",
+        "epoch": clock.epoch.isoformat(),
+        "time_scale": clock.time_scale.value,
+        "bias_seconds": clock.bias_seconds,
+        "units": {
+            "bias": "s",
+            "bias_sigma": "s",
+            "drift": "s/s",
+            "drift_sigma": "s/s",
+            "drift_rate": "s/s^2",
+            "drift_rate_sigma": "s/s^2",
+        },
+    }
+    if source_file:
+        clock_payload["source_file"] = source_file
+    optional_values = {
+        "bias_sigma_seconds": clock.bias_sigma_seconds,
+        "drift_seconds_per_second": clock.drift_seconds_per_second,
+        "drift_sigma_seconds_per_second": clock.drift_sigma_seconds_per_second,
+        "drift_rate_seconds_per_second2": clock.drift_rate_seconds_per_second2,
+        "drift_rate_sigma_seconds_per_second2": clock.drift_rate_sigma_seconds_per_second2,
+    }
+    clock_payload.update({key: value for key, value in optional_values.items() if value is not None})
+
+    provenance = dict(state.provenance)
+    # ``clock`` is the compact common path consumed by the native-state
+    # inspector. ``rinex_clk`` keeps the source-specific record auditable.
+    # The flat aliases retain compatibility with existing public consumers
+    # that already read SP3 clock values from native provenance.
+    provenance["clock"] = clock_payload
+    provenance["rinex_clk"] = dict(clock_payload)
+    provenance["clock_bias_seconds"] = clock.bias_seconds
+    provenance["clock_units"] = "s"
+    if clock.bias_sigma_seconds is not None:
+        provenance["clock_sigma_seconds"] = clock.bias_sigma_seconds
+        provenance["sigma_units"] = "s"
+    if clock.drift_seconds_per_second is not None:
+        provenance["clock_rate_seconds_per_second"] = clock.drift_seconds_per_second
+        provenance["clock_rate_units"] = "s/s"
+    return replace(state, provenance=provenance)
 
 
 def _sp3_validation_payload(sp3: Sp3StateProvider) -> dict[str, object] | None:

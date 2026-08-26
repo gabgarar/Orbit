@@ -250,6 +250,7 @@ class Sp3StateProvider:
 
         positions, velocities = _sp3_records(lines, strict_layout=strict_structure)
         clock_samples = _sp3_clock_samples(lines, strict_layout=strict_structure)
+        header_orbit_accuracy = _sp3_header_orbit_accuracy_by_satellite(lines)
         samples_by_satellite: dict[str, list[StateVector]] = {}
         for (epoch, satellite_id), position_km in positions.items():
             velocity_dm_s = velocities.get((epoch, satellite_id))
@@ -261,6 +262,22 @@ class Sp3StateProvider:
                 "time_system": metadata.time_scale_label,
                 "agency": metadata.agency,
             }
+            header_accuracy = header_orbit_accuracy.get(satellite_id)
+            if header_accuracy is not None:
+                exponent, sigma_mm = header_accuracy
+                # ``++`` is a header-wide, satellite-level one-sigma orbit
+                # declaration.  It is not a per-epoch or per-component
+                # uncertainty, so retain its scope explicitly rather than
+                # publishing it as a Cartesian covariance-like value.
+                provenance.update({
+                    "sp3_header_orbit_accuracy_exponent": exponent,
+                    "sp3_header_orbit_accuracy_base": 2,
+                    "sp3_header_orbit_sigma_mm": sigma_mm,
+                    "sp3_header_orbit_sigma_units": "mm",
+                    "sp3_header_orbit_accuracy_scope": (
+                        "file-wide satellite orbit one-standard-deviation"
+                    ),
+                })
             # The lookup key remains the raw SP3 calendar epoch; the emitted
             # Sp3ClockSample carries the aware source-epoch carrier just like
             # the corresponding StateVector below.
@@ -761,6 +778,62 @@ def _declared_satellite_ids(lines: tuple[str, ...]) -> tuple[str, ...]:
     if len(set(identifiers)) != len(identifiers):
         raise EphemerisFormatError("La cabecera SP3 declara satélites duplicados")
     return tuple(identifiers)
+
+
+def _sp3_header_orbit_accuracy_by_satellite(
+    lines: tuple[str, ...],
+) -> dict[str, tuple[int, float]]:
+    """Read SP3 ``++`` header orbit accuracies without overstating them.
+
+    The standard ``++`` fields follow the order of the satellite identifiers
+    declared in ``+`` records.  Each non-zero I3 exponent ``n`` declares a
+    file-wide, satellite-level one-standard-deviation orbit accuracy of
+    :math:`2^n` millimetres.  It is deliberately *not* an epoch-specific or
+    Cartesian-component sigma.  Blank and zero fields mean that the producer
+    did not declare this optional accuracy, so no substitute value is made up.
+
+    SP3 reserves seventeen fixed-width fields (columns 10--60) on each
+    ``++`` continuation record.  The parser scans exactly those standard
+    fields; any text in a populated field that is not a non-negative integer
+    is rejected instead of being silently interpreted as a precision claim.
+    """
+
+    accuracy_lines = [line for line in lines if line.startswith("++")]
+    if not accuracy_lines:
+        return {}
+
+    # The only defined association of a ``++`` field is the ordinal member
+    # position from the ``+`` header.  Rejecting a standalone/partial ``++``
+    # block is safer than accidentally assigning an accuracy to a different
+    # satellite in a compact inspection fragment.
+    satellite_ids = _declared_satellite_ids(lines)
+    exponents: list[int | None] = []
+    for line in accuracy_lines:
+        for offset in range(9, 60, 3):
+            token = line[offset:offset + 3].strip()
+            if not token:
+                exponents.append(None)
+                continue
+            if not re.fullmatch(r"\d{1,3}", token):
+                raise EphemerisFormatError(
+                    "La cabecera SP3 contiene un exponente de exactitud ++ invÃ¡lido"
+                )
+            exponent = int(token)
+            exponents.append(None if exponent == 0 else exponent)
+
+    if len(exponents) < len(satellite_ids):
+        # This guard is normally unreachable because a physical ``++`` line
+        # has seventeen slots, but keeps the mapping fail-closed if the fixed
+        # field policy changes in the future.
+        raise EphemerisFormatError(
+            "La cabecera SP3 ++ no cubre todos los satÃ©lites declarados"
+        )
+
+    return {
+        satellite_id: (exponent, math.ldexp(1.0, exponent))
+        for satellite_id, exponent in zip(satellite_ids, exponents)
+        if exponent is not None
+    }
 
 
 def _header_cadence_seconds(lines: tuple[str, ...]) -> float:

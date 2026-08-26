@@ -81,7 +81,7 @@ ficheros montados en `./config` se ven normalmente bajo `/app/config`.
 | Muestras de órbita API | 2–7200. |
 | Horizonte de órbita API | 0,1–8760 h. |
 | Serie de efeméride | Hasta 20 000 puntos; paso > 0 y ≤ 3600 s. |
-| Parámetros orbitales | 2–2000 muestras; presupuesto adicional para rutas RK4. |
+| Parámetros orbitales | 2–600.000 muestras; una cadencia explícita conserva todos sus puntos y las rutas RK4 mantienen un presupuesto interno adicional. |
 | Caché de órbitas runtime | TTL 10 s. |
 | Caché de efemérides | LRU 256, TTL 120 s. |
 | Estado WebSocket | Intervalo predeterminado de 1 s. |

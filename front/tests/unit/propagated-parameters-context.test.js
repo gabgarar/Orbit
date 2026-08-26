@@ -40,6 +40,28 @@ test("manual contexts retain the canonical preview frame and active definition",
     assert.equal(context.manualOrbit.definitionSource, "keplerian");
 });
 
+test("contexts expose the active simulation range separately from an object's own coverage", () => {
+    const simulationRange = {
+        mode: "range",
+        source: "simulation-range",
+        startTime: "2026-09-01T00:00:00.000Z",
+        endTime: "2026-09-01T06:00:00.000Z"
+    };
+    const context = createBuilder({
+        getObjectTimeRange: () => ({
+            startDate: "2026-01-01T00:00:00.000Z",
+            endDate: "2026-01-02T00:00:00.000Z"
+        }),
+        getActiveSimulationRange: () => simulationRange
+    })({ id: "layer:123" });
+
+    assert.deepEqual(context.timeRange, {
+        startDate: "2026-01-01T00:00:00.000Z",
+        endDate: "2026-01-02T00:00:00.000Z"
+    });
+    assert.strictEqual(context.simulationRange, simulationRange);
+});
+
 test("precise-product contexts retain the actual vector frame but expose a qualified display frame", () => {
     const context = createBuilder({
         getCompositeLayerTelemetry: () => ({
