@@ -580,6 +580,22 @@ def _tabular_native_state_provider(propagator: Any) -> Callable[[datetime.dateti
     return state_at
 
 
+def _tabular_frame_transformer(propagator: Any) -> FrameTransformService | None:
+    """Return a tabular source's own frame/EOP route when it exposes one.
+
+    Tabular SP3 and OEM providers own the transform service that was selected
+    when their source was parsed. For an imported precise product this is the
+    isolated clone bound to its paired ERP snapshot. Applying the generic
+    runtime transformer later would discard that source-specific EOP choice,
+    so the inspector deliberately follows the provider route for every
+    tabular source. TLE and manual propagators continue to use the caller's
+    runtime transformer.
+    """
+
+    candidate = getattr(propagator, "frame_transformer", None)
+    return candidate if isinstance(candidate, FrameTransformService) else None
+
+
 def _oem_selected_segment(
     propagator: OemStateProvider,
     *,
@@ -868,7 +884,15 @@ def _catalog_source(
     *,
     start_time: datetime.datetime,
     end_time: datetime.datetime,
-) -> tuple[str, Callable, str, float, dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    str,
+    Callable,
+    str,
+    float,
+    dict[str, Any],
+    dict[str, Any],
+    FrameTransformService | None,
+]:
     source = payload.source
     name, propagator = resolve_propagator(source.sat_id, source.line1, source.line2)
     # OemStateProvider intentionally has no file-wide frame/samples facade:
@@ -925,6 +949,7 @@ def _catalog_source(
             EARTH_MU_KM3_S2,
             model,
             identity,
+            _tabular_frame_transformer(segment),
         )
 
     if source.segment_index is not None:
@@ -963,7 +988,15 @@ def _catalog_source(
             "state_source": "native_tabular_state",
             "interpolation": interpolation,
         }
-        return name, _tabular_native_state_provider(propagator), frame, EARTH_MU_KM3_S2, model, identity
+        return (
+            name,
+            _tabular_native_state_provider(propagator),
+            frame,
+            EARTH_MU_KM3_S2,
+            model,
+            identity,
+            _tabular_frame_transformer(propagator),
+        )
     # Catalogue OMM imports in Orbit may carry valid TLE lines and therefore
     # execute through SGP4. Preserve that input provenance independently from
     # the actual engine: it is an OMM-fed SGP4 calculation, not an invented
@@ -1003,7 +1036,7 @@ def _catalog_source(
         "source_format": declared_catalog_format,
         "reference_frame": frame,
     }
-    return name, _native_state_provider(propagator, frame), frame, mu, model, identity
+    return name, _native_state_provider(propagator, frame), frame, mu, model, identity, None
 
 
 def _manual_source(
@@ -1014,7 +1047,15 @@ def _manual_source(
     gravity_model_registry: GravityModelRegistry | None = None,
     coverage_start: datetime.datetime | None = None,
     coverage_end: datetime.datetime | None = None,
-) -> tuple[str, Callable, str, float, dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    str,
+    Callable,
+    str,
+    float,
+    dict[str, Any],
+    dict[str, Any],
+    FrameTransformService | None,
+]:
     manual = payload.source.manual_orbit
     if manual is None:  # Defensive narrowing; the request model already rejects this.
         raise OrbitParametersError("Falta la definición de órbita manual")
@@ -1080,7 +1121,7 @@ def _manual_source(
         "propagation_options": propagation_options,
         "manual_erp": manual_erp.payload() if manual_erp is not None else None,
     }
-    return manual.name, _native_state_provider(propagator, frame), frame, mu, model, identity
+    return manual.name, _native_state_provider(propagator, frame), frame, mu, model, identity, None
 
 
 def build_orbit_parameters(
@@ -1111,7 +1152,7 @@ def build_orbit_parameters(
         raise OrbitParametersError("end_time debe ser mayor que start_time")
 
     if payload.source.kind == "manual":
-        name, state_at, frame, mu, model, identity = _manual_source(
+        name, state_at, frame, mu, model, identity, source_frame_transformer = _manual_source(
             payload,
             frame_transformer,
             gravity_field,
@@ -1121,7 +1162,7 @@ def build_orbit_parameters(
             max(normalise_utc(payload.source.manual_orbit.epoch), end_time),
         )
     else:
-        name, state_at, frame, mu, model, identity = _catalog_source(
+        name, state_at, frame, mu, model, identity, source_frame_transformer = _catalog_source(
             payload,
             resolve_propagator,
             start_time=start_time,
@@ -1133,6 +1174,7 @@ def build_orbit_parameters(
         model.get("source_format") or identity.get("source_format") or ""
     ).upper() or None
     requested_output_frame = _requested_output_frame(payload)
+    output_frame_transformer = source_frame_transformer or frame_transformer
 
     duration_seconds = (end_time - start_time).total_seconds()
     if payload.source.kind == "manual":
@@ -1166,7 +1208,7 @@ def build_orbit_parameters(
             output_state, frame_transform = _transform_state_for_output(
                 native_state,
                 requested_frame=requested_output_frame,
-                frame_transformer=frame_transformer,
+                frame_transformer=output_frame_transformer,
                 instant=instant,
             )
             native_frame = _state_frame_label(native_state)
@@ -1286,7 +1328,7 @@ def build_orbit_parameters(
         native_frame=frame,
         output_frame=output_reference_frame,
         requested_frame=requested_output_frame,
-        frame_transformer=frame_transformer,
+        frame_transformer=output_frame_transformer,
         transform_applied=transform_applied,
         calculation_frame=calculation_reference_frame,
         transform_provenance=(transform_provenances[0] if transform_provenances else None),

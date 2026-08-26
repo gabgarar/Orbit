@@ -103,6 +103,10 @@ export default function App() {
     const [notificationsOpen, setNotificationsOpen] = useState(false);
     const [operationsOpen, setOperationsOpen] = useState(false);
     const [plannerOpen, setPlannerOpen] = useState(false);
+    // The runtime owns the project-bound audit.  React only mirrors its
+    // compact metadata so BIT can present/export it independently of the
+    // ephemerides inspector window.
+    const [propagationHistory, setPropagationHistory] = useState([]);
     const plannerOpenRef = useRef(false);
     const priorWorkspaceAccessRef = useRef(false);
     const pendingProjectRequestRef = useRef(null);
@@ -139,6 +143,16 @@ export default function App() {
         : startupReadiness;
 
     activeProjectIdRef.current = userProjects.activeProjectId;
+
+    useEffect(() => {
+        if (typeof window === "undefined") return undefined;
+        const receivePropagationHistory = (event) => {
+            const history = event?.detail?.history;
+            setPropagationHistory(Array.isArray(history) ? history : []);
+        };
+        window.addEventListener("orbit:propagated-parameters-state", receivePropagationHistory);
+        return () => window.removeEventListener("orbit:propagated-parameters-state", receivePropagationHistory);
+    }, []);
 
     const closePlanner = useCallback(() => {
         if (!plannerOpenRef.current) return;
@@ -437,7 +451,7 @@ export default function App() {
             {operationsOpen && <OperationsPanel operations={operations} onClose={() => setOperationsOpen(false)} />}
             {notificationsOpen && <NotificationCenter notifications={notifications} onClose={() => setNotificationsOpen((value) => !value)} />}
             {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}
-            {diagnosticsOpen && <BuiltInTestPanel onClose={() => setDiagnosticsOpen(false)} diagnosticsState={systemDiagnostics} />}
+            {diagnosticsOpen && <BuiltInTestPanel onClose={() => setDiagnosticsOpen(false)} diagnosticsState={systemDiagnostics} propagationHistory={propagationHistory} />}
             <InitialBitWarningNotice notice={initialBitWarning.notice} onDismiss={initialBitWarning.dismiss} onOpenDiagnostics={() => setDiagnosticsOpen(true)} />
         </>}
         {administratorWorkspace && <UserAdministrationPanel

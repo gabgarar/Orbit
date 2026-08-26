@@ -139,6 +139,12 @@ html, body, #root { background: #000; overflow: hidden; }
     background: linear-gradient(145deg, rgba(13, 26, 45, .985), rgba(7, 15, 28, .985));
 }
 
+/* Orbital View/Ephemerides submenus are independent fixed surfaces so a
+   right-click at either viewport edge remains fully actionable. */
+.orbit-orbit-context-menu--submenu {
+    z-index: 10321;
+}
+
 .orbit-action-menu__header {
     display: flex;
     min-width: 0;

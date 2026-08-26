@@ -456,6 +456,144 @@ def test_eci_capability_requires_a_physical_route_and_erp_coverage_at_requested_
     ).frame is FrameId.EME2000
 
 
+@pytest.mark.parametrize("target_frame", (FrameId.TEME, FrameId.EME2000))
+def test_igb20_sp3_routes_through_registered_itrf_and_paired_erp_to_each_inertial_output(target_frame):
+    """An external realization is datum-aligned before its ERP rotation.
+
+    This exercises the direct ``TabularStateProvider`` path used by the
+    inspector, rather than only ``PreciseProduct.eci_state_at``.
+    """
+
+    transformer = _high_rigor_transformer(realization="ITRF2020")
+    register_igs20_family_itrf2020_identities(transformer)
+    product = import_precise_product(
+        [
+            _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text(frame="IGb20")),
+            _upload("IGS0OPSFIN_20262070000_01D_ERP.ERP", _erp_text()),
+        ],
+        require_eci=True,
+        frame_transformer=transformer,
+    )
+    instant = datetime(2026, 7, 26, 0, 0, 18, tzinfo=UTC)
+
+    transformed = product.provider_for_satellite("G01").state_at(
+        instant,
+        target_frame=target_frame,
+    )
+
+    assert transformed.frame is target_frame
+    assert transformed.earth_orientation_source == "IGS ERP · IGS0OPSFIN_20262070000_01D_ERP.ERP"
+    assert transformed.earth_orientation_snapshot_id == product.erp.snapshot_identity.content_id
+    assert transformed.provenance["terrestrial_realization_transform"]["source_realization"] == "IGB20"
+    route = transformed.provenance["external_terrestrial_to_inertial_route"]
+    assert route["source_frame"] == "IGB20"
+    assert route["intermediate_frame"] == "ITRF2020"
+    assert route["target_frame"] == target_frame.value
+    assert [step["kind"] for step in route["steps"]] == [
+        "terrestrial-realization",
+        "earth-orientation",
+    ]
+    assert transformed.transform_path[:2] == ("IGB20", "ITRF2020")
+
+
+@pytest.mark.parametrize("target_frame", (FrameId.TEME, FrameId.EME2000))
+def test_igb20_inspector_uses_the_product_bound_erp_transformer(target_frame):
+    """The inspector must not replace a product ERP with the global EOP route."""
+
+    product_transformer = _high_rigor_transformer(realization="ITRF2020")
+    register_igs20_family_itrf2020_identities(product_transformer)
+    product = import_precise_product(
+        [
+            _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text(frame="IGb20")),
+            _upload("IGS0OPSFIN_20262070000_01D_ERP.ERP", _erp_text()),
+        ],
+        require_eci=True,
+        frame_transformer=product_transformer,
+    )
+    provider = product.provider_for_satellite("G01")
+    start = datetime(2026, 7, 26, 0, 0, 18, tzinfo=UTC)
+    request = OrbitParametersRequest(
+        source={"kind": "catalog", "satId": "precise:fixture:G01"},
+        startTime=start.isoformat(),
+        endTime=(start + timedelta(minutes=1)).isoformat(),
+        samples=2,
+        outputFrame=target_frame.value,
+    )
+
+    # Deliberately omit the IGB20 datum mapping from the generic transformer.
+    # A successful response therefore proves that the inspector selected the
+    # imported provider's product-bound transformer and associated ERP.
+    response = build_orbit_parameters(
+        request,
+        resolve_propagator=lambda *_args: ("G01", provider),
+        frame_transformer=_high_rigor_transformer(),
+    )
+
+    first = response["samples"][0]
+    provenance = first["state"]["provenance"]
+    assert response["reference_frame"] == target_frame.value
+    assert first["frame_transform"]["path"][:2] == ["IGB20", "ITRF2020"]
+    assert provenance["frame_transform"]["earth_orientation"]["source"] == (
+        "IGS ERP · IGS0OPSFIN_20262070000_01D_ERP.ERP"
+    )
+    assert provenance["external_terrestrial_to_inertial_route"]["source_frame"] == "IGB20"
+
+
+def test_igb20_inspector_remains_fail_closed_without_registered_datum_or_erp():
+    start = datetime(2026, 7, 26, 0, 0, 18, tzinfo=UTC)
+    request = OrbitParametersRequest(
+        source={"kind": "catalog", "satId": "precise:fixture:G01"},
+        startTime=start.isoformat(),
+        endTime=(start + timedelta(minutes=1)).isoformat(),
+        samples=2,
+        outputFrame="TEME",
+    )
+
+    no_datum = import_precise_product(
+        [
+            _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text(frame="IGb20")),
+            _upload("IGS0OPSFIN_20262070000_01D_ERP.ERP", _erp_text()),
+        ],
+        frame_transformer=_high_rigor_transformer(realization="ITRF2020"),
+    )
+    with pytest.raises(ValueError, match="realizaci.n terrestre registrada"):
+        build_orbit_parameters(
+            request,
+            resolve_propagator=lambda *_args: ("G01", no_datum.provider_for_satellite("G01")),
+            frame_transformer=_high_rigor_transformer(),
+        )
+
+    datum_transformer = _high_rigor_transformer(realization="ITRF2020")
+    register_igs20_family_itrf2020_identities(datum_transformer)
+    no_erp = import_precise_product(
+        [_upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text(frame="IGb20"))],
+        frame_transformer=datum_transformer,
+    )
+    with pytest.raises(ValueError, match="Debe proporcionar un fichero ERP"):
+        build_orbit_parameters(
+            request,
+            resolve_propagator=lambda *_args: ("G01", no_erp.provider_for_satellite("G01")),
+            frame_transformer=_high_rigor_transformer(),
+        )
+
+    partial_erp = import_precise_product(
+        [
+            _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text(frame="IGb20")),
+            _upload(
+                "IGS0OPSFIN_20262070000_01D_ERP.ERP",
+                _erp_text((61247.0, 61247.0005)),
+            ),
+        ],
+        frame_transformer=datum_transformer,
+    )
+    with pytest.raises(ValueError, match="no cubre la época solicitada"):
+        build_orbit_parameters(
+            request,
+            resolve_propagator=lambda *_args: ("G01", partial_erp.provider_for_satellite("G01")),
+            frame_transformer=_high_rigor_transformer(),
+        )
+
+
 def test_no_erp_keeps_a_terrestrial_series_renderable_but_blocks_eci_state():
     product = import_precise_product([
         _upload("IGS0OPSFIN_20262070000_01D_05M_ORB.SP3", _sp3_text()),

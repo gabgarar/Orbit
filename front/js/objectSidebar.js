@@ -5156,6 +5156,68 @@ export function setupObjectSidebar({
             }));
             return;
         }
+        // Globe and tree menus both carry the target id. Do not proxy these
+        // operations through hidden legacy buttons: their closures use the
+        // last tree target and could otherwise act on a different layer after
+        // a globe right-click.
+        if (action === "explain") {
+            const targetLayerType = String(getLayerType?.(targetId) || "SATELLITE").toUpperCase();
+            if (!targetId || getObjectLayerActive(targetId) !== true || targetLayerType === "GROUND_STATION" || isBodyLayer(targetLayerType, targetId)) {
+                return;
+            }
+            closeContextMenu();
+            void openTleInfo(targetId, "explain");
+            return;
+        }
+        if (action === "viz") {
+            const targetLayerType = String(getLayerType?.(targetId) || "SATELLITE").toUpperCase();
+            if (!targetId || getObjectLayerActive(targetId) !== true || targetLayerType === "GROUND_STATION" || isBodyLayer(targetLayerType, targetId)) {
+                return;
+            }
+            closeContextMenu();
+            onOpenVisualizationOptions?.(targetId);
+            return;
+        }
+        if (action === "ground") {
+            const targetLayerType = String(getLayerType?.(targetId) || "SATELLITE").toUpperCase();
+            if (!targetId || getObjectLayerActive(targetId) !== true || targetLayerType === "GROUND_STATION" || isBodyLayer(targetLayerType, targetId)) {
+                return;
+            }
+            closeContextMenu();
+            onToggleGroundTrack?.(targetId);
+            renderInfo();
+            return;
+        }
+        if (action === "export") {
+            const targetLayerType = String(getLayerType?.(targetId) || "SATELLITE").toUpperCase();
+            if (!targetId || getObjectLayerActive(targetId) !== true || targetLayerType === "GROUND_STATION" || isBodyLayer(targetLayerType, targetId)) {
+                return;
+            }
+            closeContextMenu();
+            openExportModal(targetId);
+            return;
+        }
+        if (action === "remove") {
+            if (!targetId || getObjectLayerActive(targetId) !== true) {
+                return;
+            }
+            closeContextMenu();
+            void Promise.resolve(onToggleObjectLayer?.(targetId, false)).then((removed) => {
+                if (removed && selectedId === targetId) selectedId = null;
+                renderList();
+                renderInfo();
+                renderCatalogList();
+            });
+            return;
+        }
+        if (action === "station") {
+            if (!targetId || String(getLayerType?.(targetId) || "").toUpperCase() !== "GROUND_STATION") {
+                return;
+            }
+            closeContextMenu();
+            openGroundStationModal(targetId);
+            return;
+        }
         const actionButtons = {
             explain: contextExplainBtn,
             viz: contextVizBtn,

@@ -23,17 +23,18 @@ the active timeline start, end, and duration. Change the global range in the
 domain change (mode, start, or end) replaces the inspector request; moving the
 playhead alone must not create a new series.
 
-## Project propagation history
+## Project propagation audit
 
-The **Information** tab retains a project audit table. Each row records the
-target, source, propagator, UTC window, requested/effective cadence, declared
-frames, summarized sample count, and terminal state: **running**,
-**completed**, **cancelled**, or **error**. A request replaced, closed, or
-cancelled from the task indicator remains recorded as cancelled; it does not
-disappear with the live operation.
+The inspector shows only the current query. Review and export the audit from
+**Continuous BIT > Audit**, so one orbit's series is not mixed with the
+project's operational record. Each row records the target, source, propagator,
+UTC window, requested/effective cadence, declared frames, summarized sample
+count, and terminal state: **running**, **completed**, **cancelled**, or
+**error**. A request replaced, closed, or cancelled from the task indicator
+remains recorded as cancelled; it does not disappear with the live operation.
 
 The history is intentionally separate from the task glyph: that glyph reads
-the live ledger and shows only work that is currently executing. The table is
+the live ledger and shows only work that is currently executing. The audit is
 project metadata, is snapshotted immediately into the encrypted local library,
 and travels with the `.orbit` document. It can be reviewed after reopening a
 project even if its layer or source product is no longer available. To avoid
@@ -41,7 +42,9 @@ turning a project into an ephemerides cache, it stores neither sample series,
 source files, nor raw backend responses. The latest **200 executions** are
 retained per project.
 
-The table does not delete or repropagate any result. To reproduce numerical
+The BIT **Audit** tab also includes the current PBIT result and its steps, and
+can download a local CSV or JSON. The export preserves the metadata above but
+does not delete, repropagate, or include samples. To reproduce numerical
 values, use **Refresh** with the currently available layer/resources, or
 explicitly export the series from **Values** with its provenance.
 
@@ -97,8 +100,19 @@ step, and tolerances only when the runtime supplied them. **Output frame**
 offers `TEME`, `ITRF`, `EME2000`, `GCRF`, and `ICRF` only after the endpoint
 declares a transform route. **Native** omits a transformation request. Every
 selection is validated over the *whole* range: a route can fail because EOP/ERP,
-leap seconds, coverage, or an applicable realization is missing. In that case
-the service returns an actionable error and no relabelled table is published.
+leap seconds, coverage, or an applicable realization is missing. The selector
+is transactional: on failure Orbit retains the prior table and frame, restores
+the selector, and presents a one-shot actionable notice. It does not leave the
+inspector blocked by a persistent error or publish a relabelled table.
+
+This matters especially for SP3. A label such as `IGS20`, `IGb20`, or `IGc20`
+is a **terrestrial realization**, while `TEME`, `EME2000`, `GCRF`, and `ICRF`
+are inertial frames. Moving from that native SP3 state to TEME is not a label
+change: it first needs a registered terrestrial-realization route for the
+product (for example the published IGS20/IGb20/IGc20↔ITRF2020 operation when
+applicable), then valid ERP/EOP coverage across the entire interval. If either
+route is absent, **Native** remains the safe choice; the notice includes the
+technical cause and the missing configuration or coverage action.
 
 The response preserves `frame.native`, `frame.current`, `frame.output`, and
 `frame.calculation`; each row also retains its native frame and transformation

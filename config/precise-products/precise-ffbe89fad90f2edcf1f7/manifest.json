@@ -1,0 +1,26 @@
+{
+  "detected_product_class": "final",
+  "detected_product_family": "mgex",
+  "detected_provider_id": "igs_mgex",
+  "name": "COD0MGXFIN_20251310000_01D_05M_ORB",
+  "product_class": "final",
+  "product_id": "precise-ffbe89fad90f2edcf1f7",
+  "provider_id": "igs_mgex",
+  "schema_version": 2,
+  "selected_satellite_ids": [
+    "G01"
+  ],
+  "source_files": [
+    {
+      "archive_member": null,
+      "byte_count": 2144311,
+      "compression": "gzip",
+      "kind": "sp3",
+      "name": "COD0MGXFIN_20251310000_01D_05M_ORB.SP3",
+      "sha256": "d05efb85b21c53afe338f0fa574f9cdd8818fc603c6634bbbc2d6794bad83583",
+      "storage_name": "01-COD0MGXFIN_20251310000_01D_05M_ORB.SP3",
+      "uploaded_name": "COD0MGXFIN_20251310000_01D_05M_ORB.SP3.gz",
+      "uploaded_sha256": "40eee51e4afbf4b2101f92cb3e3bf201a8bb95ae4e2b291529675ddd52083ba1"
+    }
+  ]
+}

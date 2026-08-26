@@ -1055,74 +1055,6 @@ function SourceMethodSection({ panel, result, profile, inspector, referenceFrame
     </section>;
 }
 
-function propagationHistoryStatus(status) {
-    const normalized = String(status || "").trim().toLowerCase();
-    if (normalized === "completed") {
-        return ["COMPLETADA", "border-[#39785d] bg-[rgba(27,86,59,.25)] text-[#a4e6bd]"];
-    }
-    if (normalized === "failed") {
-        return ["ERROR", "border-[#874252] bg-[rgba(123,35,49,.2)] text-[#ffc3cb]"];
-    }
-    if (normalized === "cancelled") {
-        return ["CANCELADA", "border-[#80652e] bg-[rgba(95,70,23,.24)] text-[#f2d192]"];
-    }
-    return ["EN CURSO", "border-[#3f6ca2] bg-[rgba(26,65,112,.28)] text-[#b9d9ff]"];
-}
-
-function propagationHistoryWindow(entry) {
-    const start = entry?.range?.startTime;
-    const end = entry?.range?.endTime;
-    if (!start || !end) return "Ventana no disponible";
-    return `${formatTime(start, true)} — ${formatTime(end, true)}`;
-}
-
-function PropagationHistorySection({ history }) {
-    const entries = Array.isArray(history) ? history : [];
-    return <section className="shrink-0 rounded-[8px] border border-[#25405f] bg-[rgba(8,21,38,.74)] p-3" aria-label="Historial de propagaciones" data-testid="propagated-parameters-history">
-        <div className="flex items-start justify-between gap-2">
-            <div>
-                <h3 className="m-0 text-[11px] font-semibold text-[#e7effd]">Historial de propagaciones</h3>
-                <p className="mt-1 mb-0 text-[9px] leading-[1.4] text-[#8fa2be]">Auditoría del proyecto: conserva la solicitud y el resultado resumido, sin guardar las muestras. Se retienen las últimas 200 ejecuciones.</p>
-            </div>
-            <span className="shrink-0 rounded-[5px] border border-[#31516f] bg-[#10223b] px-1.5 py-0.5 text-[8px] font-bold text-[#b9d5fa]">{entries.length}</span>
-        </div>
-        {entries.length === 0
-            ? <p className="mt-3 mb-0 rounded-[6px] border border-[#203854] bg-[rgba(6,17,31,.53)] px-2.5 py-2 text-[9px] leading-[1.4] text-[#8fa2be]" role="status">Aún no hay propagaciones registradas para este proyecto.</p>
-            : <table className="mt-3 w-full table-fixed border-collapse text-left" aria-label="Tabla de propagaciones del proyecto">
-                <thead className="border-b border-[#284260] text-[8px] font-bold tracking-[.055em] text-[#7890b0]">
-                    <tr>
-                        <th className="w-[84px] px-1.5 py-1.5">ESTADO</th>
-                        <th className="px-1.5 py-1.5">PROPAGACIÓN</th>
-                        <th className="w-[38%] px-1.5 py-1.5">RESULTADO</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {entries.map((entry) => {
-                        const [label, tone] = propagationHistoryStatus(entry?.status);
-                        const target = entry?.target?.name || entry?.target?.id || "Órbita sin nombre";
-                        const source = entry?.source || "Fuente no declarada";
-                        const cadence = entry?.sampling?.effectiveIntervalSeconds;
-                        const count = entry?.result?.sampleCount ?? entry?.sampling?.sampleCount;
-                        const detail = entry?.error || entry?.message || "Sin detalle adicional.";
-                        return <tr className="align-top border-b border-[#1c324d] last:border-b-0" key={entry.id}>
-                            <td className="px-1.5 py-2"><span className={`inline-flex rounded-[4px] border px-1 py-0.5 text-[7px] leading-none font-bold tracking-[.045em] ${tone}`}>{label}</span></td>
-                            <td className="min-w-0 px-1.5 py-2">
-                                <strong className="block truncate text-[9px] font-semibold text-[#dce8fb]" title={target}>{target}</strong>
-                                <span className="mt-0.5 block truncate text-[8px] text-[#8fa3c0]" title={source}>{source}{entry?.propagator ? ` · ${titleCase(entry.propagator)}` : ""}</span>
-                                <span className="mt-0.5 block truncate text-[8px] text-[#7e94b2]" title={propagationHistoryWindow(entry)}>{propagationHistoryWindow(entry)}</span>
-                            </td>
-                            <td className="min-w-0 px-1.5 py-2">
-                                <span className="block truncate text-[8px] text-[#a9c0dc]" title={detail}>{detail}</span>
-                                <span className="mt-0.5 block truncate text-[8px] text-[#7890ae]">{Number.isFinite(Number(cadence)) ? `Paso ${formatSamplingInterval(cadence)}` : "Paso no declarado"}{Number.isFinite(Number(count)) ? ` · ${count} muestras` : ""}</span>
-                                <span className="mt-0.5 block truncate text-[8px] text-[#7189a8]" title={entry?.updatedAt || entry?.startedAt}>{formatTime(entry?.updatedAt || entry?.startedAt, true)}</span>
-                            </td>
-                        </tr>;
-                    })}
-                </tbody>
-            </table>}
-    </section>;
-}
-
 function InformationTab({
     panel,
     result,
@@ -1146,7 +1078,6 @@ function InformationTab({
 }) {
     const manualDesign = String(panel?.range?.mode || "").toLowerCase().includes("manual-design");
     const busy = ["busy", "loading", "pending", "propagating"].includes(String(panel?.status).toLowerCase());
-    const propagationHistory = Array.isArray(panel?.history) ? panel.history : [];
     const simulationRange = finiteTimeRange(panel?.simulationRange ?? panel?.simulation_range);
     // A manual-design session owns its epochs outside the global simulation
     // timeline. Its received design window is the one supported read-only
@@ -1288,8 +1219,6 @@ function InformationTab({
         {rendererReference?.unverifiedTerrestrialTransform === true && !rendererUnavailable && !rendererApproximate && <div className="shrink-0 rounded-[7px] border border-[rgba(218,154,51,.62)] bg-[rgba(96,62,16,.2)] px-3 py-2 text-[10px] leading-[1.45] text-[#ffdca0]" role="status">
             <strong>Transformación terrestre sin procedencia.</strong> Se conserva el marco nativo {formatReferenceFrame(rendererNativeFrame)}; la referencia terrestre recibida no declara EOP/ERP ni una operación de realización verificable.
         </div>}
-
-        <PropagationHistorySection history={propagationHistory} />
 
         {samples.length > 0
             && inspector?.availability?.available !== false

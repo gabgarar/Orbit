@@ -40,6 +40,24 @@ a manual orbit. Global show/hide controls are enabled
 when active user layers exist; The Earth does not count as a layer of
 mission for that condition.
 
+## Orbital context menu
+
+Right-clicking an orbit, either on the globe or in the **Layers** tree, opens
+the same action hierarchy. Operations are grouped so visual changes are not
+confused with operations on the data:
+
+| Group | Actions | Effect |
+| --- | --- | --- |
+| **View** | Center view, show or hide layer, show or hide *Ground track*, visualization options | Changes only the camera or representation. Hiding does not remove data or alter the time range. |
+| **Ephemerides** | Propagation, explain orbital parameters | Opens the layer's propagated inspection or an explanation of its elements, frame and provenance. |
+| **Export** | Export… | Keeps the export dialogue compatible with the layer source. |
+| **Delete layer** | Delete layer | Removes the layer from the current workspace. |
+
+The **View** and **Ephemerides** entries are submenus: they open towards the
+side that has screen space and support keyboard traversal. An action invoked
+from the globe retains the clicked layer identifier; it is never applied to
+the last layer that happened to open a tree menu.
+
 ## Search and counters
 
 Dashboard search supports matching options such as uppercase,

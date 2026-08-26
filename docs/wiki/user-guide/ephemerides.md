@@ -24,26 +24,30 @@ rango activo de la línea temporal. Cambiar el rango global se hace desde la
 de dominio temporal (modo, inicio o fin) sustituye la consulta del inspector;
 mover sólo el cursor de reproducción no debe iniciar una serie nueva.
 
-## Historial de propagaciones del proyecto
+## Auditoría de propagaciones del proyecto
 
-La pestaña **Información** conserva una tabla de auditoría por proyecto. Cada
-fila registra el objetivo, fuente, propagador, ventana UTC, cadencia solicitada
-y efectiva, marcos declarados, número de muestras resumido y el estado final:
-**en curso**, **completada**, **cancelada** o **error**. Una solicitud que se
-sustituye, se cierra o se cancela desde el indicador de tareas conserva su
-resultado como cancelada; no desaparece junto con la operación activa.
+El inspector muestra exclusivamente la consulta actual. La auditoría se
+consulta y exporta desde **BIT continuo > Auditoría**, para no mezclar la
+serie de una órbita con el registro operativo del proyecto. Cada fila registra
+el objetivo, fuente, propagador, ventana UTC, cadencia solicitada y efectiva,
+marcos declarados, número de muestras resumido y el estado final: **en curso**,
+**completada**, **cancelada** o **error**. Una solicitud que se sustituye, se
+cierra o se cancela desde el indicador de tareas conserva su resultado como
+cancelada; no desaparece junto con la operación activa.
 
 El historial está separado deliberadamente del icono de tareas: ese icono usa
-el *ledger* vivo y sólo muestra trabajo en ejecución. La tabla es metadato del
-proyecto, se guarda inmediatamente en la biblioteca local cifrada y viaja en
-el documento `.orbit`; al abrir el proyecto se recupera aunque su capa o
+el *ledger* vivo y sólo muestra trabajo en ejecución. La auditoría es metadato
+del proyecto, se guarda inmediatamente en la biblioteca local cifrada y viaja
+en el documento `.orbit`; al abrir el proyecto se recupera aunque su capa o
 producto de origen ya no esté disponible. Para no convertir el proyecto en una
 caché de efemérides, no guarda las series, el fichero de entrada ni la respuesta
 cruda del backend. Conserva las **200 ejecuciones más recientes** por proyecto.
 
-La tabla no borra ni repropaga resultados por sí sola. Para reproducir valores
-numéricos se usa **Refresh** con la capa y los recursos vigentes, o se exporta
-la serie explícitamente desde **Valores** con su procedencia.
+La pestaña **Auditoría** de BIT añade el resultado y los pasos del PBIT actual,
+y permite descargar un CSV o JSON local. La exportación conserva los metadatos
+anteriores, pero tampoco borra, repropaga ni incluye muestras. Para reproducir
+valores numéricos se usa **Refresh** con la capa y los recursos vigentes, o se
+exporta la serie explícitamente desde **Valores** con su procedencia.
 
 ## Perfil de fuente y disponibilidad
 
@@ -98,8 +102,20 @@ el paso interno y las tolerancias solo si el runtime los devuelve. El selector
 endpoint declaró una ruta de transformación. La opción **Nativo** omite la
 petición de transformación. Cada selección se comprueba para *todo* el rango:
 una ruta puede fallar por falta de EOP/ERP, de segundos intercalares, de
-cobertura o de una realización compatible. En ese caso se muestra el error y
-no se publica una tabla renombrada.
+cobertura o de una realización compatible. El selector es transaccional: si
+falla, Orbit conserva la tabla y el marco anteriores, revierte el selector y
+muestra un aviso puntual accionable; no deja el inspector bloqueado con un
+error persistente ni publica una tabla renombrada.
+
+Esto es especialmente importante para SP3. Una etiqueta como `IGS20`,
+`IGb20` o `IGc20` representa una **realización terrestre**; `TEME`, `EME2000`,
+`GCRF` e `ICRF` son marcos inerciales. Para pasar de ese SP3 nativo a TEME no
+basta cambiar una etiqueta: primero hace falta una transformación de
+realización terrestre registrada para el producto (por ejemplo la operación
+publicada IGS20/IGb20/IGc20↔ITRF2020 cuando aplique) y después una cobertura
+ERP/EOP válida durante todo el intervalo. Si falta cualquiera de esas rutas,
+la decisión segura es seguir en **Nativo**; el aviso incluye la causa técnica
+y la acción de configuración o cobertura que falta.
 
 La respuesta conserva `frame.native`, `frame.current`, `frame.output` y
 `frame.calculation`; por fila conserva además el marco nativo y la procedencia

@@ -4,8 +4,8 @@
 
 The **Built-In Test (BIT)** icon, to the right of **Help**, opens the
 continuous, read-only diagnostics panel. It does not start long propagations or
-alter an orbit. The redesigned panel separates service availability, the
-startup **PBIT**, time data, and operational validation so a data-quality
+alter an orbit. Its tabs separate service availability, the startup **PBIT**,
+time data, operational validation, and audit evidence so a data-quality
 warning is not mistaken for a service failure.
 
 ## Statuses and refresh
@@ -22,19 +22,32 @@ immediate non-blocking poll. Each row shows **Healthy**, **Warning**, or
 **Error**, together with its last published validation time. If the diagnostics
 channel is unavailable, the panel says so instead of inventing a healthy state.
 
-## Panel sections
+## Panel tabs
 
-| Section | Meaning |
+| Tab | Meaning |
 | --- | --- |
-| **Orbit services** | Web gateway, Python backend, diagnostics channel, and continuous monitor. This is availability, not authorization to create projects. |
-| **Startup PBIT** | Startup ledger, its steps, warnings, errors, and progress, plus the readiness decision. |
-| **Time and reference** | ERP/EOP, the reference-frame route, and, when present, the scene clock (MTR). Limited ERP coverage or a prediction is an operational warning; it does not by itself fail the gateway or Python backend. |
-| **Runtime validation** | Bounded probes for gravity models, propagators, and force models. They are runtime checks, not CI/CD or release/mission certification. |
-| **Scene data** | SP3 and OEM are shown only when sources are active in the scene. An absent optional source is not displayed as a failure. |
+| **Overview** | Overall state, project readiness, and issues requiring attention. Each issue opens its corresponding tab. |
+| **Services** | Web gateway, Python backend, diagnostics channel, and continuous monitor. This is availability, not authorization to create projects. |
+| **Validation** | The startup **PBIT** ledger, its steps, warnings, errors, and progress, plus time/reference, gravity, propagator, force, and scene-data checks. They are runtime probes, not CI/CD or release/mission certification. |
+| **Audit** | Current PBIT result and steps, plus project propagations. It can export local CSV or JSON. |
 
 MTR is contextual as well: it is shown only when the scene has an active
 master time range. Its local range and clamp facts are not fabricated from a
 remote card.
+
+## Exportable audit
+
+The **Audit** tab retains the latest PBIT execution published by the service
+and the propagation history owned by the open project. A propagation records
+only its target, source, propagator, UTC range, cadence, summarized sample
+count, frames, and status; it does not store samples, source files, or raw
+responses. The history travels in the encrypted local library and the `.orbit`
+document, with a maximum of **200 executions** per project.
+
+The **CSV** and **JSON** buttons download a local snapshot of that audit. It
+includes the queried system state, PBIT, and propagation rows; it does not
+replace the task glyph, which continues to show only currently running work.
+Exporting neither deletes the audit nor repropagates an orbit.
 
 ## Startup PBIT and readiness
 

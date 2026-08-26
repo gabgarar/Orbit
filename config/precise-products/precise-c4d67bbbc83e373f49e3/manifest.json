@@ -1,0 +1,37 @@
+{
+  "detected_product_class": "final",
+  "detected_product_family": "mgex",
+  "detected_provider_id": "igs_mgex",
+  "name": "COD0MGXFIN_20251310000_01D_05M_ORB",
+  "product_class": "final",
+  "product_id": "precise-c4d67bbbc83e373f49e3",
+  "provider_id": "igs_mgex",
+  "schema_version": 2,
+  "selected_satellite_ids": [
+    "G01"
+  ],
+  "source_files": [
+    {
+      "archive_member": null,
+      "byte_count": 2144311,
+      "compression": "gzip",
+      "kind": "sp3",
+      "name": "COD0MGXFIN_20251310000_01D_05M_ORB.SP3",
+      "sha256": "d05efb85b21c53afe338f0fa574f9cdd8818fc603c6634bbbc2d6794bad83583",
+      "storage_name": "01-COD0MGXFIN_20251310000_01D_05M_ORB.SP3",
+      "uploaded_name": "COD0MGXFIN_20251310000_01D_05M_ORB.SP3.gz",
+      "uploaded_sha256": "40eee51e4afbf4b2101f92cb3e3bf201a8bb95ae4e2b291529675ddd52083ba1"
+    },
+    {
+      "archive_member": null,
+      "byte_count": 37001929,
+      "compression": "gzip",
+      "kind": "clk",
+      "name": "COD0MGXFIN_20251310000_01D_30S_CLK.CLK",
+      "sha256": "a4b96bdf3a014d2b44960458ab77e6c566d31e621c32066365627bc8eaedb288",
+      "storage_name": "02-COD0MGXFIN_20251310000_01D_30S_CLK.CLK",
+      "uploaded_name": "COD0MGXFIN_20251310000_01D_30S_CLK.CLK.gz",
+      "uploaded_sha256": "6857bb24d7f5bc039eae5f5dea4d0d3654af55b077f2daf8512b98a090cb9dbb"
+    }
+  ]
+}

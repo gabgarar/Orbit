@@ -218,6 +218,10 @@ import {
     updatePropagationHistoryEntry
 } from "./js/features/propagatedParameters/propagationHistory.js";
 import {
+    createOutputFrameSelectionTransaction,
+    rollbackOutputFrameSelection
+} from "./js/features/propagatedParameters/frameSelection.js";
+import {
     DIAGNOSTICS_STATE_EVENT,
     DIAGNOSTICS_LOCAL_STATE_EVENT,
     DIAGNOSTICS_LOCAL_STATE_REQUEST_EVENT,
@@ -7117,6 +7121,7 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
     const sourceId = getSatelliteSourceIdFromLayerId(String(satelliteId || "").trim());
     const layerType = String(getLayerType(satelliteId) || "SATELLITE").toUpperCase();
     const isCelestialBody = layerType === "CELESTIAL_BODY" || layerType === "EARTH";
+    const isEarth = layerType === "EARTH" || String(satelliteId || "").toLowerCase() === "body:earth";
     const isGroundStation = layerType === "GROUND_STATION";
     // The manual registry, not the generic catalog metadata, is the
     // authorization boundary for editing. A catalogue TLE can have a very
@@ -7128,7 +7133,7 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
     // each action. Clamp against their real visual footprint so the final
     // option never falls behind the timeline or viewport edge.
     const estimatedWidth = 286;
-    const estimatedHeight = isCelestialBody ? 98 : (isGroundStation ? 178 : (canEditManualOrbit ? 270 : 222));
+    const estimatedHeight = isEarth ? 104 : (isCelestialBody ? 150 : (isGroundStation ? 224 : 222));
     const maxLeft = Math.max(viewportPadding, window.innerWidth - estimatedWidth - viewportPadding);
     const maxTop = Math.max(viewportPadding, window.innerHeight - estimatedHeight - viewportPadding);
     const safeLeft = Math.min(Math.max(viewportPadding, x), maxLeft);
@@ -7141,6 +7146,9 @@ function showSatelliteContextMenuAt(satelliteId, x, y) {
             name: getLayerDisplayName(satelliteId),
             layerType,
             canEditManualOrbit,
+            visible: getCompositeLayerVisibility(satelliteId) !== false,
+            groundTrackVisible: !isCelestialBody && !isGroundStation
+                && getSatelliteVisualizationConfig(sourceId)?.effective?.orbit_ground_track_show === true,
             left: safeLeft,
             top: safeTop
         }
@@ -9656,6 +9664,25 @@ function publishPropagatedParametersInspectorState(patch = {}) {
     }));
 }
 
+function restorePropagatedParametersOutputFrameSelection(transaction, errorMessage) {
+    const rollback = rollbackOutputFrameSelection(transaction, errorMessage);
+    if (!rollback) return false;
+    // The selected frame is a request preference, not a committed choice until
+    // the service returns the transformed series. Restore it together with the
+    // last valid result so a failed SP3 terrestrial -> inertial request never
+    // strands the inspector in a persistent error state.
+    propagatedParametersRequestedOutputFrame = rollback.requestedOutputFrame;
+    const { history: _previousHistory, ...state } = rollback.state;
+    publishPropagatedParametersInspectorState({
+        ...state,
+        // The failed attempt itself remains in the project-owned audit trail;
+        // do not overwrite it with the point-in-time history snapshot.
+        history: propagatedParametersHistory
+    });
+    void showAppAlert(rollback.message, "No se pudo cambiar el marco de salida");
+    return true;
+}
+
 function stopPropagatedParametersRequest(message = "C\u00e1lculo de par\u00e1metros propagados cancelado.") {
     const operationId = propagatedParametersOperationId;
     const controller = propagatedParametersAbortController;
@@ -10030,7 +10057,7 @@ function currentManualDesignParametersContext(context) {
     };
 }
 
-async function requestPropagatedParameters(context) {
+async function requestPropagatedParameters(context, { frameSelectionTransaction = null } = {}) {
     // Invalidate an earlier request before *any* preparation. Otherwise an
     // invalid next context (for example OEM) would leave the old request
     // alive and allow its late response to overwrite the new error state.
@@ -10058,6 +10085,10 @@ async function requestPropagatedParameters(context) {
             return;
         }
         propagatedParametersLastContext = context;
+        const errorMessage = extractManualOrbitError(error, "No se pudieron preparar las efemérides.");
+        if (restorePropagatedParametersOutputFrameSelection(frameSelectionTransaction, errorMessage)) {
+            return;
+        }
         publishPropagatedParametersInspectorState({
             open: true,
             status: "error",
@@ -10071,7 +10102,7 @@ async function requestPropagatedParameters(context) {
             result: null,
             earthOrientationPreflight: null,
             earthOrientationProvenance: null,
-            error: extractManualOrbitError(error, "No se pudieron preparar las efemérides.")
+            error: errorMessage
         });
         return;
     }
@@ -10100,6 +10131,12 @@ async function requestPropagatedParameters(context) {
             error: preflightInspector.availability.reason,
             message: "La fuente no dispone de un proveedor de efemérides verificable."
         });
+        if (restorePropagatedParametersOutputFrameSelection(
+            frameSelectionTransaction,
+            preflightInspector.availability.reason
+        )) {
+            return;
+        }
         publishPropagatedParametersInspectorState({
             open: true,
             status: "error",
@@ -10124,6 +10161,10 @@ async function requestPropagatedParameters(context) {
     const earthOrientationPreflightDetail = earthOrientationCoverageDetail(earthOrientationPreflight);
     const controller = new AbortController();
     propagatedParametersAbortController = controller;
+    const retainedFrameSelectionState = frameSelectionTransaction?.previousState?.result
+        && frameSelectionTransaction?.previousState?.inspector
+        ? frameSelectionTransaction.previousState
+        : null;
     publishPropagatedParametersInspectorState({
         open: true,
         status: "propagating",
@@ -10132,9 +10173,12 @@ async function requestPropagatedParameters(context) {
         simulationRange,
         sampling,
         samplingIntervalSeconds: propagatedParametersSamplingIntervalSeconds,
-        inspector: preflightInspector,
-        exportMetadata: null,
-        result: null,
+        // A frame selection is a transaction. Keep the last verified result
+        // visible while the new route is validated, then either replace it on
+        // success or atomically restore it on failure.
+        inspector: retainedFrameSelectionState?.inspector ?? preflightInspector,
+        exportMetadata: retainedFrameSelectionState?.exportMetadata ?? null,
+        result: retainedFrameSelectionState?.result ?? null,
         earthOrientationPreflight: earthOrientationPreflightDetail,
         earthOrientationProvenance: null,
         error: ""
@@ -10279,6 +10323,7 @@ async function requestPropagatedParameters(context) {
             simulationRange,
             sampling,
             samplingIntervalSeconds: propagatedParametersSamplingIntervalSeconds,
+            requestedOutputFrame: propagatedParametersRequestedOutputFrame,
             inspector,
             exportMetadata,
             result: inspectedResponse,
@@ -10294,6 +10339,7 @@ async function requestPropagatedParameters(context) {
                 simulationRange,
                 sampling,
                 samplingIntervalSeconds: propagatedParametersSamplingIntervalSeconds,
+                requestedOutputFrame: propagatedParametersRequestedOutputFrame,
                 inspector,
                 exportMetadata,
                 result: inspectedResponse,
@@ -10336,6 +10382,9 @@ async function requestPropagatedParameters(context) {
         });
         failRuntimeSceneOperation(operationId, new Error(errorMessage));
         operationTerminal = true;
+        if (restorePropagatedParametersOutputFrameSelection(frameSelectionTransaction, errorMessage)) {
+            return;
+        }
         publishPropagatedParametersInspectorState({
             status: "error",
             target,
@@ -10525,14 +10574,26 @@ function setupPropagatedParametersInspector() {
     });
     window.addEventListener("orbit:propagated-parameters-frame-change", (event) => {
         const detail = event.detail && typeof event.detail === "object" ? event.detail : {};
-        propagatedParametersRequestedOutputFrame = normalizePropagatedParametersOutputFrame(
+        const requestedOutputFrame = normalizePropagatedParametersOutputFrame(
             detail.requestedOutputFrame
             ?? detail.requested_output_frame
             ?? detail.outputFrame
             ?? detail.output_frame
         );
+        const previousRequestedOutputFrame = propagatedParametersRequestedOutputFrame;
+        if (requestedOutputFrame === previousRequestedOutputFrame) {
+            return;
+        }
+        const frameSelectionTransaction = createOutputFrameSelectionTransaction({
+            requestedOutputFrame,
+            previousRequestedOutputFrame,
+            previousState: propagatedParametersInspectorState
+        });
+        propagatedParametersRequestedOutputFrame = requestedOutputFrame;
         if (propagatedParametersLastContext) {
-            void requestPropagatedParameters(propagatedParametersLastContext);
+            void requestPropagatedParameters(propagatedParametersLastContext, {
+                frameSelectionTransaction
+            });
         }
     });
     window.addEventListener("orbit:propagated-parameters-close", () => {

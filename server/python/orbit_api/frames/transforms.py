@@ -49,6 +49,13 @@ _PRECISE_GNSS_LEAP_SNAPSHOT_ERROR = (
 )
 _PUBLISHED_STRICT_EOP_QUALITIES = frozenset({"final", "rapid"})
 _LOCAL_MANUAL_ERP_QUALITY = "local-validated"
+_EXTERNAL_TERRESTRIAL_TO_INERTIAL_TARGETS = frozenset({
+    FrameId.TEME,
+    FrameId.CIRS,
+    FrameId.GCRF,
+    FrameId.ICRF,
+    FrameId.EME2000,
+})
 
 
 class FrameTransformationError(ValueError):
@@ -343,7 +350,7 @@ class FrameTransformService:
         provider: EarthOrientationProvider,
         *,
         strict_eop: bool | None = None,
-    ) -> "FrameTransformService":
+    ) -> FrameTransformService:
         """Return an isolated transform service using ``provider``.
 
         A precise GNSS product may carry the ERP snapshot that belongs to its
@@ -368,7 +375,7 @@ class FrameTransformService:
     def with_manual_earth_orientation_provider(
         self,
         provider: EarthOrientationProvider,
-    ) -> "FrameTransformService":
+    ) -> FrameTransformService:
         """Clone an isolated strict route for one attached manual ERP.
 
         This is deliberately separate from :meth:`with_earth_orientation_provider`.
@@ -478,6 +485,36 @@ class FrameTransformService:
         destination_realization = self._terrestrial_realization(target, target_realization)
         source_external = self._is_external_terrestrial(state.frame)
         target_external = self._is_external_terrestrial(target)
+        if (
+            source_external
+            and target in _EXTERNAL_TERRESTRIAL_TO_INERTIAL_TARGETS
+            and self.default_terrestrial_realization is not None
+        ):
+            # An imported IGS/IGB/IGC realization is not an ITRF label. It
+            # must first pass through a registered terrestrial datum operation
+            # to the deployment's declared ITRF realization. Only then can
+            # the ordinary ERP/EOP-backed terrestrial -> inertial reduction
+            # run. Keeping this route here (rather than only in
+            # ``PreciseProduct.eci_state_at``) makes direct inspector and
+            # tabular-provider requests obey the same physical contract.
+            terrestrial = self.transform(
+                state,
+                target_frame=FrameId.ITRF,
+                target_realization=self.default_terrestrial_realization,
+            )
+            inertial = self.transform(
+                terrestrial,
+                target_frame=target,
+                target_realization=target_realization,
+                earth_orientation=earth_orientation,
+            )
+            return self._with_external_terrestrial_inertial_route(
+                source=state,
+                terrestrial=terrestrial,
+                inertial=inertial,
+                target=target,
+                target_realization=target_realization,
+            )
         if source_external or target_external:
             if self._is_terrestrial(state.frame) and self._is_terrestrial(target):
                 delegated = self._maybe_transform_terrestrial_realization(
@@ -620,7 +657,13 @@ class FrameTransformService:
         marker and retain their existing explicit transformation behaviour.
         """
 
-        if target not in {FrameId.CIRS, FrameId.GCRF, FrameId.ICRF, FrameId.EME2000}:
+        if target not in {
+            FrameId.TEME,
+            FrameId.CIRS,
+            FrameId.GCRF,
+            FrameId.ICRF,
+            FrameId.EME2000,
+        }:
             return
         if not state.is_terrestrial:
             return
@@ -809,6 +852,73 @@ class FrameTransformService:
             return callback(state)
         raise FrameTransformationError(
             f"No existe una transformación de realización terrestre registrada: {source} → {target}"
+        )
+
+    def _with_external_terrestrial_inertial_route(
+        self,
+        *,
+        source: StateVector,
+        terrestrial: StateVector,
+        inertial: StateVector,
+        target: FrameId | str,
+        target_realization: str | None,
+    ) -> StateVector:
+        """Record the two physical stages of an external-terrestrial route.
+
+        A datum operation and an Earth-orientation reduction are distinct
+        operations. The final state already carries their individual
+        provenance, but this compact route record prevents a consumer from
+        mistaking the result for a direct relabel from (for example) ``IGB20``
+        to ``TEME``. It is intentionally added only after both transforms
+        have returned valid declared frames.
+        """
+
+        provenance = dict(inertial.provenance)
+        datum = terrestrial.provenance.get("terrestrial_realization_transform")
+        frame_transform = inertial.provenance.get("frame_transform")
+        route: dict[str, object] = {
+            "source_frame": self._frame_name(source.frame, source.frame_realization),
+            "intermediate_frame": self._frame_name(
+                terrestrial.frame,
+                terrestrial.frame_realization,
+            ),
+            "target_frame": self._frame_name(target, target_realization),
+            "steps": [
+                {
+                    "kind": "terrestrial-realization",
+                    "source_frame": self._frame_name(source.frame, source.frame_realization),
+                    "target_frame": self._frame_name(
+                        terrestrial.frame,
+                        terrestrial.frame_realization,
+                    ),
+                },
+                {
+                    "kind": "earth-orientation",
+                    "source_frame": self._frame_name(
+                        terrestrial.frame,
+                        terrestrial.frame_realization,
+                    ),
+                    "target_frame": self._frame_name(target, target_realization),
+                },
+            ],
+        }
+        if isinstance(datum, Mapping):
+            route["terrestrial_realization_operation"] = dict(datum)
+        if isinstance(frame_transform, Mapping):
+            route["earth_orientation_transform"] = dict(frame_transform)
+        provenance["external_terrestrial_to_inertial_route"] = route
+
+        # The registered datum callback has already recorded the source
+        # realization. Keep it at the front of the public path too, followed
+        # by the ordinary ITRF -> target reduction, so exports/audits retain
+        # the complete conversion chain.
+        inertial_path = tuple(inertial.transform_path)
+        if inertial_path and inertial_path[0] == FrameId.ITRF.value:
+            inertial_path = inertial_path[1:]
+        return replace(
+            inertial,
+            provenance=provenance,
+            transform_path=(*terrestrial.transform_path, *inertial_path),
         )
 
     @staticmethod

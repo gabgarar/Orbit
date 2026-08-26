@@ -40,6 +40,24 @@ una órbita manual. Los controles globales de mostrar u ocultar se habilitan
 cuando existen capas de usuario activas; la Tierra no cuenta como capa de
 misión para esa condición.
 
+## Menú contextual de una órbita
+
+Un clic derecho sobre una órbita, ya sea en el globo o en el árbol de
+**Layers**, abre la misma jerarquía de acciones. Las opciones se agrupan para
+que una operación visual no se confunda con una acción sobre los datos:
+
+| Grupo | Acciones | Efecto |
+| --- | --- | --- |
+| **Vista** | Centrar vista, mostrar u ocultar capa, mostrar u ocultar *Ground track*, opciones de visualización | Cambia solo la cámara o la representación de la capa. Ocultar no elimina sus datos ni altera el rango temporal. |
+| **Efemérides** | Propagación, explicar parámetros orbitales | Abre la inspección propagada de la capa o una explicación de sus elementos, marco y procedencia. |
+| **Exportar** | Exportar… | Conserva el diálogo de exportación compatible con la fuente de la capa. |
+| **Eliminar capa** | Eliminar capa | Retira la capa del espacio de trabajo actual. |
+
+Las entradas de **Vista** y **Efemérides** son submenús: se abren hacia el lado
+que tenga espacio en pantalla y se pueden recorrer con teclado. Una acción
+recibida desde el globo conserva el identificador de la capa pulsada; nunca se
+aplica a la última capa que hubiera abierto un menú en el árbol.
+
 ## Búsqueda y contadores
 
 La búsqueda del panel admite opciones de coincidencia como mayúsculas,
@@ -53,4 +71,3 @@ La estructura de carpetas, los nombres de presentación y las relaciones
 padre-hijo se incluyen en una exportación de [Proyecto](projects.md). Los
 objetos se mantienen por su identificador y origen; moverlos de carpeta no
 duplica el objeto ni crea una nueva propagación.
-

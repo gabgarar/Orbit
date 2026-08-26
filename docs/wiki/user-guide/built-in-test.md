@@ -4,9 +4,9 @@
 
 El icono **Built-In Test (BIT)**, situado a la derecha de **Help**, abre el
 panel continuo de diagnóstico de solo lectura. No inicia propagaciones largas
-ni cambia una órbita. El rediseño separa la disponibilidad de los servicios,
-el **PBIT de inicio**, los datos de tiempo y las validaciones operativas para
-que un aviso de calidad no parezca un fallo del servicio.
+ni cambia una órbita. Sus pestañas separan la disponibilidad de los servicios,
+el **PBIT de inicio**, los datos de tiempo, las validaciones operativas y la
+auditoría para que un aviso de calidad no parezca un fallo del servicio.
 
 ## Estados y actualización
 
@@ -24,19 +24,34 @@ una consulta inmediata sin bloquear la interfaz. Cada fila muestra
 canal de diagnósticos no responde, el panel lo indica en vez de inventar un
 estado saludable.
 
-## Secciones del panel
+## Pestañas del panel
 
-| Sección | Qué significa |
+| Pestaña | Qué significa |
 | --- | --- |
-| **Servicios de Orbit** | Gateway web, backend Python, canal de diagnósticos y monitor continuo. Describe disponibilidad; no autoriza crear proyectos. |
-| **PBIT de inicio** | El ledger de arranque, sus pasos, avisos, errores y progreso, junto con la decisión de readiness. |
-| **Tiempo y referencia** | ERP/EOP, ruta de marcos y, cuando existe, el reloj de escena (MTR). Una cobertura ERP limitada o una predicción es un aviso operacional: no hace fallar por sí sola al gateway ni al backend Python. |
-| **Validaciones del runtime** | Sondas acotadas de modelos de gravedad, propagadores y fuerzas. Son comprobaciones en ejecución; no son CI/CD ni una certificación de release o de misión. |
-| **Datos de la escena** | SP3 y OEM solo se muestran cuando hay fuentes activas en la escena. La ausencia de una fuente opcional no se presenta como un fallo. |
+| **Resumen** | Estado general, readiness del proyecto y las incidencias que requieren atención. Cada incidencia abre la pestaña correspondiente. |
+| **Servicios** | Gateway web, backend Python, canal de diagnósticos y monitor continuo. Describe disponibilidad; no autoriza crear proyectos. |
+| **Validación** | El ledger del **PBIT de inicio**, sus pasos, avisos, errores y progreso, además de tiempo/referencia, modelos de gravedad, propagadores, fuerzas y datos de escena. Estas son sondas en ejecución; no son CI/CD ni una certificación de release o misión. |
+| **Auditoría** | Resultado y pasos del PBIT actual, más las propagaciones del proyecto. Permite exportar CSV o JSON locales. |
 
 El MTR también es contextual: solo se publica cuando la escena tiene un rango
 temporal maestro activo. Sus hechos locales (rango y clamp) no se fabrican a
 partir de una tarjeta remota.
+
+## Auditoría exportable
+
+La pestaña **Auditoría** conserva el resultado de la última ejecución del PBIT
+publicada por el servicio y el historial de propagaciones perteneciente al
+proyecto abierto. Una propagación registra solo su objetivo, fuente,
+propagador, rango UTC, cadencia, número resumido de muestras, marcos y estado;
+no guarda muestras, archivos fuente ni respuestas crudas. El historial viaja
+en la biblioteca local cifrada y en el documento `.orbit`, con un máximo de
+**200 ejecuciones** por proyecto.
+
+Los botones **CSV** y **JSON** descargan una fotografía local de esa auditoría.
+Incluyen el estado del sistema consultado, el PBIT y las filas de propagación;
+no sustituyen el indicador de tareas, que sigue mostrando exclusivamente el
+trabajo que está en curso. Exportar no borra el registro ni repropaga una
+órbita.
 
 ## PBIT de inicio y readiness
 

@@ -96,9 +96,30 @@ test("project, satellite and ground-station contextual menus share an identified
         await expectUnifiedContextMenu(page.locator("#satelliteContextMenu"), {
             title: "ORBIT-TEST",
             actions: [
+                { label: "Vista" },
+                { label: "Efemérides" },
+                { label: /Exportar/ },
+                { label: "Eliminar capa" }
+            ]
+        });
+
+        await page.locator("#satelliteContextMenu").getByRole("menuitem", { name: "Vista" }).click();
+        await expectUnifiedContextMenu(page.locator("#satelliteContextViewMenu"), {
+            title: "Vista",
+            actions: [
                 { label: "Centrar vista" },
-                { label: "Opciones de visualización" },
-                { label: "Efemérides" }
+                { label: "Ocultar capa" },
+                { label: "Mostrar Ground track" },
+                { label: "Opciones de visualización" }
+            ]
+        });
+
+        await page.locator("#satelliteContextMenu").getByRole("menuitem", { name: "Efemérides" }).click();
+        await expectUnifiedContextMenu(page.locator("#satelliteContextEphemeridesMenu"), {
+            title: "Efemérides",
+            actions: [
+                { label: "Propagación" },
+                { label: "Explicar parámetros orbitales" }
             ]
         });
 

@@ -29,9 +29,11 @@ export default function AppDialog() {
 
     if (!dialog) return null;
 
+    // Global alerts must remain above floating inspectors, which reserve a
+    // near-maximum z-index to sit above the Cesium workspace.
     return <div
         id="appDialogModal"
-        className="open !fixed !inset-0 !z-[10700] !flex !items-center !justify-center !bg-[var(--orbit-bg-overlay)] !p-[14px] !box-border"
+        className="open !fixed !inset-0 !z-[2147483646] !flex !items-center !justify-center !bg-[var(--orbit-bg-overlay)] !p-[14px] !box-border"
         onMouseDown={(event) => event.target === event.currentTarget && respond(false)}
     >
         <section

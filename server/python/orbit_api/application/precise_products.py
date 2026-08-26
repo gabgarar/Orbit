@@ -276,7 +276,6 @@ class PreciseProduct:
                 "El ERP importado no cubre la época solicitada para convertir a ECI."
             )
         provider = self.provider_for_satellite(satellite_id)
-        reference = self.sp3.metadata.reference_frame
         transformer = self.sp3.frame_transformer
         if transformer is None:
             raise PreciseProductImportError(
@@ -289,23 +288,10 @@ class PreciseProduct:
             transformer.require_iau2006_2000a()
         except ValueError as exc:
             raise PreciseProductImportError(str(exc)) from exc
-        # FrameTransformService intentionally refuses to jump from an
-        # external terrestrial realization (for example IGc20) directly to
-        # EME2000.  When, and only when, the capability above found a
-        # registered datum operation, make that physical two-step path
-        # explicit: source realization -> selected ITRF realization -> ECI.
-        if reference.family != "ITRF":
-            if transformer.default_terrestrial_realization is None:
-                raise PreciseProductImportError(str(capability["reason"]))
-            try:
-                terrestrial = transformer.transform(
-                    provider.native_state_at(instant),
-                    target_frame=FrameId.ITRF,
-                    target_realization=transformer.default_terrestrial_realization,
-                )
-                return transformer.transform(terrestrial, target_frame=target_frame)
-            except ValueError as exc:
-                raise PreciseProductImportError(str(exc)) from exc
+        # FrameTransformService owns the registered datum -> ITRF ->
+        # ERP/EOP-backed inertial route. Using the provider path here keeps
+        # high-level product requests, direct tabular requests and the
+        # propagated-parameters inspector on one auditable implementation.
         try:
             return provider.state_at(instant, target_frame=target_frame)
         except ValueError as exc:

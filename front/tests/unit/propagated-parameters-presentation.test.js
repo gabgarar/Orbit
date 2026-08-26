@@ -10,6 +10,10 @@ const styles = readFileSync(
     new URL("../../../react-ui/src/styles.css", import.meta.url),
     "utf8"
 );
+const bitPanelSource = readFileSync(
+    new URL("../../../react-ui/src/components/overlays/BuiltInTestPanel.jsx", import.meta.url),
+    "utf8"
+);
 
 test("the ephemerides inspector opens as a centred top-level window above workspace layers", () => {
     assert.match(panelSource, /import \{ createPortal \} from "react-dom"/);
@@ -87,15 +91,14 @@ test("the chart picker is built from every numeric Values column and exposes pro
     assert.doesNotMatch(panelSource, /availability\?\.available === false \|\| osculatingUnavailable/);
 });
 
-test("the inspector presents a project-owned, metadata-only propagation history table", () => {
-    assert.match(panelSource, /function PropagationHistorySection\(\{ history \}\)/);
-    assert.match(panelSource, /data-testid="propagated-parameters-history"/);
-    assert.match(panelSource, /Historial de propagaciones/);
-    assert.match(panelSource, /sin guardar las muestras/);
-    assert.match(panelSource, /<PropagationHistorySection history=\{propagationHistory\} \/>/);
+test("the inspector leaves project propagation audit to the BIT audit tab", () => {
+    assert.doesNotMatch(panelSource, /PropagationHistorySection/);
+    assert.doesNotMatch(panelSource, /data-testid="propagated-parameters-history"/);
+    assert.match(bitPanelSource, /function AuditTab\(/);
+    assert.match(bitPanelSource, /data-testid="bit-audit-tab"/);
+    assert.match(bitPanelSource, /Auditoría del PBIT y las propagaciones/);
+    assert.match(bitPanelSource, /serializeBitAuditCsv/);
     assert.match(panelSource, /history: \[\]/);
-    assert.match(panelSource, /COMPLETADA/);
-    assert.match(panelSource, /EN CURSO/);
 });
 
 test("an expensive selected cadence explains its active task without showing a false cap", () => {
