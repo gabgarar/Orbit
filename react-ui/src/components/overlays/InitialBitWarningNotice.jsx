@@ -7,7 +7,7 @@ export default function InitialBitWarningNotice({ notice, onDismiss, onOpenDiagn
     const visibleWarnings = notice.warnings.slice(0, 3);
     const remaining = Math.max(0, notice.warnings.length - visibleWarnings.length);
     return <aside
-        className="fixed top-[calc(max(64px,calc(76px*var(--orbit-ui-scale)))+12px)] right-[clamp(10px,1.7vw,28px)] z-[10525] w-[min(420px,calc(100vw-20px))] rounded-[12px] border border-[#9b7435] bg-[linear-gradient(145deg,rgba(61,43,17,.98),rgba(30,24,16,.98))] p-3 font-[var(--orbit-font-sans)] text-[#fff0ce] shadow-[0_22px_60px_rgba(0,0,0,.58)] backdrop-blur-[8px]"
+        className="orbit-bit-warning-notice fixed top-[calc(max(64px,calc(76px*var(--orbit-ui-scale)))+12px)] right-[clamp(10px,1.7vw,28px)] z-[10525] w-[min(420px,calc(100vw-20px))] rounded-[10px] border border-[#9b7435] bg-[linear-gradient(145deg,rgba(61,43,17,.98),rgba(30,24,16,.98))] p-3 text-[#fff0ce] shadow-[0_22px_60px_rgba(0,0,0,.58)] backdrop-blur-[8px]"
         role="alert"
         aria-atomic="true"
         aria-labelledby="initialBitWarningTitle"

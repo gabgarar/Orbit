@@ -1981,3 +1981,181 @@ aside[aria-label="Operaciones de estaciones terrestres"],
     column-gap: 20px;
     row-gap: 16px;
 }
+
+/* Built-In Test is a primary Orbit window, not a separate monitoring product.
+   Tailwind interprets `font-[var(--orbit-font-sans)]` as a font *weight* in
+   v4, so use an explicit, scoped family declaration here. This also covers
+   native controls, which otherwise keep the browser's independent font. */
+.orbit-bit-panel,
+.orbit-bit-warning-notice {
+    font-family: var(--orbit-font-sans) !important;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: normal;
+}
+
+.orbit-bit-panel :is(button, input, select, textarea, summary),
+.orbit-bit-warning-notice :is(button, input, select, textarea) {
+    font-family: inherit !important;
+    font-style: normal;
+}
+
+.orbit-bit-panel :is(h2, h3, h4, p, strong, small, span, dt, dd, th, td, a, code),
+.orbit-bit-warning-notice :is(h2, h3, h4, p, strong, small, span, li, a) {
+    font-family: inherit !important;
+    font-style: normal;
+}
+
+.orbit-bit-panel {
+    border-color: var(--orbit-frame-color) !important;
+    border-radius: var(--orbit-radius-window) !important;
+    background: var(--orbit-surface-window) !important;
+    background-clip: padding-box;
+    box-shadow: 0 22px 60px rgba(0, 0, 0, .46), inset 0 1px rgba(255, 255, 255, .045);
+}
+
+.orbit-bit-panel__header {
+    min-height: 62px;
+    border-color: var(--orbit-frame-color) !important;
+    background: var(--orbit-surface-toolbar) !important;
+}
+
+.orbit-bit-panel__tabs {
+    border-color: var(--orbit-frame-color) !important;
+    background: rgba(8, 17, 30, .74) !important;
+}
+
+.orbit-bit-panel__tabs > button {
+    min-height: 42px;
+    font-family: inherit !important;
+    letter-spacing: .01em;
+}
+
+.orbit-bit-panel__content {
+    background: linear-gradient(145deg, rgba(11, 24, 42, .76), rgba(5, 14, 25, .66));
+}
+
+.orbit-bit-card {
+    border-radius: var(--orbit-radius-control) !important;
+    background-clip: padding-box;
+    box-shadow: inset 0 1px rgba(255, 255, 255, .025);
+}
+
+.orbit-bit-status-row {
+    border-radius: var(--orbit-radius-control) !important;
+    background-clip: padding-box;
+}
+
+.orbit-bit-status-row > summary {
+    min-height: 42px;
+}
+
+.orbit-bit-status-badge {
+    font-family: inherit !important;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0;
+}
+
+.orbit-bit-detail-field {
+    font-size: 10px;
+}
+
+.orbit-bit-overview-metrics {
+    border-radius: var(--orbit-radius-control) !important;
+    background-clip: padding-box;
+}
+
+.orbit-bit-overview-metric {
+    min-height: 54px;
+}
+
+.orbit-bit-overview-metric__label {
+    letter-spacing: .055em !important;
+}
+
+.orbit-bit-attention,
+.orbit-bit-warning-notice {
+    background-clip: padding-box;
+}
+
+.orbit-bit-warning-notice {
+    border-radius: var(--orbit-radius-window) !important;
+}
+
+.orbit-bit-audit-table thead {
+    font-family: inherit;
+}
+
+/* The activity popover shares the same chrome as the BIT window and the
+   selected-object inspector.  The explicit family is intentional: Tailwind's
+   arbitrary `font-[var(...)]` utility is parsed as font-weight by v4, which
+   allowed legacy browser/host fonts to leak into this live status surface. */
+.orbit-operations-panel {
+    border-color: var(--orbit-frame-color) !important;
+    border-radius: var(--orbit-radius-window) !important;
+    background: var(--orbit-surface-window) !important;
+    background-clip: padding-box;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .44), inset 0 1px rgba(255, 255, 255, .045);
+    color: #dbe7fa;
+    font-family: var(--orbit-font-sans) !important;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: normal;
+}
+
+.orbit-operations-panel :is(button, h2, h3, p, strong, span) {
+    font-family: inherit !important;
+    font-style: normal;
+}
+
+.orbit-operations-panel__header {
+    min-height: 58px;
+    border-color: var(--orbit-frame-color) !important;
+    background: var(--orbit-surface-toolbar) !important;
+    background-clip: padding-box;
+}
+
+.orbit-operations-panel__content {
+    background: linear-gradient(145deg, rgba(11, 24, 42, .70), rgba(5, 14, 25, .60));
+}
+
+.orbit-operation-card,
+.orbit-operations-panel__empty {
+    border-radius: var(--orbit-radius-control) !important;
+    background-clip: padding-box;
+    box-shadow: inset 0 1px rgba(255, 255, 255, .025);
+}
+
+.orbit-operation-card {
+    border-color: rgba(76, 111, 151, .74) !important;
+    background: linear-gradient(145deg, rgba(13, 31, 53, .92), rgba(7, 18, 32, .94)) !important;
+}
+
+.orbit-operation-title {
+    letter-spacing: .005em;
+}
+
+.orbit-operation-scope-chip,
+.orbit-operation-status-chip {
+    font-family: inherit !important;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: .01em;
+}
+
+.orbit-operation-status-row {
+    min-height: 18px;
+}
+
+.orbit-operation-progress-track {
+    background: rgba(38, 65, 100, .70) !important;
+}
+
+.orbit-operation-progress-fill {
+    background: linear-gradient(90deg, #6b91ff, #83b8ff) !important;
+    box-shadow: 0 0 8px rgba(105, 145, 255, .46);
+}
+
+.orbit-operation-cancel {
+    border-radius: var(--orbit-radius-control) !important;
+    font-family: inherit !important;
+}

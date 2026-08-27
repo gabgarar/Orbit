@@ -110,12 +110,12 @@ function statusStyleFor(value) {
 function StatusBadge({ value, label = "" }) {
     const current = status(value);
     const style = statusStyleFor(current);
-    return <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] leading-none font-bold ${style.badge}`}><span className={`size-1.5 rounded-full ${style.dot}`} aria-hidden="true" />{label || style.label}</span>;
+    return <span className={`orbit-bit-status-badge inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] leading-none font-bold ${style.badge}`}><span className={`size-1.5 rounded-full ${style.dot}`} aria-hidden="true" />{label || style.label}</span>;
 }
 
 function StatusDot({ value }) {
     const style = statusStyleFor(value);
-    return <span className={`mt-0.5 size-2 shrink-0 rounded-full ${style.dot} shadow-[0_0_7px_currentColor]`} aria-hidden="true" />;
+    return <span className={`orbit-bit-status-dot mt-0.5 size-2 shrink-0 rounded-full ${style.dot} shadow-[0_0_7px_currentColor]`} aria-hidden="true" />;
 }
 
 function RefreshIcon() {
@@ -172,7 +172,7 @@ function downloadAuditSnapshot(snapshot, format) {
 }
 
 function DetailField({ label, value }) {
-    return <div className="grid grid-cols-[minmax(116px,.86fr)_minmax(0,1.4fr)] gap-x-3 border-t border-[#203650] py-1.5 first:border-t-0 first:pt-0">
+    return <div className="orbit-bit-detail-field grid grid-cols-[minmax(116px,.86fr)_minmax(0,1.4fr)] gap-x-3 border-t border-[#203650] py-1.5 first:border-t-0 first:pt-0">
         <dt className="text-[10px] leading-snug text-[#91a4c0]">{label}</dt>
         <dd className="m-0 min-w-0 break-words text-right text-[10px] leading-snug font-medium text-[#d9e5f6]">{value}</dd>
     </div>;
@@ -277,7 +277,7 @@ function serviceDetails(row, checkedAt) {
 }
 
 function BitStatusRow({ row, local, checkedAt }) {
-    return <details className="group min-w-0 rounded-[7px] border border-[#243f60] bg-[#09172a]/80 transition-colors open:border-[#3a5f8e] open:bg-[#0b1c31]">
+    return <details className="orbit-bit-status-row group min-w-0 rounded-[7px] border border-[#243f60] bg-[#09172a]/80 transition-colors open:border-[#3a5f8e] open:bg-[#0b1c31]">
         <summary className="flex list-none cursor-pointer items-center gap-2 px-2.5 py-2 text-left [&::-webkit-details-marker]:hidden">
             <StatusDot value={row.status} />
             <span className="min-w-0 flex-1"><strong className="block truncate text-[11px] leading-tight font-semibold text-[#e0ebfa]">{row.label}</strong><span className="mt-0.5 block truncate text-[9px] leading-tight text-[#93a9c6]">{row.message}</span></span>
@@ -298,8 +298,8 @@ function summaryCopy(summary) {
 }
 
 function OverviewMetric({ label, value, summary }) {
-    return <div className="min-w-0 border-l border-[#284664] px-2.5 first:border-l-0 first:pl-0">
-        <div className="flex items-center gap-1.5"><StatusDot value={summary?.status} /><span className="truncate text-[9px] font-bold tracking-[.1em] text-[#86a6d6] uppercase">{label}</span></div>
+    return <div className="orbit-bit-overview-metric min-w-0 border-l border-[#284664] px-2.5 first:border-l-0 first:pl-0">
+        <div className="flex items-center gap-1.5"><StatusDot value={summary?.status} /><span className="orbit-bit-overview-metric__label truncate text-[9px] font-bold tracking-[.1em] text-[#86a6d6] uppercase">{label}</span></div>
         <strong className="mt-1 block truncate text-[11px] leading-tight font-semibold text-[#e8f1fd]">{value}</strong>
         {summary && <span className="mt-0.5 block truncate text-[9px] leading-tight text-[#8ea5c4]">{summaryCopy(summary)}</span>}
     </div>;
@@ -312,7 +312,7 @@ function PbitSection({ pbit }) {
     const terminalSteps = steps.filter((step) => !["pending", "running", "queued", "loading"].includes(text(step?.status).toLowerCase()));
     const isProjectReady = readiness?.ready === true;
     const open = pbit.status !== "healthy";
-    return <section id="bit-section-startup" className={`overflow-hidden rounded-[9px] border bg-[linear-gradient(145deg,rgba(14,31,53,.96),rgba(8,19,34,.96))] ${statusStyleFor(pbit.status).border}`} aria-labelledby="bit-pbit-heading">
+    return <section id="bit-section-startup" className={`orbit-bit-card orbit-bit-pbit-card overflow-hidden rounded-[9px] border bg-[linear-gradient(145deg,rgba(14,31,53,.96),rgba(8,19,34,.96))] ${statusStyleFor(pbit.status).border}`} aria-labelledby="bit-pbit-heading">
         <div className="flex min-w-0 items-start justify-between gap-3 px-3 py-2.5">
             <div className="min-w-0"><span className="block text-[9px] font-bold tracking-[.14em] text-[#7ea2e4]">ARRANQUE</span><h3 id="bit-pbit-heading" className="mt-1 mb-0 text-[13px] leading-tight font-semibold text-[#edf4ff]">PBIT de inicio</h3><p className="mt-1 mb-0 text-[10px] leading-snug text-[#9db1cd]">{pbit.message}</p></div>
             <div className="flex shrink-0 flex-col items-end gap-1"><StatusBadge value={pbit.status} label={pbit.result} /><span className={`text-[9px] font-semibold ${isProjectReady ? "text-[#8aebbb]" : "text-[#ffd184]"}`}>{isProjectReady ? "Proyecto habilitado" : "Proyecto bloqueado"}</span></div>
@@ -333,7 +333,7 @@ function PbitSection({ pbit }) {
 
 function BitSection({ section, local, checkedAt }) {
     const hasAttention = section.summary.status !== "healthy";
-    return <section id={`bit-section-${section.id}`} className={`overflow-hidden rounded-[9px] border bg-[linear-gradient(145deg,rgba(12,28,49,.94),rgba(7,18,32,.96))] ${hasAttention ? statusStyleFor(section.summary.status).border : "border-[#294766]"}`} aria-labelledby={`bit-${section.id}-heading`}>
+    return <section id={`bit-section-${section.id}`} className={`orbit-bit-card overflow-hidden rounded-[9px] border bg-[linear-gradient(145deg,rgba(12,28,49,.94),rgba(7,18,32,.96))] ${hasAttention ? statusStyleFor(section.summary.status).border : "border-[#294766]"}`} aria-labelledby={`bit-${section.id}-heading`}>
         <header className="flex min-w-0 items-start justify-between gap-3 border-b border-[#203a58] px-3 py-2.5">
             <div className="min-w-0"><h3 id={`bit-${section.id}-heading`} className="m-0 text-[12px] leading-tight font-semibold text-[#e7effb]">{section.title}</h3><p className="mt-1 mb-0 text-[9px] leading-snug text-[#91a7c5]">{section.description}</p></div>
             <div className="shrink-0 text-right"><StatusBadge value={section.summary.status} /><span className="mt-1 block text-[9px] leading-none text-[#8da4c2]">{summaryCopy(section.summary)}</span></div>
@@ -345,7 +345,7 @@ function BitSection({ section, local, checkedAt }) {
 function AttentionSummary({ issues, onNavigate = null }) {
     const visible = issues.slice(0, 3);
     if (!visible.length) return null;
-    return <aside className="rounded-[8px] border border-[#86612b] bg-[linear-gradient(100deg,rgba(67,47,20,.72),rgba(37,30,25,.62))] px-3 py-2.5" role="status" aria-live="polite">
+    return <aside className="orbit-bit-attention rounded-[8px] border border-[#86612b] bg-[linear-gradient(100deg,rgba(67,47,20,.72),rgba(37,30,25,.62))] px-3 py-2.5" role="status" aria-live="polite">
         <div className="flex items-center justify-between gap-2"><strong className="text-[10px] font-semibold text-[#ffe0a3]">{issues.length} condición{issues.length === 1 ? "" : "es"} requiere{issues.length === 1 ? "" : "n"} revisión</strong><span className="text-[9px] text-[#e4bd70]">BIT operativo</span></div>
         <ul className="mt-1.5 mb-0 grid list-none gap-1 p-0">{visible.map((issue) => <li key={`${issue.sectionId}-${issue.id}`} className="min-w-0 text-[9px] leading-snug text-[#dec79a]"><button className="cursor-pointer border-0 bg-transparent p-0 text-left text-[#ffe0a3] underline decoration-[#a67d38] underline-offset-2 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ffe39a]" type="button" onClick={() => onNavigate?.(sectionTab(issue.sectionId))}>{issue.label}</button><span> · {issue.message}</span></li>)}</ul>
         {issues.length > visible.length && <p className="mt-1.5 mb-0 text-[9px] text-[#cfb580]">Y {issues.length - visible.length} condición{issues.length - visible.length === 1 ? "" : "es"} más en las secciones.</p>}
@@ -357,7 +357,7 @@ function AuditTab({ audit, exportFeedback, onExport }) {
     const propagationCount = Array.isArray(audit?.propagationHistory) ? audit.propagationHistory.length : 0;
     const pbit = audit?.pbit || {};
     return <section className="grid min-h-0 gap-3" aria-label="Auditoría operativa de Orbit" data-testid="bit-audit-tab">
-        <section className="rounded-[8px] border border-[#294866] bg-[linear-gradient(145deg,rgba(13,29,50,.96),rgba(8,18,33,.96))] px-3 py-3">
+        <section className="orbit-bit-card orbit-bit-audit-summary rounded-[8px] border border-[#294866] bg-[linear-gradient(145deg,rgba(13,29,50,.96),rgba(8,18,33,.96))] px-3 py-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                     <span className="block text-[10px] font-bold tracking-[.11em] text-[#86a6d6] uppercase">Registro operativo</span>
@@ -369,7 +369,7 @@ function AuditTab({ audit, exportFeedback, onExport }) {
                     <button className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[6px] border border-[#36577f] bg-[#102039] px-2.5 text-[10px] font-semibold text-[#cfe0f8] transition-colors hover:border-[#628bd0] hover:bg-[#173054] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7198ff]" type="button" onClick={() => onExport("json")}><DownloadIcon />JSON</button>
                 </div>
             </div>
-            <div className="mt-3 grid grid-cols-2 divide-x divide-[#284663] rounded-[6px] border border-[#294866] bg-[#09182b] sm:grid-cols-4" aria-label="Resumen de auditoría">
+            <div className="orbit-bit-overview-metrics mt-3 grid grid-cols-2 divide-x divide-[#284663] rounded-[6px] border border-[#294866] bg-[#09182b] sm:grid-cols-4" aria-label="Resumen de auditoría">
                 <OverviewMetric label="PBIT" value={pbit.result || "Pendiente"} summary={{ status: pbit.status || "warning", total: 1, healthy: pbit.status === "healthy" ? 1 : 0, warning: pbit.status === "warning" ? 1 : 0, error: pbit.status === "error" ? 1 : 0 }} />
                 <OverviewMetric label="Propagaciones" value={String(propagationCount)} summary={{ status: propagationCount ? "healthy" : "warning", total: propagationCount || 1, healthy: propagationCount, warning: propagationCount ? 0 : 1, error: 0 }} />
                 <OverviewMetric label="Retención" value="200 últimas" summary={{ status: "healthy", total: 1, healthy: 1, warning: 0, error: 0 }} />
@@ -378,7 +378,7 @@ function AuditTab({ audit, exportFeedback, onExport }) {
             {exportFeedback && <p className={`mt-2 mb-0 rounded-[6px] border px-2.5 py-2 text-[10px] leading-snug ${exportFeedback.startsWith("No se") ? "border-[#87464f] bg-[#401f27] text-[#ffc3cb]" : "border-[#315c89] bg-[#10233d] text-[#c6dcff]"}`} role="status">{exportFeedback}</p>}
         </section>
 
-        <section className="min-h-0 overflow-hidden rounded-[8px] border border-[#294866] bg-[rgba(8,21,38,.82)]" aria-labelledby="bit-audit-table-title">
+        <section className="orbit-bit-card orbit-bit-audit-table min-h-0 overflow-hidden rounded-[8px] border border-[#294866] bg-[rgba(8,21,38,.82)]" aria-labelledby="bit-audit-table-title">
             <header className="flex items-center justify-between gap-3 border-b border-[#243e5d] px-3 py-2.5">
                 <div className="min-w-0"><h3 id="bit-audit-table-title" className="m-0 text-[12px] font-semibold text-[#e7effb]">Eventos auditables</h3><p className="mt-0.5 mb-0 text-[10px] leading-snug text-[#91a7c5]">{rows.length} registros disponibles. Las propagaciones pertenecen al proyecto abierto.</p></div>
                 <StatusBadge value={pbit.status || "warning"} label={pbit.result || "PBIT"} />
@@ -464,19 +464,19 @@ export default function BuiltInTestPanel({ onClose, diagnosticsState = null, pro
         setActiveTab(BIT_TABS.some((candidate) => candidate.id === tab) ? tab : "overview");
     };
     return <section className="fixed inset-0 z-[10520] flex items-start justify-end bg-[#020811]/[.7] p-[clamp(10px,1.7vw,28px)] pt-[calc(max(64px,calc(76px*var(--orbit-ui-scale)))+12px)] backdrop-blur-[3px]" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-        <article ref={panelRef} tabIndex="-1" className="grid max-h-full w-[min(920px,100%)] min-h-0 overflow-hidden rounded-[14px] border border-[#36557c] bg-[#0b1526] font-[var(--orbit-font-sans)] text-[#dbe7fa] shadow-[0_28px_80px_rgba(0,0,0,.62)] outline-none [grid-template-rows:auto_auto_minmax(0,1fr)]" role="dialog" aria-modal="true" aria-labelledby="builtInTestTitle" aria-describedby="builtInTestDescription">
-            <header className="flex min-h-[58px] items-center justify-between gap-3 border-b border-[#294667] bg-[linear-gradient(105deg,rgba(14,30,52,.98),rgba(8,18,33,.98))] px-[clamp(12px,1.4vw,20px)] py-2.5">
+        <article ref={panelRef} tabIndex="-1" className="orbit-bit-panel grid max-h-full w-[min(920px,100%)] min-h-0 overflow-hidden rounded-[10px] border border-[#36557c] bg-[#0b1526] text-[#dbe7fa] shadow-[0_28px_80px_rgba(0,0,0,.62)] outline-none [grid-template-rows:auto_auto_minmax(0,1fr)]" role="dialog" aria-modal="true" aria-labelledby="builtInTestTitle" aria-describedby="builtInTestDescription">
+            <header className="orbit-bit-panel__header flex min-h-[58px] items-center justify-between gap-3 border-b border-[#294667] bg-[linear-gradient(105deg,rgba(14,30,52,.98),rgba(8,18,33,.98))] px-[clamp(12px,1.4vw,20px)] py-2.5">
                 <div className="min-w-0"><span className="block text-[10px] leading-none font-bold tracking-[.14em] text-[#7298dc]">ORBIT · ESTADO DEL SISTEMA</span><div className="mt-1 flex min-w-0 items-center gap-2"><h2 id="builtInTestTitle" className="m-0 truncate text-[16px] leading-none font-semibold text-[#edf4ff]">BIT continuo</h2><StatusBadge value={dashboard.status} /></div><p id="builtInTestDescription" className="mt-1 mb-0 text-[11px] leading-snug text-[#a1b2cb]">Monitor operativo de servicios, inicio, tiempo y validaciones.</p></div>
                 <div className="flex shrink-0 items-center gap-1"><button className="inline-flex h-8 items-center justify-center gap-1.5 rounded-[7px] border border-[#36577f] bg-[#102039] px-2.5 text-[10px] leading-none font-semibold text-[#cfe0f8] transition-colors hover:border-[#628bd0] hover:bg-[#173054] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7198ff] disabled:cursor-wait disabled:opacity-60" type="button" onClick={() => typeof refresh === "function" && void refresh({ forceRuntimeHealth: true })} disabled={refreshing || typeof refresh !== "function"} aria-label="Actualizar diagnóstico"><RefreshIcon />{refreshing ? "Actualizando…" : "Actualizar"}</button><PanelCloseButton label="Cerrar Built-In Test" onClick={onClose} /></div>
             </header>
-            <nav className="flex overflow-x-auto border-b border-[#294667] bg-[#09182b] px-[clamp(12px,1.4vw,20px)]" aria-label="Secciones del BIT" role="tablist">
+            <nav className="orbit-bit-panel__tabs flex overflow-x-auto border-b border-[#294667] bg-[#09182b] px-[clamp(12px,1.4vw,20px)]" aria-label="Secciones del BIT" role="tablist">
                 {BIT_TABS.map((tab) => {
                     const selected = activeTab === tab.id;
                     const count = tab.id === "audit" ? auditCount : null;
                     return <button className={`relative inline-flex h-10 shrink-0 cursor-pointer items-center gap-1.5 border-0 bg-transparent px-3 text-[11px] font-semibold transition-colors focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#7198ff] ${selected ? "text-[#edf4ff]" : "text-[#91a7c5] hover:text-[#d9e7fb]"}`} type="button" role="tab" id={`bit-tab-${tab.id}`} aria-selected={selected} aria-controls={`bit-panel-${tab.id}`} key={tab.id} onClick={() => activateTab(tab.id)}>{tab.label}{count !== null && <span className={`rounded-full border px-1.5 py-0.5 text-[9px] leading-none ${selected ? "border-[#537ee5] bg-[#213c71] text-[#d6e6ff]" : "border-[#36516f] bg-[#102039] text-[#9ab5d8]"}`}>{count}</span>}<span className={`absolute right-2 bottom-0 left-2 h-0.5 rounded-full transition-opacity ${selected ? "bg-[#6e94ff] opacity-100 shadow-[0_0_8px_rgba(94,132,255,.85)]" : "opacity-0"}`} aria-hidden="true" /></button>;
                 })}
             </nav>
-            <div className="orbit-scrollbar min-h-0 overflow-y-auto px-[clamp(12px,1.4vw,20px)] py-3 [scrollbar-color:#426589_transparent] [scrollbar-width:thin]">
+            <div className="orbit-bit-panel__content orbit-scrollbar min-h-0 overflow-y-auto px-[clamp(12px,1.4vw,20px)] py-3 [scrollbar-color:#426589_transparent] [scrollbar-width:thin]">
                 <p className="mt-0 mb-3 text-[10px] leading-snug text-[#8da4c3]">Actualizado: <strong className="font-semibold text-[#cfe0f8]">{utcTimestamp(checkedAt, "Pendiente")}</strong>{availability === "available" && endpoint ? <> · Diagnóstico: <code className="text-[#a9c8ff]">{endpoint}</code></> : null}</p>
                 {diagnosticsUnavailable && <aside className="mb-3 rounded-[8px] border border-[#85642d] bg-[rgba(86,57,18,.42)] px-3 py-2.5 text-[11px] leading-snug text-[#ffdaa1]" role="status"><strong className="font-semibold">Diagnóstico remoto no disponible.</strong> {error || "Se muestran solo las comprobaciones locales que Orbit conserva."}</aside>}
                 {activeTab === "overview" && <div id="bit-panel-overview" role="tabpanel" aria-labelledby="bit-tab-overview" className="grid gap-3">

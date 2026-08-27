@@ -7,6 +7,7 @@ const panel = readFileSync(
     "utf8"
 );
 const app = readFileSync(new URL("../../../react-ui/src/App.jsx", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../../../react-ui/src/styles.css", import.meta.url), "utf8");
 const notice = readFileSync(
     new URL("../../../react-ui/src/components/overlays/InitialBitWarningNotice.jsx", import.meta.url),
     "utf8"
@@ -24,12 +25,18 @@ test("BIT separates operational data into navigable tabs and keeps audit export 
     assert.match(panel, /CSV/);
     assert.match(panel, /JSON/);
     assert.match(panel, /downloadAuditSnapshot/);
-    assert.match(panel, /font-\[var\(--orbit-font-sans\)\]/);
+    assert.match(panel, /orbit-bit-panel/);
+    assert.match(panel, /orbit-bit-panel__tabs/);
+    assert.doesNotMatch(panel, /font-\[var\(--orbit-font-sans\)\]/);
+    assert.match(styles, /\.orbit-bit-panel,[\s\S]*?font-family: var\(--orbit-font-sans\) !important;/);
+    assert.match(styles, /\.orbit-bit-panel :is\(button, input, select, textarea, summary\)/);
 });
 
 test("BIT receives the project-owned history independently of the ephemerides window", () => {
     assert.match(app, /window\.addEventListener\("orbit:propagated-parameters-state", receivePropagationHistory\)/);
     assert.match(app, /setPropagationHistory\(Array\.isArray\(history\) \? history : \[\]\)/);
     assert.match(app, /propagationHistory=\{propagationHistory\}/);
-    assert.match(notice, /font-\[var\(--orbit-font-sans\)\]/);
+    assert.match(notice, /orbit-bit-warning-notice/);
+    assert.doesNotMatch(notice, /font-\[var\(--orbit-font-sans\)\]/);
+    assert.match(styles, /\.orbit-bit-warning-notice/);
 });
