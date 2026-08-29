@@ -9,14 +9,14 @@ function clamp(value, lower, upper) {
     return Math.min(Math.max(value, lower), Math.max(lower, upper));
 }
 
-function getSubmenuPosition(menu, level = 1) {
+function getSubmenuPosition(menu, { level = 1, height = 210 } = {}) {
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const leftCandidate = menu.left + MENU_WIDTH - 14;
     const left = leftCandidate + MENU_WIDTH + MENU_GAP <= viewportWidth
         ? leftCandidate
         : clamp(menu.left - MENU_WIDTH + 14, MENU_GAP, viewportWidth - MENU_WIDTH - MENU_GAP);
-    const top = clamp(menu.top + 36 + (level * 4), MENU_GAP, viewportHeight - 210 - MENU_GAP);
+    const top = clamp(menu.top + 36 + (level * 4), MENU_GAP, viewportHeight - height - MENU_GAP);
     return { left, top };
 }
 
@@ -25,7 +25,7 @@ function normalizeMenuAnchor(detail) {
     const viewportHeight = window.innerHeight;
     const rawLeft = Number(detail?.left);
     const rawTop = Number(detail?.top);
-    const menuHeight = detail?.kind === "bodies" ? 150 : 352;
+    const menuHeight = detail?.kind === "bodies" ? 150 : 370;
     return {
         left: clamp(Number.isFinite(rawLeft) ? rawLeft : MENU_GAP, MENU_GAP, viewportWidth - MENU_WIDTH - MENU_GAP),
         top: clamp(Number.isFinite(rawTop) ? rawTop : MENU_GAP, MENU_GAP, viewportHeight - menuHeight - MENU_GAP)
@@ -89,7 +89,7 @@ export default function TreeContextMenu() {
         const focusFirstAction = window.requestAnimationFrame(() => {
             const activeMenuId = submenu === "satellite"
                 ? "treeContextSatelliteMenu"
-                : (submenu === "add" ? "treeContextAddMenu" : "treeContextMenu");
+                : (submenu === "bodies" ? "treeContextBodiesMenu" : (submenu === "add" ? "treeContextAddMenu" : "treeContextMenu"));
             document.querySelector(`#${activeMenuId} [data-context-menu-action='true']`)?.focus({ preventScroll: true });
         });
         const onPointerDown = (event) => {
@@ -120,9 +120,11 @@ export default function TreeContextMenu() {
     };
     const openAdd = () => setSubmenu("add");
     const openSatellite = () => setSubmenu("satellite");
+    const openBodies = () => setSubmenu("bodies");
     const rootIcon = isBodies ? <BodiesIcon /> : <FolderIcon />;
-    const addPosition = getSubmenuPosition(menu, 1);
-    const satellitePosition = getSubmenuPosition(menu, 2);
+    const addPosition = getSubmenuPosition(menu, { level: 1, height: 250 });
+    const satellitePosition = getSubmenuPosition(menu, { level: 2, height: 310 });
+    const bodiesPosition = getSubmenuPosition(menu, { level: 2, height: 210 });
 
     return <>
         <ActionMenuSurface
@@ -142,10 +144,10 @@ export default function TreeContextMenu() {
                 <ActionMenuItem title="Ocultar todas las capas" description="Desactiva las capas dentro de esta carpeta" onClick={() => submit("hide")} />
                 <ActionMenuSeparator />
                 <ActionMenuItem title="Añadir capa" description="Importa o crea una capa en esta carpeta" onClick={openAdd} />
-                <ActionMenuItem title="Nueva subcarpeta" description="Crea una carpeta dentro de esta ubicación" onClick={() => submit("create")} />
+                <ActionMenuItem title="Nueva subcarpeta" description="Crea una carpeta dentro de esta ubicación" onClick={() => submit("folder")} />
                 <ActionMenuItem title="Renombrar carpeta" description="Cambia el nombre de esta carpeta" onClick={() => submit("rename")} />
                 <ActionMenuSeparator />
-                <ActionMenuItem title="Eliminar carpeta" description="Reubica su contenido en el proyecto" danger onClick={() => submit("delete")} />
+                <ActionMenuItem title="Eliminar carpeta" description="Elimina sus capas y subcarpetas después de confirmar" danger onClick={() => submit("delete")} />
             </>}
         </ActionMenuSurface>
 
@@ -158,8 +160,9 @@ export default function TreeContextMenu() {
             top={addPosition.top}
             ariaLabel={`Añadir una capa a ${title}`}
         >
-            <ActionMenuItem title="Añadir satélite" description="TLE desde catálogo o importación" onClick={openSatellite} />
-            <ActionMenuItem title="Estación de tierra" description="Abre el diseño de una nueva estación" onClick={() => submit("station")} />
+            <ActionMenuItem title="Añadir satélite" description="Catálogo, archivo, producto GNSS u órbita manual" onClick={openSatellite} />
+            <ActionMenuItem title="Cuerpo celeste" description="Añade Luna o Sol al grupo Bodies del visor" onClick={openBodies} />
+            <ActionMenuItem title="Estación terrestre" description="Abre el diseño de una nueva estación en esta carpeta" onClick={() => submit("station")} />
         </ActionMenuSurface>}
 
         {submenu === "satellite" && <ActionMenuSurface
@@ -171,8 +174,23 @@ export default function TreeContextMenu() {
             top={satellitePosition.top}
             ariaLabel={`Añadir un satélite a ${title}`}
         >
-            <ActionMenuItem title="TLE desde catálogo" description="Busca e importa desde el catálogo" onClick={() => submit("catalog")} />
-            <ActionMenuItem title="Importar satélite" description="Carga un archivo de órbita local" onClick={() => submit("import")} />
+            <ActionMenuItem title="Desde el catálogo" description="Explora satélites publicados" onClick={() => submit("catalog")} />
+            <ActionMenuItem title="Importar archivo" description="Carga TLE, OMM u OEM" onClick={() => submit("import-satellite")} />
+            <ActionMenuItem title="Producto GNSS" description="Importa SP3 y ficheros auxiliares" onClick={() => submit("import-gnss")} />
+            <ActionMenuItem title="Generar órbita" description="Define una órbita manual" onClick={() => submit("manual-orbit")} />
+        </ActionMenuSurface>}
+
+        {submenu === "bodies" && <ActionMenuSurface
+            id="treeContextBodiesMenu"
+            className="orbit-tree-context-menu"
+            title="Añadir cuerpo"
+            icon={<BodiesIcon />}
+            left={bodiesPosition.left}
+            top={bodiesPosition.top}
+            ariaLabel="Añadir un cuerpo celeste al visor"
+        >
+            <ActionMenuItem title="Luna" description="Añade la Luna al grupo Bodies" onClick={() => submit("moon")} />
+            <ActionMenuItem title="Sol" description="Añade el Sol al grupo Bodies" onClick={() => submit("sun")} />
         </ActionMenuSurface>}
     </>;
 }

@@ -27,17 +27,20 @@ test("layer tree prevents moving a folder into itself or descendants", () => {
     assert.equal(tree.move(child, child), false);
 });
 
-test("removing a folder returns direct children to root", () => {
+test("removing a folder removes its complete hierarchy and layer assignments", () => {
     const tree = createLayerTree(memoryStorage());
     const folder = tree.createFolder("Temporary");
     const child = tree.createFolder("Child", folder);
     const nested = tree.createFolder("Nested", child);
     tree.move("ISS", folder);
+    tree.move("Hubble", nested);
     tree.removeFolder(folder);
     assert.equal(tree.snapshot(["ISS"]).layerParents.ISS, null);
+    assert.equal(tree.snapshot(["Hubble"]).layerParents.Hubble, null);
     const folders = tree.snapshot([]).folders;
-    assert.equal(folders.find((item) => item.id === child).parentId, null);
-    assert.equal(folders.find((item) => item.id === nested).parentId, child);
+    assert.equal(folders.some((item) => item.id === folder), false);
+    assert.equal(folders.some((item) => item.id === child), false);
+    assert.equal(folders.some((item) => item.id === nested), false);
 });
 
 test("folder helpers resolve nested folders and the layers they contain", () => {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import PanelCloseButton from "./PanelCloseButton.jsx";
+import useGroundStationsPanelVisibility from "../hooks/useGroundStationsPanelVisibility.js";
 
 const fields = [["orbit_future_color", "Color órbita futura", "color"], ["orbit_future_line_width", "Grosor futuro", "number"], ["propagation_hours", "Propagación (h)", "number"], ["satellite_label_size_px", "Tamaño etiqueta", "number"], ["satellite_model_scale", "Escala modelo", "number"]];
 const checks = [["satellite_use_3d_model", "Usar modelo 3D"], ["orbit_future_show", "Mostrar futuro"], ["orbit_ground_track_show", "Mostrar ground track"]];
@@ -8,6 +9,7 @@ const controlClass = "rounded-lg border border-[var(--orbit-border-primary)] bg-
 
 export default function SatelliteVisualizationDialog() {
     const [data, setData] = useState(null);
+    const groundStationsPanelOpen = useGroundStationsPanelVisibility();
 
     useEffect(() => {
         const open = (event) => setData(event.detail);
@@ -20,7 +22,7 @@ export default function SatelliteVisualizationDialog() {
         };
     }, []);
 
-    if (!data) return null;
+    if (!data || groundStationsPanelOpen) return null;
 
     const update = (key, value) => setData((current) => ({ ...current, values: { ...current.values, [key]: value } }));
     const hiddenWhenPropagationLocked = new Set(["propagation_hours"]);

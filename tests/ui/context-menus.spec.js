@@ -187,7 +187,19 @@ test("project, satellite and ground-station contextual menus share an identified
             title: "Añadir capa",
             actions: [
                 { label: "Añadir satélite" },
-                { label: "Estación de tierra" }
+                { label: "Cuerpo celeste" },
+                { label: "Estación terrestre" }
+            ]
+        });
+
+        await page.locator("#treeContextAddMenu").getByRole("menuitem", { name: "Añadir satélite" }).click();
+        await expectUnifiedContextMenu(page.locator("#treeContextSatelliteMenu"), {
+            title: "Añadir satélite",
+            actions: [
+                { label: "Desde el catálogo" },
+                { label: "Importar archivo" },
+                { label: "Producto GNSS" },
+                { label: "Generar órbita" }
             ]
         });
 

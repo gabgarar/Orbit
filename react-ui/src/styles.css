@@ -443,6 +443,15 @@ body.with-toolbars #cesiumContainer {
     transform: translateX(0);
 }
 
+/* Ground Stations temporarily owns the operator workspace on the right.
+ * Legacy telemetry is left intact, but moved out of view until the station
+ * panel closes so it cannot appear through a docked station workspace. */
+:root.orbit-ground-stations-panel-open #leftInfoPanel.open {
+    pointer-events: none;
+    transform: translateX(calc(-100% - 86px));
+    visibility: hidden;
+}
+
 #leftSidebar {
     --orbit-sidebar-rail-gap: 12px;
     top: var(--orbit-workspace-panel-top) !important;

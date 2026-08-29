@@ -3,6 +3,7 @@ import ConfigField from "../features/config/ConfigField.jsx";
 import { sections, tabs, titles } from "../features/config/configSchema.js";
 import useConfigPanelState from "../hooks/useConfigPanelState.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
+import useGroundStationsPanelVisibility from "../hooks/useGroundStationsPanelVisibility.js";
 
 const classNames = (...classes) => classes.filter(Boolean).join(" ");
 const statusColors = {
@@ -31,6 +32,7 @@ function statusText(status) {
 export default function ConfigPanel() {
     const [tab, setTab] = useState("orbital");
     const { open, setOpen, config, setConfig, status } = useConfigPanelState();
+    const groundStationsPanelOpen = useGroundStationsPanelVisibility();
     const change = (section, key, value) => {
         setConfig((current) => ({ ...current, [section]: { ...current[section], [key]: value } }));
         window.dispatchEvent(new CustomEvent("orbit:config-panel-action", { detail: { type: "change", section, key, value } }));
@@ -38,7 +40,7 @@ export default function ConfigPanel() {
     const action = (type) => window.dispatchEvent(new CustomEvent("orbit:config-panel-action", { detail: { type } }));
     const activeSections = tabs.find(([id]) => id === tab)?.[2] || [];
 
-    if (!open) return null;
+    if (!open || groundStationsPanelOpen) return null;
 
     return <div id="configModal" className="open pointer-events-none fixed inset-0 z-[10160]">
         <aside

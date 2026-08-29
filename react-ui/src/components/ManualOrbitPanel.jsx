@@ -18,6 +18,7 @@ import {
 } from "../../../front/js/features/manualOrbit/editorState.js";
 import { findDiagnosticComponent } from "../../../front/js/features/diagnostics/diagnosticsContract.js";
 import useSystemDiagnostics from "../hooks/useSystemDiagnostics.js";
+import useGroundStationsPanelVisibility from "../hooks/useGroundStationsPanelVisibility.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
 
 const GEOPOTENTIAL_MODEL_OPTIONS = Object.freeze([
@@ -1030,6 +1031,7 @@ export default function ManualOrbitPanel() {
     const [status, setStatus] = useState(null);
     const [vectorsVisible, setVectorsVisible] = useState(false);
     const [erpUploadPending, setErpUploadPending] = useState(false);
+    const groundStationsPanelOpen = useGroundStationsPanelVisibility();
     const { availability: diagnosticsAvailability, diagnostics } = useSystemDiagnostics({ enabled: open });
     const gravityModels = gravityModelsFromDiagnostics(diagnostics);
     const gravityExecutionLimit = gravityExecutionLimitFromDiagnostics(diagnostics);
@@ -1535,7 +1537,7 @@ export default function ManualOrbitPanel() {
     }, [form, vectorsVisible]);
 
     if (!open) {
-        if (status?.kind !== "warning") return null;
+        if (groundStationsPanelOpen || status?.kind !== "warning") return null;
         return <aside
             data-testid="manual-orbit-adjustment-notice"
             className="fixed right-4 bottom-20 z-[10400] flex w-[min(420px,calc(100vw-32px))] items-start gap-2 rounded-lg border border-[#8d6c32] bg-[#302515] px-3 py-2.5 text-[#ffe0a2] shadow-[0_16px_42px_rgba(0,0,0,.48)]"
@@ -1553,6 +1555,7 @@ export default function ManualOrbitPanel() {
             </button>
         </aside>;
     }
+    if (groundStationsPanelOpen) return null;
 
     const fields = definitionTab === "keplerian" ? KEPLERIAN_FIELDS : STATE_VECTOR_FIELDS;
     const group = definitionTab === "keplerian" ? "keplerian" : "stateVector";

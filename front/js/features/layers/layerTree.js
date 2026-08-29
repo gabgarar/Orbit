@@ -160,12 +160,20 @@ export function createLayerTree(storage = globalThis.localStorage, key = "orbit.
     function removeFolder(id) {
         const folders = folderById();
         if (!folders.has(id)) return false;
-        // Removing a folder never deletes workspace content.  Its immediate
-        // child folders and layers return to the project root; any deeper
-        // branch remains intact below the child that was re-homed.
-        state.folders.forEach((folder) => { if (folder.parentId === id) folder.parentId = null; });
-        Object.keys(state.layerParents).forEach((layerId) => { if (state.layerParents[layerId] === id) state.layerParents[layerId] = null; });
-        state.folders = state.folders.filter((folder) => folder.id !== id);
+        // A folder is an owning workspace branch.  Its caller removes the
+        // operational layers first; the tree then removes the same complete
+        // branch rather than silently re-homing stale child folders or layer
+        // assignments at the project root.
+        const removedFolderIds = getLayerFolderDescendantIds({
+            folders: state.folders,
+            folderId: id
+        });
+        state.folders = state.folders.filter((folder) => !removedFolderIds.has(folder.id));
+        Object.keys(state.layerParents).forEach((layerId) => {
+            if (removedFolderIds.has(state.layerParents[layerId])) {
+                delete state.layerParents[layerId];
+            }
+        });
         save(); return true;
     }
 

@@ -5,6 +5,7 @@ import { formatReferenceFrame } from "../../../front/js/features/frames/referenc
 import { resolvePreciseProductFrameStatus } from "../../../front/js/features/preciseProducts/frameStatus.js";
 import { describeEarthOrientationCoverageDetail } from "../../../front/js/features/timekeeping/eopCoveragePolicy.js";
 import PanelCloseButton from "./PanelCloseButton.jsx";
+import useGroundStationsPanelVisibility from "../hooks/useGroundStationsPanelVisibility.js";
 
 /*
  * Floating propagated-orbit inspector.
@@ -1843,6 +1844,7 @@ export default function PropagatedOrbitParametersPanel() {
     const [activeTab, setActiveTab] = useState("info");
     const [chartColumnId, setChartColumnId] = useState(DEFAULT_CHART_COLUMN_ID);
     const [exportFeedback, setExportFeedback] = useState(null);
+    const groundStationsPanelOpen = useGroundStationsPanelVisibility();
     const panelRef = useRef(null);
     const interactionCleanupRef = useRef(null);
     const panelWasOpenRef = useRef(false);
@@ -1987,7 +1989,7 @@ export default function PropagatedOrbitParametersPanel() {
     }, [panel.open]);
 
     useEffect(() => {
-        if (!panel.open) return undefined;
+        if (!panel.open || groundStationsPanelOpen) return undefined;
         const previousFocus = typeof document !== "undefined" ? document.activeElement : null;
         panelRef.current?.focus?.({ preventScroll: true });
         const closeOnEscape = (event) => {
@@ -2002,7 +2004,7 @@ export default function PropagatedOrbitParametersPanel() {
             window.removeEventListener("keydown", closeOnEscape);
             previousFocus?.focus?.({ preventScroll: true });
         };
-    }, [panel.open]);
+    }, [groundStationsPanelOpen, panel.open]);
 
     useEffect(() => () => interactionCleanupRef.current?.(), []);
 
@@ -2198,6 +2200,7 @@ export default function PropagatedOrbitParametersPanel() {
     };
 
     if (!panel.open) return null;
+    if (groundStationsPanelOpen) return null;
     const portalTarget = typeof document === "undefined" ? null : document.body;
     if (!portalTarget) return null;
 

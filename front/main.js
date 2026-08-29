@@ -4003,6 +4003,10 @@ function removeGroundStationLayer(layerId) {
     syncGroundStationVisibilityLinks();
     layerDisplayNameOverrides.delete(layerId);
     emitObjectStateChanged({ layerId, sourceId: layerId, layerType: "GROUND_STATION", reason: "activation" });
+    // Keep an open AOS/LOS workspace in step with Layers. Its React-side
+    // fallback can now clear a deleted selected station or adopt the next
+    // available one without waiting for the panel to be reopened.
+    publishGroundStationsState();
 }
 
 function setCompositeLayerActive(layerId, active) {
@@ -4078,6 +4082,10 @@ function setCompositeLayerActive(layerId, active) {
                 forceTleRange: removedFiniteCoverage
             });
         }
+        // Satellite membership is part of the AOS/LOS selector contract.
+        // Publish both activation and removal so an open panel cannot retain
+        // a stale satellite id after a Layers operation.
+        publishGroundStationsState();
     }
     return changed;
 }
@@ -4086,6 +4094,7 @@ function duplicateSatelliteLayer(sourceId) {
     const layerId = compositeLayers.duplicate(String(sourceId || "").trim());
     if (layerId) {
         refreshGroundStationTimelineForLayerMembershipChange({ layerId, kind: "satellite" });
+        publishGroundStationsState();
     }
     return layerId;
 }
@@ -5036,14 +5045,10 @@ function updateGroundStationLayer(layerId, patch = {}) {
     if (plannerPassForecastOpen) {
         void refreshPlannerPassForecast({ force: true });
     }
-    window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
-        detail: {
-            error: "La configuración de la estación ha cambiado. Vuelve a analizar los pases.",
-            passes: [],
-            samples: [],
-            visibleNow: false
-        }
-    }));
+    // The pass workspace receives the refreshed station signature below and
+    // immediately starts a replacement analysis. Do not emit an unscoped
+    // result here: an old, unrelated pair could otherwise replace the result
+    // currently being calculated by the operator.
     emitObjectStateChanged({ layerId, sourceId: layerId, reason: "configuration" });
     publishGroundStationsState();
     return true;
@@ -5627,6 +5632,11 @@ function publishGroundStationsState() {
             altitude_m: station.altitude_m,
             time_zone: station.time_zone || "UTC",
             min_elevation_deg: station.min_elevation_deg,
+            // Keep React's automatic AOS/LOS trigger tied to the exact same
+            // authored RF/geometry contract that invalidates a runtime pass
+            // request. The value is opaque presentation state, never a
+            // persisted station property.
+            analysis_signature: groundStationAnalysisSignature(station),
             frequency_mhz: rf.frequency_mhz,
             frequency_hz: rf.frequency_mhz * 1e6,
             frequency_unit: rf.frequency_unit,
@@ -5660,8 +5670,21 @@ function publishGroundStationsState() {
     const satellites = getCompositeLayerIds()
         .filter((id) => !isGroundStationLayerId(id) && !isCelestialBodyLayerId(id))
         .map((id) => ({ id, name: getLayerDisplayName(id) }));
+    const selectedLayerId = String(selectedSatelliteId || "").trim();
+    const activeStationId = stations.some((station) => station.id === selectedLayerId)
+        ? selectedLayerId
+        : "";
+    const activeSatelliteId = satellites.some((satellite) => satellite.id === selectedLayerId)
+        ? selectedLayerId
+        : "";
     window.dispatchEvent(new CustomEvent("orbit:ground-stations-state", {
-        detail: { stations, satellites, now: getDisplayedSimulationDate()?.toISOString?.() || null }
+        detail: {
+            stations,
+            satellites,
+            activeStationId,
+            activeSatelliteId,
+            now: getDisplayedSimulationDate()?.toISOString?.() || null
+        }
     }));
 }
 
@@ -6164,7 +6187,13 @@ async function analyzeGroundStationPasses(detail = {}) {
     // station shown in Layers and with the live antenna links.
     const minElevationDeg = Math.max(0, Math.min(90, Number(station?.min_elevation_deg)));
     if (!station || !satelliteId || !Number.isFinite(minElevationDeg)) {
-        window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", { detail: { error: "Selecciona una estación, satélite y máscara válidos.", passes: [] } }));
+        window.dispatchEvent(new CustomEvent("orbit:ground-stations-analysis-result", {
+            detail: {
+                error: "Selecciona una estación, satélite y máscara válidos.",
+                passes: [],
+                analysisSelection: { stationId, satelliteLayerId }
+            }
+        }));
         return;
     }
     // A new request supersedes an earlier one, but its cancellation must not
@@ -7045,6 +7074,9 @@ function setCurrentSelectedSatellite(id) {
     selectedSatelliteId = id ? String(id) : null;
     updateSelectedEpochInfo();
     publishSelectedLayerState();
+    // Keep the AOS/LOS workspace aligned with a layer selected on the globe
+    // or in Layers. The React panel adopts the id only while it is open.
+    publishGroundStationsState();
     // A selected, visible station shows all of its visible satellite passes;
     // a selected, visible satellite shows the converse station passes. The
     // helper is range-mode gated, so ordinary realtime selection stays free.
@@ -9376,6 +9408,12 @@ async function createManualOrbitFromEditor(payload = {}) {
             propagation_hours: manualPropagationHours
         });
         layerDisplayNameOverrides.set(imported.id, imported.name);
+        // Folder-aware entry points wait for this success-only event before
+        // assigning the new layer. A draft that is cancelled or whose
+        // propagation fails must never reserve a folder for a later import.
+        window.dispatchEvent(new CustomEvent("orbit:manual-orbit-created", {
+            detail: { id: imported.id, name: imported.name }
+        }));
         restoreManualOrbitDesignMode({
             useRealtime: true,
             preserveManualOrbitCreate: true,

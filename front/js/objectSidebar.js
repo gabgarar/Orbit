@@ -1535,10 +1535,16 @@ export function setupObjectSidebar({
     folderContextMenu.innerHTML = `
         <div class="folder-add-menu"><button class="catalog-context-action" type="button">Añadir capa <span>›</span></button><div class="folder-add-submenu">
             <div class="folder-add-menu"><button class="catalog-context-action" type="button">Añadir satélite <span>›</span></button><div class="folder-add-submenu">
-                <button class="catalog-context-action" data-folder-action="catalog" type="button">TLE desde catálogo</button>
-                <button class="catalog-context-action" data-folder-action="import" type="button">Importar satélite</button>
+                <button class="catalog-context-action" data-folder-action="catalog" type="button">Desde el catálogo</button>
+                <button class="catalog-context-action" data-folder-action="import-satellite" type="button">Importar archivo</button>
+                <button class="catalog-context-action" data-folder-action="import-gnss" type="button">Producto GNSS</button>
+                <button class="catalog-context-action" data-folder-action="manual-orbit" type="button">Generar órbita</button>
             </div></div>
-            <button class="catalog-context-action" data-folder-action="station" type="button">Estación de tierra</button>
+            <div class="folder-add-menu"><button class="catalog-context-action" type="button">Cuerpo celeste <span>›</span></button><div class="folder-add-submenu">
+                <button class="catalog-context-action" data-folder-action="moon" type="button">Luna</button>
+                <button class="catalog-context-action" data-folder-action="sun" type="button">Sol</button>
+            </div></div>
+            <button class="catalog-context-action" data-folder-action="station" type="button">Estación terrestre</button>
         </div></div>
         <button class="catalog-context-action" data-folder-action="create" type="button">Nueva subcarpeta</button>
         <div class="catalog-context-separator"></div>
@@ -1582,6 +1588,11 @@ export function setupObjectSidebar({
     window.addEventListener("orbit:tree-context-menu-ready", onTreeContextMenuReady);
     let pendingFolderAssignment = null;
     let pendingFolderImportAssignment = null;
+    // A manual-orbit draft can be cancelled long after its entry point was
+    // chosen. Keep its folder intent separate until the user actually asks
+    // the editor to create the orbit, so a cancelled draft cannot capture an
+    // unrelated future import.
+    let pendingManualOrbitFolderAssignment = null;
 
     function getActiveBodyLayerIds() {
         return getRenderableLayerIds().filter((id) => isBodyLayer(getLayerType?.(id), id));
@@ -1615,20 +1626,125 @@ export function setupObjectSidebar({
         setLayersVisibility(getActiveBodyLayerIds(), visible);
     }
 
-    async function removeFolderAndRehome(folder) {
-        const tree = layerTree.snapshot(getRenderableLayerIds());
-        const hasContent = tree.folders.some((item) => item.parentId === folder.id)
-            || Object.values(tree.layerParents).some((parentId) => parentId === folder.id);
+    function markLayerTreeDirty() {
+        window.dispatchEvent(new Event("orbit:project-document-dirty"));
+    }
+
+    function clearRemovedObjectDetails(layerIds) {
+        const removedIds = new Set(layerIds);
+        if (removedIds.has(selectedId)) {
+            selectedId = null;
+        }
+        if (removedIds.has(detailTargetId)) {
+            detailTargetId = null;
+            detailSelectionRevision += 1;
+            window.dispatchEvent(new CustomEvent("orbit:selected-object", { detail: null }));
+        }
+    }
+
+    async function removeFolderAndContents(folder) {
+        const layerIds = [...new Set(getFolderLayerIds(folder.id))];
+        const folderIds = layerTree.getFolderDescendantIds(folder.id);
+        const nestedFolderCount = Math.max(0, folderIds.size - 1);
+        const hasContent = layerIds.length > 0 || nestedFolderCount > 0;
+        const contentDescription = [
+            layerIds.length > 0 ? `${layerIds.length} ${layerIds.length === 1 ? "capa" : "capas"}` : "",
+            nestedFolderCount > 0 ? `${nestedFolderCount} ${nestedFolderCount === 1 ? "subcarpeta" : "subcarpetas"}` : ""
+        ].filter(Boolean).join(" y ");
         const shouldDelete = !hasContent || await askConfirmation({
             title: "Eliminar carpeta",
-            message: `La carpeta '${folder.name}' contiene elementos. Se reubicaran en la raiz del proyecto.`,
-            confirmText: "Eliminar",
+            message: `La carpeta '${folder.name}' contiene ${contentDescription}. Se eliminarán de la escena junto con esta carpeta y no se reubicarán en la raíz del proyecto.`,
+            confirmText: "Eliminar contenido",
             cancelText: "Cancelar"
         });
         if (!shouldDelete) return false;
+
+        const failedIds = [];
+        for (const layerId of layerIds) {
+            try {
+                const removed = await Promise.resolve(onToggleObjectLayer?.(layerId, false));
+                if (removed === false || getObjectLayerActive(layerId) === true) {
+                    failedIds.push(layerId);
+                }
+            } catch {
+                failedIds.push(layerId);
+            }
+        }
+
+        if (failedIds.length > 0) {
+            clearRemovedObjectDetails(layerIds.filter((layerId) => !failedIds.includes(layerId)));
+            renderList();
+            renderInfo();
+            renderCatalogList();
+            showErrorPopup(`No se pudieron eliminar ${failedIds.length} ${failedIds.length === 1 ? "capa" : "capas"} de '${folder.name}'. La carpeta se conserva para que puedas revisarlas.`);
+            return false;
+        }
+
         const removed = layerTree.removeFolder(folder.id);
-        if (removed) renderList();
+        if (removed) {
+            clearRemovedObjectDetails(layerIds);
+            markLayerTreeDirty();
+            renderList();
+            renderInfo();
+            renderCatalogList();
+        }
         return removed;
+    }
+
+    function reserveFolderAssignment(folder, source = "") {
+        if (!folder?.id) return null;
+        return { folderId: folder.id, knownIds: new Set(getRenderableLayerIds()), source };
+    }
+
+    async function executeLayerAddAction(action, { folder = null } = {}) {
+        const normalizedAction = String(action || "").trim();
+        if (normalizedAction === "catalog") {
+            pendingFolderAssignment = reserveFolderAssignment(folder, "catalog");
+            openCatalogSatelliteFlow();
+            return true;
+        }
+        if (normalizedAction === "import-satellite") {
+            requestSatelliteImport(folder);
+            return true;
+        }
+        if (normalizedAction === "import-gnss") {
+            requestPreciseProductImport(folder);
+            return true;
+        }
+        if (normalizedAction === "manual-orbit") {
+            pendingManualOrbitFolderAssignment = reserveFolderAssignment(folder, "manual-orbit");
+            closeAddMenu();
+            window.dispatchEvent(new Event("orbit:manual-orbit-open"));
+            return true;
+        }
+        if (normalizedAction === "moon" || normalizedAction === "sun") {
+            // Bodies are intentionally owned by the permanent Bodies branch,
+            // not by a user folder, just like the Layers + menu.
+            requestCelestialBody(normalizedAction);
+            return true;
+        }
+        if (normalizedAction === "station") {
+            // As with manual orbits, reserve the target only after the
+            // exclusive station designer is actually confirmed.
+            return requestNewGroundStationDesign({
+                onConfirmed: () => {
+                    pendingFolderAssignment = reserveFolderAssignment(folder, "station");
+                }
+            });
+        }
+        if (normalizedAction === "folder") {
+            closeAddMenu();
+            const name = await requestFolderName({
+                title: folder ? "Nueva subcarpeta" : "Nueva carpeta",
+                label: folder ? "Nombre de la subcarpeta" : "Nombre de la carpeta"
+            });
+            if (layerTree.createFolder(name, folder?.id || null)) {
+                markLayerTreeDirty();
+                renderList();
+                return true;
+            }
+        }
+        return false;
     }
 
     function showFolderContextMenu(x, y, markup, target, menuWidth = 260, menuHeight = 230) {
@@ -1636,7 +1752,7 @@ export function setupObjectSidebar({
         const useReactTreeContextMenu = reactTreeContextMenuReady || window.__orbitTreeContextMenuReady === true;
         const resolvedMenuWidth = useReactTreeContextMenu ? 286 : menuWidth;
         const resolvedMenuHeight = useReactTreeContextMenu
-            ? (target?.type === "bodies" ? 150 : 352)
+            ? (target?.type === "bodies" ? 150 : 370)
             : menuHeight;
         const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - resolvedMenuWidth - 8));
         const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - resolvedMenuHeight - 8));
@@ -1685,30 +1801,8 @@ export function setupObjectSidebar({
             setFolderVisibility(folder, false);
             return;
         }
-        if (action === "catalog") {
-            pendingFolderAssignment = { folderId: folder.id, knownIds: new Set(getRenderableLayerIds()) };
-            onRequestAddSatellite?.();
-            waitAndOpenCatalog();
-            return;
-        }
-        if (action === "import") {
-            requestSatelliteImport(folder);
-            return;
-        }
-        if (action === "station") {
-            // Do not reserve a folder until the user actually enters the
-            // designer.  Otherwise cancelling the transition would leave a
-            // stale assignment that could be applied to an unrelated layer.
-            void requestNewGroundStationDesign({
-                onConfirmed: () => {
-                    pendingFolderAssignment = { folderId: folder.id, knownIds: new Set(getRenderableLayerIds()) };
-                }
-            });
-            return;
-        }
-        if (action === "create") {
-            const name = await requestFolderName({ title: "Nueva subcarpeta", label: "Nombre de la subcarpeta" });
-            if (layerTree.createFolder(name, folder.id)) renderList();
+        if (["catalog", "import-satellite", "import-gnss", "manual-orbit", "moon", "sun", "station", "folder", "create"].includes(action)) {
+            await executeLayerAddAction(action === "create" ? "folder" : action, { folder });
             return;
         }
         if (action === "rename") {
@@ -1717,11 +1811,14 @@ export function setupObjectSidebar({
                 label: "Nombre de la carpeta",
                 initialValue: folder.name
             });
-            if (layerTree.renameFolder(folder.id, name)) renderList();
+            if (layerTree.renameFolder(folder.id, name)) {
+                markLayerTreeDirty();
+                renderList();
+            }
             return;
         }
         if (action !== "delete") return;
-        await removeFolderAndRehome(folder);
+        await removeFolderAndContents(folder);
     }
 
     folderContextMenu.addEventListener("click", async (event) => {
@@ -1754,8 +1851,27 @@ export function setupObjectSidebar({
         folderContextMenu.classList.remove("open");
         folderContextTarget = null;
     };
+    const onManualOrbitCreated = (event) => {
+        if (!pendingManualOrbitFolderAssignment) return;
+        const layerId = String(event.detail?.id || "").trim();
+        const folderId = pendingManualOrbitFolderAssignment.folderId;
+        const folderStillExists = layerTree.snapshot(getRenderableLayerIds()).folders
+            .some((folder) => folder.id === folderId);
+        if (layerId && folderStillExists && getObjectLayerActive(layerId) === true) {
+            layerTree.move(layerId, folderId);
+            markLayerTreeDirty();
+            renderList();
+        }
+        pendingManualOrbitFolderAssignment = null;
+    };
+    const discardPendingManualOrbitFolderAssignment = () => {
+        pendingManualOrbitFolderAssignment = null;
+    };
     window.addEventListener("orbit:tree-context-menu-action", onTreeContextMenuAction);
     window.addEventListener("orbit:tree-context-menu-dismiss", onTreeContextMenuDismiss);
+    window.addEventListener("orbit:manual-orbit-created", onManualOrbitCreated);
+    window.addEventListener("orbit:manual-orbit-cancel", discardPendingManualOrbitFolderAssignment);
+    window.addEventListener("orbit:manual-orbit-close", discardPendingManualOrbitFolderAssignment);
 
     document.addEventListener("pointerdown", (event) => {
         if (!contextMenu.contains(event.target) && !event.target.closest?.("#catalogContextMenu")) closeContextMenu();
@@ -2202,7 +2318,10 @@ export function setupObjectSidebar({
     const onListRootDrop = (event) => {
         event.preventDefault();
         const id = event.dataTransfer.getData("text/plain");
-        if (layerTree.move(id, null)) renderList();
+        if (layerTree.move(id, null)) {
+            markLayerTreeDirty();
+            renderList();
+        }
     };
     listRoot.addEventListener("dragover", onListRootDragOver);
     listRoot.addEventListener("drop", onListRootDrop);
@@ -2613,6 +2732,12 @@ export function setupObjectSidebar({
         setCatalogRefreshState({ visible: false, text: "", value: 0 });
         catalogProgress.textContent = "";
         catalogModal.classList.remove("open");
+        // A folder-targeted catalog flow reserves its destination before the
+        // user chooses a satellite. Closing it without an addition must not
+        // move the next unrelated layer into that folder.
+        if (pendingFolderAssignment?.source === "catalog") {
+            pendingFolderAssignment = null;
+        }
         window.dispatchEvent(new Event("orbit:catalog-close"));
         catalogFilterModal.classList.remove("open");
         closeContextMenu();
@@ -4414,14 +4539,11 @@ export function setupObjectSidebar({
         openPreciseProductImportModal([]);
     }
 
-    addTleFromCatalogBtn?.addEventListener("click", openCatalogSatelliteFlow);
-    addSatelliteBtn?.addEventListener("click", openCatalogSatelliteFlow);
-    generateOrbitBtn?.addEventListener("click", () => {
-        closeAddMenu();
-        window.dispatchEvent(new Event("orbit:manual-orbit-open"));
-    });
-    importSatelliteBtn?.addEventListener("click", () => requestSatelliteImport());
-    importPreciseProductBtn?.addEventListener("click", () => requestPreciseProductImport());
+    addTleFromCatalogBtn?.addEventListener("click", () => { void executeLayerAddAction("catalog"); });
+    addSatelliteBtn?.addEventListener("click", () => { void executeLayerAddAction("catalog"); });
+    generateOrbitBtn?.addEventListener("click", () => { void executeLayerAddAction("manual-orbit"); });
+    importSatelliteBtn?.addEventListener("click", () => { void executeLayerAddAction("import-satellite"); });
+    importPreciseProductBtn?.addEventListener("click", () => { void executeLayerAddAction("import-gnss"); });
     preciseProductImportCloseBtn?.addEventListener("click", () => closePreciseProductImportModal());
     preciseProductImportCancelBtn?.addEventListener("click", () => closePreciseProductImportModal());
     preciseProductImportConfirmBtn?.addEventListener("click", () => { void requestPreciseProductPreview(); });
@@ -4513,12 +4635,10 @@ export function setupObjectSidebar({
             renderList();
         }
     };
-    addMoonBtn?.addEventListener("click", () => requestCelestialBody("moon"));
-    addSunBtn?.addEventListener("click", () => requestCelestialBody("sun"));
+    addMoonBtn?.addEventListener("click", () => { void executeLayerAddAction("moon"); });
+    addSunBtn?.addEventListener("click", () => { void executeLayerAddAction("sun"); });
 
-    addGroundStationBtn?.addEventListener("click", () => {
-        void requestNewGroundStationDesign();
-    });
+    addGroundStationBtn?.addEventListener("click", () => { void executeLayerAddAction("station"); });
 
     groundStationCloseBtn?.addEventListener("click", () => { void requestCloseGroundStationModal(); });
     groundStationCancelBtn?.addEventListener("click", () => { void requestCloseGroundStationModal(); });
@@ -5014,11 +5134,7 @@ export function setupObjectSidebar({
         onOpenVisualizationOptions?.(id);
     });
 
-    addFolderBtn?.addEventListener("click", async () => {
-        closeAddMenu();
-        const name = await requestFolderName({ title: "Nueva carpeta", label: "Nombre de la carpeta" });
-        if (layerTree.createFolder(name)) renderList();
-    });
+    addFolderBtn?.addEventListener("click", () => { void executeLayerAddAction("folder"); });
 
     contextGroundTrackBtn.addEventListener("click", () => {
         if (!contextTargetId) return;
@@ -5831,6 +5947,7 @@ export function setupObjectSidebar({
             if (addedIds.length) {
                 addedIds.forEach((id) => layerTree.move(id, pendingFolderAssignment.folderId));
                 pendingFolderAssignment = null;
+                markLayerTreeDirty();
             }
         }
         // These actions only apply to actual rows in the layer tree. Empty
@@ -5964,12 +6081,12 @@ export function setupObjectSidebar({
             const folderRemoveBtn = document.createElement("button");
             folderRemoveBtn.type = "button";
             folderRemoveBtn.className = "layer-tree-folder-remove-btn";
-            folderRemoveBtn.title = "Eliminar carpeta y reubicar su contenido";
+            folderRemoveBtn.title = "Eliminar carpeta y su contenido";
             folderRemoveBtn.setAttribute("aria-label", folderRemoveBtn.title);
             folderRemoveBtn.innerHTML = trashIconMarkup;
             folderRemoveBtn.addEventListener("click", (event) => {
                 event.stopPropagation();
-                void removeFolderAndRehome(folder);
+                void removeFolderAndContents(folder);
             });
 
             folderActions.append(folderVisibilityBtn, folderRemoveBtn);
@@ -5980,7 +6097,10 @@ export function setupObjectSidebar({
             header.addEventListener("drop", (event) => {
                 event.preventDefault(); event.stopPropagation();
                 const id = event.dataTransfer.getData("text/plain");
-                if (layerTree.move(id, folder.id)) renderList();
+                if (layerTree.move(id, folder.id)) {
+                    markLayerTreeDirty();
+                    renderList();
+                }
             });
             folderToggle.addEventListener("click", () => { layerTree.toggle(folder.id); renderList(); });
             header.addEventListener("contextmenu", (event) => {
@@ -6004,7 +6124,10 @@ export function setupObjectSidebar({
                 event.preventDefault();
                 event.stopPropagation();
                 const id = event.dataTransfer.getData("text/plain");
-                if (layerTree.move(id, folder.id)) renderList();
+                if (layerTree.move(id, folder.id)) {
+                    markLayerTreeDirty();
+                    renderList();
+                }
             });
             group.appendChild(body); parentContainer.appendChild(group); containers.set(folder.id, body);
             tree.folders.filter((item) => item.parentId === folder.id).forEach((child) => renderFolder(child, body));
@@ -6787,6 +6910,9 @@ export function setupObjectSidebar({
             window.removeEventListener("orbit:tree-context-menu-ready", onTreeContextMenuReady);
             window.removeEventListener("orbit:tree-context-menu-action", onTreeContextMenuAction);
             window.removeEventListener("orbit:tree-context-menu-dismiss", onTreeContextMenuDismiss);
+            window.removeEventListener("orbit:manual-orbit-created", onManualOrbitCreated);
+            window.removeEventListener("orbit:manual-orbit-cancel", discardPendingManualOrbitFolderAssignment);
+            window.removeEventListener("orbit:manual-orbit-close", discardPendingManualOrbitFolderAssignment);
             window.removeEventListener(ORBIT_OPERATION_CANCEL_REQUEST_EVENT, onSceneOperationCancelRequest);
             window.removeEventListener("orbit:scene-operations-cancel", onSceneOperationsCancel);
             sidebar.remove();

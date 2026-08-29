@@ -16,6 +16,7 @@ import PanelCloseButton from "./PanelCloseButton.jsx";
 import FieldHelpTooltip from "./FieldHelpTooltip.jsx";
 import MasterTimeRangeOutOfRangeStatus from "./MasterTimeRangeOutOfRangeStatus.jsx";
 import { resolveMasterTimeRangeObjectStatus } from "../../../front/js/features/masterTimeRange/ui.js";
+import useGroundStationsPanelVisibility from "../hooks/useGroundStationsPanelVisibility.js";
 
 const standardTabs = [
     ["overview", "OVERVIEW", "Overview"],
@@ -340,6 +341,7 @@ export default function ObjectDetailsPanel() {
     const [designMode, setDesignMode] = useState(false);
     const [stationDesignMode, setStationDesignMode] = useState(false);
     const [stationLinkContext, setStationLinkContext] = useState(null);
+    const groundStationsPanelOpen = useGroundStationsPanelVisibility();
     const lastSelection = useRef({ id: null, revision: null });
     const selectedSourceFormat = String(
         detail?.sourceFormat
@@ -413,7 +415,7 @@ export default function ObjectDetailsPanel() {
         return () => window.removeEventListener("orbit:ground-stations-analysis-result", onGroundStationAnalysis);
     }, [detail?.id]);
 
-    if (designMode || stationDesignMode || !detail || dismissedId === detail.id) return null;
+    if (designMode || stationDesignMode || groundStationsPanelOpen || !detail || dismissedId === detail.id) return null;
 
     const eopDiagnostic = selectedSp3PanelShown
         ? findDiagnosticComponent(diagnostics, "erp")
